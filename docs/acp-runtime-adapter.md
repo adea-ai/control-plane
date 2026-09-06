@@ -50,7 +50,7 @@ missing, incompatible, or disappeared driver fails closed, while a disconnected 
 reconciles as unknown until connectivity returns.
 
 The in-repository reference driver runs only a disposable ACP transport fixture. It does not launch
-Agent HQ or take ownership of native authentication, configuration, MCP setup, or session files.
+Adea or take ownership of native authentication, configuration, MCP setup, or session files.
 
 ## External session references
 

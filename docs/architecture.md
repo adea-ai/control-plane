@@ -6,8 +6,8 @@ The Control Plane is a TypeScript modular monolith with independently deployable
 
 | System                 | Owns                                                                                                                                                                                         | Does not own                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Agent HQ**           | Product identity, workspace authorization, persistent user-facing Agents/Tasks, RuntimeNode registration, product events, execution-location UX, and web/mobile remote coordination          | Control Plane execution policy, ProjectState, durable workflow semantics, or provider corpora |
-| **Control Plane**      | AgentProfile/Skill resolution, ProjectState, ContextPackages, ExecutionPlans, durable execution, runtime/tool/model/provider policy, orchestration, usage, and normalized execution evidence | Agent HQ product tables/UI state or Cortana corpus/native memory                              |
+| **Adea**           | Product identity, workspace authorization, persistent user-facing Agents/Tasks, RuntimeNode registration, product events, execution-location UX, and web/mobile remote coordination          | Control Plane execution policy, ProjectState, durable workflow semantics, or provider corpora |
+| **Control Plane**      | AgentProfile/Skill resolution, ProjectState, ContextPackages, ExecutionPlans, durable execution, runtime/tool/model/provider policy, orchestration, usage, and normalized execution evidence | Adea product tables/UI state or Cortana corpus/native memory                              |
 | **RuntimeNode / host** | Concrete execution location and RuntimeDriver/local-service capabilities                                                                                                                     | Product authorization or Control Plane routing/orchestration policy                           |
 | **Concrete harness**   | Native agent loop, native sessions, provider authentication, harness-local tools/configuration                                                                                               | Stable Control Plane contracts or product identity                                            |
 | **ContextProvider**    | Separately owned evidence/memory/corpus and provider-specific authorization                                                                                                                  | ProjectState or Control Plane execution authority                                             |
@@ -34,9 +34,9 @@ The accepted implementation sequence is:
 1. **M9 — Managed Cloud Deployment, Hardening & Evals:** establish a working Railway + Neon + R2 + Restate managed-cloud reference and freeze deployment-independent contracts/behavior.
 2. **M10 — Local & Hosted Portability:** extract/consume infrastructure ports and add Local/Hosted adapters while preserving the M9 semantic baseline.
 3. **M11 — Feature Completion & Production Audit:** independently audit managed cloud, Local, and Hosted as one portable product.
-4. **M12 — Cross-Product Integration & Release:** connect independently approved Agent HQ and optional Cortana release candidates.
+4. **M12 — Cross-Product Integration & Release:** connect independently approved Adea and optional Cortana release candidates.
 
-This implementation order is distinct from Agent HQ product rollout. The Control Plane cloud profile is implemented in M9 even though `agent_hq_cloud` remains a later user-visible Agent HQ execution-location option.
+This implementation order is distinct from Adea product rollout. The Control Plane cloud profile is implemented in M9 even though `agent_hq_cloud` remains a later user-visible Adea execution-location option.
 
 ### Managed cloud — M9 reference
 
@@ -48,7 +48,7 @@ This implementation order is distinct from Agent HQ product rollout. The Control
 - Railway service/shared variables for bootstrap/service configuration.
 - Dynamic connector/provider credentials remain behind the credential-vault secret boundary rather than becoming per-user environment variables.
 
-Control Plane R2 storage and Agent HQ Artifact storage are separate authorities even if they use the same Cloudflare account/provider. Each product uses separately scoped buckets/environment sets and credentials; Control Plane's `ctrl-plane` bucket is not Agent HQ Artifact storage.
+Control Plane R2 storage and Adea Artifact storage are separate authorities even if they use the same Cloudflare account/provider. Each product uses separately scoped buckets/environment sets and credentials; Control Plane's `ctrl-plane` bucket is not Adea Artifact storage.
 
 ### Local — M10
 
@@ -90,7 +90,7 @@ Control Plane R2 storage and Agent HQ Artifact storage are separate authorities 
 
 ## Persistence and data ownership
 
-The Control Plane owns a separate persistence boundary from Agent HQ and Cortana.
+The Control Plane owns a separate persistence boundary from Adea and Cortana.
 
 - Managed cloud: Neon PostgreSQL.
 - Local: embedded SQLite.
@@ -110,7 +110,7 @@ The repository's existing local PostgreSQL Compose fixtures are integration/serv
 
 `ObjectStore` is deployment-neutral. The M9 Control Plane cloud implementation uses the Control Plane-owned Cloudflare R2 bucket/configuration; M10 Local/Hosted use filesystem or user-controlled S3-compatible storage. Physical provider identifiers do not enter stable contracts.
 
-Agent HQ owns a different Artifact authorization/lifecycle boundary and must use its own bucket/credentials for first-party Artifact promotion. Sharing a Cloudflare account does not authorize one product to read, write, delete, scan, retain, or issue capabilities for the other product's objects.
+Adea owns a different Artifact authorization/lifecycle boundary and must use its own bucket/credentials for first-party Artifact promotion. Sharing a Cloudflare account does not authorize one product to read, write, delete, scan, retain, or issue capabilities for the other product's objects.
 
 ## Runtime transport
 
@@ -119,7 +119,7 @@ Agent HQ owns a different Artifact authorization/lifecycle boundary and must use
 - `DirectLocalRuntimeTransport` for co-located Control Plane + RuntimeDriver;
 - `RemoteRuntimeGatewayTransport` only for non-co-located RuntimeNodes.
 
-Agent HQ's durable web/mobile remote relay is a separate product-control transport and must not be conflated with Runtime Gateway.
+Adea's durable web/mobile remote relay is a separate product-control transport and must not be conflated with Runtime Gateway.
 
 ## Context and memory
 

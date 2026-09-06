@@ -15,7 +15,7 @@ inward and are wired by modules at the application edge.
 Database rows are never response contracts. Public and service responses are purpose-built, versioned,
 and independently evolvable.
 
-The canonical Agent HQ service schemas, opaque identifiers, envelopes, compatibility rules, and
+The canonical Adea service schemas, opaque identifiers, envelopes, compatibility rules, and
 fixtures are documented in [`contracts.md`](contracts.md) and exported by `@control-plane/contracts`.
 Transport DTOs must implement that boundary rather than inventing database- or runtime-native public
 shapes.
@@ -61,7 +61,7 @@ duration, and context IDs; they exclude bodies, authorization headers, cookies, 
 
 ## Service authentication boundary
 
-`PolicyServiceAuthenticator` verifies Agent HQ service claims through a replaceable credential
+`PolicyServiceAuthenticator` verifies Adea service claims through a replaceable credential
 verifier, enforces configured issuer/audience/lifetime/revocation policy, and checks route scopes plus
 the workspace/project asserted by the versioned request envelope. `RequireServiceAuthentication`
 declares the required operation scopes on a route. The default implementation still fails closed with
@@ -81,6 +81,6 @@ bun run openapi:check
 The check requires health, readiness, and the representative `/v1/system/echo` contract. Add domain
 contracts only when their owning milestone defines and versions them.
 
-The Agent HQ-facing typed client is published separately as `@control-plane/sdk`. Its generated
+The Adea-facing typed client is published separately as `@control-plane/sdk`. Its generated
 OpenAPI boundary and deterministic pre-execution stub are documented in [`sdk.md`](sdk.md). The SDK
 does not import this application or any server implementation package.

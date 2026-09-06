@@ -29,7 +29,7 @@ Railway service/shared variables are the accepted initial source for **service/b
 - R2 endpoint/bucket/credential references;
 - bootstrap/master references for other deployment services.
 
-The Cloud Control API authenticates Agent HQ with signed, scoped service credentials. Railway
+The Cloud Control API authenticates Adea with signed, scoped service credentials. Railway
 configuration supplies the exact issuer, a bounded set of trusted Ed25519 public keys, and the current
 emergency-revocation set through `CONTROL_PLANE_SERVICE_AUTH_ISSUER`,
 `CONTROL_PLANE_SERVICE_AUTH_TRUSTED_KEYS`, and

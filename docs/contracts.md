@@ -1,7 +1,7 @@
-# Agent HQ ↔ Control Plane contracts
+# Adea ↔ Control Plane contracts
 
-`@control-plane/contracts` 1.x is the publishable, runtime-independent service boundary between Agent HQ and the
-Control Plane. Agent HQ supplies authorized product intent and workspace identity; the Control Plane
+`@control-plane/contracts` 1.x is the publishable, runtime-independent service boundary between Adea and the
+Control Plane. Adea supplies authorized product intent and workspace identity; the Control Plane
 applies execution policy and owns runtime semantics. The package depends only on Zod and can build
 without Control Plane domain, database, application, workflow, or adapter packages.
 
@@ -62,20 +62,20 @@ data rather than persistence rows.
 - Runtime read models expose Control Plane status and opaque RuntimeNode/connection references. They
   never expose local paths, device credentials, process handles, or native harness configuration.
 
-Browser/user credentials, Agent HQ service credentials, RuntimeNode device credentials, and
+Browser/user credentials, Adea service credentials, RuntimeNode device credentials, and
 provider/harness credentials are distinct trust boundaries. None belongs in these generic payloads.
 
 ## Service authentication
 
-Agent HQ calls protected Control Plane routes with a bearer credential verified by a configured
+Adea calls protected Control Plane routes with a bearer credential verified by a configured
 `ServiceCredentialVerifier`. The verifier is a replaceable infrastructure adapter: it must verify the
-credential signature against currently trusted Agent HQ keys before returning claims. The policy
+credential signature against currently trusted Adea keys before returning claims. The policy
 authenticator then independently enforces these claims:
 
 | Claim             | Requirement                                                                      |
 | ----------------- | -------------------------------------------------------------------------------- |
 | `credentialKind`  | Exactly `service`; browser sessions, RuntimeNode devices, and provider keys fail |
-| `issuer`          | Exact configured Agent HQ issuer URL                                             |
+| `issuer`          | Exact configured Adea issuer URL                                             |
 | `audience`        | Exact configured Control Plane audience                                          |
 | `principalId`     | Stable `svc_`-prefixed service identity                                          |
 | `credentialId`    | Unique revocation handle                                                         |
@@ -93,12 +93,12 @@ is mandatory at every authenticated route. Authentication establishes caller ide
 and execution policy must still authorize the requested action.
 
 Internal workers use `internal_service` principals created with explicit scopes. They do not inherit
-Agent HQ user permissions and are not accepted as external bearer claims. Deployments remain
+Adea user permissions and are not accepted as external bearer claims. Deployments remain
 fail-closed with `SERVICE_AUTH_NOT_CONFIGURED` until an authentication adapter is supplied.
 
 ### Credential lifecycle and audit policy
 
-- Agent HQ publishes overlapping old and new verification keys during rotation. New credentials use
+- Adea publishes overlapping old and new verification keys during rotation. New credentials use
   the new `keyId`; the old key is removed only after its final credential expiry plus clock skew.
 - Credentials are short-lived. The default clock-skew allowance is 30 seconds and may be narrowed by
   deployment policy. A credential whose issuance is too far in the future or whose expiry is outside

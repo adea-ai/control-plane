@@ -171,7 +171,7 @@ Required checks are enforced by branch protection rulesets/branch protection. Do
 
 Use Conventional Commits so the release automation can determine the next version: `fix:` produces a patch release, `feat:` produces a minor release, and `!` or `BREAKING CHANGE:` produces a major release. Add `Release-As: x.y.z` only when a deliberate version override is needed. The release workflow maintains the changelog and GitHub release after changes land on `main`; npm publication is opt-in through `.github/code-foundry.yml`.
 
-The coordinated workspace release line starts at `1.0.0`: the versioned Agent HQ contracts are the
+The coordinated workspace release line starts at `1.0.0`: the versioned Adea contracts are the
 stable compatibility boundary, and the generated Code Foundry baseline enables pre-major bump
 behavior. Release Please tracks every application and package workspace, including private
 infrastructure packages, so internal dependency versions and changelogs advance together.
