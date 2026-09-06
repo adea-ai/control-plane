@@ -25,6 +25,6 @@
   },
   "dependencies": {
     "@control-plane/deployment": "workspace:*",
-    "@aws-sdk/client-s3": "3.1124.0"
+    "@aws-sdk/client-s3": "3.1125.0"
   }
 }
