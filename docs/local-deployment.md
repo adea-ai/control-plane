@@ -1,6 +1,6 @@
 # Local deployment and recovery
 
-Local is the developer-MVP default. Agent HQ Desktop owns one Control Plane process and its bundled
+Local is the developer-MVP default. Adea Desktop owns one Control Plane process and its bundled
 Restate child process. The composition uses embedded SQLite, filesystem Artifacts, local secret
 handles, content-redacted telemetry, and a direct co-located RuntimeTransport. It does not require
 Docker, PostgreSQL, Redis/Valkey, Temporal, Railway, Neon, R2, or Runtime Gateway.

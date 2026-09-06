@@ -43,7 +43,7 @@ labels:
     description: Cross-service contracts, SDKs, external systems, or repository integration.
   - name: cross-repo
     color: D93F0B
-    description: Requires coordinated changes or acceptance evidence across Agent HQ and Control Plane.
+    description: Requires coordinated changes or acceptance evidence across Adea and Control Plane.
   - name: worktree-safe
     color: C2E0C6
     description: Can proceed in an isolated worktree once declared dependencies are satisfied.

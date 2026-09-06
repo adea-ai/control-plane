@@ -1,8 +1,8 @@
 # ProjectState and promotion proposals
 
 The Control Plane owns durable canonical `ProjectState` for a workspace/project scope. It is separate
-from Agent HQ product state, workflow checkpoints, runtime-native sessions, and model conversation
-history. Agent HQ consumes it only through versioned Control Plane contracts and SDKs.
+from Adea product state, workflow checkpoints, runtime-native sessions, and model conversation
+history. Adea consumes it only through versioned Control Plane contracts and SDKs.
 
 ## Revisions and conflict handling
 

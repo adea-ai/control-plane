@@ -25,7 +25,7 @@ before the selected service.
 | Capability                              | Accepted M9 provider/boundary                     | Rule                                                                                                                                                                           |
 | --------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Compute                                 | Railway                                           | Repository-owned/reproducible service configuration; dashboard-only settings are not sufficient release evidence.                                                              |
-| Relational state                        | Separate Control Plane Neon PostgreSQL            | Drizzle migrations are explicit; Agent HQ uses a different Neon project/database.                                                                                              |
+| Relational state                        | Separate Control Plane Neon PostgreSQL            | Drizzle migrations are explicit; Adea uses a different Neon project/database.                                                                                                  |
 | Object storage                          | Cloudflare R2 through `ObjectStore`               | Current Control Plane bucket is `ctrl-plane` with Wrangler binding `ctrl_plane`; physical identifiers remain deployment configuration and never enter public/domain contracts. |
 | Durable workflows                       | Restate through `WorkflowRuntime`                 | Temporal is superseded for the release path; Restate-specific types stay out of public/domain contracts.                                                                       |
 | Service configuration/bootstrap secrets | Railway service/shared variables                  | Values are never committed; configuration is validated at startup.                                                                                                             |
@@ -76,7 +76,7 @@ runtime activities return `CLOUD_RUNTIME_DISABLED` without R2 access; certificat
 be enabled in the production environment by accident.
 
 The certification runtime proves the M9 Railway + Restate + Neon + R2 lifecycle; it is not a mock Pi
-provider and does not claim that the later Agent HQ `agent_hq_cloud` product runtime is certified.
+provider and does not claim that the later Adea `agent_hq_cloud` product runtime is certified.
 An injected concrete runtime activity port replaces it when that product capability is implemented.
 
 The endpoint validates Restate native request identity with the environment-specific public key.
@@ -126,7 +126,7 @@ credentials remain Railway-managed secrets.
 
 Requirements:
 
-1. Use the existing dedicated Control Plane Neon project/database, separate from Agent HQ.
+1. Use the existing dedicated Control Plane Neon project/database, separate from Adea.
 2. Apply repository-owned Drizzle migrations through an explicit migration job/pre-deploy step; ordinary service startup must not silently migrate production.
 3. Maintain separate runtime and migration/admin authority. Only services that need relational persistence receive runtime access.
 4. Validate schema compatibility before accepting traffic.
@@ -150,7 +150,7 @@ M9.9 completed the following Cloud storage gates:
 6. performed synthetic write/read/delete checks and the same integrity checks through the Control Plane `ObjectStore` adapter from Railway staging;
 7. recorded a sanitized resource/configuration manifest without account tokens, access-key secrets, or raw credentials.
 
-**Product storage ownership remains separate.** Agent HQ may use the same Cloudflare account/provider, but it uses a separate Agent HQ-owned bucket or environment-isolated bucket set and separate credentials. Agent HQ must not reuse the Control Plane `ctrl-plane` bucket or its broad credentials as Artifact authority.
+**Product storage ownership remains separate.** Adea may use the same Cloudflare account/provider, but it uses a separate Adea-owned bucket or environment-isolated bucket set and separate credentials. Adea must not reuse the Control Plane `ctrl-plane` bucket or its broad credentials as Artifact authority.
 
 Local and Hosted profiles introduced in M10 use filesystem or user-controlled S3-compatible storage by default. Switching `ObjectStore` must not change Artifact identity or public contracts.
 

@@ -19,7 +19,7 @@ protocol versions exactly. The classifications map into RuntimeConnection state 
 
 Capabilities outside a certification are downgraded to unsupported. If a capability asserted by a
 certification disappears from negotiation, the connection becomes unavailable with
-`CERTIFIED_CAPABILITY_MISSING`. These rules keep Agent HQ discovery read models honest because the
+`CERTIFIED_CAPABILITY_MISSING`. These rules keep Adea discovery read models honest because the
 same compatibility state and limitation codes feed health, eligibility, and read-model projection.
 
 ## Upgrade and deprecation policy
@@ -38,7 +38,7 @@ matrix version advances.
 The current minimum reference versions are Managed Pi adapter/driver 1.0.0, Pi 0.52.0, and Runtime
 Gateway protocol 1.5.0; and ACP adapter/driver 1.0.0, ACP reference harness 2.4.0, and Runtime Gateway
 protocol 1.5.0. Current `supported` entries certify only the in-repository disposable reference
-drivers and harnesses. Agent HQ production compatibility remains a separate pre-release gate.
+drivers and harnesses. Adea production compatibility remains a separate pre-release gate.
 
 Run `bun run compatibility:check` from the repository root whenever an adapter, driver, harness,
 protocol, capability claim, or certification file changes. The check validates the matrix, verifies
