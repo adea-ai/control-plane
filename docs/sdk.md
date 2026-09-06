@@ -35,9 +35,9 @@ A stub/fake is never evidence that the concrete Railway, Local or Hosted impleme
 
 ## Deterministic contract tests
 
-The SDK testing surface must remain runnable without Agent HQ, Cortana, Railway, Neon, R2, Restate cloud infrastructure, paid model providers, or user credentials. Fixtures validate the same public schemas/compatibility behavior consumed by real deployments.
+The SDK testing surface must remain runnable without Adea, Cortana, Railway, Neon, R2, Restate cloud infrastructure, paid model providers, or user credentials. Fixtures validate the same public schemas/compatibility behavior consumed by real deployments.
 
-Cross-repository references are compatibility targets, not ordinary implementation dependencies. Live Agent HQ/Cortana composition occurs only in M12.
+Cross-repository references are compatibility targets, not ordinary implementation dependencies. Live Adea/Cortana composition occurs only in M12.
 
 ## OpenAPI and schema generation
 
@@ -53,7 +53,7 @@ Compatibility rules:
 
 ## Publishing and deprecation
 
-Contract/SDK releases remain independently consumable by third-party/hosted clients. Publishing must preserve Apache-2.0 packaging and cannot require Agent HQ private packages.
+Contract/SDK releases remain independently consumable by third-party/hosted clients. Publishing must preserve Apache-2.0 packaging and cannot require Adea private packages.
 
 Deprecations remain available through their supported major until the documented sunset. Clients with no compatible major fail before dispatch rather than attempting best-effort coercion.
 

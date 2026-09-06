@@ -100,7 +100,7 @@ test('records architecture ownership and adapter decisions', async () => {
   const architecture = await readRepositoryFile('docs/architecture.md')
 
   for (const term of [
-    'Agent HQ',
+    'Adea',
     'Control Plane',
     'RuntimeNode',
     'concrete harness',
@@ -121,7 +121,7 @@ test('records architecture ownership and adapter decisions', async () => {
   ]) {
     assert.match(architecture, new RegExp(term, 'i'))
   }
-  assert.match(architecture, /Agent HQ.*identity.*workspace authorization/is)
+  assert.match(architecture, /Adea.*identity.*workspace authorization/is)
   assert.match(architecture, /Control Plane.*runtime\/tool\/model\/provider policy/is)
   assert.match(architecture, /no-cross-database-access/i)
   assert.match(architecture, /contract.*context.*execution.*runtime/is)

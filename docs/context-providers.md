@@ -24,6 +24,6 @@ provenance. Raw contribution content and reusable credentials do not belong in t
 ## Testing and adapters
 
 `@control-plane/context` supplies no-provider behavior, evidence and memory fake profiles, malformed
-and degraded fixtures, and a reusable conformance check. These tests require no Cortana, Agent HQ,
+and degraded fixtures, and a reusable conformance check. These tests require no Cortana, Adea,
 local corpus, or production credentials. A vendor adapter must implement the same port and pass the
 same scope, determinism, and bound checks before integration testing.

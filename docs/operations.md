@@ -7,7 +7,7 @@ This runbook covers the accepted Control Plane deployment sequence and must dist
 - **M9 — Managed Cloud Deployment, Hardening & Evals:** make the Railway + Neon + R2 + Restate profile actually deploy, recover, and pass the cloud hardening/eval gates.
 - **M10 — Local & Hosted Portability:** port the accepted M9 semantics to Local and user-controlled Hosted profiles.
 - **M11 — Feature Completion & Production Audit:** rerun production-readiness evidence across managed cloud, Local, and Hosted.
-- **M12 — Cross-Product Integration & Release:** connect the independently approved Control Plane candidate to Agent HQ and optional Cortana release candidates.
+- **M12 — Cross-Product Integration & Release:** connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates.
 
 Historical AWS/ECS/Terraform procedures are not the current first-party cloud runbook.
 
@@ -53,7 +53,7 @@ Staging uses the explicit `certification` runtime mode to persist and integrity-
 terminal result through R2. Production uses `disabled`: the worker remains healthy and discoverable,
 but runtime activities fail closed with `CLOUD_RUNTIME_DISABLED` and never open R2. It cannot accept
 certification executions or claim execution availability.
-This path certifies the Control Plane cloud infrastructure only; later Agent HQ managed-runtime
+This path certifies the Control Plane cloud infrastructure only; later Adea managed-runtime
 support requires its own runtime provider and certification.
 
 Do not treat the staging certification, current Railway dashboard, or historical AWS configuration as
@@ -165,7 +165,7 @@ proof of rollback, restart recovery, load, isolation, secret-canary, or cost acc
 
 ## Neon operations
 
-- Use the dedicated Control Plane Neon project/database, never Agent HQ's database.
+- Use the dedicated Control Plane Neon project/database, never Adea's database.
 - Application services receive least-privilege runtime authority only where needed.
 - Migration/admin authority is one-shot/operator scoped and not available to ordinary service replicas.
 - Validate schema version before accepting traffic.
@@ -234,7 +234,7 @@ Required operational evidence includes:
 - update/rollback/forward repair;
 - key/credential rotation/revocation;
 - resource budgets for small VPS and server profiles;
-- no dependency on Railway/Neon/R2/Agent HQ Cloud for standalone operation.
+- no dependency on Railway/Neon/R2/Adea Cloud for standalone operation.
 
 ## Diagnostic correlation
 

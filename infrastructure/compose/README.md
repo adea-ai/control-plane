@@ -1,6 +1,6 @@
 # Hosted Control Plane
 
-This Compose project packages the provider-neutral Control Plane for a user-controlled Linux host. It does not require Railway, Neon, Cloudflare R2, or Agent HQ credentials.
+This Compose project packages the provider-neutral Control Plane for a user-controlled Linux host. It does not require Railway, Neon, Cloudflare R2, or Adea credentials.
 
 ## Simple profile
 

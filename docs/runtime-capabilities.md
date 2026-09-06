@@ -8,7 +8,7 @@ and mock fixtures use the same schemas and no concrete runtime SDK is a dependen
 
 A `RuntimeDefinition` identifies a normalized runtime family and records adapter, driver, and harness
 versions, location, health, lifecycle, capabilities, tested-version metadata, and limitations.
-`RuntimeNodeRef` is an opaque reference to Agent HQ-owned device identity. It always declares
+`RuntimeNodeRef` is an opaque reference to Adea-owned device identity. It always declares
 `authority: agent_hq`; the Control Plane neither recreates nor owns that identity.
 
 A Control Plane-owned `RuntimeConnection` links its opaque connection ID to one RuntimeDefinition and,
@@ -31,7 +31,7 @@ attempts keep valid connection references after a runtime disappears. Revocation
 
 ## Health and freshness ingestion
 
-Normalized health reports keep Agent HQ-owned node status separate from runtime availability. This
+Normalized health reports keep Adea-owned node status separate from runtime availability. This
 allows node-online/runtime-degraded and node-offline/runtime-stale conditions to remain distinct.
 Reports carry monotonic sequences, adapter, driver, harness, and protocol versions, and a versioned
 capability snapshot with bounded TTL and verification provenance.
@@ -45,7 +45,7 @@ stale regardless of the last successful state.
 Ingestion is idempotent, rejects conflicting report identities, and ignores out-of-order reports.
 Eligibility-affecting changes publish a normalized internal availability-change event. Limitations are
 bounded display text and diagnostics are normalized uppercase codes, preventing raw native details from
-entering Agent HQ-facing state.
+entering Adea-facing state.
 
 ## Capability requirements
 
@@ -74,7 +74,7 @@ Every decision is full, degraded, or ineligible and contains sorted machine-read
 or insufficient required capabilities are ineligible, while missing or degraded optional capabilities
 remain explicit degradations. The audit envelope records the evaluator version, plan, runtime
 connection, policy snapshot, evaluation time, and a canonical input digest. Managed-cloud candidates
-use `not_applicable` node status so cloud eligibility does not invent Agent HQ device health.
+use `not_applicable` node status so cloud eligibility does not invent Adea device health.
 
 ## Runtime routing
 
@@ -113,10 +113,10 @@ optional projection port. Supported compositions bind that port to their scoped 
 discovery repository; projection failure fails the adapter operation so retry can repair the public
 read model without exposing native session identifiers.
 
-## Agent HQ discovery read models
+## Adea discovery read models
 
 The Control API exposes authenticated v1 list/get operations for runtime connections and external
-sessions. Agent HQ calls only these Control Plane operations; it does not call Runtime Gateway,
+sessions. Adea calls only these Control Plane operations; it does not call Runtime Gateway,
 drivers, harnesses, or native runtimes directly. Every request carries the normal service envelope and
 is authorized against its workspace, optional project, and optional RuntimeNode scope.
 
