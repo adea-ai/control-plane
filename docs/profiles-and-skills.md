@@ -1,15 +1,15 @@
 # AgentProfile and Skill versioning
 
-The Control Plane owns executable AgentProfile and Skill configuration. Agent HQ owns the persistent,
+The Control Plane owns executable AgentProfile and Skill configuration. Adea owns the persistent,
 user-facing Agent and stores only an explicit `{ profileId, profileVersionId }` pin. Publishing another
-version never changes that pin, and Agent HQ does not copy the composed runtime configuration into its
+version never changes that pin, and Adea does not copy the composed runtime configuration into its
 product database.
 
 ## Catalog records and ownership
 
 `AgentProfile` and `Skill` are stable catalog records. Their versions carry the executable content.
 Ownership is one of system, workspace, organization reference, or private principal reference. These
-references scope lookup and authorization without copying Agent HQ membership or permission rules into
+references scope lookup and authorization without copying Adea membership or permission rules into
 the Control Plane.
 
 AgentProfile definitions contain role/persona instructions, exact SkillVersion references and digests,

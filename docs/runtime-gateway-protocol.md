@@ -44,7 +44,7 @@ Protocol v1.2 adds additive RuntimeNode inventory deltas and explicit adapter-ve
 
 The durable per-node checkpoint records only the accepted version, canonical digest, observation time, and stable opaque runtime references. Exact replays are idempotent, version reuse with different content fails closed, stale reports cannot revive disappeared runtimes, and deltas must name the exact preceding version. Full snapshots make omitted runtimes unavailable; deltas do so only for explicit removals. A bounded disappearance TTL then moves still-missing connections to expired, while RuntimeConnection rows and historical execution references are retained.
 
-RuntimeNode reachability remains separate from individual runtime health. Inventory ingestion calls the ordinary M4 health and availability-change ports, so Agent HQ read models observe Control Plane API/event changes rather than gateway-specific client pushes. Context-provider inventory remains a distinct protocol family and is not registered as an executable RuntimeConnection.
+RuntimeNode reachability remains separate from individual runtime health. Inventory ingestion calls the ordinary M4 health and availability-change ports, so Adea read models observe Control Plane API/event changes rather than gateway-specific client pushes. Context-provider inventory remains a distinct protocol family and is not registered as an executable RuntimeConnection.
 
 ## Local managed Pi adapter
 
@@ -52,7 +52,7 @@ RuntimeNode reachability remains separate from individual runtime health. Invent
 
 The wire configuration contains a synthetic `LocalProjectGrant` reference, never an absolute path or reusable Pi credential. The node-side driver owns grant resolution, local installation, process, filesystem, and credential access. Offline or revoked nodes, missing or revoked grants, and incompatible Pi versions fail before execution delivery.
 
-The reference transport uses the M5 RuntimeNode duplicate-effect ledger. Reconnect redelivers the same command ID and payload hash and replays the recorded exchange without re-executing Pi. Deterministic fixtures cover progress, output, tool interaction, usage, Artifact emission, completion, cancellation, crash, timeout, and ambiguous outcomes without Agent HQ or production node dependencies.
+The reference transport uses the M5 RuntimeNode duplicate-effect ledger. Reconnect redelivers the same command ID and payload hash and replays the recorded exchange without re-executing Pi. Deterministic fixtures cover progress, output, tool interaction, usage, Artifact emission, completion, cancellation, crash, timeout, and ambiguous outcomes without Adea or production node dependencies.
 
 ## Reconnect reconciliation
 
