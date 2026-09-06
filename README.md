@@ -7,7 +7,7 @@ Production-shaped TypeScript monorepo for the Control Plane. The repository is o
 - **M9 — Managed Cloud Deployment, Hardening & Evals:** make the Railway + Neon + R2 + Restate managed-cloud profile fully operational and freeze deployment-independent behavior.
 - **M10 — Local & Hosted Portability:** port the accepted M9 semantics to embedded Local and user-controlled VPS/container profiles.
 - **M11 — Feature Completion & Production Audit:** independently audit managed cloud, Local, and Hosted.
-- **M12 — Cross-Product Integration & Release:** connect the approved Control Plane candidate to Agent HQ and optional Cortana release candidates.
+- **M12 — Cross-Product Integration & Release:** connect the approved Control Plane candidate to Adea and optional Cortana release candidates.
 
 M9 replaced the former AWS/ECS/Terraform and Temporal implementation with the active Cloud profile:
 Railway + Neon + Cloudflare R2 + Restate. The product has exactly three deployment profiles: Cloud,
@@ -58,7 +58,7 @@ Key documentation:
 - [`docs/architecture/diagram-sources.md`](docs/architecture/diagram-sources.md) contains version-controlled Mermaid definitions for Control Plane-owned diagrams. It must remain consistent with the canonical Google Drive diagram catalog.
 - [`docs/runtime-compatibility/README.md`](docs/runtime-compatibility/README.md) explains machine-readable runtime compatibility and certification semantics.
 - [`.github/labels.yml`](.github/labels.yml) defines the shared issue-label taxonomy.
-- Canonical PRDs, TDDs, specifications, ADRs, roadmap decisions, and terminology remain in the Agent HQ Google Drive corpus; GitHub implementation docs must not contradict those accepted sources.
+- Canonical PRDs, TDDs, specifications, ADRs, roadmap decisions, and terminology remain in the Adea Google Drive corpus; GitHub implementation docs must not contradict those accepted sources.
 
 ## Workspace commands
 
@@ -113,7 +113,7 @@ M10 formalizes deployment-profile ports for persistence, workflow runtime, objec
 
 ## Runtime transport invariant
 
-Co-located Control Plane/runtime execution uses direct RuntimeTransport/RuntimeDriver access. Runtime Gateway is required only for non-co-located RuntimeNodes. Agent HQ's durable web/mobile remote relay is a separate product-control transport and must not be conflated with Runtime Gateway.
+Co-located Control Plane/runtime execution uses direct RuntimeTransport/RuntimeDriver access. Runtime Gateway is required only for non-co-located RuntimeNodes. Adea's durable web/mobile remote relay is a separate product-control transport and must not be conflated with Runtime Gateway.
 
 ## Package rules
 

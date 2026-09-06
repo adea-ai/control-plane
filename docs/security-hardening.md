@@ -8,10 +8,10 @@ The threat review uses STRIDE categories alongside the profile-specific controls
 
 | Boundary                                   | Primary threats                                                           | Required controls                                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Client / Agent HQ → Control Plane          | spoofing, cross-workspace access, replay                                  | purpose-bound credentials, workspace scope, idempotency, normalized denial                                              |
+| Client / Adea → Control Plane              | spoofing, cross-workspace access, replay                                  | purpose-bound credentials, workspace scope, idempotency, normalized denial                                              |
 | Direct Local Control Plane → RuntimeDriver | local privilege confusion, path/process escape                            | trusted local IPC/in-process allowlist, capability/scope validation, no policy bypass because components are co-located |
 | Control Plane → non-co-located RuntimeNode | node/workspace substitution, replay, stale ownership                      | authenticated Runtime Gateway, command ID/digest/expiry, revocation, durable duplicate-effect ledger                    |
-| Agent HQ remote relay → Local/Hosted host  | ciphertext replay/tamper/wrong recipient                                  | HPKE recipient/AAD binding, expiry/replay checks, endpoint-only plaintext, cloud-safe metadata                          |
+| Adea remote relay → Local/Hosted host      | ciphertext replay/tamper/wrong recipient                                  | HPKE recipient/AAD binding, expiry/replay checks, endpoint-only plaintext, cloud-safe metadata                          |
 | Model/tool/MCP/provider adapters           | prompt injection, confused deputy, secret egress                          | policy before execution, exact pins, scoped leases, bounded output validation                                           |
 | Persistence / Restate / events / telemetry | tenant leakage, tampering, secret/content leakage                         | workspace scope, integrity/idempotency, adapter-specific permissions, redaction, audit                                  |
 | Sandbox                                    | path traversal, metadata access, ambient credentials, resource exhaustion | bounded paths/network/resources/time/output, ephemeral capability references                                            |
@@ -21,7 +21,7 @@ The threat review uses STRIDE categories alongside the profile-specific controls
 Credential roles are deliberately separate:
 
 - human/browser/desktop sessions;
-- Agent HQ ↔ Control Plane service credentials;
+- Adea ↔ Control Plane service credentials;
 - RuntimeNode authentication/signing credentials;
 - RuntimeNode/host E2E content-encryption keys;
 - deployment/service bootstrap secrets;
@@ -43,7 +43,7 @@ M10 adds Local/Hosted secret-provider adapters while preserving credential ident
 
 ## Persistence and workflow security
 
-- M9 managed cloud uses separate Control Plane Neon PostgreSQL; Agent HQ uses a different database.
+- M9 managed cloud uses separate Control Plane Neon PostgreSQL; Adea uses a different database.
 - M10 Local and Hosted `simple` use SQLite; Hosted `server` uses PostgreSQL.
 - Restate workflow state is separate from Control Plane domain persistence.
 - LangGraph checkpoint state is separate from Restate and ProjectState.

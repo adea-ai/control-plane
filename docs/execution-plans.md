@@ -11,7 +11,7 @@ The compiler records its semantic version and the exact `AgentProfileVersion` ID
 revision, profile schema and digest; every `SkillVersion` ID, revision, manifest schema, semantic
 version, and content digest; and the `ContextPackage` ID, digest, schema, and compiler version. It also
 preserves opaque workspace, project, task, Agent, and request correlation IDs without taking
-ownership of Agent HQ objects.
+ownership of Adea objects.
 
 Profile, request, and caller constraints are composed fail-closed through the provider-neutral domain
 contract. Skill tool/capability requirements, output contracts, context classifications and budgets,

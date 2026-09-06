@@ -1,6 +1,6 @@
 # Marketplace registry integration
 
-Control Plane is the server-side authority for the Agent HQ marketplace. It
+Control Plane is the server-side authority for the Adea marketplace. It
 fetches the registry's stable latest pointer, resolves the digest-derived
 immutable release, verifies every published artifact, and returns sanitized
 catalog metadata through authenticated API endpoints.
@@ -27,7 +27,7 @@ seven release assets: `catalog.v1.json`, `catalog-latest.v1.json`,
 
 ## API boundary
 
-Authenticated Agent HQ service principals use:
+Authenticated Adea service principals use:
 
 - `POST /v1/marketplace/catalog` with `marketplace:read` to retrieve verified
   raw catalog artifacts and the workspace's sanitized installation states;
@@ -36,13 +36,13 @@ Authenticated Agent HQ service principals use:
   `canonicalContentDigest`, requested harness, and workspace/user identity.
 
 The envelope's top-level `workspaceId` is the Control Plane service scope used
-by authentication. The nested `workspaceIdentity.workspaceId` is Agent HQ's
+by authentication. The nested `workspaceIdentity.workspaceId` is Adea's
 external workspace identity and is the scope used for installation records.
 These identifiers may use different namespaces and must not be compared for
 equality by a proxy; the service principal's authority remains the gate for
 the top-level Control Plane scope.
 
-The catalog response contains artifact JSON strings because Agent HQ performs
+The catalog response contains artifact JSON strings because Adea performs
 the same independent verification before rendering. It never contains plugin
 source files, upstream archives, credentials, or executable content. The
 installation response contains only state and exact pins. Possible states are

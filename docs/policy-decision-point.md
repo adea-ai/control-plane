@@ -13,7 +13,7 @@ deny without exposing policy text or request attributes in the returned decision
 
 Workspace scope is established before policy evaluation. Principal, resource, and context workspace
 IDs must match, and action/resource classes must match. A policy can therefore narrow authority but
-cannot widen the caller's Agent HQ workspace scope.
+cannot widen the caller's Adea workspace scope.
 
 ## Policy lifecycle
 
