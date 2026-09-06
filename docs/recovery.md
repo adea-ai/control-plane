@@ -52,7 +52,7 @@ Required behavior:
 - local filesystem Artifact availability/recovery;
 - RuntimeDriver/Pi/ACP restart/reconciliation;
 - no Runtime Gateway dependency for co-located execution;
-- no silent failover to Agent HQ Cloud when the selected Local node is unavailable.
+- no silent failover to Adea Cloud when the selected Local node is unavailable.
 
 ## Hosted recovery target — M10
 

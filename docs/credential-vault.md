@@ -1,6 +1,6 @@
 # Connector credential vault
 
-`@control-plane/credential-vault` separates dynamic connector/provider credentials from Agent HQ sessions, RuntimeNode identity, ordinary Control Plane service authentication, and deployment bootstrap configuration.
+`@control-plane/credential-vault` separates dynamic connector/provider credentials from Adea sessions, RuntimeNode identity, ordinary Control Plane service authentication, and deployment bootstrap configuration.
 
 Public credential metadata contains a stable credential ID, workspace/connector ownership, provider name, status, revision, and lifecycle timestamps. Reusable secret values remain behind a provider-neutral secret boundary and never enter public contracts, ExecutionPlans, ContextPackages, Restate state, events, logs, traces, runtime messages, or ordinary errors.
 

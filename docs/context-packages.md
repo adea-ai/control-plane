@@ -1,7 +1,7 @@
 # ContextPackage compilation
 
 A `ContextPackage` is an immutable, content-addressed execution input owned by the Control Plane. It
-is not mutable memory, an Agent HQ product-state copy, a workflow checkpoint, model conversation
+is not mutable memory, an Adea product-state copy, a workflow checkpoint, model conversation
 history, or a runtime-native session. Runtime adapters receive this normalized package and translate
 it at their boundary.
 

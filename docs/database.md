@@ -17,7 +17,7 @@ Restate durable workflow state is separate from Control Plane domain persistence
 
 ## Current managed-cloud Neon state
 
-A separate Neon project named `control-plane` exists. It is distinct from the Agent HQ Neon project.
+A separate Neon project named `control-plane` exists. It is distinct from the Adea Neon project.
 The repository-owned managed-cloud compositions now connect both `control-api` and
 `workflow-worker` to PostgreSQL using application-role credentials. The Control API persists plans,
 commands, executions, ProjectState, and ContextPackages; the workflow worker persists execution and
@@ -35,7 +35,7 @@ attempt lifecycle transitions and loads the exact accepted plan before runtime d
   explicit migration job before staging traffic is accepted, while production
   remains separately migrated through the release process;
 - any unrelated `neon_auth` schema is outside the Control Plane domain contract;
-- Control Plane application code must not depend on that `neon_auth` schema because Agent HQ owns product user authentication.
+- Control Plane application code must not depend on that `neon_auth` schema because Adea owns product user authentication.
 
 Configuration shape alone is not live-environment evidence. M9.6 #73 completed the explicit staging
 migration, deployed-service connectivity, least-privilege verification, and bounded reconnect/
@@ -81,7 +81,7 @@ The environment mapping is intentionally explicit and credential-free in source:
 
 Naming convention: Neon branches and Railway environments share the environment
 name (`staging`, `production`); Git source branches keep the release-flow names
-(`staging`, `main`). This matches the Agent HQ Neon project, which also names
+(`staging`, `main`). This matches the Adea Neon project, which also names
 its durable branches after environments (`development`, `staging`,
 `production`). Control Plane has no shared `development` Neon branch by policy:
 local development uses the pinned Compose PostgreSQL fixture and tests use

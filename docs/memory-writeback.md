@@ -21,4 +21,4 @@ delivery returns the recorded result. Timeout-before-effect, timeout-after-effec
 ambiguous status are normalized; a provider with idempotent status can reconcile an observed commit,
 while unresolved or non-idempotent ambiguity remains `reconciliation_required` for operator review.
 The package supplies absent, read-only, idempotent, and ambiguous fake profiles and requires no
-Cortana or Agent HQ service.
+Cortana or Adea service.
