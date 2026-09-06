@@ -24,16 +24,18 @@ updates:
       interval: weekly
       day: sunday
     open-pull-requests-limit: 99
-    ignore:
-      # TypeScript 7 has no working typescript-eslint (support lands in TS 7.1,
-      # unreleased) and removes deprecated options. Hold majors until the
-      # coordinated TS7 toolchain migration.
-      - dependency-name: typescript
-        update-types: ['version-update:semver-major']
     groups:
       npm-dependencies:
         applies-to: version-updates
         patterns: ['*']
+    ignore:
+      # TypeScript 7 cannot resolve node: builtins in this toolchain
+      # (verified); revisit when the TS/eslint toolchain supports TS 7.
+      - dependency-name: 'typescript'
+        versions: ['>=7.0.0']
+      # Held with TypeScript 5.9 above.
+      - dependency-name: '@types/node'
+        versions: ['>=23']
   - package-ecosystem: pip
     directory: /
     target-branch: staging
