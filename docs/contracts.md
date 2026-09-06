@@ -75,7 +75,7 @@ authenticator then independently enforces these claims:
 | Claim             | Requirement                                                                      |
 | ----------------- | -------------------------------------------------------------------------------- |
 | `credentialKind`  | Exactly `service`; browser sessions, RuntimeNode devices, and provider keys fail |
-| `issuer`          | Exact configured Adea issuer URL                                             |
+| `issuer`          | Exact configured Adea issuer URL                                                 |
 | `audience`        | Exact configured Control Plane audience                                          |
 | `principalId`     | Stable `svc_`-prefixed service identity                                          |
 | `credentialId`    | Unique revocation handle                                                         |
