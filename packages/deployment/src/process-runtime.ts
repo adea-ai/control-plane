@@ -77,11 +77,18 @@ class NodeProcessHandle implements ProcessHandle {
   async stop(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
     if (this.#child.exitCode !== null) return
     this.#child.kill(signal)
-    const stopped = await Promise.race([
-      this.wait().then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), this.#stopTimeoutMs)),
-    ])
-    if (!stopped) throw new ProcessRuntimeError('PROCESS_STOP_TIMEOUT')
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      const stopped = await Promise.race([
+        this.wait().then(() => true),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => resolve(false), this.#stopTimeoutMs)
+        }),
+      ])
+      if (!stopped) throw new ProcessRuntimeError('PROCESS_STOP_TIMEOUT')
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+    }
   }
 }
 
