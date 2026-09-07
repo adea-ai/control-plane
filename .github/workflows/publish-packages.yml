@@ -1,0 +1,67 @@
+name: Publish shared packages
+
+# Publishes the stable, deployment-neutral packages (@adea-ai/contracts,
+# @adea-ai/runtime-gateway-protocol, @adea-ai/sdk, @adea-ai/telemetry,
+# @adea-ai/tool-sdk, @adea-ai/runtime-sdk) to the public npm registry on every
+# main push that touches them (plus manual dispatch). Workspace names stay
+# @control-plane/*; scripts/publish-packages.mjs maps names and resolves
+# workspace: ranges at publish time.
+#
+# Prerequisites (one-time, dashboard):
+#   1. The `adea` org on npmjs.com (already exists for the @adea-ai/* family).
+#   2. NPM_TOKEN set to an automation token with publish rights on @adea-ai/*.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/contracts/**'
+      - 'packages/runtime-gateway-protocol/**'
+      - 'packages/control-sdk/**'
+      - 'packages/telemetry/**'
+      - 'packages/tool-sdk/**'
+      - 'packages/runtime-sdk/**'
+      - 'scripts/publish-packages.mjs'
+      - '.github/workflows/publish-packages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: control-plane-publish-packages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pinned Bun
+        run: npm install --global bun@1.4.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build published packages
+        # The tarballs must contain dist/ output: the exports map serves
+        # dist types and entry points to registry consumers.
+        run: bunx turbo run build --filter=@control-plane/contracts --filter=@control-plane/runtime-gateway-protocol --filter=@control-plane/sdk --filter=@control-plane/telemetry --filter=@control-plane/tool-sdk --filter=@control-plane/runtime-sdk
+
+      - name: Publish changed packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun scripts/publish-packages.mjs

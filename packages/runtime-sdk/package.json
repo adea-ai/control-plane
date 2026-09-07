@@ -1,7 +1,22 @@
 {
   "name": "@control-plane/runtime-sdk",
   "version": "1.5.2",
-  "private": true,
+  "description": "SDK for building Control Plane runtimes: adapters, capabilities, conformance, discovery, eligibility, health, sessions, transport, and routing.",
+  "keywords": [
+    "adapter",
+    "agents",
+    "conformance",
+    "runtime",
+    "sdk"
+  ],
+  "homepage": "https://github.com/adea-ai/control-plane#readme",
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/runtime-sdk"
+  },
   "files": [
     "dist"
   ],
@@ -14,6 +29,10 @@
       "node": "./dist/index.js",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

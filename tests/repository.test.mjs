@@ -27,7 +27,14 @@ const packages = readdirSync(new URL('../packages/', import.meta.url), { withFil
   .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
   .map(({ name }) => name)
   .sort()
-const publicPackages = new Set(['contracts', 'control-sdk', 'runtime-gateway-protocol'])
+const publicPackages = new Set([
+  'contracts',
+  'control-sdk',
+  'runtime-gateway-protocol',
+  'telemetry',
+  'tool-sdk',
+  'runtime-sdk',
+])
 
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'))

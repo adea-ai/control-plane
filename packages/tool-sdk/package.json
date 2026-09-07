@@ -1,7 +1,22 @@
 {
   "name": "@control-plane/tool-sdk",
   "version": "1.2.2",
-  "private": true,
+  "description": "Tool definition schemas for the Control Plane: ownership, executors, risk classes, approval modes, idempotency, retry policies, and limits.",
+  "keywords": [
+    "agents",
+    "mcp",
+    "schemas",
+    "tools",
+    "zod"
+  ],
+  "homepage": "https://github.com/adea-ai/control-plane#readme",
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/tool-sdk"
+  },
   "files": [
     "dist"
   ],
@@ -14,6 +29,10 @@
       "node": "./dist/index.js",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -102,3 +102,44 @@ export function sanitizeAttributes(
   }
   return sanitized
 }
+
+const diagnosticRedactedValue = '[REDACTED]'
+const diagnosticCircularValue = '[Circular]'
+const diagnosticSensitiveKey =
+  /authorization|cookie|credential|password|private.?key|secret|token|api.?key/i
+
+export function redactDiagnostics(value: unknown, additionalKeys: readonly string[] = []): unknown {
+  const explicitKeys = new Set(additionalKeys.map(normalizeDiagnosticKey))
+  return redactDiagnosticValue(value, explicitKeys, new WeakSet())
+}
+
+function redactDiagnosticValue(
+  value: unknown,
+  explicitKeys: ReadonlySet<string>,
+  seen: WeakSet<object>
+): unknown {
+  if (value instanceof Error) return { name: value.name, message: 'Service operation failed' }
+  if (value === null || typeof value !== 'object') return value
+  if (seen.has(value)) return diagnosticCircularValue
+  seen.add(value)
+
+  if (Array.isArray(value))
+    return value.map((item) => redactDiagnosticValue(item, explicitKeys, seen))
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      isSensitiveDiagnosticKey(key, explicitKeys)
+        ? diagnosticRedactedValue
+        : redactDiagnosticValue(item, explicitKeys, seen),
+    ])
+  )
+}
+
+function isSensitiveDiagnosticKey(key: string, explicitKeys: ReadonlySet<string>): boolean {
+  return diagnosticSensitiveKey.test(key) || explicitKeys.has(normalizeDiagnosticKey(key))
+}
+
+function normalizeDiagnosticKey(key: string): string {
+  return key.replaceAll(/[^A-Za-z0-9]/g, '').toLowerCase()
+}

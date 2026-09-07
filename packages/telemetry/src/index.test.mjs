@@ -3,16 +3,14 @@ import {
   createStructuredLogger,
   createDeterministicSamplingPolicy,
   createLangSmithTraceAdapter,
-  createSentryErrorTracker,
   createTelemetry,
-  diagnosticQueries,
-  executionTraceSpans,
   extractTraceContext,
   injectTraceContext,
-  operationalMetrics,
   redactTelemetryValue,
   semanticAttributes,
 } from './index.ts'
+import { createSentryErrorTracker } from './sentry.ts'
+import { diagnosticQueries, executionTraceSpans, operationalMetrics } from './catalog.ts'
 
 const identifiers = {
   serviceName: 'control-api',
