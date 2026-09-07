@@ -7,6 +7,149 @@ const workflow = readFileSync(
   'utf8'
 )
 const script = workflow.split("node <<'NODE'\n")[1]?.split('\n          NODE')[0]
+const cleanupScript = workflow.split("node <<'CLEANUP'\n")[1]?.split('\n          CLEANUP')[0]
+
+async function findCleanupBranch(responses, overrides = {}) {
+  const requests = []
+  const writes = []
+  let index = 0
+  await runInNewContext(cleanupScript, {
+    URL,
+    AbortSignal,
+    process: {
+      env: {
+        NEON_API_KEY: 'synthetic-key',
+        NEON_PROJECT_ID: 'synthetic-project-123',
+        PR_NUMBER: '404',
+        PR_HEAD_REF: 'fix/example',
+        GITHUB_OUTPUT: '/synthetic/output',
+        ...overrides,
+      },
+    },
+    require: () => ({ appendFileSync: (path, value) => writes.push({ path, value }) }),
+    fetch: async (url, options) => {
+      requests.push({ url: String(url), options })
+      const response = responses[index++]
+      if (response instanceof Error) throw response
+      return { status: response.status ?? 200, json: async () => response.body }
+    },
+    console: { log: () => {} },
+  })
+  return { requests, writes }
+}
+
+const previewBranch = {
+  id: 'br-synthetic-preview',
+  name: 'preview/pr-404-fix/example',
+  project_id: 'synthetic-project-123',
+  parent_id: 'br-synthetic-parent',
+  primary: false,
+  default: false,
+  protected: false,
+}
+
+describe('Neon preview cleanup lookup', () => {
+  test('treats a successfully verified absent preview as a no-op', async () => {
+    expect(cleanupScript).toBeString()
+    const result = await findCleanupBranch([{ body: { branches: [] } }])
+    expect(result.writes).toEqual([])
+    expect(result.requests).toHaveLength(1)
+    expect(workflow).toContain("if: steps.cleanup_branch.outputs.branch_id != ''")
+    expect(workflow).toContain('branch: ${{ steps.cleanup_branch.outputs.branch_id }}')
+  })
+
+  test('matches the exact name across pagination and exports only a validated branch ID', async () => {
+    const result = await findCleanupBranch([
+      {
+        body: {
+          branches: [{ ...previewBranch, name: `${previewBranch.name}-other` }],
+          pagination: { next: 'next/page' },
+        },
+      },
+      { body: { branches: [previewBranch] } },
+    ])
+    expect(result.writes).toEqual([
+      { path: '/synthetic/output', value: 'branch_id=br-synthetic-preview\n' },
+    ])
+    expect(new URL(result.requests[1].url).searchParams.get('cursor')).toBe('next/page')
+    for (const request of result.requests) {
+      expect(new URL(request.url).origin).toBe('https://console.neon.tech')
+      expect(request.options.redirect).toBe('error')
+      expect(request.options.headers.Authorization).toBe('Bearer synthetic-key')
+    }
+  })
+
+  test('does not turn API failures or malformed listings into successful absence', async () => {
+    for (const response of [
+      { status: 401 },
+      { status: 403 },
+      { status: 404 },
+      { status: 429 },
+      { status: 500 },
+      { body: {} },
+      { body: { branches: [null] } },
+      { body: { branches: [], pagination: { next: 1 } } },
+      { body: { branches: [], pagination: 'invalid' } },
+      new Error('synthetic network failure'),
+    ]) {
+      await expect(findCleanupBranch([response])).rejects.toThrow()
+    }
+  })
+
+  test('rejects unsafe or ambiguous targets and pagination loops', async () => {
+    for (const override of [
+      { id: 'br-invalid\nother=output' },
+      { project_id: 'another-project' },
+      { parent_id: undefined },
+      { primary: true },
+      { default: true },
+      { protected: true },
+    ]) {
+      await expect(
+        findCleanupBranch([{ body: { branches: [{ ...previewBranch, ...override }] } }])
+      ).rejects.toThrow()
+    }
+    await expect(
+      findCleanupBranch([{ body: { branches: [previewBranch, previewBranch] } }])
+    ).rejects.toThrow()
+    await expect(
+      findCleanupBranch([
+        { body: { branches: [], pagination: { next: 'same' } } },
+        { body: { branches: [], pagination: { next: 'same' } } },
+      ])
+    ).rejects.toThrow()
+  })
+
+  test('rejects missing credentials and malformed scope before fetching', async () => {
+    for (const override of [
+      { NEON_API_KEY: '' },
+      { NEON_PROJECT_ID: '../other' },
+      { PR_NUMBER: '0' },
+      { PR_HEAD_REF: '' },
+      { GITHUB_OUTPUT: '' },
+    ]) {
+      await expect(findCleanupBranch([], override)).rejects.toThrow(
+        'Neon cleanup inputs are unavailable or invalid'
+      )
+    }
+  })
+
+  test('requires a complete listing even after finding a target', async () => {
+    await expect(
+      findCleanupBranch([
+        { body: { branches: [previewBranch], pagination: { next: 'next' } } },
+        { status: 500 },
+      ])
+    ).rejects.toThrow('Neon cleanup lookup failed: HTTP 500')
+    await expect(
+      findCleanupBranch(
+        Array.from({ length: 20 }, (_, index) => ({
+          body: { branches: [], pagination: { next: `page-${index}` } },
+        }))
+      )
+    ).rejects.toThrow('Neon branch lookup exceeded pagination limit')
+  })
+})
 
 function execute(overrides = {}) {
   const writes = []

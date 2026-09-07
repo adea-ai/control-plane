@@ -161,9 +161,72 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Find exact preview branch
+        id: cleanup_branch
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          PR_NUMBER: ${{ github.event.number }}
+          PR_HEAD_REF: ${{ needs.setup.outputs.branch }}
+        run: |
+          node <<'CLEANUP'
+          const { appendFileSync } = require('node:fs');
+          (async () => {
+            const { NEON_API_KEY, NEON_PROJECT_ID, PR_NUMBER, PR_HEAD_REF, GITHUB_OUTPUT } = process.env;
+            if (
+              !NEON_API_KEY || !GITHUB_OUTPUT ||
+              !/^[a-z0-9-]{1,60}$/.test(NEON_PROJECT_ID ?? '') ||
+              !/^[1-9][0-9]*$/.test(PR_NUMBER ?? '') ||
+              !PR_HEAD_REF || /[\r\n\x00]/.test(PR_HEAD_REF)
+            ) throw new Error('Neon cleanup inputs are unavailable or invalid');
+            const targetName = `preview/pr-${PR_NUMBER}-${PR_HEAD_REF}`;
+            const cursors = new Set();
+            let cursor;
+            let target;
+            for (let page = 0; page < 20; page += 1) {
+              const url = new URL(`https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches`);
+              url.searchParams.set('search', targetName);
+              url.searchParams.set('limit', '1000');
+              if (cursor) url.searchParams.set('cursor', cursor);
+              const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${NEON_API_KEY}` },
+                redirect: 'error',
+                signal: AbortSignal.timeout(10000),
+              });
+              if (response.status !== 200) throw new Error(`Neon cleanup lookup failed: HTTP ${response.status}`);
+              const result = await response.json();
+              if (!Array.isArray(result?.branches)) throw new Error('Invalid Neon branch listing');
+              for (const branch of result.branches) {
+                if (!branch || typeof branch.name !== 'string') throw new Error('Invalid Neon branch entry');
+                if (branch.name !== targetName) continue;
+                if (
+                  target || !/^br-[a-z0-9-]{1,57}$/.test(branch.id ?? '') ||
+                  branch.project_id !== NEON_PROJECT_ID || !/^br-[a-z0-9-]{1,57}$/.test(branch.parent_id ?? '') ||
+                  branch.primary !== false || branch.default !== false || branch.protected !== false
+                ) throw new Error('Unsafe or ambiguous Neon cleanup target');
+                target = branch.id;
+              }
+              if (result.pagination !== undefined && (
+                result.pagination === null || typeof result.pagination !== 'object' || Array.isArray(result.pagination)
+              )) throw new Error('Invalid Neon branch pagination');
+              const next = result.pagination?.next;
+              if (next === undefined || next === null || next === '') {
+                if (target) appendFileSync(GITHUB_OUTPUT, `branch_id=${target}\n`);
+                else console.log('No matching preview branch exists; cleanup is already satisfied.');
+                return;
+              }
+              if (typeof next !== 'string' || cursors.has(next)) throw new Error('Invalid Neon branch pagination');
+              cursors.add(next);
+              cursor = next;
+            }
+            throw new Error('Neon branch lookup exceeded pagination limit');
+          })();
+          CLEANUP
+
       - name: Delete Neon branch
+        if: steps.cleanup_branch.outputs.branch_id != ''
         uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          branch: ${{ steps.cleanup_branch.outputs.branch_id }}
           api_key: ${{ secrets.NEON_API_KEY }}

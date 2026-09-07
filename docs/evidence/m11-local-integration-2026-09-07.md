@@ -318,3 +318,21 @@ The canonical lint/type-check/format-check/test chain passed on 2026-09-07, incl
 and 87.29% line / 83.85% function coverage. No new agents or persistent servers were started.
 Execution validation still lacks its own durable command result replay, and inline authoring remains
 disabled. Neither this change nor the internal context-authoring repository closes that requirement.
+
+## Upstream refresh and preview cleanup
+
+Candidate merge `567d80b` incorporated upstream `301aa7a` (SDK publication fixes and the
+adopted Code Foundry v1.4.1 callers). The canonical local gate chain passed after integration.
+Authenticated GitHub inspection then confirmed that cleanup run `34152272912` failed because
+PR #404's preview did not exist. The pinned deletion action has no missing-branch no-op option.
+
+The local workflow now resolves a unique exact preview name through the paginated Neon list API
+before invoking that same pinned action with a validated branch ID. Verified absence skips deletion;
+API failures, malformed responses, unsafe targets and incomplete pagination still fail. Eight focused
+workflow tests pass, including six cleanup cases, and the full lint/type/format/test chain passes
+(773 unit tests; 87.29% line and 83.85% function coverage). The CI guide now matches the adopted
+runtime pin and direct-main PR topology. These are local checks, not hosted cleanup certification.
+
+No Neon branches or role grants were changed. The prior read-only inventory still showed ten
+branches, including the preview for closed PR #400; removing that exact preview remains pending
+user approval. The independent `SET ROLE control_plane_migrator` failure remains unresolved.
