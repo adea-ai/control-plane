@@ -73,4 +73,21 @@ Permitted differences include latency, capacity, availability, infrastructure co
 
 ## M11 release gate
 
+### Bounded SQLite measurement
+
+After `bun run build`, run `bun scripts/run-m11-sqlite-benchmark.mjs` to measure
+1,000 durable record writes and replay reads through the real SQLite provider,
+at concurrency 8. Override `M11_SQLITE_ITERATIONS` (1–10,000) and
+`M11_SQLITE_CONCURRENCY` (1–64, no greater than iterations) for bounded profiles.
+The JSON output retains every latency sample, percentiles/max, throughput, WAL
+and database sizes, backup time/size, CPU usage and RSS snapshots, plus commit,
+dirty-state, runtime and host metadata. Each read is checked against its written
+record and revision; database integrity is checked before cleanup.
+
+Each run creates and removes its own temporary database. No external database or
+provider is used. Capture the JSON as raw benchmark evidence from a clean, pinned
+candidate. Results are explicitly `measurement_only`: these are single-process
+SQLite record measurements, not API/execution/Restate capacity, peak memory,
+provider cost, live VPS measurements or an approved release-budget decision.
+
 M11 owns final absolute and regression budgets after real M9/M10 data exists. It can block release for unbounded resource growth, unsafe retry amplification, database saturation, excessive deployment overhead, unacceptable cost, or profile-specific behavior that cannot be operated reliably.
