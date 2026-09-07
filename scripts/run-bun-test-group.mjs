@@ -26,6 +26,7 @@ const repositoryGroups = {
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
+    'tests/m11-graph-composition.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
     'tests/neon-workflow.test.mjs',

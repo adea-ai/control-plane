@@ -56,6 +56,7 @@ import {
 } from '@control-plane/secrets'
 import {
   createRestateEndpointFactory,
+  type GraphSegmentActivityPort,
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
@@ -108,6 +109,7 @@ export interface HostedServerCompositionOptions {
     acceptance: ExecutionAcceptancePort
   ) => RemoteControlHostAdapter<unknown>
   readonly runtimeActivityPort?: WorkflowRuntimeActivityPort
+  readonly graphActivities?: GraphSegmentActivityPort
 }
 
 export class HostedServerControlPlaneComposition {
@@ -128,6 +130,7 @@ export class HostedServerControlPlaneComposition {
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
+  readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
@@ -243,7 +246,7 @@ export class HostedServerControlPlaneComposition {
       lifecycle: new ExecutionLifecycleService(executions),
       plans,
       runtime: this.runtimeActivityPort,
-      graph: new DisabledGraphSegmentActivities(),
+      graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
       runtimeRouter: this.runtimeAttemptRouter,
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
@@ -251,6 +254,7 @@ export class HostedServerControlPlaneComposition {
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
       }),
     })
+    this.executionLifecycleActivities = activities
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??

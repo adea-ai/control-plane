@@ -34,6 +34,7 @@ import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
   type ExecutionLifecycleActivities,
+  type GraphSegmentActivityPort,
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
@@ -75,6 +76,7 @@ export interface LocalControlPlaneCompositionOptions {
   readonly workflowRuntime?: WorkflowRuntime
   readonly endpointFactory?: RestateEndpointFactory
   readonly activities?: ExecutionLifecycleActivities
+  readonly graphActivities?: GraphSegmentActivityPort
   readonly runtimeTransport?: RuntimeAdapterWithTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
@@ -126,6 +128,14 @@ export class LocalControlPlaneComposition {
   #started = false
 
   constructor(options: LocalControlPlaneCompositionOptions) {
+    if (options.graphActivities !== undefined && options.activities !== undefined)
+      throw new Error('LOCAL_GRAPH_ACTIVITIES_CONFIGURATION_CONFLICT')
+    if (
+      options.graphActivities !== undefined &&
+      options.runtimeTransport === undefined &&
+      options.runtimeFactory === undefined
+    )
+      throw new Error('LOCAL_GRAPH_RUNTIME_REQUIRED')
     this.dataDirectory = resolve(options.dataDirectory)
     this.profile = options.profile ?? 'local'
     const processProvider = options.processProvider ?? new NodeProcessRuntimeProvider()
@@ -206,7 +216,7 @@ export class LocalControlPlaneComposition {
               this.objectStore,
               runtimeTransport
             ),
-            graph: new DisabledGraphSegmentActivities(),
+            graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
             commands: this.commands,
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()

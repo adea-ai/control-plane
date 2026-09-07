@@ -1315,7 +1315,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:ac179067428b6a156ba926911a5e2a81070a77375939991d3a37bfde36d7802c"
+      "sourceDigest": "sha256:e54804d5feb87337dbff7477de05ca4f2f1a3469b559f74a95a92afb3c509e2d"
     },
     {
       "id": "hosted-simple",
@@ -1354,7 +1354,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:f74d31ba80fe612232e13bf31cd2df205afaa26deacdfe78b1bc09fc10071a21"
+      "sourceDigest": "sha256:aae6c2bb4fac537ee3447d83e7f1971ff19303f2c90ed8d9243b4057f8c987c5"
     },
     {
       "id": "local",
@@ -1393,7 +1393,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:f74d31ba80fe612232e13bf31cd2df205afaa26deacdfe78b1bc09fc10071a21"
+      "sourceDigest": "sha256:aae6c2bb4fac537ee3447d83e7f1971ff19303f2c90ed8d9243b4057f8c987c5"
     }
   ],
   "ownership": [

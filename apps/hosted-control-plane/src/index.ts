@@ -100,6 +100,7 @@ export function resolveHostedCompositionConfiguration(
     ...optional('remoteControl'),
     ...optional('remoteControlFactory'),
     ...optional('runtimeActivityPort'),
+    ...optional('graphActivities'),
     ...optional('contextAuthoring'),
   }
 }

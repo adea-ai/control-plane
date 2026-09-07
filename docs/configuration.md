@@ -104,6 +104,15 @@ selection fail startup.
 
 ## Current service surfaces
 
+Local (including Hosted Simple) and Hosted Server composition options accept `graphActivities`
+using the shared `GraphSegmentActivityPort`. The Hosted launcher preserves this option. The
+normal durable execution activities forward run, resume, continue and graph cancellation to it;
+omitting it retains the disabled-graph default. Local requires a runtime transport/factory for
+this composed path and rejects combining `graphActivities` with a replacement `activities` object.
+The injecting application owns the graph adapter's durable checkpoint store and resource lifecycle.
+This option alone does not provision graph definitions, a SQLite checkpointer, graph operation
+authorization or an environment-selected graph deployment; those remain acceptance work.
+
 The accepted Cloud process topology has two application services plus one infrastructure runtime:
 
 | Service           | Cloud surface                                                   |

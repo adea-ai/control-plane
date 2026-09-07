@@ -1,5 +1,16 @@
 # M11 local integration checkpoint
 
+Graph composition follow-up: Local/Hosted Simple and Hosted Server now accept the shared graph
+activity port instead of unconditionally discarding the possibility of a configured adapter.
+Hosted launcher option propagation is covered. A registered smoke test invokes run, resume,
+continue and cancellation through each composition's durable activities using recording graph
+ports. Local rejects conflicting replacement activities and graph configuration without a runtime.
+The disabled default remains; this does not claim durable SQLite checkpoints, graph registration,
+operation authorization or live Restate/LangGraph recovery. Injectors own checkpoint/resource
+lifecycle. Composition fingerprints were refreshed without promoting readiness assessments.
+The complete lint/type/format/test command passed, including 800 unit and 98 E2E tests and the
+new composition smoke coverage. No external resources or deployments were changed.
+
 Standalone matrix refresh after `4668127`: `bun run test:m11-standalone` passed 77 repository
 scenarios plus 26 context, 7 Cortana-compatible adapter, 18 encrypted relay, 16 profile-portability
 and 11 deployment tests (155 total). The first run revealed an environment-skipped PostgreSQL test
