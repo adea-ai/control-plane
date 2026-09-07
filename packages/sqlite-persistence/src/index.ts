@@ -173,19 +173,23 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
       throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
     }
     if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
-    this.#native?.close()
-    this.#native = undefined
-    this.#drizzle = undefined
     const temporaryPath = `${this.#path}.restore-${randomUUID()}`
     await writeFile(temporaryPath, snapshot.bytes, { mode: 0o600, flag: 'wx' })
-    await unlink(`${this.#path}-wal`).catch(() => undefined)
-    await unlink(`${this.#path}-shm`).catch(() => undefined)
-    await rename(temporaryPath, this.#path)
-    await chmod(this.#path, 0o600)
-    await this.#open()
-    await this.migrate()
-    const health = await this.health()
-    if (!health.ready) throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
+    try {
+      validateRestoreDatabase(temporaryPath)
+      // Staging is asynchronous; recheck before touching the live connection.
+      if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
+      this.#native?.close()
+      this.#native = undefined
+      this.#drizzle = undefined
+      await unlink(`${this.#path}-wal`).catch(() => undefined)
+      await unlink(`${this.#path}-shm`).catch(() => undefined)
+      await rename(temporaryPath, this.#path)
+      await chmod(this.#path, 0o600)
+      await this.#open()
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined)
+    }
   }
 
   close(): void {
@@ -221,6 +225,35 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
   #assertOpen(): DatabaseSync {
     if (this.#native === undefined) throw new SqlitePersistenceError('SQLITE_CLOSED')
     return this.#native
+  }
+}
+
+function validateRestoreDatabase(path: string): void {
+  let database: DatabaseSync | undefined
+  try {
+    // A WAL-mode backup may need sidecars even for reads. Only the disposable
+    // staged copy is opened here; normalize it to a standalone file before rename.
+    database = new DatabaseSync(path)
+    database.exec('PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE')
+    const checks = database.prepare('PRAGMA quick_check').all()
+    if (checks.length !== 1 || Object.values(checks[0] ?? {})[0] !== 'ok') {
+      throw new Error('Invalid SQLite integrity')
+    }
+    const version = database
+      .prepare("SELECT value FROM control_plane_metadata WHERE key = 'schema_version'")
+      .get()
+    if (version?.['value'] !== String(SCHEMA_VERSION)) {
+      throw new Error('Incompatible SQLite schema')
+    }
+    database
+      .prepare(
+        'SELECT namespace, id, revision, value, updated_at FROM control_plane_records LIMIT 0'
+      )
+      .all()
+  } catch {
+    throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
+  } finally {
+    database?.close()
   }
 }
 
