@@ -304,3 +304,17 @@ chain also exited successfully (773 unit tests; 87.28% line and 83.85% function 
 Disposable project `m11-authoring-recovery-20260907`, its PostgreSQL volume and network were
 removed; loopback port 55039 was verified closed. No new agents or persistent servers were started.
 The candidate remains local-only and full M11 acceptance remains unproven.
+
+## Execution validation trusted-principal boundary
+
+The validation controller now forwards the guard-authenticated principal separately from caller
+assertions in the request body. The durable service rejects absent and mismatched principals before
+any profile/state/package/skill reads or plan writes. A regression first failed against the previous
+service, then passed with this explicit boundary; the same test verifies the authenticated HTTP path.
+This is composition hardening, not a demonstrated bypass of the existing HTTP authentication guard.
+Non-HTTP callers remain responsible for authenticating the principal they supply.
+
+The canonical lint/type-check/format-check/test chain passed on 2026-09-07, including 773 unit tests
+and 87.29% line / 83.85% function coverage. No new agents or persistent servers were started.
+Execution validation still lacks its own durable command result replay, and inline authoring remains
+disabled. Neither this change nor the internal context-authoring repository closes that requirement.

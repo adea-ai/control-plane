@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -24,7 +25,10 @@ import {
 export const EXECUTION_VALIDATION_SERVICE = Symbol('EXECUTION_VALIDATION_SERVICE')
 
 export interface ExecutionValidationService {
-  validate(envelope: unknown): Promise<ExecutionRequestValidationResponse>
+  validate(
+    envelope: unknown,
+    callerPrincipalId: string
+  ): Promise<ExecutionRequestValidationResponse>
 }
 
 export interface DurableExecutionValidationServiceOptions {
@@ -43,8 +47,17 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     this.#compiler = new ExecutionPlanCompiler(options.compilerVersion)
   }
 
-  async validate(input: unknown): Promise<ExecutionRequestValidationResponse> {
+  async validate(
+    input: unknown,
+    callerPrincipalId: string
+  ): Promise<ExecutionRequestValidationResponse> {
     const request = ExecutionRequestValidationRequestSchema.parse(input)
+    if (callerPrincipalId !== request.caller.servicePrincipalId) {
+      throw new ForbiddenException({
+        code: 'EXECUTION_VALIDATION_CALLER_MISMATCH',
+        message: 'Execution validation requires the authenticated caller',
+      })
+    }
     const projectId = request.projectId
     if (projectId === undefined) reject()
 

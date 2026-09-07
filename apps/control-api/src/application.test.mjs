@@ -443,10 +443,15 @@ describe('Control API', () => {
     const profile = executionProfile(constraints)
     const skill = executionSkill()
     const persistedPlans = []
+    let evidenceReads = 0
+    const readEvidence = (value) => {
+      evidenceReads += 1
+      return globalThis.structuredClone(value)
+    }
     const service = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
       contextPackages: {
-        get: async () => globalThis.structuredClone(contextPackage),
+        get: async () => readEvidence(contextPackage),
       },
       plans: {
         get: async () => undefined,
@@ -458,23 +463,31 @@ describe('Control API', () => {
           }
         },
       },
-      profiles: { getAgentProfileVersion: async () => globalThis.structuredClone(profile) },
+      profiles: { getAgentProfileVersion: async () => readEvidence(profile) },
       projectStates: {
-        getAtRevision: async () => ({
-          schemaVersion: 1,
-          workspaceId: contextPackage.projectState.workspaceId,
-          projectId: contextPackage.projectState.projectId,
-          revision: contextPackage.projectState.revision,
-          items: [],
-          createdAt: '2026-08-23T11:00:00.000Z',
-          updatedAt: '2026-08-23T11:00:00.000Z',
-        }),
+        getAtRevision: async () =>
+          readEvidence({
+            schemaVersion: 1,
+            workspaceId: contextPackage.projectState.workspaceId,
+            projectId: contextPackage.projectState.projectId,
+            revision: contextPackage.projectState.revision,
+            items: [],
+            createdAt: '2026-08-23T11:00:00.000Z',
+            updatedAt: '2026-08-23T11:00:00.000Z',
+          }),
       },
-      skills: { getSkillVersion: async () => globalThis.structuredClone(skill) },
+      skills: { getSkillVersion: async () => readEvidence(skill) },
     })
     const request = executionValidationRequest(contextPackage, constraints)
 
-    const response = await service.validate(request)
+    await expect(service.validate(request, '')).rejects.toMatchObject({ status: 403 })
+    await expect(service.validate(request)).rejects.toMatchObject({ status: 403 })
+    await expect(service.validate(request, 'service:another-caller')).rejects.toMatchObject({
+      status: 403,
+    })
+    expect(persistedPlans).toHaveLength(0)
+    expect(evidenceReads).toBe(0)
+    const response = await service.validate(request, request.caller.servicePrincipalId)
     const application = await createApplication(
       [],
       policyAuthenticator({
@@ -506,13 +519,16 @@ describe('Control API', () => {
     expect(persistedPlans).toHaveLength(2)
 
     await expect(
-      service.validate({
-        ...request,
-        payload: {
-          ...request.payload,
-          policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+      service.validate(
+        {
+          ...request,
+          payload: {
+            ...request.payload,
+            policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+          },
         },
-      })
+        request.caller.servicePrincipalId
+      )
     ).rejects.toMatchObject({ status: 422 })
     expect(persistedPlans).toHaveLength(2)
   })

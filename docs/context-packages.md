@@ -75,6 +75,14 @@ form must also provide durable command replay: the authoring clock and permissio
 must not create a different package on each identical retry. The shared input schema is preparation
 for that integration, not a claim that inline execution authoring is enabled.
 
+The execution-validation controller now forwards the principal established by its service-authentication
+guard separately from the body. The durable validation service rejects a missing or mismatched
+principal before reading evidence or persisting a plan. This is an explicit composition boundary,
+not credential verification inside the service: non-HTTP callers must supply a principal from their
+own trusted authenticator. The protected HTTP route remains responsible for credential, scope and
+revocation checks. Validation-command replay is still missing; this boundary alone does not make
+inline authoring ready.
+
 `createForCommand` supplies internal authoring replay through an injected
 `ContextAuthoringCommandRepository`. Its scope includes authenticated principal, workspace, project,
 the `context.author` operation and idempotency key. The service computes a canonical request hash;
