@@ -228,3 +228,33 @@ The command exited zero and stopped its service. Explicit follow-up removed its
 container, network and disposable volume; label-filtered inventories were empty
 and port 55009 had no listener. Unrelated database and release containers were
 left untouched. The Neon capacity and role-authorization gates remain separate.
+
+## Real SQLite measurement harness
+
+Commit `d9f3d76ab69cdd7f3084d780ebe7a124d575032a` adds a bounded real-provider
+SQLite record benchmark with independently checked values/revisions, integrity
+verification, per-operation raw latency samples and an environment manifest.
+Full lint, type-check, format, build and tests passed before the clean measurement:
+763 unit, 51 smoke and 98 E2E. This introduces no release budget or benchmark score.
+
+The default run verified 1,000 records at concurrency 8 on the recorded Apple M2 Max
+developer host, using Bun 1.4.0 and SQLite 3.51.0. The reported `process.version`
+is Bun's Node-compatibility value, not proof of execution under a native Node binary.
+Raw evidence is retained in [m11-sqlite-d9f3d76.json](./m11-sqlite-d9f3d76.json),
+including all 2,000 write/read latency samples. Observed write/read-pair throughput
+was approximately 4,276 records/second; write p95 was 1.79 ms, replay-read p95
+1.46 ms, backup time 2.47 ms and measured WAL size 2,138,312 bytes.
+
+This single fresh-database run is measurement-only, not a cold-host/warm-host study,
+peak-memory profile, baseline comparison, statistical confidence bound, execution
+acceptance throughput, VPS capacity or production release approval. The benchmark
+removed its temporary database before emitting successful evidence. The existing
+synthetic M9 harness and this real SQLite harness have different workloads and
+must not be compared as equivalent baselines.
+
+The original raw artifact's `dataDigest` identifies the workload descriptor, not
+the resulting SQLite file bytes. The harness now names that field `workloadDigest`.
+Review also identified that the test subprocess timeout could bypass child cleanup;
+the test runner now owns the temporary root and isolated process group and removes
+both after timeout. A forced-timeout regression confirms partial-file-tree cleanup.
+These follow-ups do not rewrite the historical raw samples or their candidate ID.

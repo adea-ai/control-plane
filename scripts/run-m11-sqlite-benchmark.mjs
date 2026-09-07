@@ -106,7 +106,7 @@ try {
       schemaVersion: health.version,
       durability: 'WAL/FULL',
       provider: 'node:sqlite',
-      dataDigest: `sha256:${createHash('sha256')
+      workloadDigest: `sha256:${createHash('sha256')
         .update(
           JSON.stringify({ iterations, payload: 'x'.repeat(256), sequence: '0..iterations-1' })
         )
