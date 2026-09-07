@@ -172,6 +172,7 @@ function execute(overrides = {}) {
     DATABASE_HOST_POOLED: 'pool.example.invalid',
     DATABASE_APP_PASSWORD: 'synthetic@app:password',
     DATABASE_MIGRATION_PASSWORD: 'synthetic/migration?password',
+    DATABASE_ADMIN_PASSWORD: 'synthetic/admin?password',
     GITHUB_ENV: '/synthetic/github-env',
     ...overrides,
   }
@@ -216,6 +217,12 @@ describe('Neon restricted connection workflow', () => {
         'control_plane_migrator',
         'synthetic/migration?password',
       ],
+      [
+        'DATABASE_ADMIN_URL',
+        'direct.example.invalid',
+        'control_plane_admin',
+        'synthetic/admin?password',
+      ],
     ]) {
       const url = new URL(values[name])
       expect(url.hostname).toBe(host)
@@ -224,7 +231,7 @@ describe('Neon restricted connection workflow', () => {
       expect(url.searchParams.get('sslmode')).toBe('require')
       expect(masks).toContain(`::add-mask::${values[name]}`)
     }
-    expect(masks).toHaveLength(3)
+    expect(masks).toHaveLength(4)
   })
 
   test('fails closed when required connection inputs are absent', () => {
@@ -233,6 +240,7 @@ describe('Neon restricted connection workflow', () => {
       'DATABASE_HOST_POOLED',
       'DATABASE_APP_PASSWORD',
       'DATABASE_MIGRATION_PASSWORD',
+      'DATABASE_ADMIN_PASSWORD',
       'GITHUB_ENV',
     ]) {
       expect(() => execute({ [name]: undefined })).toThrow(

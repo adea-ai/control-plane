@@ -379,9 +379,13 @@ test('requires a dedicated Neon administration credential for remote isolated te
   assert.match(workflow, /DATABASE_ADMIN_PASSWORD/)
   assert.match(workflow, /control_plane_admin/)
   assert.match(workflow, /DATABASE_ADMIN_URL=\$\{adminUrl\}/)
+  const verify = workflow
+    .split('      - name: Verify migrations and transactions')[1]
+    ?.split('  delete_neon_branch:')[0]
+  assert.ok(verify)
   assert.doesNotMatch(
-    workflow,
-    /DATABASE_ADMIN_URL:\s*\$\{\{ steps\.create_neon_branch\.outputs\.db_url \}\}/
+    verify,
+    /DATABASE_ADMIN_URL:/
   )
 })
 
