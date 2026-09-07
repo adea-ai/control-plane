@@ -1,5 +1,14 @@
 # M11 local integration checkpoint
 
+PR #412 recovery gate follow-up: CI exposed two stale integration evidence labels in the recovery
+registry after the PostgreSQL drills were expanded. The registry now matches the actual successful
+drill outputs; a regression test verifies all integration labels remain present in their executable
+sources. The full recovery runner still requires observing those labels from successful commands.
+`bun run test:recovery-matrix` passed all 22 named scenarios locally, including the real PostgreSQL
+restart and restore drills. The disposable Compose database, volume and network were removed.
+Lint, formatting and the focused production-hardening suite also passed. This does not certify a
+managed PostgreSQL failover or production recovery objective.
+
 Interaction rejection follow-up: the real Restate restart regression first reproduced HTTP 200 for
 an approval carrying an invalid input value, followed by a failing workflow consumer. The handler
 now runs the existing value validator before resolving its durable promise and returns a terminal
