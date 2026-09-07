@@ -47,8 +47,10 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   Passing the credential-free matrix alone cannot satisfy the full M11 acceptance gate.
   It also runs a Local graph approval through the pinned real Restate runtime, stops/reconstructs
   Local and Restate while awaiting input, and resumes from SQLite checkpoints to an Artifact-backed
-  terminal result. This test uses command-inbox acceptance and an internal workflow submission with
-  controlled graph operations. It is controlled-restart evidence, not hard-crash, live-provider or
+  terminal result. An invalid approval is rejected with HTTP 400 before a subsequent valid approval completes the same
+  workflow. Interaction value validation runs before durable promise resolution and again on consumption.
+  This test uses command-inbox acceptance, internal workflow submission and controlled graph operations.
+  It is controlled-restart evidence, not hard-crash, live-provider or
   authenticated public graph-selection acceptance. Finished workflow output is retrieved using
   Restate's documented [workflow attach endpoint](https://docs.restate.dev/services/invocation/http).
 - `bun run test:recovery-matrix` runs current disposable recovery fixtures.

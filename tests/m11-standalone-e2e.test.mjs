@@ -149,6 +149,13 @@ describe('M11 standalone execution composition', () => {
       local = createLocal()
       await local.start()
       expect((await local.executions.getExecution(executionId)).state).toBe('awaiting_input')
+      const invalidResponse = await post('respondToInteraction', {
+        interactionId: 'approval-1',
+        responseId: 'invalid-graph-response',
+        action: 'approve',
+        value: 'not-an-input-response',
+      })
+      expect(invalidResponse.status).toBe(400)
       expect(
         (
           await post('respondToInteraction', {

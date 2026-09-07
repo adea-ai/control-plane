@@ -1,5 +1,14 @@
 # M11 local integration checkpoint
 
+Interaction rejection follow-up: the real Restate restart regression first reproduced HTTP 200 for
+an approval carrying an invalid input value, followed by a failing workflow consumer. The handler
+now runs the existing value validator before resolving its durable promise and returns a terminal
+HTTP 400 for invalid values. The same regression then accepts a valid approval and completes the
+workflow (1 test, 11 assertions). Consumer-side validation remains in place. This prevents new invalid
+values from poisoning the wait; it does not repair already-persisted invalid responses or prove
+production reachability, authorization, deployment, or milestone-wide security acceptance.
+Canonical lint, type/build, format and test gates passed, including 99 E2E tests (550 assertions).
+
 Real Local Restate graph recovery follow-up: the standalone E2E suite accepts an Execution through
 the command inbox, submits the internal graph workflow, persists its approval wait, and closes both
 Local and the pinned Restate runtime. A reconstructed composition and Restate process recover the
