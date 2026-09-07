@@ -167,9 +167,20 @@ test('plans a deterministic Railway standby transition without deleting services
     assertDisconnectScope,
     planStandbyActions,
     railwayDisconnectArguments,
+    railwayClearSourceArguments,
     railwayRemoveArguments,
     railwayRepoTriggersArguments,
   } = await import('../scripts/railway-standby.mjs')
+  assert.throws(() => railwayClearSourceArguments('service-id'), /service and environment IDs/)
+  assert.deepEqual(railwayClearSourceArguments('service-id', 'staging-id'), [
+    'api',
+    '--raw-var',
+    'serviceId=service-id',
+    '--raw-var',
+    'environmentId=staging-id',
+    '--compact',
+    'mutation ClearSource($serviceId: String!, $environmentId: String!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: { source: { repo: null } }) }',
+  ])
   const disconnect = [{ type: 'disconnect-source', serviceId: 'shared-api' }]
   assert.throws(
     () =>
