@@ -17,6 +17,12 @@ Execution adapters receive a detached copy of the case. Their changes to thresho
 flags cannot modify the evaluator's authoritative suite. This prevents object-aliasing mistakes
 or manipulation at this callback boundary; it is not a sandbox for arbitrary in-process code.
 
+Promotion and rollback hold a per-gate update guard while their audit record is persisted.
+Conflicting updates return `RELEASE_GATE_UPDATE_IN_PROGRESS`; reads and updates to independent
+gates remain available. A rejected audit write leaves promoted state unchanged and releases the
+guard. This is a single-registry concurrency contract, not distributed locking or durable gate
+recovery across processes; those require an authoritative persistence integration.
+
 These contracts validate supplied measurements; they do not prove those measurements are true.
 The M11.6 task corpus, deterministic evidence scorers, controlled live-provider runs, human
 calibration, hidden-task rotation, statistical comparisons, and provenance records remain

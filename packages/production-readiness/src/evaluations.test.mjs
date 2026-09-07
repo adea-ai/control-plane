@@ -51,6 +51,51 @@ const suite = {
 }
 
 describe('production evaluation and release gates', () => {
+  test('does not replace a gate while its promotion audit is being persisted', async () => {
+    const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+    const run = await service.run({
+      evalRunId: 'concurrent-promotion',
+      suite,
+      configuration,
+      execute: async () => ({ functional_correctness: 1, latency_ms: 100, cost_usd: 0.01 }),
+    })
+    let releaseAudit
+    const persisted = new Promise((resolve) => {
+      releaseAudit = resolve
+    })
+    const registry = new ReleaseGateRegistry({
+      auditRepository: {
+        append: async () => persisted,
+        list: async () => [],
+      },
+    })
+    const input = {
+      releaseGateId: 'gate-concurrent',
+      candidate: run,
+      baseline: run,
+      maximumRegressions: {},
+    }
+    registry.evaluate(input)
+    const promotion = registry.promote(input.releaseGateId, 'operator://release')
+    try {
+      expect(() => registry.evaluate(input)).toThrow('RELEASE_GATE_UPDATE_IN_PROGRESS')
+      expect(registry.evaluate({ ...input, releaseGateId: 'independent-gate' }).status).toBe(
+        'passed'
+      )
+      await expect(
+        registry.rollback(input.releaseGateId, 'operator://rollback', 'test')
+      ).rejects.toThrow('RELEASE_GATE_UPDATE_IN_PROGRESS')
+      await expect(registry.promote(input.releaseGateId, 'operator://duplicate')).rejects.toThrow(
+        'RELEASE_GATE_UPDATE_IN_PROGRESS'
+      )
+    } finally {
+      releaseAudit()
+      await promotion
+    }
+    expect(registry.promoted(input.releaseGateId)).toEqual(run)
+    expect(registry.evaluate(input).status).toBe('passed')
+  })
+
   test('does not let an execution adapter rewrite its authoritative scoring criteria', async () => {
     const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
     const run = await service.run({
@@ -280,6 +325,14 @@ describe('production evaluation and release gates', () => {
       'AUDIT_STORAGE_UNAVAILABLE'
     )
     expect(registry.promoted('gate-storage-failure')).toBeUndefined()
+    expect(
+      registry.evaluate({
+        releaseGateId: 'gate-storage-failure',
+        candidate,
+        baseline,
+        maximumRegressions: {},
+      }).status
+    ).toBe('passed')
   })
 
   test('fails closed when a live-provider suite is not explicitly enabled', async () => {
