@@ -38,7 +38,9 @@ trusted policy-decision inputs; the compiler never invents authority or resolves
 
 ## Pre-validation authoring service
 
-`ContextPackageAuthoringService` separates caller selection from trusted inputs. Its strict request
+`ContextAuthoringInputsSchema` in `@control-plane/contracts` defines the shared caller-selection
+shape. `ContextPackageAuthoringService` extends it with host-bound scope and revision, separating
+caller selection from trusted inputs. Its strict request
 schema accepts scope, the pinned state revision, candidate IDs/revisions, objective, result contract,
 success criteria and requested budgets. It does not accept authorization flags, Artifact metadata,
 permissions, ProjectState content or a caller-controlled compilation clock. The host supplies the
@@ -66,6 +68,12 @@ Deployment wiring, authoritative adapters, pinned optional-provider enrichment, 
 acceptance and the entrypoint's authentication/idempotency contract remain required before the
 context-authoring reachability gap can close. Calling the service with a fixture is not proof that a
 shipped application exposes a supported authoring path.
+
+The canonical API specification permits context inputs as an alternative to a package reference,
+but the current execution-validation operation still accepts references only. Enabling the input
+form must also provide durable command replay: the authoring clock and permission observations
+must not create a different package on each identical retry. The shared input schema is preparation
+for that integration, not a claim that inline execution authoring is enabled.
 
 ## Child derivation
 

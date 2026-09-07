@@ -70,14 +70,28 @@ and ExecutionRequest v1 already references a ContextPackage. They do not specify
 a public compilation endpoint. The existing
 `apps/control-api/src/executions/execution-validation.service.ts` loads that
 package by ID/digest, checks workspace/project/revision/compiler pins and compiles
-an ExecutionPlan; it does not construct the ContextPackage. Therefore wiring a
-compiler into validation without a preceding authorized construction contract
-would change the request semantics rather than finish the existing path.
+an ExecutionPlan; it does not construct the ContextPackage.
 
-The implementation follow-up must establish a pre-validation authoring service
+The [Data Model & API Specification](https://docs.google.com/document/d/1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM/edit),
+retrieved on 2026-09-07 with modification time `2026-08-28T07:18:49.965Z`, supplies
+an additional accepted form in its v1 ExecutionRequest schema: a ContextPackage
+reference **or context inputs**. Its minimum-request summary and the TDD describe
+the reference form, but do not prohibit the input form. The current executable
+`ExecutionRequestValidationRequestSchema` in `packages/contracts/src/control-api.ts`
+requires a reference only. This is a missing supported input form, not evidence
+that a separate public compilation endpoint is required.
+
+The implementation follow-up must use the authoring service
 with independently supplied policy decisions and product Artifact lifecycle
-evidence, persist the immutable package, and then use the existing reference-based
-validation contract. Standalone acceptance can exercise that boundary through
+evidence, persist the immutable package, and then validate the resulting reference.
+An additive context-input branch in the execution request can perform these steps
+internally while preserving existing reference clients. It must reject ambiguous
+reference-plus-input payloads, derive scope and principal from the authenticated
+envelope, preserve command idempotency, and update generated schemas/OpenAPI/SDK
+and compatibility fixtures together. The lower-level service alone does not
+satisfy those public entrypoint requirements.
+
+Standalone acceptance can exercise that boundary through
 synthetic service principals and authoritative contract fixtures; a live Agent HQ
 deployment is not an ordinary M11 dependency. Required evidence includes rejection
 of cross-workspace, revoked and unscanned inputs, no-provider operation, pinned

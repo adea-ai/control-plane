@@ -64,6 +64,29 @@ export const ContextPackagePublicReferenceSchema = z.object({
 
 export type ContextPackagePublicReference = z.output<typeof ContextPackagePublicReferenceSchema>
 
+/** Caller selection only; policy, state, Artifact metadata and clocks are host-owned. */
+export const ContextAuthoringInputsSchema = z.strictObject({
+  objective: z.string().min(1).max(16_384),
+  candidates: z
+    .array(
+      z.strictObject({
+        itemId: IdentifierSchemas.projectStateItemId,
+        itemRevision: z.number().int().positive(),
+        required: z.boolean(),
+        priority: z.number().int(),
+      })
+    )
+    .max(10_000),
+  successCriteria: z.array(z.string().min(1).max(4_096)).min(1).max(128),
+  returnContract: z.strictObject({ contractRef: z.string().min(1).max(512) }),
+  budgets: z.strictObject({
+    maximumBytes: z.number().int().positive(),
+    maximumTokens: z.number().int().positive(),
+  }),
+})
+
+export type ContextAuthoringInputs = z.output<typeof ContextAuthoringInputsSchema>
+
 export const PolicySnapshotPublicReferenceSchema = z.object({
   policySnapshotId: z.string().min(1).max(256),
   revision: z.number().int().positive(),

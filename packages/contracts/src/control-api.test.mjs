@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { URL } from 'node:url'
 import {
   ContextPackagePublicReferenceSchema,
+  ContextAuthoringInputsSchema,
   ControlApiFixtures,
   ExecutionAcceptanceRequestSchema,
   ExecutionAcceptanceResponseSchema,
@@ -18,6 +19,39 @@ import {
 } from './index.ts'
 
 describe('Agent HQ Control API contracts', () => {
+  test('defines caller context inputs without accepting host-owned authority', () => {
+    const input = {
+      objective: 'Use bounded project context',
+      candidates: [
+        { itemId: 'psi_01JABCDEF0123456789ABCDEFG', itemRevision: 1, required: true, priority: 0 },
+      ],
+      successCriteria: ['Return evidence'],
+      returnContract: { contractRef: 'contract://result/v1' },
+      budgets: { maximumBytes: 1024, maximumTokens: 256 },
+    }
+    expect(ContextAuthoringInputsSchema.parse(input)).toEqual(input)
+    for (const extra of [
+      { workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' },
+      { principalRef: 'service:admin' },
+      { compiledAt: '2026-09-07T00:00:00.000Z' },
+      { permissions: ['admin'] },
+      { artifacts: [] },
+      { projectState: {} },
+    ])
+      expect(ContextAuthoringInputsSchema.safeParse({ ...input, ...extra }).success).toBe(false)
+    expect(
+      ContextAuthoringInputsSchema.safeParse({
+        ...input,
+        candidates: [{ ...input.candidates[0], authorized: true }],
+      }).success
+    ).toBe(false)
+    expect(
+      ContextAuthoringInputsSchema.safeParse({
+        ...input,
+        budgets: { ...input.budgets, maximumBytes: 0 },
+      }).success
+    ).toBe(false)
+  })
   test('prepares the independently installable contract package for release automation', async () => {
     const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     const releaseManifest = JSON.parse(

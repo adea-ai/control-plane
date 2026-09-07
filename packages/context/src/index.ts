@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   ContextContributionSchema,
+  ContextAuthoringInputsSchema,
   IdentifierSchemas,
   type ContextContribution,
 } from '@control-plane/contracts'
@@ -370,15 +371,10 @@ export interface ContextPackageRepository {
   getById(contextPackageId: string): Promise<ContextPackage | undefined>
 }
 
-export const ContextAuthoringRequestSchema = z.strictObject({
+export const ContextAuthoringRequestSchema = ContextAuthoringInputsSchema.extend({
   workspaceId: IdentifierSchemas.workspaceId,
   projectId: IdentifierSchemas.projectId,
   projectStateRevision: z.number().int().nonnegative(),
-  objective: CompilationInputSchema.shape.objective,
-  candidates: z.array(CandidateSchema.omit({ authorized: true }).strict()).max(10_000),
-  successCriteria: CompilationInputSchema.shape.successCriteria,
-  returnContract: CompilationInputSchema.shape.returnContract,
-  budgets: CompilationInputSchema.shape.budgets,
 })
 
 type ContextAuthoringRequest = z.output<typeof ContextAuthoringRequestSchema>
