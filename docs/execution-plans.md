@@ -47,8 +47,17 @@ implemented here.
 
 The file-backed test covers concurrent distinct candidates, rollback after an injected command-write
 failure, full close/reopen, caller isolation, changed-input rejection and stored-scope corruption.
-These are same-provider SQLite tests, not multi-process or PostgreSQL certification. This repository
-is not yet wired into execution validation: PostgreSQL persistence, profile portability and the API's
+These are same-provider SQLite tests, not multi-process certification.
+
+`PostgresExecutionValidationCommandRepository` implements the same atomic pair through a
+transaction-scoped advisory lock and the `execution_validation_commands` table (migration 0033).
+The PostgreSQL integration test exercises eight competing commits through four connections,
+injected rollback, repository reconstruction, caller isolation and corrupted scope/request/digest
+metadata. Its candidates are asserted absent before rollback, so earlier shared-suite fixtures cannot
+mask a leaked write. The existing recovery drills do not yet seed validation-command records;
+process restart and backup recovery for this record type are not certified by this test.
+
+Neither repository is yet wired into execution validation: profile portability and the API's
 first-result replay behavior remain required. The existing reference-only API still recompiles on
 each call, so this groundwork does not close M11's validation replay or authoring reachability gate.
 

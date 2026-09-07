@@ -336,3 +336,16 @@ runtime pin and direct-main PR topology. These are local checks, not hosted clea
 No Neon branches or role grants were changed. The prior read-only inventory still showed ten
 branches, including the preview for closed PR #400; removing that exact preview remains pending
 user approval. The independent `SET ROLE control_plane_migrator` failure remains unresolved.
+
+## PostgreSQL validation-command persistence
+
+Migration 0033 and `PostgresExecutionValidationCommandRepository` add atomic first-result
+command/plan persistence. The integration test passes eight competing commits through four
+connections, first-result replay, changed-hash conflict, caller isolation, injected transaction rollback,
+repository reconstruction and corrupted metadata rejection. An initial fixture collision with an
+earlier shared-suite plan was corrected using distinct inputs plus pre-test absence assertions.
+
+The integration runner passed 28 tests (24 database, two LangGraph, one portability and one harness)
+and its existing connection-loss/restart/backup drills. Those drills do not yet seed validation-command
+records, so they are not proof of this record type's recovery. Full local lint/type/format/test gates
+also passed; profile portability, production API wiring and end-to-end validation replay remain open.

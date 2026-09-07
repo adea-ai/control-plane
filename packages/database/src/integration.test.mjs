@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
+import { ControlApiFixtures } from '@control-plane/contracts'
 import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
@@ -16,7 +17,10 @@ import {
   RecordingProjectStateEventPublisher,
 } from '@control-plane/domain'
 import { ExecutionEventDispatcher, ExecutionEventService } from '@control-plane/events'
-import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
+import {
+  ExecutionPlanAcceptanceValidator,
+  executionValidationPayloadHash,
+} from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   ExternalSessionRegistry,
@@ -34,6 +38,7 @@ import { PostgresExecutionEventRepository } from './execution-event-repository.t
 import { PostgresExternalSessionRepository } from './external-session-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
+import { PostgresExecutionValidationCommandRepository } from './validation-command-repository.ts'
 import { PostgresEvaluationRepository } from './evaluation-repository.ts'
 import { PostgresInteractionRepository } from './interaction-repository.ts'
 import { PostgresMemoryWriteProposalRepository } from './memory-write-proposal-repository.ts'
@@ -57,6 +62,7 @@ import {
   evaluationRuns,
   executionEvents,
   executionPlans,
+  executionValidationCommands,
   executions,
   externalSessions,
   inboxMessages,
@@ -497,6 +503,103 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     )
     expect(await repository.get(failedRecord.scope)).toBeUndefined()
     expect(await packages.getById(failedPackage.contextPackageId)).toBeUndefined()
+  })
+
+  test('atomically retains validation results with concurrent connections and rejects corrupted metadata', async () => {
+    await isolated.migrate()
+    const plan = createExecutionPlanTestFixture({
+      profileCapabilityRequirements: ['execution.cancel'],
+    })
+    const alternate = createExecutionPlanTestFixture({
+      profileCapabilityRequirements: ['model.select'],
+    })
+    expect(alternate.executionPlanId).not.toBe(plan.executionPlanId)
+    const scope = {
+      callerPrincipalId: 'svc_agent-hq',
+      workspaceId: plan.correlation.workspaceId,
+      projectId: plan.correlation.projectId,
+      operation: 'execution.validate',
+      idempotencyKey: 'validation-postgres-0001',
+    }
+    const recordFor = (value) => ({
+      scope,
+      commandId: ControlApiFixtures.executionValidation.request.commandId,
+      requestId: value.correlation.requestId,
+      payloadHash: executionValidationPayloadHash(ControlApiFixtures.executionValidation.request),
+      executionPlan: { executionPlanId: value.executionPlanId, contentDigest: value.contentDigest },
+      recordedAt: '2026-09-07T12:00:00.000Z',
+    })
+    const repository = new PostgresExecutionValidationCommandRepository(isolated.application)
+    const plans = new PostgresExecutionPlanRepository(isolated.application)
+    expect(await plans.get(recordFor(plan).executionPlan)).toBeUndefined()
+    expect(await plans.get(recordFor(alternate).executionPlan)).toBeUndefined()
+    const failing = new PostgresExecutionValidationCommandRepository({
+      transaction: (operation) =>
+        isolated.application.transaction((transaction) =>
+          operation({
+            execute: transaction.execute.bind(transaction),
+            select: transaction.select.bind(transaction),
+            insert: (table) => {
+              if (table === executionValidationCommands)
+                throw new Error('INJECTED_VALIDATION_WRITE_FAILURE')
+              return transaction.insert(table)
+            },
+          })
+        ),
+    })
+    await expect(failing.commit(recordFor(plan), plan)).rejects.toThrow(
+      'INJECTED_VALIDATION_WRITE_FAILURE'
+    )
+    expect(await repository.get(scope)).toBeUndefined()
+    expect(await plans.get(recordFor(plan).executionPlan)).toBeUndefined()
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => {
+        const candidate = index % 2 ? alternate : plan
+        return repository.commit(recordFor(candidate), candidate)
+      })
+    )
+    for (const result of results) expect(result).toEqual(results[0])
+    const loser =
+      results[0].executionPlan.executionPlanId === plan.executionPlanId ? alternate : plan
+    expect(await plans.get(recordFor(loser).executionPlan)).toBeUndefined()
+    expect(await isolated.application.select().from(executionValidationCommands)).toHaveLength(1)
+    expect(
+      await new PostgresExecutionValidationCommandRepository(isolated.application).get(scope)
+    ).toEqual(results[0])
+    await expect(
+      repository.commit({ ...recordFor(plan), payloadHash: `sha256:${'0'.repeat(64)}` }, plan)
+    ).rejects.toThrow('EXECUTION_VALIDATION_COMMAND_CONFLICT')
+    expect(await repository.get({ ...scope, callerPrincipalId: 'svc_other' })).toBeUndefined()
+    const [stored] = await isolated.application.select().from(executionValidationCommands)
+    for (const mutation of [
+      { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      { projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      { record: { ...stored.record, scope: { ...scope, callerPrincipalId: 'svc_other' } } },
+      { record: { ...stored.record, requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV' } },
+      {
+        record: {
+          ...stored.record,
+          executionPlan: {
+            ...stored.record.executionPlan,
+            contentDigest: `sha256:${'0'.repeat(64)}`,
+          },
+        },
+      },
+    ]) {
+      try {
+        await isolated.application
+          .update(executionValidationCommands)
+          .set(mutation)
+          .where(eq(executionValidationCommands.commandKey, stored.commandKey))
+        await expect(repository.get(scope)).rejects.toThrow()
+      } finally {
+        await isolated.application
+          .update(executionValidationCommands)
+          .set(stored)
+          .where(eq(executionValidationCommands.commandKey, stored.commandKey))
+      }
+    }
+    expect(await repository.get(scope)).toEqual(results[0])
   })
 
   test('persists workspace-scoped runtime discovery projections across restart', async () => {

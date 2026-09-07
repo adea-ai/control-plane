@@ -34,6 +34,7 @@ export {
   executionState,
 } from './executions.js'
 export { executionPlans } from './execution-plans.js'
+export { executionValidationCommands } from './execution-validation-commands.js'
 export {
   projectStateMutations,
   projectStateRevisions,

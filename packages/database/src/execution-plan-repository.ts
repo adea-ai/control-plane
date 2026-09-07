@@ -11,7 +11,7 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { executionPlans } from './schema/execution-plans.js'
 
 export class PostgresExecutionPlanRepository implements ExecutionPlanRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert'>) {}
 
   async put(input: ExecutionPlan): Promise<ExecutionPlanReference> {
     const plan = assertExecutionPlanIntegrity(input)

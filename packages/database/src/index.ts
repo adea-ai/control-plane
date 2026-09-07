@@ -11,6 +11,7 @@ export { PostgresEncryptedSecretStore } from './credential-secret-store.js'
 export { PostgresDelegationRepository } from './delegation-repository.js'
 export { PostgresExecutionEventRepository } from './execution-event-repository.js'
 export { PostgresExecutionPlanRepository } from './execution-plan-repository.js'
+export { PostgresExecutionValidationCommandRepository } from './validation-command-repository.js'
 export { PostgresExternalSessionRepository } from './external-session-repository.js'
 export { PostgresExecutionRepository } from './execution-repository.js'
 export { PostgresEvaluationRepository } from './evaluation-repository.js'
@@ -38,6 +39,7 @@ export {
   commandInboxStatus,
   contextPackages,
   contextAuthoringCommands,
+  executionValidationCommands,
   agentProfileVersions,
   agentProfiles,
   catalogVersionLifecycle,
