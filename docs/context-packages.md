@@ -87,7 +87,23 @@ Concurrent compilation may occur, but losing candidates are not persisted. Reads
 scope and package integrity. Records currently have no deletion path and remain retained; bounded
 cleanup/retention policy is not implemented. This is not the complete `execution.validate` command
 inbox: that boundary must bind the full execution payload and final plan result, not only context
-inputs. PostgreSQL support and application wiring remain open.
+inputs. Application wiring remains open.
+
+`PostgresContextAuthoringCommandRepository` implements the same contract using migration
+`0032_groovy_surge.sql`. Its transaction-scoped advisory lock serializes commits for a hashed command
+scope; full scope equality is still verified from the stored record. The package and command are
+inserted in one transaction, with a foreign key retaining referential integrity. A lock-hash collision
+can serialize unrelated commands but cannot make their command records equivalent. Migration must
+run before using this adapter. Cross-profile export/import of authoring commands remains unverified.
+
+A disposable PostgreSQL 18.3 run on 2026-09-07 passed 27 integration tests, including eight
+concurrent authoring commits through the fixture's four-connection pool, duplicate/hash-conflict
+handling, principal isolation, repository reconstruction and injected transaction rollback. This
+includes review-requested corruption checks for workspace, project, package-ID and stored-principal
+scope metadata: each fails closed on read and is restored within the isolated test database. This
+authoring test is not a process-restart test. The suite's separate connection-loss, service-restart
+and backup/restore drills also passed for their existing evaluation/execution/event/usage evidence;
+they do not yet certify authoring-command recovery. The disposable Docker resources were removed.
 
 The SQLite regression exercises eight concurrent calls with differing trusted timestamps, confirms
 exactly one stored package/command, reopens the file and replays without invoking authorization or

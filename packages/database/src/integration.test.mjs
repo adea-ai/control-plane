@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import {
+  contextPackageSerializationFixtures,
+  composeProviderContextPackage,
+} from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
   CommandInboxService,
@@ -23,6 +26,8 @@ import {
 } from '@control-plane/runtime-sdk'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
+import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
+import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
 import { PostgresEncryptedSecretStore } from './credential-secret-store.ts'
 import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresExecutionEventRepository } from './execution-event-repository.ts'
@@ -393,6 +398,105 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await expect(restarted.get(reference)).rejects.toThrow()
     await expect(restarted.getById(package_.contextPackageId)).rejects.toThrow()
     expect(await isolated.application.select().from(contextPackages)).toHaveLength(1)
+  })
+
+  test('atomically retains the first context authoring result and rolls back failed command writes', async () => {
+    await isolated.migrate()
+    const repository = new PostgresContextAuthoringCommandRepository(isolated.application)
+    const packages = new PostgresContextPackageRepository(isolated.application)
+    const candidates = [
+      contextPackageSerializationFixtures.futureAcp,
+      contextPackageSerializationFixtures.futureLangGraph,
+    ]
+    const scope = {
+      principalRef: 'service:authoring-integration',
+      ...candidates[0].projectState,
+      operation: 'context.author',
+      idempotencyKey: 'context-authoring-integration-0001',
+    }
+    delete scope.revision
+    const recordFor = (package_, key = scope.idempotencyKey) => ({
+      scope: { ...scope, idempotencyKey: key },
+      payloadHash: `sha256:${'d'.repeat(64)}`,
+      contextPackage: {
+        contextPackageId: package_.contextPackageId,
+        contentDigest: package_.contentDigest,
+      },
+    })
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => {
+        const package_ = candidates[index % 2]
+        return repository.commit(recordFor(package_), package_)
+      })
+    )
+    expect(
+      results.every(
+        (record) =>
+          record.contextPackage.contextPackageId === results[0].contextPackage.contextPackageId
+      )
+    ).toBe(true)
+    const winner = await packages.get(results[0].contextPackage)
+    expect(winner).toBeDefined()
+    const loser = candidates.find(
+      (candidate) => candidate.contextPackageId !== winner.contextPackageId
+    )
+    expect(await packages.getById(loser.contextPackageId)).toBeUndefined()
+    expect(
+      await new PostgresContextAuthoringCommandRepository(isolated.application).get(scope)
+    ).toEqual(results[0])
+    await expect(
+      repository.commit({ ...recordFor(winner), payloadHash: `sha256:${'e'.repeat(64)}` }, winner)
+    ).rejects.toThrow('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+    expect(await repository.get({ ...scope, principalRef: 'service:other' })).toBeUndefined()
+
+    const [storedCommand] = await isolated.application.select().from(contextAuthoringCommands)
+    for (const patch of [
+      { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+      { projectId: 'prj_01JBBCDEF0123456789ABCDEFG' },
+      { contextPackageId: contextPackageSerializationFixtures.futurePi.contextPackageId },
+      { record: { ...storedCommand.record, scope: { ...scope, principalRef: 'service:other' } } },
+    ]) {
+      try {
+        await isolated.application
+          .update(contextAuthoringCommands)
+          .set(patch)
+          .where(eq(contextAuthoringCommands.commandKey, storedCommand.commandKey))
+        await expect(repository.get(scope)).rejects.toThrow(
+          'CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH'
+        )
+      } finally {
+        await isolated.application
+          .update(contextAuthoringCommands)
+          .set(storedCommand)
+          .where(eq(contextAuthoringCommands.commandKey, storedCommand.commandKey))
+      }
+    }
+
+    const failedPackage = composeProviderContextPackage(candidates[0], {
+      callerContextRefs: ['contract://rollback-input/v1'],
+      localProjectGrantRefs: [],
+      contributions: [],
+    })
+    const failedRecord = recordFor(failedPackage, 'context-authoring-rollback-0001')
+    const failing = new PostgresContextAuthoringCommandRepository({
+      transaction: (operation) =>
+        isolated.application.transaction((transaction) =>
+          operation({
+            execute: transaction.execute.bind(transaction),
+            select: transaction.select.bind(transaction),
+            insert: (table) => {
+              if (table === contextAuthoringCommands)
+                throw new Error('INJECTED_COMMAND_WRITE_FAILURE')
+              return transaction.insert(table)
+            },
+          })
+        ),
+    })
+    await expect(failing.commit(failedRecord, failedPackage)).rejects.toThrow(
+      'INJECTED_COMMAND_WRITE_FAILURE'
+    )
+    expect(await repository.get(failedRecord.scope)).toBeUndefined()
+    expect(await packages.getById(failedPackage.contextPackageId)).toBeUndefined()
   })
 
   test('persists workspace-scoped runtime discovery projections across restart', async () => {

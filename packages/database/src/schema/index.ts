@@ -8,6 +8,7 @@ export {
 } from './catalog.js'
 export { credentialSecrets } from './credential-secrets.js'
 export { contextPackages } from './context-packages.js'
+export { contextAuthoringCommands } from './context-authoring-commands.js'
 export { delegations, delegationState } from './delegations.js'
 export {
   idColumn,
