@@ -10,6 +10,7 @@ import {
 import {
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
+  SqliteContextAuthoringCommandRepository,
   SqlitePersistenceProvider,
   SqliteProjectStateRepository,
   SqliteRuntimeDiscoveryRepository,
@@ -199,6 +200,7 @@ describe('SQLite domain repositories', () => {
         compilerVersion: '1.0.0',
         projectStates,
         packages,
+        commands: new SqliteContextAuthoringCommandRepository(provider),
         now: () => new Date(receivedAt),
         authority: {
           async authorize(principalRef, request) {
@@ -238,7 +240,42 @@ describe('SQLite domain repositories', () => {
       await expect(authoring.create('service:other', request)).rejects.toThrow(
         'UNAUTHORIZED_CONTEXT'
       )
-      const ref = await authoring.create('service:standalone', request)
+      const idempotencyKey = 'standalone-authoring-0001'
+      const realCommands = authoring.options.commands
+      authoring.options.commands = new SqliteContextAuthoringCommandRepository({
+        transaction: (operation) =>
+          provider.transaction((transaction) =>
+            operation({
+              get: transaction.get.bind(transaction),
+              put: async (write) => {
+                if (write.namespace === 'context-authoring-commands')
+                  throw new Error('INJECTED_COMMAND_WRITE_FAILURE')
+                return transaction.put(write)
+              },
+            })
+          ),
+      })
+      await expect(
+        authoring.createForCommand('service:standalone', idempotencyKey, request)
+      ).rejects.toThrow('INJECTED_COMMAND_WRITE_FAILURE')
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('context-packages')).toEqual([])
+        expect(await transaction.list('context-authoring-commands')).toEqual([])
+      })
+      authoring.options.commands = realCommands
+      let clockTicks = 0
+      authoring.options.now = () => new Date(Date.parse(receivedAt) + clockTicks++ * 1000)
+      const refs = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          authoring.createForCommand('service:standalone', idempotencyKey, request)
+        )
+      )
+      const ref = refs[0]
+      expect(refs.every((value) => value.contextPackageId === ref.contextPackageId)).toBe(true)
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('context-packages')).toHaveLength(1)
+        expect(await transaction.list('context-authoring-commands')).toHaveLength(1)
+      })
       const before = await packages.get(ref)
       expect(before.budgets).toEqual({ maximumBytes: 1024, maximumTokens: 256 })
       expect(before.providerComposition).toBeUndefined()
@@ -248,6 +285,29 @@ describe('SQLite domain repositories', () => {
       const reopened = new SqliteContextPackageRepository(provider)
       expect(await reopened.get(ref)).toEqual(before)
       expect(await reopened.getById(ref.contextPackageId)).toEqual(before)
+      authoring.options.commands = new SqliteContextAuthoringCommandRepository(provider)
+      authoring.options.authority.authorize = async () => {
+        throw new Error('Replay must not re-author')
+      }
+      authoring.options.now = () => new Date('2026-10-01T00:00:00.000Z')
+      expect(
+        await authoring.createForCommand('service:standalone', idempotencyKey, request)
+      ).toEqual(ref)
+      await expect(
+        authoring.createForCommand('service:standalone', idempotencyKey, {
+          ...request,
+          objective: 'Changed input',
+        })
+      ).rejects.toThrow('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+      expect(
+        await authoring.options.commands.get({
+          principalRef: 'service:other',
+          workspaceId: ids.workspaceId,
+          projectId: ids.projectId,
+          operation: 'context.author',
+          idempotencyKey,
+        })
+      ).toBeUndefined()
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

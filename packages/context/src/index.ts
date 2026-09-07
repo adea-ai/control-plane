@@ -378,6 +378,33 @@ export const ContextAuthoringRequestSchema = ContextAuthoringInputsSchema.extend
 })
 
 type ContextAuthoringRequest = z.output<typeof ContextAuthoringRequestSchema>
+
+export const ContextAuthoringCommandScopeSchema = z.strictObject({
+  principalRef: z.string().min(1).max(256),
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('context.author'),
+  idempotencyKey: z
+    .string()
+    .min(16)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/),
+})
+export const ContextAuthoringCommandRecordSchema = z.object({
+  scope: ContextAuthoringCommandScopeSchema,
+  payloadHash: DigestSchema,
+  contextPackage: ContextPackageReferenceSchema,
+})
+export type ContextAuthoringCommandScope = z.output<typeof ContextAuthoringCommandScopeSchema>
+export type ContextAuthoringCommandRecord = z.output<typeof ContextAuthoringCommandRecordSchema>
+export interface ContextAuthoringCommandRepository {
+  get(scope: ContextAuthoringCommandScope): Promise<ContextAuthoringCommandRecord | undefined>
+  /** Atomically retain the first command result and its package, or reject a hash conflict. */
+  commit(
+    record: ContextAuthoringCommandRecord,
+    package_: ContextPackage
+  ): Promise<ContextAuthoringCommandRecord>
+}
 const AuthoringDecisionSchema = z.object({
   workspaceId: IdentifierSchemas.workspaceId,
   projectId: IdentifierSchemas.projectId,
@@ -419,6 +446,7 @@ export class ContextPackageAuthoringService {
       compilerVersion: string
       projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
       packages: ContextPackageRepository
+      commands?: ContextAuthoringCommandRepository
       authority: ContextAuthoringAuthority
       now: () => Date
     }
@@ -427,6 +455,51 @@ export class ContextPackageAuthoringService {
   }
 
   async create(principalInput: string, input: unknown): Promise<ContextPackageReference> {
+    return this.options.packages.put(await this.#compile(principalInput, input))
+  }
+
+  async createForCommand(
+    principalRef: string,
+    idempotencyKey: string,
+    input: unknown
+  ): Promise<ContextPackageReference> {
+    const repository = this.options.commands
+    if (!repository) throw new Error('CONTEXT_AUTHORING_COMMANDS_NOT_CONFIGURED')
+    const request = ContextAuthoringRequestSchema.parse(input)
+    const scope = ContextAuthoringCommandScopeSchema.parse({
+      principalRef,
+      idempotencyKey,
+      operation: 'context.author',
+      workspaceId: request.workspaceId,
+      projectId: request.projectId,
+    })
+    const payloadHash = sha256(request)
+    const replay = (recordInput: ContextAuthoringCommandRecord): ContextPackageReference => {
+      const record = ContextAuthoringCommandRecordSchema.parse(recordInput)
+      if (canonical(record.scope) !== canonical(scope))
+        throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
+      if (record.payloadHash !== payloadHash) throw new Error('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+      return record.contextPackage
+    }
+    const existing = await repository.get(scope)
+    if (existing) return replay(existing)
+    const package_ = await this.#compile(principalRef, request)
+    return replay(
+      await repository.commit(
+        {
+          scope,
+          payloadHash,
+          contextPackage: {
+            contextPackageId: package_.contextPackageId,
+            contentDigest: package_.contentDigest,
+          },
+        },
+        package_
+      )
+    )
+  }
+
+  async #compile(principalInput: string, input: unknown): Promise<ContextPackage> {
     const principalRef = z.string().min(1).max(256).parse(principalInput)
     const request = ContextAuthoringRequestSchema.parse(input)
     const decisionInput = await this.options.authority.authorize(
@@ -518,7 +591,7 @@ export class ContextPackageAuthoringService {
       },
       compiledAt,
     })
-    return this.options.packages.put(package_)
+    return package_
   }
 }
 

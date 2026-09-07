@@ -2,12 +2,21 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ContextPackageReferenceSchema,
+  ContextAuthoringCommandScopeSchema,
+  ContextAuthoringCommandRecordSchema,
+  type ContextAuthoringCommandScope,
+  type ContextAuthoringCommandRecord,
+  type ContextAuthoringCommandRepository,
   assertContextPackageIntegrity,
   type ContextPackage,
   type ContextPackageReference,
   type ContextPackageRepository,
 } from '@control-plane/context'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import {
   AgentProfileSchema,
   AgentProfileVersionSchema,
@@ -183,6 +192,87 @@ export class SqliteVersionedCatalogRepository implements AgentProfileRepository,
       return true
     })
   }
+}
+
+export class SqliteContextAuthoringCommandRepository implements ContextAuthoringCommandRepository {
+  constructor(readonly provider: PersistenceProvider) {}
+
+  get(input: ContextAuthoringCommandScope): Promise<ContextAuthoringCommandRecord | undefined> {
+    const scope = ContextAuthoringCommandScopeSchema.parse(input)
+    return this.provider.transaction((transaction) => this.#read(transaction, scope))
+  }
+
+  commit(
+    input: ContextAuthoringCommandRecord,
+    packageInput: ContextPackage
+  ): Promise<ContextAuthoringCommandRecord> {
+    const record = ContextAuthoringCommandRecordSchema.parse(input)
+    const package_ = assertContextPackageIntegrity(packageInput)
+    if (
+      record.scope.workspaceId !== package_.projectState.workspaceId ||
+      record.scope.projectId !== package_.projectState.projectId ||
+      record.contextPackage.contextPackageId !== package_.contextPackageId ||
+      record.contextPackage.contentDigest !== package_.contentDigest
+    )
+      throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
+    return this.provider.transaction(async (transaction) => {
+      const existing = await this.#read(transaction, record.scope)
+      if (existing) {
+        if (existing.payloadHash !== record.payloadHash)
+          throw new Error('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+        return existing
+      }
+      const id = recordId(package_.contextPackageId)
+      const stored = await transaction.get(namespaces.contextPackages, id)
+      if (stored && !isDeepStrictEqual(assertContextPackageIntegrity(stored.value), package_))
+        throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+      if (!stored)
+        await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
+      await transaction.put({
+        namespace: 'context-authoring-commands',
+        id: authoringCommandId(record.scope),
+        value: json(record),
+      })
+      return record
+    })
+  }
+
+  async #read(
+    transaction: PersistenceTransaction,
+    scope: ContextAuthoringCommandScope
+  ): Promise<ContextAuthoringCommandRecord | undefined> {
+    const stored = await transaction.get('context-authoring-commands', authoringCommandId(scope))
+    if (!stored) return undefined
+    const record = ContextAuthoringCommandRecordSchema.parse(stored.value)
+    if (!isDeepStrictEqual(record.scope, scope))
+      throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
+    const storedPackage = await transaction.get(
+      namespaces.contextPackages,
+      recordId(record.contextPackage.contextPackageId)
+    )
+    if (!storedPackage) throw new Error('CONTEXT_AUTHORING_COMMAND_PACKAGE_MISSING')
+    const package_ = assertContextPackageIntegrity(storedPackage.value)
+    if (
+      package_.contentDigest !== record.contextPackage.contentDigest ||
+      package_.contextPackageId !== record.contextPackage.contextPackageId ||
+      package_.projectState.workspaceId !== scope.workspaceId ||
+      package_.projectState.projectId !== scope.projectId
+    )
+      throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
+    return record
+  }
+}
+
+function authoringCommandId(scope: ContextAuthoringCommandScope): string {
+  return recordId(
+    JSON.stringify([
+      scope.principalRef,
+      scope.workspaceId,
+      scope.projectId,
+      scope.operation,
+      scope.idempotencyKey,
+    ])
+  )
 }
 
 export class SqliteContextPackageRepository implements ContextPackageRepository {

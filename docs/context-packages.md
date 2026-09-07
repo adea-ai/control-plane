@@ -75,6 +75,28 @@ form must also provide durable command replay: the authoring clock and permissio
 must not create a different package on each identical retry. The shared input schema is preparation
 for that integration, not a claim that inline execution authoring is enabled.
 
+`createForCommand` supplies internal authoring replay through an injected
+`ContextAuthoringCommandRepository`. Its scope includes authenticated principal, workspace, project,
+the `context.author` operation and idempotency key. The service computes a canonical request hash;
+same-key different-input requests conflict, while an existing result is returned without rerunning
+policy or compilation. Authentication and current permission to resolve/read the returned reference
+remain host responsibilities on every request; replay is not a renewed authorization lease.
+
+`SqliteContextAuthoringCommandRepository` atomically stores the first winning command and package.
+Concurrent compilation may occur, but losing candidates are not persisted. Reads verify the stored
+scope and package integrity. Records currently have no deletion path and remain retained; bounded
+cleanup/retention policy is not implemented. This is not the complete `execution.validate` command
+inbox: that boundary must bind the full execution payload and final plan result, not only context
+inputs. PostgreSQL support and application wiring remain open.
+
+The SQLite regression exercises eight concurrent calls with differing trusted timestamps, confirms
+exactly one stored package/command, reopens the file and replays without invoking authorization or
+the clock, rejects changed input, and isolates another principal's lookup. Injected failure of the
+command-record write rolls back the package write too. This is same-provider concurrency evidence,
+not multi-process contention or cross-profile migration certification. Full candidate validation on
+2026-09-07 passed lint/type/format and 772 unit, 52 smoke and 98 E2E tests (87.50% line and 83.98%
+function coverage).
+
 ## Child derivation
 
 A child package references its parent package ID and digest. Its state items and Artifacts must be
