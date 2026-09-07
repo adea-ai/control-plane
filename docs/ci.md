@@ -27,9 +27,8 @@ The gate covers:
 - repository credential-pattern scanning through `bun run security:scan` without echoing matches.
 
 Repository settings allow squash and rebase merges but disable merge commits.
-Feature branches must squash into `staging`. The `staging` → `main` promotion
-and Release Please version pull requests must rebase; Code Foundry fails closed
-for any other configured merge strategy.
+Feature branches must squash into `main`. Release Please version pull requests
+must rebase; Code Foundry fails closed for any other configured merge strategy.
 
 ## Public-repository security gates
 

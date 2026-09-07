@@ -105,9 +105,9 @@ For maintainers, trusted contributors, and automation agents:
    chore(ci): cache Rust dependencies
    ```
 
-8. Push the branch and open a pull request into `staging`.
+8. Push the branch and open a pull request into `main`.
 9. Address review feedback and failed checks on the same branch.
-10. Merge with a squash after required checks pass and the change is ready; feature PRs land on `staging` with squash merges.
+10. Merge with a squash after required checks pass and the change is ready; feature PRs land on `main` with squash merges.
 
 ### Internal agent handoff
 

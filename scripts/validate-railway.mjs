@@ -78,7 +78,7 @@ const expectedEnvironments = {
   staging: {
     railwayEnvironment: 'staging',
     applicationEnvironment: 'staging',
-    sourceBranch: 'staging',
+    sourceBranch: 'main',
     neonBranch: 'staging',
   },
   production: {
@@ -124,7 +124,7 @@ for (const requiredFragment of [
   "volume('restate-data'",
   'preserve()',
   'RESTATE_REQUEST_IDENTITY_PUBLIC_KEY',
-  "const sourceBranch = production ? 'main' : 'staging'",
+  "const sourceBranch = 'main'",
   'branch: sourceBranch',
   'CONTROL_PLANE_CLOUD_RUNTIME',
   'CONTROL_PLANE_SERVICE_AUTH_ISSUER',
@@ -161,7 +161,7 @@ for (const environmentName of ['staging', 'production']) {
   if (
     configured?.sourceConnected !== false ||
     configured?.standbyAction !== 'remove-active-deployment' ||
-    configured?.activationBranch !== (environmentName === 'staging' ? 'staging' : 'main')
+    configured?.activationBranch !== 'main'
   ) {
     throw new Error(`Railway standby policy is incomplete: ${environmentName}.`)
   }

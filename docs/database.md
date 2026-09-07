@@ -26,8 +26,8 @@ attempt lifecycle transitions and loads the exact accepted plan before runtime d
 - the dedicated Control Plane Neon project has separate `staging` and
   `production` branches named after the Railway environments they serve:
   `staging` is the Railway staging database and `production` is the Railway
-  production database. The Git source branches remain `staging` and `main`;
-  only the Git branch names differ from the environment names, and the explicit
+  production database. Git deploys from `main`; only the Neon branch names
+  differ from the environment flow, and the explicit
   mapping below is the authority for the join;
 - Railway's `staging` and `production` environments must each supply their own
   `DATABASE_URL`, `DATABASE_MIGRATION_URL`, and `DATABASE_ADMIN_URL` values;
@@ -76,12 +76,11 @@ The environment mapping is intentionally explicit and credential-free in source:
 
 | Railway environment | Git source branch | Neon branch  | Application environment |
 | ------------------- | ----------------- | ------------ | ----------------------- |
-| `staging`           | `staging`         | `staging`    | `staging`               |
+| `staging`           | `main`            | `staging`    | `staging`               |
 | `production`        | `main`            | `production` | `production`            |
 
 Naming convention: Neon branches and Railway environments share the environment
-name (`staging`, `production`); Git source branches keep the release-flow names
-(`staging`, `main`). This matches the Adea Neon project, which also names
+name (`staging`, `production`); Git deploys from `main`. This matches the Adea Neon project, which also names
 its durable branches after environments (`development`, `staging`,
 `production`). Control Plane has no shared `development` Neon branch by policy:
 local development uses the pinned Compose PostgreSQL fixture and tests use

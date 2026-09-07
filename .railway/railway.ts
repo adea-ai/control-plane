@@ -7,7 +7,11 @@ const restateImage =
 export default defineRailway((context) => {
   const production = context.isEnvironment('production')
   const applicationEnvironment = production ? 'production' : 'staging'
-  const sourceBranch = production ? 'main' : 'staging'
+  // Both environments deploy from main: the staging environment is an
+  // on-demand reference that is activated against main (or a tag) for
+  // cloud-substrate debugging, then stood back down. There is no staging
+  // branch; see infrastructure/railway/environment.json.
+  const sourceBranch = 'main'
   const desiredReplicas = 1
   const applicationSource = production ? undefined : github(repository, { branch: sourceBranch })
   const restateData = volume('restate-data', { sizeMB: 500, region: 'ams' })

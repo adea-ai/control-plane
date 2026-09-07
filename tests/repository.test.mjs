@@ -199,12 +199,12 @@ end_of_record
   assert.throws(() => parseCoverageMinimum('features: all\n'), /not configured/)
 })
 
-test('configures the Code Foundry CI baseline for the public staging-release repository', async () => {
+test('configures the Code Foundry CI baseline for the public direct-workflow repository', async () => {
   const config = await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')
 
   assert.match(config, /^features: all$/m)
   assert.match(config, /^license: apache-2\.0$/m)
-  assert.match(config, /^git_workflow: staging-release$/m)
+  assert.match(config, /^git_workflow: direct$/m)
   assert.match(config, /^release_merge_strategy: rebase$/m)
   assert.match(config, /^codeql: auto$/m)
   assert.match(config, /^dependency_review: auto$/m)
@@ -225,7 +225,7 @@ test('configures the Code Foundry CI baseline for the public staging-release rep
   }
 })
 
-test('emits the required gate contexts and documents the staging-release policy', async () => {
+test('emits the required gate contexts and documents the direct-workflow policy', async () => {
   const [config, contributing, ci, foundation, productionReadiness] = await Promise.all([
     readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/CONTRIBUTING.md', import.meta.url), 'utf8'),
@@ -234,15 +234,15 @@ test('emits the required gate contexts and documents the staging-release policy'
     readFile(new URL('../.github/workflows/m9-production-readiness.yml', import.meta.url), 'utf8'),
   ])
 
-  assert.match(config, /^merge_strategy: rebase$/m)
+  assert.match(config, /^merge_strategy: squash$/m)
   assert.match(foundation, /^\s{4}name: Foundation Acceptance \/ Gate$/m)
   assert.match(productionReadiness, /^\s{4}name: M9 Production Readiness \/ Gate$/m)
-  assert.match(contributing, /feature PRs land on `staging` with squash merges/)
-  assert.match(ci, /Feature branches must squash into `staging`/)
-  assert.doesNotMatch(contributing, /feature PRs land on `main` with rebase merges/)
+  assert.match(contributing, /feature PRs land on `main` with squash merges/)
+  assert.match(ci, /Feature branches must squash into `main`/)
+  assert.doesNotMatch(contributing, /feature PRs land on `staging` with squash merges/)
 })
 
-test('generates the staging-release Code Foundry callers with parallel validation', async () => {
+test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {
   const validation = await readFile(
     new URL('../.github/workflows/validation.yml', import.meta.url),
     'utf8'
@@ -264,22 +264,18 @@ test('generates the staging-release Code Foundry callers with parallel validatio
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 2)
   assert.match(validation, /cancel-in-progress: true/)
   assert.doesNotMatch(validation, /ubuntu-slim/)
-  assert.match(validation, /branches: \[main, staging\]/)
+  assert.match(validation, /branches: \[main\]/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
   assert.match(release, /release\.yml@v1\.3\.1/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
-  assert.match(draftPr, /base: staging/)
-  assert.equal((dependabot.match(/target-branch: staging/g) ?? []).length, 2)
-
-  const releasePr = await readFile(
-    new URL('../.github/workflows/release-pr.yml', import.meta.url),
-    'utf8'
-  )
-  assert.match(releasePr, /branches: \[staging\]/)
-  assert.match(releasePr, /release-pr\.yml@v1\.3\.1/)
+  assert.match(draftPr, /base: main/)
+  assert.equal((dependabot.match(/target-branch: main/g) ?? []).length, 2)
+  // The direct workflow has no staging promotion caller: release-pr.yml must be gone.
+  const callerWorkflows = readdirSync(new URL('../.github/workflows/', import.meta.url))
+  assert(!callerWorkflows.includes('release-pr.yml'))
   const opencodeSecurity = await readFile(
     new URL('../.github/workflows/opencode-security.yml', import.meta.url),
     'utf8'

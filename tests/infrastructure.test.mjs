@@ -100,7 +100,7 @@ test('maps Railway staging and production to isolated Neon branches', async () =
     staging: {
       railwayEnvironment: 'staging',
       applicationEnvironment: 'staging',
-      sourceBranch: 'staging',
+      sourceBranch: 'main',
       neon: { provider: 'neon', project: 'control-plane', branch: 'staging' },
     },
     production: {
@@ -110,7 +110,7 @@ test('maps Railway staging and production to isolated Neon branches', async () =
       neon: { provider: 'neon', project: 'control-plane', branch: 'production' },
     },
   })
-  assert.match(source, /const sourceBranch = production \? 'main' : 'staging'/)
+  assert.match(source, /const sourceBranch = 'main'/)
   assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 1)
 })
 
@@ -136,7 +136,7 @@ test('defines a zero-compute production standby and bounded staging cost posture
   })
   assert.equal(policy.environments.staging.availability, 'configured-on-demand-reference')
   assert.equal(policy.environments.staging.sourceConnected, false)
-  assert.equal(policy.environments.staging.activationBranch, 'staging')
+  assert.equal(policy.environments.staging.activationBranch, 'main')
   assert.equal(policy.environments.staging.standbyAction, 'remove-active-deployment')
   assert.deepEqual(
     Object.fromEntries(

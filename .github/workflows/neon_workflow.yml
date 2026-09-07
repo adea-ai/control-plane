@@ -1,0 +1,143 @@
+name: Create/Delete Branch for Pull Request
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  # Supersede stale create/migrate runs, but let a close event wait so cleanup is never canceled.
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      branch: ${{ steps.branch_name.outputs.current_branch }}
+    steps:
+      - name: Get branch name
+        id: branch_name
+        uses: tj-actions/branch-names@5250492686b253f06fa55861556d1027b067aeb5 # v9.0.2
+
+  create_neon_branch:
+    name: Migrate Neon Branch
+    needs: setup
+    if: >-
+      github.event.action == 'opened' ||
+      github.event.action == 'reopened' ||
+      github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Get branch expiration date
+        run: echo "EXPIRES_AT=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Create Neon branch
+        id: create_neon_branch
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b # v6.4.0
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          parent_branch: staging
+          database: neondb
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ env.EXPIRES_AT }}
+
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Build restricted database URLs
+        env:
+          DATABASE_HOST: ${{ steps.create_neon_branch.outputs.db_host }}
+          DATABASE_HOST_POOLED: ${{ steps.create_neon_branch.outputs.db_host_pooled }}
+          DATABASE_APP_PASSWORD: ${{ secrets.NEON_CI_APP_PASSWORD }}
+          DATABASE_MIGRATION_PASSWORD: ${{ secrets.NEON_CI_MIGRATION_PASSWORD }}
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require("node:fs");
+          const {
+            DATABASE_APP_PASSWORD,
+            DATABASE_HOST,
+            DATABASE_HOST_POOLED,
+            DATABASE_MIGRATION_PASSWORD,
+            GITHUB_ENV,
+          } = process.env;
+          if (
+            !DATABASE_APP_PASSWORD ||
+            !DATABASE_HOST ||
+            !DATABASE_HOST_POOLED ||
+            !DATABASE_MIGRATION_PASSWORD ||
+            !GITHUB_ENV
+          ) {
+            throw new Error("Neon migration connection inputs are unavailable");
+          }
+          const connectionUrl = (role, password, host) => {
+            const url = new URL(`postgresql://${role}@localhost/neondb`);
+            url.hostname = host;
+            url.password = password;
+            url.searchParams.set("sslmode", "require");
+            return url.toString();
+          };
+          const runtimeUrl = connectionUrl(
+            "control_plane_app",
+            DATABASE_APP_PASSWORD,
+            DATABASE_HOST_POOLED,
+          );
+          const runtimeUnpooledUrl = connectionUrl(
+            "control_plane_app",
+            DATABASE_APP_PASSWORD,
+            DATABASE_HOST,
+          );
+          const migrationUrl = connectionUrl(
+            "control_plane_migrator",
+            DATABASE_MIGRATION_PASSWORD,
+            DATABASE_HOST,
+          );
+          console.log(`::add-mask::${runtimeUrl}`);
+          console.log(`::add-mask::${runtimeUnpooledUrl}`);
+          console.log(`::add-mask::${migrationUrl}`);
+          appendFileSync(
+            GITHUB_ENV,
+            `DATABASE_URL=${runtimeUrl}\nDATABASE_URL_UNPOOLED=${runtimeUrl}\nDATABASE_MIGRATION_URL=${migrationUrl}\n`,
+          );
+          NODE
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify migrations and transactions
+        run: |
+          bun --cwd=packages/database run db:check
+          bun --cwd=packages/database run db:migrate
+          bun run test:integration
+
+  delete_neon_branch:
+    name: Delete Neon Branch
+    needs: setup
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete Neon branch
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}

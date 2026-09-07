@@ -34,7 +34,7 @@ post_release_mode: auto
 opencode_security: true
 sync_mode: overlay
 custom_workflows: preserve
-git_workflow: staging-release
-merge_strategy: rebase
+git_workflow: direct
+merge_strategy: squash
 release_merge_strategy: rebase
 opencode_security_model:
