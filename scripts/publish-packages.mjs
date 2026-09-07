@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,19 +53,39 @@ async function publishedVersion(name) {
   return result.stdout.trim() || null
 }
 
+// Workspace manifests are the source of truth for workspace: ranges; bun
+// links workspace members lazily, so node_modules lookups are unreliable.
+const workspaceVersions = new Map()
+for (const kind of ['packages', 'apps']) {
+  let entries = []
+  try {
+    entries = await readdir(join(repoRoot, kind), { withFileTypes: true })
+  } catch {
+    continue
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    try {
+      const manifest = JSON.parse(
+        await readFile(join(repoRoot, kind, entry.name, 'package.json'), 'utf8')
+      )
+      workspaceVersions.set(manifest.name, manifest.version)
+    } catch {
+      // Not a workspace package manifest; skip.
+    }
+  }
+}
+
 async function rewriteSection(section, workspaceName) {
   const rewritten = {}
   for (const [dep, range] of Object.entries(section ?? {})) {
     const mappedDep = dep.startsWith('@control-plane/') ? publicName(dep) : dep
     if (typeof range === 'string' && range.startsWith('workspace:')) {
-      try {
-        const depManifest = JSON.parse(
-          await readFile(join(repoRoot, 'node_modules', dep, 'package.json'), 'utf8')
-        )
-        rewritten[mappedDep] = `^${depManifest.version}`
-      } catch {
+      const depVersion = workspaceVersions.get(dep)
+      if (!depVersion) {
         throw new Error(`[publish] cannot resolve ${range} for ${dep} in ${workspaceName}`)
       }
+      rewritten[mappedDep] = `^${depVersion}`
     } else {
       rewritten[mappedDep] = range
     }
