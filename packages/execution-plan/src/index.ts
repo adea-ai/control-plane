@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 import { ContextPackageReferenceSchema, ContextPackageSchema } from '@control-plane/context'
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  IdentifierSchemas,
+  ServiceCallerAssertionSchema,
+  ExecutionRequestValidationRequestSchema,
+} from '@control-plane/contracts'
 import {
   AgentProfileVersionSchema,
   ExecutionConstraintSetSchema,
@@ -253,6 +257,79 @@ export function deriveExecutionPlan(parentInput: unknown, input: unknown): Execu
 export interface ExecutionPlanRepository {
   put(plan: ExecutionPlan): Promise<ExecutionPlanReference>
   get(reference: ExecutionPlanReference): Promise<ExecutionPlan | undefined>
+}
+
+export const ExecutionValidationCommandScopeSchema = z
+  .object({
+    callerPrincipalId: ServiceCallerAssertionSchema.shape.servicePrincipalId,
+    workspaceId: IdentifierSchemas.workspaceId,
+    projectId: IdentifierSchemas.projectId,
+    operation: z.literal('execution.validate'),
+    idempotencyKey: z
+      .string()
+      .min(16)
+      .max(128)
+      .regex(/^[A-Za-z0-9._:-]+$/),
+  })
+  .strict()
+
+export const ExecutionValidationCommandRecordSchema = z
+  .object({
+    scope: ExecutionValidationCommandScopeSchema,
+    commandId: IdentifierSchemas.commandId,
+    requestId: IdentifierSchemas.requestId,
+    payloadHash: DigestSchema,
+    executionPlan: ExecutionPlanReferenceSchema,
+    recordedAt: TimestampSchema,
+  })
+  .strict()
+
+export type ExecutionValidationCommandScope = z.output<typeof ExecutionValidationCommandScopeSchema>
+export type ExecutionValidationCommandRecord = z.output<
+  typeof ExecutionValidationCommandRecordSchema
+>
+
+export interface ExecutionValidationCommandRepository {
+  get(scope: ExecutionValidationCommandScope): Promise<ExecutionValidationCommandRecord | undefined>
+  /** Atomically persist the first command/plan pair; reject same-key payload conflicts. */
+  commit(
+    record: ExecutionValidationCommandRecord,
+    plan: ExecutionPlan
+  ): Promise<ExecutionValidationCommandRecord>
+}
+
+export function executionValidationCommandKey(input: ExecutionValidationCommandScope): string {
+  const scope = ExecutionValidationCommandScopeSchema.parse(input)
+  return sha256([
+    scope.callerPrincipalId,
+    scope.workspaceId,
+    scope.projectId,
+    scope.operation,
+    scope.idempotencyKey,
+  ]).slice(7)
+}
+
+/** Hash semantic inputs, not the caller-supplied hash or retry transport metadata. */
+export function executionValidationPayloadHash(input: unknown): string {
+  const request = ExecutionRequestValidationRequestSchema.parse(input)
+  return sha256({ contractVersion: request.contractVersion, payload: request.payload })
+}
+
+export function assertExecutionValidationCommandPlan(
+  input: ExecutionValidationCommandRecord,
+  planInput: ExecutionPlan
+): ExecutionValidationCommandRecord {
+  const record = ExecutionValidationCommandRecordSchema.parse(input)
+  const plan = assertExecutionPlanIntegrity(planInput)
+  if (
+    record.scope.workspaceId !== plan.correlation.workspaceId ||
+    record.scope.projectId !== plan.correlation.projectId ||
+    record.requestId !== plan.correlation.requestId ||
+    record.executionPlan.executionPlanId !== plan.executionPlanId ||
+    record.executionPlan.contentDigest !== plan.contentDigest
+  )
+    throw new Error('EXECUTION_VALIDATION_COMMAND_PLAN_MISMATCH')
+  return record
 }
 
 export class InMemoryExecutionPlanRepository implements ExecutionPlanRepository {

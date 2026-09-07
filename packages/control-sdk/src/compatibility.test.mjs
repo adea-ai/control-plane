@@ -89,4 +89,37 @@ describe('Control API generated contract', () => {
       'Compatibility baseline v1 is immutable'
     )
   })
+
+  test('preserves every old request alternative and rejects constrained or narrowed unions', () => {
+    const document = (schema) => ({
+      paths: {
+        '/test': { post: { requestBody: { content: { 'application/json': { schema } } } } },
+      },
+    })
+    const original = { type: 'object', properties: { ref: { type: 'string' } }, required: ['ref'] }
+    const added = {
+      type: 'object',
+      properties: { inputs: { type: 'string' } },
+      required: ['inputs'],
+    }
+    const union = { anyOf: [original, added] }
+    expect(findBreakingContractChanges(document(original), document(union))).toEqual([])
+    expect(findBreakingContractChanges(document(union), document(union))).toEqual([])
+    expect(
+      findBreakingContractChanges(document(union), document({ anyOf: [original] }))
+    ).not.toEqual([])
+    expect(
+      findBreakingContractChanges(document(original), document({ anyOf: [added] }))
+    ).not.toEqual([])
+    expect(
+      findBreakingContractChanges(
+        document(original),
+        document({ ...union, additionalProperties: false })
+      )
+    ).not.toEqual([])
+    const narrowed = { ...original, properties: { ref: { type: 'string', maxLength: 1 } } }
+    expect(
+      findBreakingContractChanges(document(original), document({ anyOf: [narrowed, added] }))
+    ).not.toEqual([])
+  })
 })

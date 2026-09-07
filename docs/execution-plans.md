@@ -31,6 +31,66 @@ content integrity on every write. Retrieval returns an isolated copy suitable fo
 and reproduction. The plan contains only normalized references and policy requirements—never raw
 provider, connector, runtime-harness, secret-manager, or user credentials.
 
+## Validation-command replay
+
+`ExecutionValidationCommandRepository` defines an atomic first-result command/plan commit.
+The key binds authenticated caller principal, workspace, project, `execution.validate` and
+idempotency key. Records preserve the original command/request IDs, plan reference and receipt
+timestamp. The semantic hash is computed from the parsed contract version and complete validation
+payload; a caller-supplied hash, issued timestamp or retry metadata is not its authority.
+
+`SqliteExecutionValidationCommandRepository` stores the pair in one transaction. Same-key,
+same-hash commits return the first record without persisting a losing plan; changed hashes conflict.
+Reads verify scope and referenced plan integrity, including original request correlation. Records
+currently have no deletion path and are retained indefinitely; retention cleanup policy is not
+implemented here.
+
+The file-backed test covers concurrent distinct candidates, rollback after an injected command-write
+failure, full close/reopen, caller isolation, changed-input rejection and stored-scope corruption.
+These are same-provider SQLite tests, not multi-process certification.
+
+`PostgresExecutionValidationCommandRepository` implements the same atomic pair through a
+transaction-scoped advisory lock and the `execution_validation_commands` table (migration 0033).
+The PostgreSQL integration test exercises eight competing commits through four connections,
+injected rollback, repository reconstruction, caller isolation and corrupted scope/request/digest
+metadata. Its candidates are asserted absent before rollback, so earlier shared-suite fixtures cannot
+mask a leaked write. The PostgreSQL service-restart drill additionally verifies the exact stored
+command/plan pair and retries the repository commit after restart. The backup-restore drill checks
+both restored objects and their integrity through an administrator connection. Since that restore
+excludes ownership and privileges, it proves data recovery, not restored application permissions or
+API replay readiness. A live cloud/Hosted Server API restart matrix remains required.
+
+Profile portability now carries `execution-validation-command` records with their exact plans.
+Manifest verification rejects missing plans, forged logical keys, aliases and scope/request/digest
+mismatches. Imports preserve SQLite's record-key prefix and insert PostgreSQL plans before commands.
+A real SQLite → PostgreSQL → SQLite round trip retains the command and every exported logical ID
+and record digest. Older importers may reject this added category; this is not live cutover evidence.
+
+The validation service now uses this repository in the cloud, Hosted Server and shared
+Local/Hosted Simple compositions. It checks the authenticated caller before looking up a record.
+Identical semantic inputs replay the stored plan without reading profile, state, context or Skill
+inputs and without invoking the compilation clock. A changed payload under the same key returns
+409, even if the caller reuses its declared payload hash. First validation uses a composition-owned
+clock rather than `issuedAt`, and commits the plan and result atomically before returning success.
+Concurrent first calls may compile candidates, but only the winning pair persists.
+
+Response correlation identifies the current request while the stored plan retains its original request
+correlation. Replay reports a historical validation result; it is not fresh authorization to execute
+under a revoked policy or Artifact grant. Execution-time authorization remains a separate gate.
+Calls predating validation-command recording have no recorded validation-command entry; this change
+does not backfill them, and outstanding pre-upgrade retries require rollout consideration.
+
+The Local composition test proves concurrent service calls and replay after a real SQLite close/reopen
+with compilation inputs and the clock unavailable. The HTTP test proves missing-credential rejection,
+stable replay and conflict status. A PostgreSQL integration test uses the actual cloud composition and
+signed service credentials through HTTP injection: eight requests persist one command/plan pair,
+then replay succeeds after closing and recreating the application and connection with compilation
+inputs unavailable. Changed inputs return 409; invalid and revoked credentials return 401 even for
+recorded requests. This is in-process reconstruction, not an OS process crash or deployed restart;
+a live cloud/Hosted Server API restart matrix is still required. Inline context inputs are supported
+by the contract and validation service when an authoring service is injected; missing composition
+returns 503. The production context-authoring authority and entrypoint reachability gate remains open.
+
 ## Child execution authority
 
 A child plan records its parent plan ID and digest. Its workspace, project, and Agent remain fixed;

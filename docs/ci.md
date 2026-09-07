@@ -1,14 +1,15 @@
 # Continuous integration
 
-Code Foundry v0.40.1 is the CI control plane for this repository. Generated callers are pinned under `.github/workflows/` and use the staging-release
-topology: feature branches target `staging`, and validated `staging` changes are
-promoted to `main`.
+Code Foundry v1.4.1 is the CI runtime pinned by the generated callers under
+`.github/workflows/`. Feature branches target `main`; Railway staging is an
+on-demand reference environment, not a Git promotion branch.
 
 ## Required pull-request gate
 
 `Validation / Gate` is the single stable Code Foundry check. This repository sets
-`staging_validation_mode: audit`, so pull requests into both `staging` and `main`
-run CI, all four test jobs, Security, and CodeQL. Release Please pull requests use
+`staging_validation_mode: audit` in its shared configuration, but the generated
+pull-request caller targets `main`. Ordinary pull requests run CI, all four test
+jobs, Security, and CodeQL. Release Please pull requests use
 the separate release-policy tier. Each tier fans out independent jobs
 and aggregates their results. Each workflow cancels superseded work for the same
 branch while unrelated pull requests, scheduled audits, and manual runs remain
@@ -43,6 +44,23 @@ Maintainers must treat successful `Validation / Gate`, `Foundation Acceptance /
 Gate`, and `M9 Production Readiness / Gate` checks as required and merge only
 through pull requests. Repository rules should require these stable gates without
 enumerating their internal parallel jobs.
+
+## Neon preview lifecycle
+
+The Neon workflow creates or migrates a PR-scoped preview on open, reopen and
+synchronize, and attempts cleanup on close. Cleanup first performs a read-only,
+paginated exact-name lookup using the [Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
+A successfully verified absent preview is a no-op, covering previews that were
+never created or have already expired. Only a unique, unprotected, non-default
+child branch in the configured project supplies an ID to the pinned deletion
+action. HTTP failures, malformed or incomplete listings, pagination loops and
+unsafe targets fail rather than being treated as absence. The workflow does not
+check out PR code for cleanup, and passes the head ref as environment data.
+
+This behavior does not grant migration-role membership, raise branch limits or
+authorize manual deletion of an existing preview. Those are separate operational
+decisions. Local workflow tests use synthetic responses; a local pass is not
+proof that a hosted cleanup job ran successfully.
 
 ## Reversible billing pause
 

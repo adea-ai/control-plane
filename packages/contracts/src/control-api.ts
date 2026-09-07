@@ -64,6 +64,29 @@ export const ContextPackagePublicReferenceSchema = z.object({
 
 export type ContextPackagePublicReference = z.output<typeof ContextPackagePublicReferenceSchema>
 
+/** Caller selection only; policy, state, Artifact metadata and clocks are host-owned. */
+export const ContextAuthoringInputsSchema = z.strictObject({
+  objective: z.string().min(1).max(16_384),
+  candidates: z
+    .array(
+      z.strictObject({
+        itemId: IdentifierSchemas.projectStateItemId,
+        itemRevision: z.number().int().positive(),
+        required: z.boolean(),
+        priority: z.number().int(),
+      })
+    )
+    .max(10_000),
+  successCriteria: z.array(z.string().min(1).max(4_096)).min(1).max(128),
+  returnContract: z.strictObject({ contractRef: z.string().min(1).max(512) }),
+  budgets: z.strictObject({
+    maximumBytes: z.number().int().positive(),
+    maximumTokens: z.number().int().positive(),
+  }),
+})
+
+export type ContextAuthoringInputs = z.output<typeof ContextAuthoringInputsSchema>
+
 export const PolicySnapshotPublicReferenceSchema = z.object({
   policySnapshotId: z.string().min(1).max(256),
   revision: z.number().int().positive(),
@@ -248,20 +271,30 @@ export const RuntimeListResponseSchema = successResponse(
   z.object({ runtimes: z.array(RuntimeReadModelSchema).max(1_000) })
 )
 
+const ExecutionValidationPayloadSchema = z.object({
+  taskId: IdentifierSchemas.taskId,
+  agentId: IdentifierSchemas.agentId,
+  profileVersionId: IdentifierSchemas.profileVersionId,
+  skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
+  projectState: ProjectStateReferenceSchema,
+  policySnapshot: PolicySnapshotPublicReferenceSchema,
+  runtimeRequirements: z.array(CapabilityNameSchema).max(128),
+  outputContractRef: z.string().min(1).max(512),
+})
+
 export const ExecutionRequestValidationRequestSchema = CommandContextSchema.extend({
   operation: z.literal('execution.validate'),
   issuedAt: TimestampSchema,
-  payload: z.object({
-    taskId: IdentifierSchemas.taskId,
-    agentId: IdentifierSchemas.agentId,
-    profileVersionId: IdentifierSchemas.profileVersionId,
-    skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
-    projectState: ProjectStateReferenceSchema,
-    contextPackage: ContextPackagePublicReferenceSchema,
-    policySnapshot: PolicySnapshotPublicReferenceSchema,
-    runtimeRequirements: z.array(CapabilityNameSchema).max(128),
-    outputContractRef: z.string().min(1).max(512),
-  }),
+  payload: z.union([
+    ExecutionValidationPayloadSchema.extend({
+      contextPackage: ContextPackagePublicReferenceSchema,
+      contextInputs: z.never().optional(),
+    }),
+    ExecutionValidationPayloadSchema.extend({
+      contextPackage: z.never().optional(),
+      contextInputs: ContextAuthoringInputsSchema,
+    }),
+  ]),
 }).superRefine((request, context) => {
   if (
     request.payload.projectState.workspaceId !== request.workspaceId ||

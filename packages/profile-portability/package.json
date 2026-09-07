@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "oxlint src",
-    "test": "bun test src/*.test.mjs",
+    "test": "bun test --path-ignore-patterns '**/*.integration.test.mjs' src/*.test.mjs",
     "test:integration": "bun test --timeout 30000 src/postgres.integration.test.mjs"
   },
   "dependencies": {
@@ -30,6 +30,7 @@
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/production-readiness": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
     "drizzle-orm": "0.45.2",
     "zod": "4.5.4"

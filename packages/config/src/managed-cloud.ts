@@ -26,7 +26,7 @@ export interface ManagedCloudServiceAuthenticationConfiguration {
 }
 
 export interface ManagedCloudRuntimeConfiguration {
-  readonly mode: 'certification' | 'disabled'
+  readonly mode: 'certification' | 'disabled' | 'remote'
 }
 
 export interface ManagedCloudConfiguration {
@@ -123,7 +123,7 @@ function loadWorkflowRuntimeConfiguration(
   environment: RawEnvironment
 ): ManagedCloudRuntimeConfiguration {
   const mode = environment['CONTROL_PLANE_CLOUD_RUNTIME']
-  if (mode !== 'certification' && mode !== 'disabled') {
+  if (mode !== 'certification' && mode !== 'disabled' && mode !== 'remote') {
     throw new ConfigurationError({
       code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
       invalid: ['CONTROL_PLANE_CLOUD_RUNTIME'],

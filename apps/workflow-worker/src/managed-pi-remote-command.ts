@@ -179,10 +179,12 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     readonly attempt: ExecutionAttempt
     readonly effectKey: string
     readonly reason: 'user_request' | 'deadline'
+    readonly issuedAt?: string
   }): Promise<GatewayCommandEnvelope> {
     const execution = await this.#executions.getExecution(input.executionId)
     if (execution === undefined) throw new Error('REMOTE_RUNTIME_EXECUTION_MISSING')
     const runtime = await this.#runtime(input.attempt, execution.correlation)
+    const issuedAt = input.issuedAt === undefined ? this.#now() : new Date(input.issuedAt)
     return this.#command({
       executionId: input.executionId,
       attempt: input.attempt,
@@ -193,9 +195,10 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
       requiredCapabilities: ['execution.cancel'],
       respectAttemptDeadline: false,
       maximumDurationMs: 5 * 60 * 1_000,
+      issuedAt,
       parameters: {
         handleId: `managed-pi:${input.attempt.attemptId}`,
-        requestedAt: this.#now().toISOString(),
+        requestedAt: issuedAt.toISOString(),
       },
     })
   }
@@ -246,8 +249,9 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     readonly parameters: Record<string, unknown>
     readonly respectAttemptDeadline?: boolean
     readonly maximumDurationMs?: number
+    readonly issuedAt?: Date
   }): GatewayCommandEnvelope {
-    const issuedAt = this.#now()
+    const issuedAt = input.issuedAt ?? this.#now()
     const protocolVersion = gatewayProtocolVersion(input.runtime.versions.protocol)
     const payload = JSON.parse(
       JSON.stringify({ version: 1, parameters: input.parameters })

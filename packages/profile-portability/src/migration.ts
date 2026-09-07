@@ -1,4 +1,13 @@
 import { createHash } from 'node:crypto'
+import { EvalRunSchema } from '@control-plane/production-readiness'
+import {
+  ContextAuthoringCommandRecordSchema,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
+import {
+  ExecutionValidationCommandRecordSchema,
+  executionValidationCommandKey,
+} from '@control-plane/execution-plan'
 import type {
   DeploymentProfile,
   JsonValue,
@@ -14,6 +23,7 @@ import {
   assertPortableManifest,
   createPortableRecord,
   finalizePortableManifest,
+  portableEvaluationRunKey,
   type PortableArtifactReference,
   type PortableExportManifest,
   type PortableRecord,
@@ -385,7 +395,10 @@ export const PortablePersistenceNamespaces = Object.freeze({
   'project-states': 'project-state',
   'project-state-history': 'project-state',
   'context-packages': 'context-package',
+  'context-authoring-commands': 'context-authoring-command',
   'execution-plans': 'execution-plan',
+  'execution-validation-commands': 'execution-validation-command',
+  'evaluation-runs': 'evaluation-run',
 } as const)
 
 type PortablePersistenceNamespace = keyof typeof PortablePersistenceNamespaces
@@ -605,11 +618,16 @@ function persistenceIdentity(record: PortableRecord): {
   }
   return {
     namespace,
-    id: sqliteRecordId(
-      namespace === 'project-states' || namespace === 'project-state-history'
-        ? id.replaceAll(':', '\u001f')
-        : id
-    ),
+    id:
+      namespace === 'context-authoring-commands' ||
+      namespace === 'execution-validation-commands' ||
+      namespace === 'evaluation-runs'
+        ? `r-${id}`
+        : sqliteRecordId(
+            namespace === 'project-states' || namespace === 'project-state-history'
+              ? id.replaceAll(':', '\u001f')
+              : id
+          ),
   }
 }
 
@@ -618,6 +636,26 @@ function portableIdentity(
   value: JsonValue,
   fallback: string
 ): string {
+  if (namespace === 'evaluation-runs') {
+    const key = portableEvaluationRunKey(EvalRunSchema.parse(value).evalRunId)
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
+  if (namespace === 'execution-validation-commands') {
+    const key = executionValidationCommandKey(
+      ExecutionValidationCommandRecordSchema.parse(value).scope
+    )
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
+  if (namespace === 'context-authoring-commands') {
+    const key = contextAuthoringCommandKey(ContextAuthoringCommandRecordSchema.parse(value).scope)
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
   if (!isJsonObject(value)) return fallback
   if (namespace === 'agent-profiles' && typeof value['profileId'] === 'string') {
     return value['profileId']

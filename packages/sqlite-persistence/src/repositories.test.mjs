@@ -2,12 +2,17 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { CommandInboxService } from '@control-plane/domain'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
+import {
+  ContextPackageAuthoringService,
+  contextPackageSerializationFixtures,
+} from '@control-plane/context'
 import {
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
+  SqliteContextAuthoringCommandRepository,
   SqlitePersistenceProvider,
+  SqliteProjectStateRepository,
   SqliteRuntimeDiscoveryRepository,
 } from './index.ts'
 
@@ -51,16 +56,59 @@ function commandInput(overrides = {}) {
   }
 }
 
-function service(provider) {
+function service(provider, now = receivedAt) {
   return new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider),
     executionIdFactory: () => ids.executionId,
     executionPlanValidator: { validate: async () => true },
-    now: () => receivedAt,
+    now: () => now,
   })
 }
 
 describe('SQLite domain repositories', () => {
+  test.each([1, 30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    const deadline = new Date(Date.parse(receivedAt) + days * 86_400_000).toISOString()
+    const input = commandInput({ retentionExpiresAt: deadline })
+    try {
+      await provider.migrate()
+      let accepted
+      if (days < 30) {
+        const template = await new CommandInboxService({
+          repository: new InMemoryCommandAcceptanceRepository(),
+          executionIdFactory: () => ids.executionId,
+          executionPlanValidator: { validate: async () => true },
+          now: () => receivedAt,
+        }).acceptExecution(commandInput())
+        // Seed the pre-policy persisted shape without using new-acceptance validation.
+        accepted = await new SqliteCommandAcceptanceRepository(provider).accept(
+          { ...template.command, retentionExpiresAt: deadline },
+          template.execution
+        )
+      } else {
+        accepted = await service(provider).acceptExecution(input)
+      }
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const replay = await service(provider, deadline).acceptExecution(input)
+      expect(replay.replayed).toBe(true)
+      expect(replay.command.retentionExpiresAt).toBe(deadline)
+      expect(replay.execution).toEqual(accepted.execution)
+      await expect(
+        service(provider, new Date(Date.parse(deadline) + 1).toISOString()).acceptExecution(input)
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      expect(
+        await new SqliteCommandAcceptanceRepository(provider).getByExecutionId(ids.executionId)
+      ).toMatchObject({ retentionExpiresAt: deadline })
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('persists workspace-scoped runtime discovery projections across reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-discovery-'))
     const path = join(directory, 'control-plane.sqlite')
@@ -123,6 +171,143 @@ describe('SQLite domain repositories', () => {
       const repository = new SqliteContextPackageRepository(provider)
       expect(await repository.getById(package_.contextPackageId)).toEqual(package_)
       expect(await repository.getById('ctx_01JABCDEF0123456789ABCDEFG')).toBeUndefined()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('authors from durable state and resolves the resulting package after reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-authoring-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const projectStates = new SqliteProjectStateRepository(provider)
+      const scope = { workspaceId: ids.workspaceId, projectId: ids.projectId }
+      expect(
+        await projectStates.create({
+          schemaVersion: 1,
+          ...scope,
+          revision: 0,
+          items: [],
+          createdAt: receivedAt,
+          updatedAt: receivedAt,
+        })
+      ).toBe(true)
+      const packages = new SqliteContextPackageRepository(provider)
+      const authoring = new ContextPackageAuthoringService({
+        compilerVersion: '1.0.0',
+        projectStates,
+        packages,
+        commands: new SqliteContextAuthoringCommandRepository(provider),
+        now: () => new Date(receivedAt),
+        authority: {
+          async authorize(principalRef, request) {
+            if (
+              principalRef !== 'service:standalone' ||
+              request.workspaceId !== scope.workspaceId ||
+              request.projectId !== scope.projectId
+            )
+              return undefined
+            return {
+              ...scope,
+              principalRef,
+              expiresAt: '2026-08-24T11:00:00.000Z',
+              constraints: {
+                allowedSensitivities: ['public'],
+                allowedStateItemIds: [],
+                allowedArtifactIds: [],
+              },
+              permissions: [],
+              budgets: { maximumBytes: 1024, maximumTokens: 256 },
+            }
+          },
+          async resolveArtifact() {
+            throw new Error('Unexpected Artifact resolution')
+          },
+        },
+      })
+      const request = {
+        ...scope,
+        projectStateRevision: 0,
+        objective: 'Run with no optional context provider',
+        candidates: [],
+        successCriteria: ['Return the pinned package'],
+        returnContract: { contractRef: 'contract://standalone-result/v1' },
+        budgets: { maximumBytes: 2048, maximumTokens: 512 },
+      }
+      await expect(authoring.create('service:other', request)).rejects.toThrow(
+        'UNAUTHORIZED_CONTEXT'
+      )
+      const idempotencyKey = 'standalone-authoring-0001'
+      const realCommands = authoring.options.commands
+      authoring.options.commands = new SqliteContextAuthoringCommandRepository({
+        transaction: (operation) =>
+          provider.transaction((transaction) =>
+            operation({
+              get: transaction.get.bind(transaction),
+              put: async (write) => {
+                if (write.namespace === 'context-authoring-commands')
+                  throw new Error('INJECTED_COMMAND_WRITE_FAILURE')
+                return transaction.put(write)
+              },
+            })
+          ),
+      })
+      await expect(
+        authoring.createForCommand('service:standalone', idempotencyKey, request)
+      ).rejects.toThrow('INJECTED_COMMAND_WRITE_FAILURE')
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('context-packages')).toEqual([])
+        expect(await transaction.list('context-authoring-commands')).toEqual([])
+      })
+      authoring.options.commands = realCommands
+      let clockTicks = 0
+      authoring.options.now = () => new Date(Date.parse(receivedAt) + clockTicks++ * 1000)
+      const refs = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          authoring.createForCommand('service:standalone', idempotencyKey, request)
+        )
+      )
+      const ref = refs[0]
+      expect(refs.every((value) => value.contextPackageId === ref.contextPackageId)).toBe(true)
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('context-packages')).toHaveLength(1)
+        expect(await transaction.list('context-authoring-commands')).toHaveLength(1)
+      })
+      const before = await packages.get(ref)
+      expect(before.budgets).toEqual({ maximumBytes: 1024, maximumTokens: 256 })
+      expect(before.providerComposition).toBeUndefined()
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const reopened = new SqliteContextPackageRepository(provider)
+      expect(await reopened.get(ref)).toEqual(before)
+      expect(await reopened.getById(ref.contextPackageId)).toEqual(before)
+      authoring.options.commands = new SqliteContextAuthoringCommandRepository(provider)
+      authoring.options.authority.authorize = async () => {
+        throw new Error('Replay must not re-author')
+      }
+      authoring.options.now = () => new Date('2026-10-01T00:00:00.000Z')
+      expect(
+        await authoring.createForCommand('service:standalone', idempotencyKey, request)
+      ).toEqual(ref)
+      await expect(
+        authoring.createForCommand('service:standalone', idempotencyKey, {
+          ...request,
+          objective: 'Changed input',
+        })
+      ).rejects.toThrow('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+      expect(
+        await authoring.options.commands.get({
+          principalRef: 'service:other',
+          workspaceId: ids.workspaceId,
+          projectId: ids.projectId,
+          operation: 'context.author',
+          idempotencyKey,
+        })
+      ).toBeUndefined()
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

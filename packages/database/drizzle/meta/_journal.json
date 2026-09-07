@@ -225,6 +225,20 @@
       "when": 1788470966368,
       "tag": "0031_bouncy_sandman",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1788805620222,
+      "tag": "0032_groovy_surge",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788808021516,
+      "tag": "0033_medical_nextwave",
+      "breakpoints": true
     }
   ]
 }

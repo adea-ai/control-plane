@@ -33,9 +33,12 @@ cp .env.example .env
 # POSTGRES_MIGRATION_PASSWORD, and POSTGRES_APPLICATION_PASSWORD in .env.
 openssl rand -hex 32
 mkdir -p data/server/control-plane data/server/postgres data/server/restate
+chmod 700 data/server/restate
+node ../../scripts/provision-restate-identity.mjs "$(pwd -P)/data/server/restate"
+# Put the printed PUBLIC value in RESTATE_REQUEST_IDENTITY_PUBLIC_KEY in .env.
 sudo chown 1000:1000 data/server/control-plane
 sudo chown 70:70 data/server/postgres
-sudo chown 0:0 data/server/restate
+sudo chown 0:0 data/server/restate data/server/restate/request-identity-private.pem
 chmod 700 data/server data/server/*
 docker compose --profile server up --build -d
 docker compose --profile server ps
@@ -47,6 +50,18 @@ by the former `control_plane` application/owner role to `control_plane_migrator`
 runtime grants, and then migrations run as the migrator. Back up PostgreSQL before the first upgrade
 from a release that used one shared role. Never reuse any of the three passwords or point
 `DATABASE_URL` at the bootstrap or migration role.
+
+The Server workflow endpoint requires Restate request signatures. The provisioning command
+creates an owner-only ED25519 private key in the Restate data directory and prints only its
+public identity. It reuses an existing key and refuses symlinks or unsafe permissions. Provision
+before changing directory ownership; for an existing root-owned Restate directory, run the
+command with `sudo node` instead. Never mount the private key into the Control Plane container.
+Back up the key with Restate state. Missing keys or mismatched public identities prevent startup
+or deployment registration; they never enable unsigned access. To rotate, stop Server and
+Restate, retain the old key in an owner-only backup, provision a new key in the same location,
+update the public identity in `.env`, and recreate both services together. Rollback restores both
+the previous private key and public identity. The Simple profile remains loopback-only and does
+not require this separate-service signing configuration.
 
 The server component manifest reports `hosted-server`, PostgreSQL persistence, filesystem artifacts, and the separate Restate dependency. An S3-compatible ObjectStore is optional and replaces only the object-store adapter; Neon is a supported PostgreSQL provider but is not required. To enable it, set `HOSTED_OBJECT_STORE=s3-compatible` plus `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. The endpoint must use HTTPS and all values are required together. Cloudflare R2 works through this seam with region `auto`.
 

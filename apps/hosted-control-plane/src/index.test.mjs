@@ -14,7 +14,33 @@ import {
 } from './index.ts'
 
 describe('Hosted server composition', () => {
+  test('maps the Restate request identity from the production environment', () => {
+    const key = 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f'
+    expect(
+      resolveHostedCompositionConfiguration({
+        DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
+        RESTATE_REQUEST_IDENTITY_PUBLIC_KEY: key,
+      }).requestIdentityPublicKey
+    ).toBe(key)
+  })
+
+  test('rejects missing or malformed Hosted signing configuration before allocating resources', () => {
+    for (const requestIdentityPublicKey of [undefined, '', 'invalid', 'publickeyv1_0']) {
+      expect(
+        () =>
+          new HostedServerControlPlaneComposition({
+            dataDirectory: '/unused-hosted-test',
+            databaseUrl: 'invalid-database-url',
+            requestIdentityPublicKey,
+          })
+      ).toThrow('HOSTED_RESTATE_REQUEST_IDENTITY_REQUIRED')
+    }
+  })
+
   test('propagates the supported remote runtime activity port through the production launcher', () => {
+    const contextAuthoring = {
+      authority: { authorize: async () => undefined, resolveArtifact: async () => undefined },
+    }
     const runtimeActivityPort = {
       dispatch: async () => ({ outcome: 'cancelled' }),
       applyInteraction: async () => ({ outcome: 'cancelled' }),
@@ -25,10 +51,11 @@ describe('Hosted server composition', () => {
         DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
         CONTROL_PLANE_DATA_DIR: '/var/lib/control-plane',
       },
-      { runtimeActivityPort }
+      { runtimeActivityPort, contextAuthoring }
     )
 
     expect(configuration.runtimeActivityPort).toBe(runtimeActivityPort)
+    expect(configuration.contextAuthoring).toBe(contextAuthoring)
     expect(configuration).toMatchObject({
       dataDirectory: '/var/lib/control-plane',
       databaseUrl: 'postgresql://app:secret@postgres/control_plane',
@@ -38,6 +65,7 @@ describe('Hosted server composition', () => {
   test('reports PostgreSQL and separate Restate dependencies without changing core contracts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-'))
     const calls = []
+    const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
     const connection = {
       database: {},
       check: async () => calls.push('database:check'),
@@ -50,6 +78,7 @@ describe('Hosted server composition', () => {
       stop: async () => calls.push('workflow:stop'),
     }
     const composition = new HostedServerControlPlaneComposition({
+      contextAuthoring: { authority },
       dataDirectory: directory,
       databaseUrl: 'postgresql://app:secret@postgres/control_plane',
       connection,
@@ -75,6 +104,9 @@ describe('Hosted server composition', () => {
       },
     })
     try {
+      expect(
+        composition.executionValidationService.options.contextAuthoring.options.authority
+      ).toBe(authority)
       await composition.start()
       expect(await composition.manifest()).toMatchObject({
         profile: 'hosted-server',
@@ -212,6 +244,7 @@ describe('Hosted server composition', () => {
       () =>
         new HostedServerControlPlaneComposition({
           dataDirectory: '/tmp/control-plane-invalid-object-store',
+          requestIdentityPublicKey: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',
           databaseUrl: 'postgresql://app:secret@postgres/control_plane',
           connection: { database: {}, check: async () => undefined, close: async () => undefined },
           objectStoreKind: 's3-compatible',

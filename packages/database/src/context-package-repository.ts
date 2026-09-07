@@ -11,7 +11,7 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { contextPackages } from './schema/context-packages.js'
 
 export class PostgresContextPackageRepository implements ContextPackageRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert'>) {}
 
   async put(input: ContextPackage): Promise<ContextPackageReference> {
     const package_ = assertContextPackageIntegrity(input)

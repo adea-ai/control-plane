@@ -4,6 +4,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { executionValidationCommandKey } from '@control-plane/execution-plan'
+import {
+  contextPackageSerializationFixtures,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
 import {
   SqlitePersistenceProvider,
   SqliteProjectStateRepository,
@@ -148,6 +154,166 @@ class MemoryObjectStore {
 }
 
 describe('portable profile export and import', () => {
+  test('requires validation replay records to retain exact scoped plans and logical identities', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const command = {
+      scope: {
+        callerPrincipalId: 'svc_portable',
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        operation: 'execution.validate',
+        idempotencyKey: 'portable-validation-0001',
+      },
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: plan.correlation.requestId,
+      recordedAt: createdAt,
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+      executionPlan: { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
+    }
+    const planRecord = {
+      category: 'execution-plan',
+      logicalId: `execution-plans/${plan.executionPlanId}`,
+      revision: 0,
+      value: plan,
+    }
+    const commandRecord = {
+      category: 'execution-validation-command',
+      logicalId: `execution-validation-commands/${executionValidationCommandKey(command.scope)}`,
+      revision: 0,
+      value: command,
+    }
+    const manifestFor = async (records) =>
+      assertPortableManifest(
+        await exportPortableState(source({ records }), {
+          exportId: 'validation-fixture',
+          createdAt,
+        })
+      )
+    expect(
+      assertPortableManifest(await manifestFor([planRecord, commandRecord])).records
+    ).toHaveLength(2)
+    const otherScope = { ...command.scope, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' }
+    const aliasId = 'pln_01JBBCDEF0123456789ABCDEFG'
+    for (const records of [
+      [commandRecord],
+      [
+        planRecord,
+        { ...commandRecord, logicalId: `execution-validation-commands/${'0'.repeat(64)}` },
+      ],
+      [
+        planRecord,
+        {
+          ...commandRecord,
+          logicalId: `execution-validation-commands/${executionValidationCommandKey(otherScope)}`,
+          value: { ...command, scope: otherScope },
+        },
+      ],
+      [
+        planRecord,
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            executionPlan: { ...command.executionPlan, contentDigest: `sha256:${'0'.repeat(64)}` },
+          },
+        },
+      ],
+      [
+        planRecord,
+        { ...commandRecord, value: { ...command, requestId: 'req_01JBBCDEF0123456789ABCDEFG' } },
+      ],
+      [
+        { ...planRecord, logicalId: `execution-plans/${aliasId}` },
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            executionPlan: { ...command.executionPlan, executionPlanId: aliasId },
+          },
+        },
+      ],
+    ])
+      await expect(manifestFor(records)).rejects.toThrow()
+  })
+
+  test('requires authoring replay identities to retain their exact scoped package', async () => {
+    const package_ = contextPackageSerializationFixtures.futurePi
+    const command = {
+      scope: {
+        principalRef: 'service:portable',
+        workspaceId: package_.projectState.workspaceId,
+        projectId: package_.projectState.projectId,
+        operation: 'context.author',
+        idempotencyKey: 'portable-authoring-0001',
+      },
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+      contextPackage: {
+        contextPackageId: package_.contextPackageId,
+        contentDigest: package_.contentDigest,
+      },
+    }
+    const packageRecord = {
+      category: 'context-package',
+      logicalId: `context-packages/${package_.contextPackageId}`,
+      revision: 0,
+      value: package_,
+    }
+    const commandRecord = {
+      category: 'context-authoring-command',
+      logicalId: `context-authoring-commands/${contextAuthoringCommandKey(command.scope)}`,
+      revision: 0,
+      value: command,
+    }
+    const manifestFor = (records) =>
+      exportPortableState(source({ records }), { exportId: 'authoring-fixture', createdAt })
+    expect(
+      assertPortableManifest(await manifestFor([packageRecord, commandRecord])).records
+    ).toHaveLength(2)
+    const otherScope = { ...command.scope, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' }
+    const aliasId = 'ctx_01JBBCDEF0123456789ABCDEFG'
+    for (const records of [
+      [commandRecord],
+      [
+        packageRecord,
+        {
+          ...commandRecord,
+          logicalId: `context-authoring-commands/${contextAuthoringCommandKey(otherScope)}`,
+          value: { ...command, scope: otherScope },
+        },
+      ],
+      [
+        { ...packageRecord, logicalId: `context-packages/${aliasId}` },
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            contextPackage: { ...command.contextPackage, contextPackageId: aliasId },
+          },
+        },
+      ],
+      [
+        packageRecord,
+        { ...commandRecord, logicalId: `context-authoring-commands/${'0'.repeat(64)}` },
+      ],
+      [
+        packageRecord,
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            contextPackage: {
+              ...command.contextPackage,
+              contentDigest: `sha256:${'0'.repeat(64)}`,
+            },
+          },
+        },
+      ],
+    ]) {
+      await expect(
+        (async () => assertPortableManifest(await manifestFor(records)))()
+      ).rejects.toThrow()
+    }
+  })
   test('creates a deterministic, versioned, digest-verified manifest without history by default', async () => {
     const first = await exportPortableState(source(), {
       exportId: 'export-1',

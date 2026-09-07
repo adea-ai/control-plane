@@ -6,6 +6,7 @@ import {
   type StructuredLogger,
 } from '@control-plane/bootstrap'
 import type { RawEnvironment } from '@control-plane/config'
+import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 import type { NestFastifyApplication } from '@nestjs/platform-fastify'
 import { createControlApiApplication } from './application.js'
 import type { ServiceAuthenticator } from './auth/service-authentication.js'
@@ -25,6 +26,7 @@ import type { MarketplaceRegistryService } from './marketplace/registry.js'
 export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
+  readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly cwd?: string
   readonly environment?: RawEnvironment
   readonly executionAcceptanceService?: ExecutionAcceptanceService
@@ -71,7 +73,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           : createManagedCloudControlApiComposition(
               managedCloud,
               logger,
-              options.postgresConnectionFactory
+              options.postgresConnectionFactory,
+              options.contextAuthoring
             )
       if (cloudComposition !== undefined) {
         registerResource('control-api-postgres', () => cloudComposition.connection.close())

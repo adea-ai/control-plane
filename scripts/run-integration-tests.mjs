@@ -83,6 +83,11 @@ const remoteDatabase = [process.env.DATABASE_URL, process.env.DATABASE_MIGRATION
   .some((value) => !isLoopbackHostname(databaseHostname(value)))
 
 try {
+  if (remoteDatabase && !process.env.DATABASE_ADMIN_URL) {
+    throw new Error(
+      'Remote integration requires an explicit DATABASE_ADMIN_URL for isolated test databases'
+    )
+  }
   if (!remoteDatabase && !postgresWasRunning)
     run('docker', ['compose', 'up', '-d', '--wait', 'postgres'])
   if (!remoteDatabase) await waitForPostgres()
@@ -103,6 +108,7 @@ try {
   run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1'], {
     environment: integrationEnvironment,
   })
+  run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
   if (remoteDatabase) {
     console.log('Skipping PostgreSQL disruption and restore drills against a remote target.')
   } else {

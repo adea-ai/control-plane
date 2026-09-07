@@ -77,6 +77,8 @@ export function resolveHostedCompositionConfiguration(
     options[key] === undefined ? {} : { [key]: options[key] }
   const restateAdminUrl = options.restateAdminUrl ?? environment['RESTATE_ADMIN_URL']
   const restateIngressUrl = options.restateIngressUrl ?? environment['RESTATE_INGRESS_URL']
+  const requestIdentityPublicKey =
+    options.requestIdentityPublicKey ?? environment['RESTATE_REQUEST_IDENTITY_PUBLIC_KEY']
   const workflowDeploymentUri =
     options.workflowDeploymentUri ?? environment['WORKFLOW_DEPLOYMENT_URI']
   return {
@@ -87,6 +89,7 @@ export function resolveHostedCompositionConfiguration(
     databaseUrl: options.databaseUrl ?? requiredEnvironment(environment, 'DATABASE_URL'),
     ...(restateAdminUrl === undefined ? {} : { restateAdminUrl }),
     ...(restateIngressUrl === undefined ? {} : { restateIngressUrl }),
+    ...(requestIdentityPublicKey === undefined ? {} : { requestIdentityPublicKey }),
     ...(workflowDeploymentUri === undefined ? {} : { workflowDeploymentUri }),
     ...resolveHostedObjectStore(environment, options),
     ...optional('workflowEndpointPort'),
@@ -97,6 +100,8 @@ export function resolveHostedCompositionConfiguration(
     ...optional('remoteControl'),
     ...optional('remoteControlFactory'),
     ...optional('runtimeActivityPort'),
+    ...optional('graphActivities'),
+    ...optional('contextAuthoring'),
   }
 }
 

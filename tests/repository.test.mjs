@@ -120,6 +120,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(!unit.includes('packages/database/src/integration.test.mjs'))
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
   assert.deepEqual(integration, [
+    'apps/control-api/src/validation-replay.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
@@ -148,8 +149,12 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
+    'tests/m11-graph-composition.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',
+    'tests/m11-sqlite-benchmark.test.mjs',
+    'tests/neon-workflow.test.mjs',
     'tests/repository.test.mjs',
+    'tests/restate-identity.test.mjs',
   ])
   const inventory = await discoverTestInventory()
   const owned = [...unit, ...integration, ...e2e, ...smoke]
@@ -247,6 +252,10 @@ test('emits the required gate contexts and documents the direct-workflow policy'
   assert.match(contributing, /feature PRs land on `main` with squash merges/)
   assert.match(ci, /Feature branches must squash into `main`/)
   assert.doesNotMatch(contributing, /feature PRs land on `staging` with squash merges/)
+  assert.doesNotMatch(contributing, /staging-release|git switch staging|origin staging/)
+  assert.doesNotMatch(contributing, /(?:from|targeting|at) `staging`/)
+  assert.match(contributing, /configured Git workflow is `direct`/)
+  assert.match(contributing, /not an intermediate Git integration branch/)
 })
 
 test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {

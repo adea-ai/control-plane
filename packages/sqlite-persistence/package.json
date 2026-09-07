@@ -26,6 +26,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "drizzle-orm": "0.45.2"
   },

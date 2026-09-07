@@ -50,6 +50,7 @@ jobs:
             "$compose_root/server/control-plane" \
             "$compose_root/server/postgres" \
             "$compose_root/server/restate"
+          export RESTATE_REQUEST_IDENTITY_PUBLIC_KEY="$(node ../../scripts/provision-restate-identity.mjs "$compose_root/server/restate")"
           sudo chown -R 1000:1000 "$compose_root/simple" "$compose_root/server/control-plane"
           sudo chown -R 70:70 "$compose_root/server/postgres"
           sudo chown -R 0:0 "$compose_root/server/restate"
