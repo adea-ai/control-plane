@@ -4,17 +4,10 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "ignorePatterns": [
-    "node_modules/**",
-    "**/dist/**",
-    "**/.turbo/**",
-    "**/coverage/**"
-  ],
+  "ignorePatterns": ["node_modules/**", "**/dist/**", "**/.turbo/**", "**/coverage/**"],
   "overrides": [
     {
-      "files": [
-        "apps/control-api/src/**/*.controller.ts"
-      ],
+      "files": ["apps/control-api/src/**/*.controller.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -36,9 +29,7 @@
       }
     },
     {
-      "files": [
-        "packages/control-sdk/src/**/*.ts"
-      ],
+      "files": ["packages/control-sdk/src/**/*.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
