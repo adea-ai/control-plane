@@ -469,6 +469,7 @@
         "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/execution-plan",
+        "@control-plane/production-readiness",
         "@control-plane/sqlite-persistence"
       ],
       "externalDependencies": ["drizzle-orm", "zod"],
@@ -641,6 +642,7 @@
         "@control-plane/domain",
         "@control-plane/events",
         "@control-plane/execution-plan",
+        "@control-plane/production-readiness",
         "@control-plane/runtime-sdk"
       ],
       "externalDependencies": ["drizzle-orm"],

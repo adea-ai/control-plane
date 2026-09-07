@@ -7,6 +7,7 @@ import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import {
   PostgresContextAuthoringCommandRepository,
   PostgresExecutionValidationCommandRepository,
+  PostgresEvaluationRepository,
 } from '@control-plane/database'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
@@ -16,6 +17,7 @@ import {
   SqliteVersionedCatalogRepository,
   SqliteContextAuthoringCommandRepository,
   SqliteExecutionValidationCommandRepository,
+  SqliteEvaluationRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   PersistencePortableStateDestination,
@@ -26,6 +28,7 @@ import {
   exportPortableState,
   planPortableImport,
 } from './index.ts'
+import { observedEvaluationFixture } from './evaluation-fixture.mjs'
 
 const enabled =
   process.env.RUN_M10_POSTGRES_CONFORMANCE === 'true' ||
@@ -55,6 +58,8 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
   test('moves a supported catalog subset SQLite to PostgreSQL and back with stable identity', async () => {
     const local = await sqliteProvider('local')
     await seedCatalog(local)
+    const evaluation = await observedEvaluationFixture()
+    await new SqliteEvaluationRepository(local).saveRun(evaluation)
     const package_ = contextPackageSerializationFixtures.futurePi
     const command = {
       scope: {
@@ -117,6 +122,9 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
       )
     ).toEqual(validation)
     const replayPlan = await planPortableImport(localManifest, cloud)
+    expect(
+      await new PostgresEvaluationRepository(database.application).getRun(evaluation.evalRunId)
+    ).toEqual(evaluation)
     const replay = await applyPortableImport(localManifest, replayPlan, cloud, {}, () => createdAt)
     expect(replay).toMatchObject({ outcome: 'replayed' })
 
@@ -154,6 +162,9 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
     ).toEqual(validation)
     expect(restoredManifest.records.map(({ logicalId }) => logicalId)).toEqual(
       localManifest.records.map(({ logicalId }) => logicalId)
+    )
+    expect(await new SqliteEvaluationRepository(restored).getRun(evaluation.evalRunId)).toEqual(
+      evaluation
     )
     expect(restoredManifest.records.map(({ contentDigest }) => contentDigest)).toEqual(
       localManifest.records.map(({ contentDigest }) => contentDigest)

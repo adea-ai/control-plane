@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
+import { EvalRunSchema } from '@control-plane/production-readiness'
 import {
   ContextAuthoringCommandRecordSchema,
   assertContextPackageIntegrity,
@@ -41,6 +42,7 @@ export const PortableRecordCategorySchema = z.enum([
   'context-authoring-command',
   'execution-plan',
   'execution-validation-command',
+  'evaluation-run',
   'policy-configuration',
   'runtime-configuration',
   'tool-configuration',
@@ -145,6 +147,14 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     if (digestJson(recordUnsigned) !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
     }
+    if (record.category === 'evaluation-run') {
+      const run = EvalRunSchema.parse(record.value)
+      if (
+        record.logicalId !== `evaluation-runs/${portableEvaluationRunKey(run.evalRunId)}` ||
+        record.revision !== 0
+      )
+        throw new Error('PORTABLE_EVALUATION_IDENTITY_INVALID')
+    }
   }
   const packages = new Map(
     manifest.records
@@ -195,6 +205,10 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
 
 export function digestJson(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
+}
+
+export function portableEvaluationRunKey(evalRunId: string): string {
+  return createHash('sha256').update(EvalRunSchema.shape.evalRunId.parse(evalRunId)).digest('hex')
 }
 
 function normalizeManifestInput(

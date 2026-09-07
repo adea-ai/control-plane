@@ -539,3 +539,32 @@ do not yet seed observed evaluation receipts. SQLite persistence, receipt-bearin
 retention, actual agent executions and calibrated full-corpus acceptance remain unverified.
 The disposable `m11-eval-receipts-20260907` container/network/volume were removed and port 55109
 was verified closed. No remote infrastructure or production data was changed.
+
+## SQLite evaluation persistence and cross-profile receipt portability
+
+`SqliteEvaluationRepository` now stores complete schema-validated evaluation runs, including bound
+observation receipts, in one transaction. Identical concurrent saves retain one immutable record;
+changed content conflicts. Tests exercise injected transaction rollback, real file close/reopen,
+detached reads, embedded-ID mismatch and receipt corruption.
+
+Portable exports now include evaluation runs as a dedicated `evaluation-run` category, independent
+of optional selected history. Logical identities use the SHA-256 of the run ID, preserving bounded
+portable identifiers and the SQLite physical key. Imports require revision zero and matching run
+identity and validate the full receipt. PostgreSQL uses the existing row conversion and consistency
+checks; no database schema migration or external dependency upgrade is introduced. Existing private
+path and sensitive-value export checks still apply; receipts are not silently redacted. Older strict
+importers do not support this added category and must be upgraded before importing these manifests.
+
+Unit coverage verifies exact SQLite-to-SQLite preservation and rejects forged identities, revisions,
+receipt traces and mismatched physical keys. The live PostgreSQL integration fixture now includes an
+observed run in the SQLite-to-PostgreSQL-to-SQLite round trip and checks exact repository contents and
+manifest digests. These are scripted evaluator controls, not agent-quality acceptance results.
+
+The canonical lint/type/format/test chain passed, including 789 unit tests. The full PostgreSQL
+integration command and existing disruption/restore drills passed. The drills still do not seed
+receipt-bearing evaluations, so receipt-specific backup recovery remains open, alongside production
+composition, retention policy, actual agent executions and full calibrated corpus acceptance.
+The generated architecture inventory was refreshed for the two workspace dependency additions; no
+readiness classification was changed. The disposable `m11-eval-portability-20260907` database,
+network and volume were removed and port 55119 was verified closed. No remote infrastructure or
+production data was changed.

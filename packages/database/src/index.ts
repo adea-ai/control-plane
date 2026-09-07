@@ -14,7 +14,11 @@ export { PostgresExecutionPlanRepository } from './execution-plan-repository.js'
 export { PostgresExecutionValidationCommandRepository } from './validation-command-repository.js'
 export { PostgresExternalSessionRepository } from './external-session-repository.js'
 export { PostgresExecutionRepository } from './execution-repository.js'
-export { PostgresEvaluationRepository } from './evaluation-repository.js'
+export {
+  PostgresEvaluationRepository,
+  fromEvaluationRunRow,
+  toEvaluationRunRow,
+} from './evaluation-repository.js'
 export { PostgresInteractionRepository } from './interaction-repository.js'
 export { PostgresMemoryWriteProposalRepository } from './memory-write-proposal-repository.js'
 export {

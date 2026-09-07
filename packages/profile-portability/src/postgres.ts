@@ -10,6 +10,9 @@ import {
   contextAuthoringCommands,
   executionPlans,
   executionValidationCommands,
+  evaluationRuns,
+  fromEvaluationRunRow,
+  toEvaluationRunRow,
   executions,
   profileMigrations,
   projectStateRevisions,
@@ -31,8 +34,10 @@ import {
   executionValidationCommandKey,
 } from '@control-plane/execution-plan'
 import { and, eq } from 'drizzle-orm'
+import { EvalRunSchema } from '@control-plane/production-readiness'
 import {
   createPortableRecord,
+  portableEvaluationRunKey,
   type PortableArtifactReference,
   type PortableRecord,
   type PortableSecretReference,
@@ -94,6 +99,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       authoringRows,
       planRows,
       validationRows,
+      evaluationRows,
       executionRows,
     ] = await Promise.all([
       this.#database.select().from(agentProfiles),
@@ -106,6 +112,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       this.#database.select().from(contextAuthoringCommands),
       this.#database.select().from(executionPlans),
       this.#database.select().from(executionValidationCommands),
+      this.#database.select().from(evaluationRuns),
       this.#database
         .select({ executionId: executions.executionId, state: executions.state })
         .from(executions),
@@ -114,6 +121,15 @@ export class PostgresPortableStateSource implements PortableStateSource {
       stateRows.map((row) => [scopeId(row.workspaceId, row.projectId), row.revision])
     )
     const records: Array<Omit<PortableRecord, 'contentDigest'>> = [
+      ...evaluationRows.map((row) => {
+        const run = fromEvaluationRunRow(row)
+        return {
+          category: 'evaluation-run' as const,
+          logicalId: `evaluation-runs/${portableEvaluationRunKey(run.evalRunId)}`,
+          revision: 0,
+          value: portableJson(run),
+        }
+      }),
       ...profileRows.map((row) => ({
         category: 'agent-profile' as const,
         logicalId: `agent-profiles/${row.profileId}`,
@@ -338,6 +354,24 @@ async function writeRecord(
   record: PortableRecord
 ): Promise<void> {
   const [namespace, id] = identity(record.logicalId)
+  if (namespace === 'evaluation-runs') {
+    const run = EvalRunSchema.parse(record.value)
+    if (
+      id !== portableEvaluationRunKey(run.evalRunId) ||
+      record.category !== 'evaluation-run' ||
+      record.revision !== 0
+    )
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+    await inserted(
+      transaction
+        .insert(evaluationRuns)
+        .values(toEvaluationRunRow(run))
+        .onConflictDoNothing()
+        .returning({ id: evaluationRuns.evalRunId }),
+      record
+    )
+    return
+  }
   if (namespace === 'agent-profiles') {
     const value = AgentProfileSchema.parse(record.value)
     await inserted(
@@ -566,6 +600,7 @@ function byWriteOrder(left: PortableRecord, right: PortableRecord): number {
     'context-authoring-commands',
     'execution-plans',
     'execution-validation-commands',
+    'evaluation-runs',
   ]
   return (
     order.indexOf(identity(left.logicalId)[0]) - order.indexOf(identity(right.logicalId)[0]) ||

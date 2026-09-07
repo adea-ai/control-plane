@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { EvalRunSchema } from '@control-plane/production-readiness'
 import {
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
@@ -22,6 +23,7 @@ import {
   assertPortableManifest,
   createPortableRecord,
   finalizePortableManifest,
+  portableEvaluationRunKey,
   type PortableArtifactReference,
   type PortableExportManifest,
   type PortableRecord,
@@ -396,6 +398,7 @@ export const PortablePersistenceNamespaces = Object.freeze({
   'context-authoring-commands': 'context-authoring-command',
   'execution-plans': 'execution-plan',
   'execution-validation-commands': 'execution-validation-command',
+  'evaluation-runs': 'evaluation-run',
 } as const)
 
 type PortablePersistenceNamespace = keyof typeof PortablePersistenceNamespaces
@@ -616,7 +619,9 @@ function persistenceIdentity(record: PortableRecord): {
   return {
     namespace,
     id:
-      namespace === 'context-authoring-commands' || namespace === 'execution-validation-commands'
+      namespace === 'context-authoring-commands' ||
+      namespace === 'execution-validation-commands' ||
+      namespace === 'evaluation-runs'
         ? `r-${id}`
         : sqliteRecordId(
             namespace === 'project-states' || namespace === 'project-state-history'
@@ -631,6 +636,12 @@ function portableIdentity(
   value: JsonValue,
   fallback: string
 ): string {
+  if (namespace === 'evaluation-runs') {
+    const key = portableEvaluationRunKey(EvalRunSchema.parse(value).evalRunId)
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
   if (namespace === 'execution-validation-commands') {
     const key = executionValidationCommandKey(
       ExecutionValidationCommandRecordSchema.parse(value).scope
