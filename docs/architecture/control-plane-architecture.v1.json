@@ -1602,10 +1602,10 @@
       "representations": [
         "SQLite Drizzle schema",
         "SCHEMA_VERSION=1",
-        "imperative CREATE TABLE migration"
+        "ordered checksum-verified forward migration registry"
       ],
       "classification": "partially_verified",
-      "assessment": "The current schema is deterministic and tested, but SQLite has no forward migration history beyond version 1.",
+      "assessment": "SQLite startup applies an ordered transactional registry, verifies applied checksums, and adopts exact legacy v1 schemas. Synthetic forward-step failure and repair plus file-backed adoption/backup/reopen are tested; no product schema beyond v1 has shipped.",
       "evidence": [
         {
           "kind": "source",
@@ -1616,7 +1616,7 @@
         "issue": 194,
         "severity": "medium",
         "owner": "sqlite-persistence",
-        "disposition": "Add explicit forward migration and rollback/forward-repair evidence before schema version 2."
+        "disposition": "Certify the actual version-2 product migration and its backup recovery/forward repair before introducing schema version 2."
       }
     },
     {
@@ -1887,9 +1887,9 @@
     {
       "id": "PERSIST-MIGRATIONS",
       "postgresql": "27 forward Drizzle migrations with schema drift check",
-      "sqlite": "Single imperative schema version 1 migration",
+      "sqlite": "Ordered atomic forward registry with applied SQL checksums and legacy v1 adoption",
       "classification": "partially_verified",
-      "assessment": "Clean creation works in both profiles, but rollback and future SQLite upgrade paths are not implemented as migration streams.",
+      "assessment": "Both dialects have forward migration mechanisms. SQLite verifies history, rolls back failed sequences, and validates restored migration history before replacement. Synthetic v2 tests are not actual future-schema or timed cross-profile recovery certification.",
       "evidence": [
         {
           "kind": "source",
@@ -1904,7 +1904,7 @@
         "issue": 194,
         "severity": "medium",
         "owner": "database-migrations",
-        "disposition": "Add versioned SQLite forward migrations and tested rollback/forward-repair procedures for both dialects."
+        "disposition": "Exercise actual released-schema upgrade, backup recovery, and forward-repair procedures for both dialects with measured operational evidence."
       }
     },
     {

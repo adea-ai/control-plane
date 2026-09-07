@@ -23,6 +23,36 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('adopts a legacy file and retains its migration history through backup and reopen', async () => {
+    const { directory, instance } = await provider()
+    await instance.transaction((transaction) =>
+      transaction.put({ namespace: 'commands', id: 'retained', value: { status: 'accepted' } })
+    )
+    instance.close()
+    const native = new DatabaseSync(join(directory, 'control-plane.sqlite'))
+    native.exec("DELETE FROM control_plane_metadata WHERE key LIKE 'migration:%'")
+    native.close()
+    await instance.migrate()
+    const snapshot = await instance.backup()
+    instance.close()
+    await instance.migrate()
+    await instance.restore(snapshot)
+    await instance.migrate()
+    expect(
+      await instance.transaction((transaction) => transaction.get('commands', 'retained'))
+    ).toMatchObject({ revision: 1, value: { status: 'accepted' } })
+    instance.close()
+    const check = new DatabaseSync(join(directory, 'control-plane.sqlite'))
+    try {
+      expect(
+        check.prepare("SELECT value FROM control_plane_metadata WHERE key = 'migration:1'").get()
+          .value
+      ).toMatch(/^[a-f0-9]{64}$/)
+    } finally {
+      check.close()
+    }
+  })
+
   test('rejects a future schema without creating current-version objects', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-version-'))
     const path = join(directory, 'state.sqlite')
