@@ -466,8 +466,8 @@
       "name": "@control-plane/telemetry",
       "version": "1.2.3",
       "peerDependencies": {
-        "@opentelemetry/api": "1.9.1",
-        "@sentry/node": "10.73.0",
+        "@opentelemetry/api": "^1.9.0",
+        "@sentry/node": "^10.73.0",
       },
       "optionalPeers": [
         "@opentelemetry/api",

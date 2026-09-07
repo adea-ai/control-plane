@@ -1,7 +1,8 @@
 # Adea ↔ Control Plane contracts
 
 `@control-plane/contracts` 1.x is the publishable, runtime-independent service boundary between Adea and the
-Control Plane. Adea supplies authorized product intent and workspace identity; the Control Plane
+Control Plane (published to npm as [`@adea-ai/contracts`](https://www.npmjs.com/package/@adea-ai/contracts)).
+Adea supplies authorized product intent and workspace identity; the Control Plane
 applies execution policy and owns runtime semantics. The package depends only on Zod and can build
 without Control Plane domain, database, application, workflow, or adapter packages.
 

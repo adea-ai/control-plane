@@ -96,6 +96,9 @@ for (const relative of PUBLISH_PACKAGES) {
     staged[section] = await rewriteSection(staged[section], name)
   }
   await writeFile(stagedManifestPath, `${JSON.stringify(staged, null, 2)}\n`)
+  // Ship the repository license inside the tarball so registry consumers and
+  // license scanners see it without visiting the repository.
+  await cp(join(repoRoot, 'LICENSE'), join(stage, 'package', 'LICENSE'))
   console.log(`[publish] publishing ${publishedAs}@${version}...`)
   const result = sh(['npm', 'publish', '--access', 'public'], join(stage, 'package'))
   await rm(stage, { recursive: true, force: true })
