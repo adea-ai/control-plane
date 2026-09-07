@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.4...workspace-v1.8.5) (2026-09-07)
+
+
+### Maintenance
+
+* **ci:** remove staging branch, migrate to direct workflow ([#389](https://github.com/adea-ai/control-plane/issues/389)) ([8eee783](https://github.com/adea-ai/control-plane/commit/8eee783459be26703bbc4fd816828d577885bea2))
+
 ## [1.8.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.3...workspace-v1.8.4) (2026-09-07)
 
 
