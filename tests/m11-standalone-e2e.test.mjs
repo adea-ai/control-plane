@@ -9,6 +9,12 @@ import { ControlApiFixtures } from '@control-plane/contracts'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
+  LangGraphOrchestrationAdapter,
+  LangGraphSqliteCheckpointSaver,
+  deterministicInterruptGraph,
+} from '../packages/langgraph-adapter/src/index.ts'
+import { OrchestrationGraphSegmentActivities } from '../packages/workflow-runtime/src/index.ts'
+import {
   LocalControlPlaneComposition,
   createLocalManagedPiRuntime,
 } from '@control-plane/local-control-plane'
@@ -39,6 +45,141 @@ const observedAt = '2026-08-30T12:00:00.000Z'
 const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
 
 describe('M11 standalone execution composition', () => {
+  test('resumes a graph approval after restarting real Local Restate and SQLite', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-graph-restate-'))
+    const plan = createExecutionPlanTestFixture()
+    let executionId, artifactId, resultKey
+    const graph = {
+      graphDefinitionId: 'local-restate-recovery',
+      graphVersion: '1.0.0',
+      contentDigest: `sha256:${'a'.repeat(64)}`,
+    }
+    const operations = []
+    const registration = deterministicInterruptGraph(graph)
+    const createLocal = () =>
+      new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        runtimeTransport: createDirectManagedPiAdapter(),
+        workflowEndpointPort: 19080,
+        graphActivitiesFactory: ({ persistence }) =>
+          new OrchestrationGraphSegmentActivities(
+            new LangGraphOrchestrationAdapter({
+              checkpointer: new LangGraphSqliteCheckpointSaver(
+                persistence,
+                plan.correlation.workspaceId
+              ),
+              graphs: [
+                {
+                  reference: graph,
+                  build(context) {
+                    const runnable = registration.build(context)
+                    return {
+                      invoke: async (input, config) => {
+                        const state = await runnable.invoke(input, config)
+                        if (state.output?.decision === undefined) return state
+                        await local.objectStore.put({
+                          key: resultKey,
+                          body: new TextEncoder().encode(JSON.stringify(state.output)),
+                          contentType: 'application/json',
+                          metadata: { execution: executionId },
+                        })
+                        return { ...state, output: { ...state.output, artifactRef: artifactId } }
+                      },
+                    }
+                  },
+                },
+              ],
+              operations: {
+                invoke: async ({ name }) => {
+                  operations.push(name)
+                  return { value: name }
+                },
+                cancel: async () => true,
+              },
+              events: { publish: async () => {} },
+            })
+          ),
+      })
+    let local = createLocal()
+    const post = (path, body) =>
+      fetch(`http://127.0.0.1:8080/execution-lifecycle/${executionId}/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      })
+    try {
+      await local.start()
+      await local.executionPlans.put(plan)
+      const acceptedAt = new Date().toISOString()
+      const deadlineAt = new Date(Date.now() + 90000).toISOString()
+      const executionPlan = {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      }
+      const accepted = await local.commands.acceptExecution({
+        ...command(plan),
+        receivedAt: acceptedAt,
+        retentionExpiresAt: new Date(Date.parse(acceptedAt) + 30 * 86400000).toISOString(),
+      })
+      executionId = accepted.execution.executionId
+      artifactId = `art_${executionId.slice(4)}`
+      resultKey = `graph-results/${executionId}/result.json`
+      const input = {
+        executionId,
+        workflowId: `wfl_${executionId.slice(4)}`,
+        executionPlan,
+        deadlineAt,
+        graph: {
+          workspaceId: plan.correlation.workspaceId,
+          reference: graph,
+          threadId: 'local-restate-thread',
+          input: { objective: 'recover graph approval' },
+        },
+      }
+      expect((await post('run/send', input)).ok).toBe(true)
+      const waitDeadline = Date.now() + 15000
+      while ((await local.executions.getExecution(executionId)).state !== 'awaiting_input') {
+        if (Date.now() > waitDeadline) throw new Error('GRAPH_RESTATE_APPROVAL_TIMEOUT')
+        await delay(25)
+      }
+      expect(operations).toEqual(['prepare'])
+      await local.close()
+      local = createLocal()
+      await local.start()
+      expect((await local.executions.getExecution(executionId)).state).toBe('awaiting_input')
+      expect(
+        (
+          await post('respondToInteraction', {
+            interactionId: 'approval-1',
+            responseId: 'graph-response-one',
+            action: 'approve',
+          })
+        ).ok
+      ).toBe(true)
+      const execution = await waitForTerminalExecution(local, executionId)
+      expect(execution.state).toBe('completed')
+      expect(execution.terminalResultRef).toBe(artifactId)
+      expect(
+        JSON.parse(new TextDecoder().decode((await local.objectStore.get(resultKey)).body))
+      ).toEqual({ decision: 'approve' })
+      const result = await fetch(
+        `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${executionId}/attach`,
+        { signal: AbortSignal.timeout(15000) }
+      )
+      expect(result.ok).toBe(true)
+      expect(await result.json()).toMatchObject({
+        status: 'completed',
+        graphCheckpointId: expect.any(String),
+      })
+      expect(operations).toEqual(['prepare', 'finalize'])
+    } finally {
+      await local.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
   test.each([
     ['managed-pi', createDirectManagedPiAdapter],
     ['acp', createDirectAcpAdapter],

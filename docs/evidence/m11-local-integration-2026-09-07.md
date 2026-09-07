@@ -1,5 +1,17 @@
 # M11 local integration checkpoint
 
+Real Local Restate graph recovery follow-up: the standalone E2E suite accepts an Execution through
+the command inbox, submits the internal graph workflow, persists its approval wait, and closes both
+Local and the pinned Restate runtime. A reconstructed composition and Restate process recover the
+same SQLite/RocksDB state, accept approval, persist the graph result bytes, complete the command and
+Execution, and expose the finished workflow result through Restate attach. The prepare/finalize
+operations each run once. Harness corrections retained all product contracts: approval carries no
+input value, completed work requires an Artifact reference, finalization requires an accepted command,
+and completed workflows are attached rather than resubmitted. Full lint/type/format/test gates passed,
+including 99 E2E tests. Test ports 8080, 9070 and 19080 were closed after execution and temporary state
+was removed. This is a controlled restart with fixture graph operations; hard-crash timing, live
+provider effects, public graph selection/authorization and the complete M11 matrix remain open.
+
 Local graph factory follow-up: `graphActivitiesFactory` receives the composition-owned SQLite
 provider so a graph saver can use application startup, backup and shutdown without another
 connection. Conflicting graph port/factory/replacement-activity configurations fail before factory
