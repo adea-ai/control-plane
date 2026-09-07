@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url'
 
 // Publishes the stable, deployment-neutral packages to the public npm registry
 // under the @adea-ai scope (the npm org that already exists for the product
-// family). Workspace names stay @control-plane/*; the mapping is applied to
-// the staged manifest and to any @control-plane/* dependency names so the
+// family). Workspace names stay @control-plane/*; the mapping below is applied
+// to the staged manifest and to any @control-plane/* dependency names so the
 // published tarballs are self-consistent under @adea-ai/*.
 //
-// All four packages are Zod-only (telemetry's provider SDKs are optional peer
+// All six packages are Zod-only (telemetry's provider SDKs are optional peer
 // deps) and contain no infrastructure, deployment, or credential code; that is
 // what makes public publishing safe. Never add an adapter, app, or
 // infrastructure package to PUBLISH_PACKAGES.
@@ -29,6 +29,8 @@ const PUBLISH_PACKAGES = [
   'packages/runtime-gateway-protocol',
   'packages/control-sdk',
   'packages/telemetry',
+  'packages/tool-sdk',
+  'packages/runtime-sdk',
 ]
 
 function publicName(workspaceName) {

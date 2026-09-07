@@ -1,10 +1,11 @@
 name: Publish shared packages
 
 # Publishes the stable, deployment-neutral packages (@adea-ai/contracts,
-# @adea-ai/runtime-gateway-protocol, @adea-ai/sdk, @adea-ai/telemetry) to the
-# public npm registry on every main push that touches them (plus manual
-# dispatch). Workspace names stay @control-plane/*; scripts/publish-packages.mjs
-# maps names and resolves workspace: ranges at publish time.
+# @adea-ai/runtime-gateway-protocol, @adea-ai/sdk, @adea-ai/telemetry,
+# @adea-ai/tool-sdk, @adea-ai/runtime-sdk) to the public npm registry on every
+# main push that touches them (plus manual dispatch). Workspace names stay
+# @control-plane/*; scripts/publish-packages.mjs maps names and resolves
+# workspace: ranges at publish time.
 #
 # Prerequisites (one-time, dashboard):
 #   1. The `adea` org on npmjs.com (already exists for the @adea-ai/* family).
@@ -18,6 +19,8 @@ on:
       - 'packages/runtime-gateway-protocol/**'
       - 'packages/control-sdk/**'
       - 'packages/telemetry/**'
+      - 'packages/tool-sdk/**'
+      - 'packages/runtime-sdk/**'
       - 'scripts/publish-packages.mjs'
       - '.github/workflows/publish-packages.yml'
   workflow_dispatch:
@@ -56,7 +59,7 @@ jobs:
       - name: Build published packages
         # The tarballs must contain dist/ output: the exports map serves
         # dist types and entry points to registry consumers.
-        run: bunx turbo run build --filter=@control-plane/contracts --filter=@control-plane/runtime-gateway-protocol --filter=@control-plane/sdk --filter=@control-plane/telemetry
+        run: bunx turbo run build --filter=@control-plane/contracts --filter=@control-plane/runtime-gateway-protocol --filter=@control-plane/sdk --filter=@control-plane/telemetry --filter=@control-plane/tool-sdk --filter=@control-plane/runtime-sdk
 
       - name: Publish changed packages
         env:

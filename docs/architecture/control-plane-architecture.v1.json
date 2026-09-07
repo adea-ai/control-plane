@@ -686,7 +686,7 @@
       "version": "1.5.2",
       "lockVersion": "1.5.2",
       "kind": "package",
-      "private": true,
+      "private": false,
       "browser": false,
       "exports": [
         "."
@@ -888,7 +888,7 @@
       "version": "1.2.2",
       "lockVersion": "1.2.2",
       "kind": "package",
-      "private": true,
+      "private": false,
       "browser": false,
       "exports": [
         "."
