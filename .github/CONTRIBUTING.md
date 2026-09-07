@@ -17,7 +17,7 @@ Agents must follow these rules before changing code:
 1. Read this file, `AGENTS.md`, and the relevant project documentation.
 2. Inspect the current branch, worktree, remotes, and existing changes before editing.
 3. Preserve user-owned changes. Never discard or overwrite unrelated work.
-4. Branch from `staging` and target pull requests at `staging`; do not work directly on `main`.
+4. Branch from `main` and target pull requests at `main`; do not push work directly to `main`.
 5. Keep the change focused. Do not expand scope without documenting why.
 6. Run the applicable format, lint, type-check, build, unit, integration, E2E, smoke, and security checks.
 7. Report exact validation results, skipped checks, known limitations, and remaining risks.
@@ -32,23 +32,15 @@ Agents must not:
 
 ## Branching model
 
-```text
-                                      release PR
-                                   ┌──────────────┐
-                                   │              ▼
-feat/*  fix/*  chore/*  ──PR──▶  staging  ──PR──▶  main
-docs/*  test/*  refactor/*         │              │
-                                   │              └── protected release branch
-                                   └── integration branch
-```
+The configured Git workflow is `direct`: focused branches open pull requests into
+`main`, and feature PRs merge with squash (`merge_strategy: squash`) after required
+checks and review. The Release Please version PR uses rebase
+(`release_merge_strategy: rebase`). Direct workflow does not authorize direct pushes,
+force pushes, bypassing checks, or merging without required approval.
 
-| Branch                                                         | Purpose                  | Contribution rule                                                         |
-| -------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------- |
-| `main`                                                         | Protected release branch | Merge through the `staging` → `main` release PR. No direct pushes.        |
-| `staging`                                                      | Integration branch       | Target normal pull requests here. Required checks must pass before merge. |
-| `feat/*`, `fix/*`, `chore/*`, `refactor/*`, `docs/*`, `test/*` | Focused work             | Branch from `staging`; keep changes small and reviewable.                 |
-
-The Git workflow is `staging-release`: topic branches **squash** into `staging`, a promotion PR **rebases** validated changes into `main` (`merge_strategy: rebase`), and the Release Please version PR **rebases** into `main` (`release_merge_strategy: rebase`). Release automation never defaults to a merge method and never merges with `--admin`; `code-foundry doctor` and `code-foundry sync` fail closed on any other merge strategy. Re-align `staging` with `main` after a release when needed.
+Railway staging is an on-demand reference environment deployed from `main` or a
+pinned tag, not an intermediate Git integration branch. Its Neon database remains
+separate from production. Production tracks `main`.
 
 ## Before you start
 
@@ -65,8 +57,8 @@ The Git workflow is `staging-release`: topic branches **squash** into `staging`,
 ```sh
 git status --short --branch
 git fetch origin
-git switch staging
-git pull --ff-only origin staging
+git switch main
+git pull --ff-only origin main
 git switch -c feat/short-description
 ```
 
@@ -91,7 +83,7 @@ Run the checks relevant to the change. For a release or security-sensitive chang
 
 For maintainers, trusted contributors, and automation agents:
 
-1. Start from an up-to-date `staging` branch.
+1. Start from an up-to-date `main` branch.
 2. Create a focused branch with a descriptive prefix.
 3. Inspect the relevant code and tests before making changes.
 4. Implement the smallest complete change.
@@ -128,11 +120,11 @@ For contributors who do not have direct write access:
 
 1. Fork the repository on GitHub.
 2. Add the upstream repository as `upstream`.
-3. Branch from the upstream `staging` branch.
+3. Branch from the upstream `main` branch.
 4. Make a focused change and follow the local setup instructions.
 5. Add tests and documentation for behavior changes.
 6. Run all applicable checks locally.
-7. Push to the fork and open a pull request targeting `staging`.
+7. Push to the fork and open a pull request targeting `main`.
 8. Explain the problem, proposed solution, validation, compatibility, and rollout impact.
 9. Address maintainer feedback without rewriting unrelated history or scope.
 
@@ -155,12 +147,10 @@ Keep pull requests focused and reviewable. Include screenshots or recordings for
 
 | Event                                              | Expected automation                                                                   |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Pull request targeting `staging`                   | Audit validation: CI, full tests, Security, and CodeQL, ending in `Validation / Gate` |
 | Ordinary pull request targeting `main`             | Audit validation: CI, full tests, Security, and CodeQL, ending in `Validation / Gate` |
 | Exact Release Please pull request targeting `main` | Release-policy validation only, ending in `Validation / Gate`                         |
 | Scheduled or manual validation                     | Full audit tier                                                                       |
-| Push to a working branch                           | Draft PR workflow                                                                     |
-| Push to `staging`                                  | Promotion PR workflow; canonical validation waits for the PR event                    |
+| Push to a configured topic-branch prefix           | Draft PR workflow                                                                     |
 | Push to `main`                                     | Release workflow; canonical validation already ran on the merged PR                   |
 
 The single validation caller keys concurrency by event and pull-request head. A newer update to the same pull request cancels its superseded validation run; scheduled and manual audits remain independent. The mode-aware orchestrator fans out only the jobs required by that event and always concludes with the stable aggregate gate.
@@ -180,11 +170,10 @@ Security checks can be skipped when repository visibility or the GitHub plan doe
 
 ## Review and merge protocol
 
-| Change                       | Target    | Merge method                                    | Merge gate                                                |
-| ---------------------------- | --------- | ----------------------------------------------- | --------------------------------------------------------- |
-| Working branch               | `staging` | Squash                                          | All applicable required checks pass                       |
-| `staging` → `main` promotion | `main`    | Rebase (`merge_strategy`)                       | Current staging checks, release review, and rollout notes |
-| Release Please version PR    | `main`    | Rebase (`release_merge_strategy`, fails closed) | Validation gate and release policy pass                   |
+| Change                    | Target | Merge method                                    | Merge gate                              |
+| ------------------------- | ------ | ----------------------------------------------- | --------------------------------------- |
+| Working branch            | `main` | Squash                                          | All applicable required checks pass     |
+| Release Please version PR | `main` | Rebase (`release_merge_strategy`, fails closed) | Validation gate and release policy pass |
 
 Reviewers focus on correctness, security, maintainability, test coverage, operational impact, and compatibility. Authors remain responsible for responding to feedback and verifying the final commit.
 
@@ -194,7 +183,7 @@ Report vulnerabilities privately using [SECURITY.md](./SECURITY.md), never in a 
 
 For an urgent production or security issue:
 
-1. Create a focused branch from `staging`.
+1. Create a focused branch from `main`.
 2. Document the urgency and affected systems without exposing secrets.
 3. Open a pull request and run the narrowest complete validation available.
 4. Request the appropriate maintainer review.
