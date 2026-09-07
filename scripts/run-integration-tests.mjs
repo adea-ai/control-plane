@@ -62,9 +62,25 @@ const runningServices = run('docker', ['compose', 'ps', '--status', 'running', '
 const postgresWasRunning = runningServices.includes('postgres')
 // A remote target (Neon preview branch or similar) replaces the local Docker
 // Postgres lane entirely: no container to boot or probe, and the
-// Docker-lifecycle drills below do not apply to it.
-const remoteDatabase =
-  process.env.DATABASE_URL !== undefined || process.env.DATABASE_MIGRATION_URL !== undefined
+// Docker-lifecycle drills below do not apply to it. Loopback URLs still take
+// the local lane: the recovery matrix drives its own Postgres on an
+// ephemeral loopback port and passes those URLs down, so presence alone
+// cannot distinguish remote from local.
+function databaseHostname(value) {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return ''
+  }
+}
+function isLoopbackHostname(hostname) {
+  return (
+    hostname === '' || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  )
+}
+const remoteDatabase = [process.env.DATABASE_URL, process.env.DATABASE_MIGRATION_URL]
+  .filter((value) => value !== undefined)
+  .some((value) => !isLoopbackHostname(databaseHostname(value)))
 
 try {
   if (!remoteDatabase && !postgresWasRunning)
