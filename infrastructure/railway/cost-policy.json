@@ -30,7 +30,7 @@
     "staging": {
       "availability": "configured-on-demand-reference",
       "sourceConnected": false,
-      "activationBranch": "staging",
+      "activationBranch": "main",
       "standbyAction": "remove-active-deployment",
       "services": {
         "control-api": {

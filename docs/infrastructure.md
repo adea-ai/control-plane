@@ -40,7 +40,7 @@ As of the M9 certification and local-first standby baseline:
 - a Railway `control-plane` project with isolated staging and production environments exists;
 - dependency-aware monorepo builds are fixed and the active Cloud application topology is `control-api` plus `workflow-worker`;
 - the private Restate runtime is separately pinned in `restate.json`; staging retains its persistent volume while all three Cloud services are stopped by default;
-- Railway staging maps to Git `staging` and the dedicated Neon `staging` branch; production maps to Git `main` and the Neon `production` branch, but its application sources remain disconnected while cloud availability is disabled;
+- Railway staging deploys from Git `main` (on demand) and the dedicated Neon `staging` branch; production maps to Git `main` and the Neon `production` branch, but its application sources remain disconnected while cloud availability is disabled;
 - existing `neon_auth` tables in that Neon project are not Control Plane identity authority and must not become an application dependency;
 - a Cloudflare R2 bucket named **`ctrl-plane`** already exists for the Control Plane managed-cloud ObjectStore, with logical Wrangler binding **`ctrl_plane`**;
 - an authenticated Wrangler CLI is available to implementation agents for non-destructive R2 inspection/configuration and synthetic smoke tests;
@@ -119,8 +119,8 @@ deployment contract.
 The Control Plane cloud database is external to Railway and independently owned.
 Railway does not share a connection string between environments: `staging` maps
 to the Neon `staging` branch and `production` maps to Neon `production`. Neon
-branches are named after the Railway environments they serve; Git source
-branches remain `staging` and `main`. The mapping is
+branches are named after the Railway environments they serve; Git deploys from
+`main`. The mapping is
 versioned in `infrastructure/railway/environment.json`; connection strings and
 credentials remain Railway-managed secrets.
 

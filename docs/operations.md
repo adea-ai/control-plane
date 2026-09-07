@@ -108,7 +108,7 @@ To activate staging for a bounded Cloud test:
    ```
 
 Production activation is a release operation, not a scale-only operation. Before scaling production,
-the reviewed `staging` to `main` promotion must be complete; production-specific secrets and service
+the candidate commit must be merged to `main` and tagged by the release flow; production-specific secrets and service
 identity must exist; the production Neon migration must pass with migration-only authority; Restate
 must have its production volume, stable identity key, and worker registration; and R2 isolation,
 health, smoke, observability, and rollback gates must pass. Connect application sources only as an

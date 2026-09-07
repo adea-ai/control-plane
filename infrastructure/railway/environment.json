@@ -22,7 +22,7 @@
     "staging": {
       "railwayEnvironment": "staging",
       "applicationEnvironment": "staging",
-      "sourceBranch": "staging",
+      "sourceBranch": "main",
       "neon": {
         "provider": "neon",
         "project": "control-plane",
