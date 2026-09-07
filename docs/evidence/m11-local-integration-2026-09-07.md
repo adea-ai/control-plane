@@ -99,3 +99,21 @@ These commands exercise their checked-in reference transports and fixtures,
 including Local direct runtime and packaged RPC scenarios. Command success alone
 does not prove every #188 scenario, live external providers, fresh VPS deployment,
 managed cloud or the independent final #197 acceptance procedure.
+
+## Live Hosted Server signing follow-up
+
+At `3917c80` (code unchanged from the combined candidate), a local isolated server-profile
+Compose run built the Hosted image, bootstrapped PostgreSQL roles, migrated the database and
+started Restate plus Hosted. `/ready` returned 200 and unsigned `/discover` returned 401.
+Restate and Hosted were then force-recreated with the same persisted signing key; readiness
+and unsigned rejection passed again. Harness process exited zero.
+
+Project: `m11-integration-signing-80690`. The local test image
+`control-plane/m11-signing-test:80690` is intentionally retained for inspection. The temporary
+private signing material and database/application data were removed, all five Compose
+containers and their network were removed, and a label-filtered container inventory was empty.
+
+This proves the exercised local Hosted Server startup/signing/recreation path. It does not
+prove full representative execution, remote runtime identity integration, Hosted Simple,
+fresh VPS deployment, cross-product relay or managed-cloud acceptance. The local temporary
+harness was `/tmp/m11-hosted-signing-live.mjs`; it is not a versioned release command.
