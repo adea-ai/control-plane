@@ -538,7 +538,7 @@
       "workspaceDependencies": [],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["prettier"],
+      "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
     {
@@ -553,7 +553,7 @@
       "workspaceDependencies": ["@control-plane/contracts"],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["prettier"],
+      "developmentExternalDependencies": [],
       "layer": "core-port"
     },
     {
@@ -605,7 +605,7 @@
       "workspaceDependencies": ["@control-plane/contracts"],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["prettier", "zod"],
+      "developmentExternalDependencies": ["zod"],
       "layer": "adapter-infrastructure"
     },
     {

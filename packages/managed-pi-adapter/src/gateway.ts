@@ -409,7 +409,12 @@ export class ManagedPiGatewayClient implements ManagedPiClient {
 }
 
 export type ReferenceManagedPiScenario =
-  'complete' | 'running' | 'awaiting_input' | 'crash' | 'timeout' | 'ambiguous'
+  | 'complete'
+  | 'running'
+  | 'awaiting_input'
+  | 'crash'
+  | 'timeout'
+  | 'ambiguous'
 
 interface ReferenceExecution {
   readonly handle: RuntimeExecutionHandle

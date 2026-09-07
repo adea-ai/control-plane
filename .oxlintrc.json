@@ -1,0 +1,130 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "error" },
+  "ignorePatterns": ["node_modules/**", "**/dist/**", "**/.turbo/**", "**/coverage/**"],
+  "overrides": [
+    {
+      "files": ["apps/control-api/src/**/*.controller.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@control-plane/database",
+                  "@control-plane/database/*",
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "postgres"
+                ],
+                "message": "Controllers must use purpose-built service contracts, never persistence rows."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/control-sdk/src/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@langchain/langgraph",
+                  "@langchain/langgraph/*",
+                  "@modelcontextprotocol/*",
+                  "@temporalio/*",
+                  "@e2b/*",
+                  "e2b",
+                  "e2b/*",
+                  "litellm",
+                  "litellm/*",
+                  "pi-ai",
+                  "pi-ai/*",
+                  "@mariozechner/pi-ai",
+                  "@mariozechner/pi-ai/*",
+                  "acp",
+                  "acp/*",
+                  "@agentclientprotocol/*",
+                  "@control-plane/adapter-*",
+                  "@control-plane/database",
+                  "@control-plane/database/*",
+                  "@control-plane/bootstrap",
+                  "@control-plane/bootstrap/*",
+                  "@control-plane/config",
+                  "@control-plane/config/*",
+                  "@control-plane/context",
+                  "@control-plane/context/*",
+                  "@control-plane/domain",
+                  "@control-plane/domain/*",
+                  "@control-plane/execution-plan",
+                  "@control-plane/execution-plan/*",
+                  "@control-plane/policy",
+                  "@control-plane/policy/*",
+                  "@control-plane/runtime-sdk",
+                  "@control-plane/runtime-sdk/*",
+                  "@control-plane/telemetry",
+                  "@control-plane/telemetry/*"
+                ],
+                "message": "The public SDK may depend only on the public contract boundary."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/bootstrap/**/*.ts",
+        "packages/config/**/*.ts",
+        "packages/domain/**/*.ts",
+        "packages/contracts/**/*.ts",
+        "packages/control-sdk/**/*.ts",
+        "packages/events/**/*.ts",
+        "packages/execution-plan/**/*.ts",
+        "packages/runtime-sdk/**/*.ts",
+        "packages/tool-sdk/**/*.ts",
+        "packages/policy/**/*.ts",
+        "packages/context/**/*.ts",
+        "packages/orchestration/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@langchain/langgraph",
+                  "@langchain/langgraph/*",
+                  "@modelcontextprotocol/*",
+                  "@temporalio/*",
+                  "@e2b/*",
+                  "e2b",
+                  "e2b/*",
+                  "litellm",
+                  "litellm/*",
+                  "pi-ai",
+                  "pi-ai/*",
+                  "@mariozechner/pi-ai",
+                  "@mariozechner/pi-ai/*",
+                  "acp",
+                  "acp/*",
+                  "@agentclientprotocol/*",
+                  "@control-plane/adapter-*",
+                  "@control-plane/database",
+                  "@control-plane/database/*"
+                ],
+                "message": "Core packages must depend on stable ports, not concrete vendor adapters."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

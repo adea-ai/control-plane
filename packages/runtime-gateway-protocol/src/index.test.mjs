@@ -276,7 +276,7 @@ describe('Runtime Gateway protocol', () => {
     expect(schema.default.$schema).toBe('https://json-schema.org/draft/2020-12/schema')
     expect(schema.default.oneOf).toHaveLength(9)
     expect(Object.keys(manifest.default.dependencies)).toEqual(['zod'])
-    expect(Object.keys(manifest.default.devDependencies)).toEqual(['prettier'])
+    expect(Object.keys(manifest.default.devDependencies ?? {})).toEqual([])
   })
 })
 

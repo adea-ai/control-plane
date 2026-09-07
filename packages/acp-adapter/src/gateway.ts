@@ -704,11 +704,10 @@ export class ReferenceAcpDriver {
       throw runtimeError('ACP_SESSION_REFERENCE_MISSING', 'validation', false)
     const nativeSessionId = this.#native(parameters.sessionRef)
     if (parameters.action === 'replay') {
-      const replay = await this.#harness.replay(nativeSessionId, {
-        ...(parameters.afterSequence === undefined
-          ? {}
-          : { afterSequence: parameters.afterSequence }),
-      })
+      const replay = await this.#harness.replay(
+        nativeSessionId,
+        parameters.afterSequence === undefined ? {} : { afterSequence: parameters.afterSequence }
+      )
       return { progress: [], result: successResult(command, replay, this.#now()) }
     }
     await this.#harness.request(`session/${parameters.action}`, { sessionId: nativeSessionId })

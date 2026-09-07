@@ -47,7 +47,7 @@ describe('M11.1 requirements ledger', () => {
       [...new Set(ledger.priorMilestoneAudits.map(({ milestone }) => milestone))].sort()
     ).toEqual(['M1', 'M10', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9'])
     expect(ledger.priorMilestoneAudits.some(({ issue }) => issue === 73)).toBe(true)
-    for (const issue of [...Array.from({ length: 18 }, (_, index) => 200 + index)]) {
+    for (const issue of Array.from({ length: 18 }, (_, index) => 200 + index)) {
       expect(
         ledger.priorMilestoneAudits.some((entry) => entry.issue === issue),
         `issue #${issue}`

@@ -5,8 +5,23 @@ import { access, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { format } from 'prettier'
-import ts from 'typescript'
+
+function formatMarkdown(text) {
+  const result = spawnSync(
+    'bun',
+    [
+      'x',
+      'oxfmt',
+      '--stdin-filepath',
+      'report.md',
+      '--config',
+      resolve(repositoryRoot, '.oxfmtrc.json'),
+    ],
+    { input: text, encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(`oxfmt markdown formatting failed: ${result.stderr}`)
+  return result.stdout
+}
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const auditPath = resolve(repositoryRoot, 'docs/architecture/control-plane-architecture.v1.json')
@@ -530,16 +545,12 @@ export async function renderArchitectureReport(audit) {
     'Run `bun run architecture:check` after changing package manifests, public SDK operations, OpenAPI, controllers, composition roots, persistence adapters, or this audit. Run `bun run architecture:refresh` only after explicitly reviewing newly discovered package and operation drift.',
     '',
   ]
-  return format(lines.join('\n'), { parser: 'markdown', printWidth: 100 })
+  return formatMarkdown(lines.join('\n'))
 }
 
 function exportKeys(exports) {
   if (exports === undefined) return []
   return typeof exports === 'string' ? ['.'] : Object.keys(exports).sort()
-}
-
-function operationPattern() {
-  return /\n\s{2}(\w+): \{\n\s+operation: '([^']+)',\n\s+method: '([^']+)',\n\s+path: '([^']+)'/g
 }
 
 async function discoverControllerPaths(path) {
