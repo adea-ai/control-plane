@@ -20,7 +20,10 @@ export const PublicContractManifest = Object.freeze({
 })
 
 export type CompatibilityDirection =
-  'exact' | 'backward-compatible' | 'forward-compatible' | 'breaking'
+  | 'exact'
+  | 'backward-compatible'
+  | 'forward-compatible'
+  | 'breaking'
 
 export interface ContractCompatibility {
   readonly compatible: boolean

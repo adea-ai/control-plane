@@ -386,7 +386,8 @@ export class RuntimeEventIngestionService {
 
   async #applyTerminal(
     frame:
-      GatewayResultEnvelope | (GatewayErrorEnvelope & { commandId: string; payloadHash: string }),
+      | GatewayResultEnvelope
+      | (GatewayErrorEnvelope & { commandId: string; payloadHash: string }),
     context: RuntimeEventContext,
     normalized: NormalizedRuntimeTerminal
   ): Promise<RuntimeEventEffectResult> {

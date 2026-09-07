@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
-import { ESLint } from 'eslint'
 import {
   assertCoverageGoal,
   parseCoverageMinimum,
@@ -210,7 +210,7 @@ test('configures the Code Foundry CI baseline for the public staging-release rep
   assert.match(config, /^dependency_review: auto$/m)
   assert.match(config, /^opencode_security: true$/m)
   assert.match(config, /^staging_validation_mode: audit$/m)
-  assert.match(config, /^runtime_ref: v0\.40\.1$/m)
+  assert.match(config, /^runtime_ref: v1\.3\.1$/m)
   for (const runner of [
     'runner',
     'ci_runner',
@@ -259,7 +259,7 @@ test('generates the staging-release Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v0\.40\.1/
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.3\.1/
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 2)
   assert.match(validation, /cancel-in-progress: true/)
@@ -267,19 +267,19 @@ test('generates the staging-release Code Foundry callers with parallel validatio
   assert.match(validation, /branches: \[main, staging\]/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v0\.40\.1/)
+  assert.match(release, /release\.yml@v1\.3\.1/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
   assert.match(draftPr, /base: staging/)
-  assert.equal((dependabot.match(/target-branch: staging/g) ?? []).length, 3)
+  assert.equal((dependabot.match(/target-branch: staging/g) ?? []).length, 2)
 
   const releasePr = await readFile(
     new URL('../.github/workflows/release-pr.yml', import.meta.url),
     'utf8'
   )
   assert.match(releasePr, /branches: \[staging\]/)
-  assert.match(releasePr, /release-pr\.yml@v0\.40\.1/)
+  assert.match(releasePr, /release-pr\.yml@v1\.3\.1/)
   const opencodeSecurity = await readFile(
     new URL('../.github/workflows/opencode-security.yml', import.meta.url),
     'utf8'
@@ -434,7 +434,7 @@ test('tracks every workspace for coordinated stable release automation', async (
 test('configures strict TypeScript and dependency-boundary checks', async () => {
   const tsconfig = await readJson('tsconfig.base.json')
   const manifest = await readJson('package.json')
-  const eslintConfig = await readFile(new URL('../eslint.config.js', import.meta.url), 'utf8')
+  const oxlintConfig = await readFile(new URL('../.oxlintrc.json', import.meta.url), 'utf8')
 
   assert.equal(tsconfig.compilerOptions.strict, true)
   assert.equal(tsconfig.compilerOptions.noImplicitReturns, true)
@@ -451,7 +451,7 @@ test('configures strict TypeScript and dependency-boundary checks', async () => 
     'litellm',
     'pi-ai',
   ]) {
-    assert.match(eslintConfig, new RegExp(prohibited.replaceAll('/', '\\/')))
+    assert.match(oxlintConfig, new RegExp(prohibited.replaceAll('/', '\\/')))
   }
 })
 
@@ -482,6 +482,13 @@ test('keeps observability vendor SDKs behind the telemetry package boundary', as
   }
 })
 
+function runOxlint(cwd, fixture) {
+  return spawnSync('bun', ['x', 'oxlint', fileURLToPath(fixture)], {
+    cwd,
+    encoding: 'utf8',
+  })
+}
+
 test('rejects database contracts in Control API controllers', async () => {
   const cwd = fileURLToPath(new URL('../', import.meta.url))
   const fixture = new URL(
@@ -491,11 +498,10 @@ test('rejects database contracts in Control API controllers', async () => {
   await writeFile(fixture, 'import "@control-plane/database";\n')
 
   try {
-    const eslint = new ESLint({ cwd })
-    const [result] = await eslint.lintFiles([fileURLToPath(fixture)])
+    const result = runOxlint(cwd, fixture)
 
-    assert.equal(result.errorCount, 1)
-    assert.equal(result.messages[0]?.ruleId, 'no-restricted-imports')
+    assert.equal(result.status, 1)
+    assert.match(result.stdout, /no-restricted-imports/)
   } finally {
     await unlink(fixture)
   }
@@ -510,11 +516,10 @@ test('rejects live database imports from core packages', async () => {
   await writeFile(fixture, 'import "@control-plane/database";\n')
 
   try {
-    const eslint = new ESLint({ cwd })
-    const [result] = await eslint.lintFiles([fileURLToPath(fixture)])
+    const result = runOxlint(cwd, fixture)
 
-    assert.equal(result.errorCount, 1)
-    assert.equal(result.messages[0]?.ruleId, 'no-restricted-imports')
+    assert.equal(result.status, 1)
+    assert.match(result.stdout, /no-restricted-imports/)
   } finally {
     await unlink(fixture)
   }
@@ -526,11 +531,10 @@ test('rejects concrete vendor imports from core packages', async () => {
   await writeFile(fixture, 'import "@temporalio/client";\n')
 
   try {
-    const eslint = new ESLint({ cwd })
-    const [result] = await eslint.lintFiles([fileURLToPath(fixture)])
+    const result = runOxlint(cwd, fixture)
 
-    assert.equal(result.errorCount, 1)
-    assert.equal(result.messages[0]?.ruleId, 'no-restricted-imports')
+    assert.equal(result.status, 1)
+    assert.match(result.stdout, /no-restricted-imports/)
   } finally {
     await unlink(fixture)
   }

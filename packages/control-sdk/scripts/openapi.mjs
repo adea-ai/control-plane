@@ -2,11 +2,22 @@ import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { ErrorResponseEnvelopeSchema, PublicContractManifest } from '@control-plane/contracts'
-import { format, resolveConfig } from 'prettier'
 import { z } from 'zod'
 import { ControlApiOperations } from '../src/operations.ts'
 
 const packageRoot = new URL('../', import.meta.url)
+
+function formatJson(text) {
+  const config = fileURLToPath(new URL('../../.oxfmtrc.json', packageRoot))
+  return execFileSync(
+    'bun',
+    ['x', 'oxfmt', '--stdin-filepath', 'artifact.json', '--config', config],
+    {
+      input: text,
+      encoding: 'utf8',
+    }
+  )
+}
 const major = PublicContractManifest.current.major
 const artifactUrl = new URL(`openapi/control-plane.v${major}.json`, packageRoot)
 const baselineUrl = new URL(`compatibility/control-plane.v${major}.baseline.json`, packageRoot)
@@ -214,11 +225,7 @@ function displayPath(path) {
 
 async function run() {
   const generated = createControlApiOpenApiDocument()
-  const prettierConfig = (await resolveConfig(fileURLToPath(artifactUrl))) ?? {}
-  const serialized = await format(JSON.stringify(generated), {
-    ...prettierConfig,
-    parser: 'json',
-  })
+  const serialized = formatJson(JSON.stringify(generated))
   if (process.argv.includes('--initialize-baseline')) {
     if (readBaselineFromBase() !== undefined) {
       throw new Error(`Compatibility baseline v${major} already exists on the target branch`)

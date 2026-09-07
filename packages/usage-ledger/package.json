@@ -2,14 +2,11 @@
   "name": "@control-plane/usage-ledger",
   "version": "1.1.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -20,11 +17,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

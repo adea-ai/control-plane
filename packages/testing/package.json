@@ -2,14 +2,11 @@
   "name": "@control-plane/testing",
   "version": "1.1.2",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -25,12 +22,15 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/index.test.mjs",
     "test:integration": "bun test --timeout 30000 src/postgres.integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",
     "@control-plane/database": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

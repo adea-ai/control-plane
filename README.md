@@ -69,7 +69,7 @@ Key documentation:
 | `bun test`                   | Run workspace test groups                                                                              |
 | `bun run test:acceptance`    | Run the repository acceptance baseline currently implemented in source                                 |
 | `bun run check:boundaries`   | Reject undeclared dependencies and cross-package source imports                                        |
-| `bun run format`             | Format the repository with Prettier                                                                    |
+| `bun run format`             | Format the repository with oxfmt                                                                       |
 | `bun run format:check`       | Check formatting without modifying files                                                               |
 | `bun run containers:print`   | Print the current service image build plan                                                             |
 | `bun run containers:build`   | Build current production-shaped service images                                                         |

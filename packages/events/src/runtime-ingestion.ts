@@ -8,7 +8,11 @@ import type { ExecutionEvent, ExecutionEventDraft, ExecutionEventRepository } fr
 import { ExecutionEventError, ExecutionEventService } from './index.js'
 
 export type RuntimeEventEffectOutcome =
-  'applied' | 'duplicate' | 'conflict' | 'out_of_order' | 'terminal_conflict'
+  | 'applied'
+  | 'duplicate'
+  | 'conflict'
+  | 'out_of_order'
+  | 'terminal_conflict'
 
 export interface RuntimeProgressEffect {
   readonly commandId: string

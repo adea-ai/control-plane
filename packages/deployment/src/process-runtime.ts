@@ -40,7 +40,9 @@ export class NodeProcessRuntimeProvider implements ProcessRuntimeProvider {
 }
 
 export type ProcessRuntimeErrorCode =
-  'PROCESS_LAUNCH_INVALID' | 'PROCESS_LAUNCH_FAILED' | 'PROCESS_STOP_TIMEOUT'
+  | 'PROCESS_LAUNCH_INVALID'
+  | 'PROCESS_LAUNCH_FAILED'
+  | 'PROCESS_STOP_TIMEOUT'
 
 export class ProcessRuntimeError extends Error {
   constructor(readonly code: ProcessRuntimeErrorCode) {

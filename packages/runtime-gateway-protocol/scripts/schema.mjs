@@ -1,8 +1,19 @@
 import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { format } from 'prettier'
 import { z } from 'zod'
 import { GatewayEnvelopeSchema } from '../src/index.ts'
+
+function formatJson(text) {
+  const config = fileURLToPath(new URL('../../../.oxfmtrc.json', import.meta.url))
+  const result = spawnSync(
+    'bun',
+    ['x', 'oxfmt', '--stdin-filepath', 'artifact.json', '--config', config],
+    { input: text, encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(`oxfmt JSON formatting failed: ${result.stderr}`)
+  return result.stdout
+}
 
 const outputUrl = new URL('../schema/gateway-envelope.v1.json', import.meta.url)
 
@@ -27,10 +38,7 @@ export function gatewayJsonSchema() {
   }
 }
 
-const expected = await format(JSON.stringify(gatewayJsonSchema()), {
-  parser: 'json',
-  printWidth: 100,
-})
+const expected = formatJson(JSON.stringify(gatewayJsonSchema()))
 
 if (import.meta.main) {
   if (process.argv.includes('--check')) {
