@@ -82,3 +82,20 @@ configured recovery bound but does not emit an exact recovery duration.
 The test container, network and volume (including data from the failed first
 attempt) were removed; label-filtered inventories were empty. No shared database,
 Neon role or production service was modified.
+
+## Named release-command follow-up
+
+At `dc5a48a` (code unchanged from the combined candidate), the documented commands
+`bun run test:m10-conformance`, `bun run test:m10-operability` and
+`bun run test:m11-standalone` completed successfully in sequence. The standalone
+command ran 77 acceptance tests plus context (19), Cortana-compatible adapter (7),
+relay (18), profile-portability (13) and deployment (9): 143 passing tests.
+The profile package explicitly skipped one PostgreSQL migration test because this
+credential-free invocation did not enable database integration. That same named
+test passed separately in the PostgreSQL follow-up above; the skip is not counted
+as a pass here.
+
+These commands exercise their checked-in reference transports and fixtures,
+including Local direct runtime and packaged RPC scenarios. Command success alone
+does not prove every #188 scenario, live external providers, fresh VPS deployment,
+managed cloud or the independent final #197 acceptance procedure.
