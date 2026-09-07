@@ -129,6 +129,22 @@ describe('production evaluation and release gates', () => {
     expect(receipts).toHaveLength(2)
     expect(receipts[1].passed).toBe(false)
     expect(await repository.getRun(candidate.evalRunId)).toEqual(candidate)
+    expect(candidate.results[0].observation).toEqual(receipts[1])
+    for (const mutate of [
+      (value) => {
+        value.results[0].observation.observations[0].target = 'forged-gate'
+      },
+      (value) => {
+        value.results[0].metrics.evidence_sufficiency = 1
+      },
+      (value) => {
+        value.suite.cases[0].inputDigest = `sha256:${'0'.repeat(64)}`
+      },
+    ]) {
+      const corrupted = structuredClone(candidate)
+      mutate(corrupted)
+      expect(EvalRunSchema.safeParse(corrupted).success).toBe(false)
+    }
     const gates = new ReleaseGateRegistry()
     expect(
       gates.evaluate({

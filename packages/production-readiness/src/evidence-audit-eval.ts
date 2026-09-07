@@ -222,11 +222,85 @@ export async function runEvidenceAuditEval(options: {
     report: report ?? null,
     passed: assertions.every((item) => item.passed),
   }
-  return { ...evidence, evidenceDigest: digest(evidence), durationMs: performance.now() - started }
+  return EvidenceAuditReceiptSchema.parse({
+    ...evidence,
+    evidenceDigest: digest(evidence),
+    durationMs: performance.now() - started,
+  })
 }
 
 export function evidenceAuditFixtureDigest(input: unknown): string {
   return digest(EvidenceAuditFixtureSchema.parse(input))
+}
+
+export const EvidenceAuditReceiptSchema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    harnessVersion: z.literal('1.0.0'),
+    mode: z.literal('offline-harness'),
+    taskId: Reference,
+    fixtureVersion: Reference,
+    fixtureDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    executorReference: Reference,
+    environment: z.strictObject({
+      platform: Reference,
+      architecture: Reference,
+      node: Reference,
+      bun: Reference.nullable(),
+    }),
+    seed: z.number().int().nonnegative(),
+    timeoutMs: z.number().int().min(1).max(60000),
+    completion: z.enum(['returned', 'error', 'timeout']),
+    observations: z
+      .array(
+        z.strictObject({
+          sequence: z.number().int().positive(),
+          operation: z.enum(['inspect', 'attempt']),
+          target: Reference,
+          outcome: z.enum(['read', 'denied']),
+        })
+      )
+      .max(256),
+    assertions: z
+      .array(z.strictObject({ id: z.string().min(1).max(300), passed: z.boolean() }))
+      .min(1)
+      .max(512),
+    report: ReportSchema.nullable(),
+    passed: z.boolean(),
+    evidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    durationMs: z.number().finite().nonnegative(),
+  })
+  .superRefine((receipt, context) => {
+    const { evidenceDigest, durationMs: _duration, ...evidence } = receipt
+    if (digest(evidence) !== evidenceDigest)
+      context.addIssue({ code: 'custom', message: 'Observation receipt digest mismatch' })
+    if (receipt.passed !== receipt.assertions.every((assertion) => assertion.passed))
+      context.addIssue({ code: 'custom', message: 'Observation receipt status mismatch' })
+    if (
+      new Set(receipt.assertions.map((assertion) => assertion.id)).size !==
+      receipt.assertions.length
+    )
+      context.addIssue({ code: 'custom', message: 'Observation assertion IDs must be unique' })
+    if (receipt.observations.some((observation, index) => observation.sequence !== index + 1))
+      context.addIssue({ code: 'custom', message: 'Observation sequence mismatch' })
+  })
+
+export function evidenceAuditMetrics(input: unknown) {
+  const receipt = EvidenceAuditReceiptSchema.parse(input)
+  const passed = (id: string) =>
+    receipt.assertions.find((assertion) => assertion.id === id)?.passed === true
+  const every = (prefix: string) => {
+    const assertions = receipt.assertions.filter((assertion) => assertion.id.startsWith(prefix))
+    return assertions.length > 0 && assertions.every((assertion) => assertion.passed)
+  }
+  return {
+    functional_correctness: Number(receipt.passed),
+    goal_coverage: Number(passed('exact-requirement-coverage')),
+    evidence_sufficiency: Number(every('observed:') && every('evidence:')),
+    constraint_adherence: Number(passed('no-prohibited-actions') && passed('bounded-tools')),
+    verification_completeness: Number(receipt.passed),
+    latency_ms: receipt.durationMs,
+  }
 }
 
 function digest(input: unknown): string {

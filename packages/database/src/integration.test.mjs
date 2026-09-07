@@ -9,6 +9,11 @@ import {
 } from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
+  EvaluationService,
+  createEvidenceAuditMetricsExecutor,
+  evidenceAuditFixtureDigest,
+} from '@control-plane/production-readiness'
+import {
   CommandInboxService,
   ExecutionLifecycleService,
   ExecutionReconciliationService,
@@ -687,6 +692,54 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const restarted = new PostgresEvaluationRepository(isolated.application)
     expect(await restarted.getRun(run.evalRunId)).toEqual(run)
     expect(await isolated.application.select().from(evaluationRuns)).toHaveLength(1)
+    const fixture = {
+      taskId: 'case-1',
+      version: '1',
+      candidate: 'current',
+      prompt: 'Inspect every gate.',
+      untrustedSummary: '',
+      requirements: [
+        { id: 'gate', evidence: { id: 'run', candidate: 'current', outcome: 'pass' } },
+      ],
+    }
+    const observed = await new EvaluationService({ repository }).run({
+      evalRunId: 'eval-observed-integration',
+      suite: {
+        ...run.suite,
+        cases: [{ ...run.suite.cases[0], inputDigest: evidenceAuditFixtureDigest(fixture) }],
+      },
+      configuration: run.configuration,
+      execute: createEvidenceAuditMetricsExecutor({
+        fixtures: [fixture],
+        executorReference: 'scripted-pg-control-v1',
+        seed: 1104,
+        executor: async ({ tools }) => {
+          const evidence = tools.inspect('gate')
+          return {
+            status: 'complete',
+            requirements: [{ id: 'gate', evidenceId: evidence.id, state: 'verified' }],
+          }
+        },
+      }),
+    })
+    const reconstructed = new PostgresEvaluationRepository(isolated.application)
+    expect(await reconstructed.getRun(observed.evalRunId)).toEqual(observed)
+    expect(observed.results[0].observation.observations).toHaveLength(1)
+    const corrupted = structuredClone(observed)
+    corrupted.results[0].observation.observations[0].target = 'forged'
+    try {
+      await isolated.application
+        .update(evaluationRuns)
+        .set({ evidence: corrupted })
+        .where(eq(evaluationRuns.evalRunId, observed.evalRunId))
+      await expect(reconstructed.getRun(observed.evalRunId)).rejects.toThrow()
+    } finally {
+      await isolated.application
+        .update(evaluationRuns)
+        .set({ evidence: observed })
+        .where(eq(evaluationRuns.evalRunId, observed.evalRunId))
+    }
+    expect(await reconstructed.getRun(observed.evalRunId)).toEqual(observed)
   })
 
   test('persists immutable release decisions across repository restart', async () => {

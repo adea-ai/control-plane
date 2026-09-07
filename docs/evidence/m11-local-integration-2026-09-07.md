@@ -516,3 +516,26 @@ authority were introduced. Complete corpus/runtime bindings and independent revi
 The full local chain passed with 787 unit tests and 85.64% line / 74.57% function coverage. The final
 focused package suite and format check passed after strengthening the fixture-snapshot assertion.
 No provider or persistent service was started; database integration was not rerun for this adapter.
+
+## Atomic evaluation run and observation receipts
+
+Observed evaluation results now embed their complete receipt in the run record. Schema checks bind
+the task/case ID and fixture input digest, verify receipt content digests/observation sequences and
+assertion uniqueness, and require stored metrics to match derived receipt metrics. The existing
+PostgreSQL JSONB run row stores these together without a schema migration. Metric-only historical
+runs remain readable; older strict readers may reject receipt-bearing runs, so downgrade remains a
+release gate. Hashes detect inconsistent content, not external executor authenticity.
+
+The PostgreSQL integration case verifies an observed run through a reconstructed repository and
+rejects deliberately corrupted stored trace content. Unit tests also reject mismatched metrics and
+fixture digests. An initial negative test exposed an outer Zod refinement re-parsing an already-invalid
+receipt; the refinement now leaves nested validation failures intact rather than throwing from
+`safeParse`. The optional extra-archive callback remains isolated and awaited, but is no longer
+needed to retain the receipt associated with a successfully saved run.
+
+Full local gates passed with 787 unit tests and 85.64% line / 74.57% function coverage. All 29
+PostgreSQL integration tests and existing recovery drills passed on the final change. Those drills
+do not yet seed observed evaluation receipts. SQLite persistence, receipt-bearing backup recovery,
+retention, actual agent executions and calibrated full-corpus acceptance remain unverified.
+The disposable `m11-eval-receipts-20260907` container/network/volume were removed and port 55109
+was verified closed. No remote infrastructure or production data was changed.

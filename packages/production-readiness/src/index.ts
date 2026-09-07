@@ -15,6 +15,7 @@ export type {
   EvaluationMetric,
   EvaluationMetricValues,
   EvaluationRepository,
+  ObservedEvaluationCase,
 } from './evaluations.js'
 export {
   InMemoryReleaseAuditRepository,
@@ -51,6 +52,8 @@ export { assessDeployment } from './deployment.js'
 export type { DeploymentAssessment } from './deployment.js'
 export {
   EvidenceAuditFixtureSchema,
+  EvidenceAuditReceiptSchema,
+  evidenceAuditMetrics,
   evidenceAuditFixtureDigest,
   runEvidenceAuditEval,
 } from './evidence-audit-eval.js'

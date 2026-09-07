@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { EvidenceAuditReceiptSchema, evidenceAuditMetrics } from './evidence-audit-eval.js'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const ReferenceSchema = z
@@ -110,17 +111,34 @@ const MetricValuesSchema = z.partialRecord(
   z.number().finite().nonnegative()
 )
 
+const ObservedEvaluationCaseSchema = z.strictObject({
+  metrics: MetricValuesSchema,
+  observation: EvidenceAuditReceiptSchema,
+})
+export type ObservedEvaluationCase = z.output<typeof ObservedEvaluationCaseSchema>
+
 export const EvalResultSchema = z
   .object({
     evalCaseId: ReferenceSchema,
     dataset: VersionedArtifactSchema,
     configuration: EvaluationConfigurationSchema,
     metrics: MetricValuesSchema,
+    observation: EvidenceAuditReceiptSchema.optional(),
     failedRequiredMetrics: z.array(EvaluationMetricSchema),
     status: z.enum(['failed', 'passed']),
   })
   .strict()
   .superRefine((result, context) => {
+    const observation = EvidenceAuditReceiptSchema.safeParse(result.observation)
+    if (
+      observation.success &&
+      (observation.data.taskId !== result.evalCaseId ||
+        !sameMetrics(result.metrics, evidenceAuditMetrics(observation.data)))
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Observed evaluation metrics or case binding mismatch',
+      })
     const expectedStatus = result.failedRequiredMetrics.length === 0 ? 'passed' : 'failed'
     if (result.status !== expectedStatus) {
       context.addIssue({ code: 'custom', message: 'Evaluation result status is inconsistent' })
@@ -175,6 +193,15 @@ export const EvalRunSchema = z
           path: ['results', resultIndex, 'dataset'],
         })
       }
+      if (
+        result.observation !== undefined &&
+        result.observation.fixtureDigest !== evaluationCase.inputDigest
+      )
+        context.addIssue({
+          code: 'custom',
+          message: 'Observed evaluation fixture digest differs from case input',
+          path: ['results', resultIndex, 'observation'],
+        })
       if (!sameValue(result.configuration, run.configuration)) {
         context.addIssue({
           code: 'custom',
@@ -256,7 +283,7 @@ export class EvaluationService {
     readonly allowLiveProvider?: boolean
     readonly execute: (
       evaluationCase: EvalSuite['cases'][number]
-    ) => Promise<EvaluationMetricValues>
+    ) => Promise<EvaluationMetricValues | ObservedEvaluationCase>
   }): Promise<EvalRun> {
     const suite = EvalSuiteSchema.parse(input.suite)
     const configuration = EvaluationConfigurationSchema.parse(input.configuration)
@@ -267,7 +294,10 @@ export class EvaluationService {
     const results = []
     for (const evaluationCase of suite.cases) {
       // The adapter may inspect its task, but cannot rewrite the scoring authority.
-      const metrics = MetricValuesSchema.parse(await input.execute(clone(evaluationCase)))
+      const output = await input.execute(clone(evaluationCase))
+      const observed =
+        'observation' in output ? ObservedEvaluationCaseSchema.parse(output) : undefined
+      const metrics = MetricValuesSchema.parse(observed?.metrics ?? output)
       const failedRequiredMetrics = evaluationCase.scorers
         .filter(
           ({ direction, metric, required, threshold }) =>
@@ -280,6 +310,7 @@ export class EvaluationService {
           dataset: suite.dataset,
           configuration,
           metrics,
+          ...(observed === undefined ? {} : { observation: observed.observation }),
           failedRequiredMetrics,
           status: failedRequiredMetrics.length === 0 ? 'passed' : 'failed',
         })

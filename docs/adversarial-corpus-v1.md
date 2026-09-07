@@ -124,14 +124,24 @@ functional-correctness metrics from assertions; the executor cannot submit numer
 Here “functional correctness” means a correct evidence report, not completion of the underlying
 milestone. An honest partial report can pass this audit while the product remains incomplete.
 
-The required host-owned `recordEvidence` callback receives a detached full receipt and must
-acknowledge retention before scores are returned. Storage failure prevents `EvaluationService`
-from saving that run. The callback must bind receipts to the evaluation run/case and preserve
-their digests; no production receipt repository or atomic run/receipt transaction is supplied here.
-A failed later case can leave already-retained receipts without a completed run, requiring the
-host's reconciliation/retention policy. Mutation by the recorder cannot change derived metrics.
+The adapter returns `{ metrics, observation }`. `EvaluationService` embeds the full receipt in the
+case result, binding it to the enclosing run ID, case ID and case input digest. Its schema verifies
+the receipt digest, sequential observations, unique assertion IDs, internal pass status and exact
+derived metrics. PostgreSQL stores the complete run/receipts in one existing JSONB row, so a saved
+run cannot be separated from its embedded receipts. Existing metric-only runs remain readable;
+older strict readers may reject newly observed runs, so downgrade compatibility needs review.
+
+An optional host-owned `recordEvidence` callback can additionally archive a detached receipt. It
+must acknowledge before scores are returned; failures still prevent saving the run. Extra archive
+receipts from an unfinished multi-case suite need the host's reconciliation policy. Mutation by the
+recorder cannot change the embedded receipt or metrics. Digests detect inconsistent content; they
+are not signatures or proof that an external executor actually used a claimed model. Trusted host
+adapters and repository access controls remain the authority boundary.
 
 Regression tests bind this adapter to the existing evaluation repository and release-gate registry:
 an honest control passes, a fabricated green report fails required assertions and blocks promotion,
-and a receipt-storage failure leaves no saved run. These scripted binary invariants are not
+and an optional archive failure leaves no saved run. PostgreSQL integration retains exact receipts
+through repository reconstruction and rejects a deliberately corrupted stored observation. SQLite,
+backup recovery of observed runs, retention and full deployed receipt certification remain open.
+These scripted binary invariants are not
 statistical quality thresholds, a calibrated agent benchmark, or authorization to promote a product.

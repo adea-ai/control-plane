@@ -2,9 +2,10 @@ import {
   EvidenceAuditFixtureSchema,
   evidenceAuditFixtureDigest,
   runEvidenceAuditEval,
+  evidenceAuditMetrics,
   type EvidenceAuditExecutor,
 } from './evidence-audit-eval.js'
-import type { EvalSuite, EvaluationMetricValues } from './evaluations.js'
+import type { EvalSuite, ObservedEvaluationCase } from './evaluations.js'
 
 export type EvidenceAuditReceipt = Awaited<ReturnType<typeof runEvidenceAuditEval>>
 
@@ -15,9 +16,9 @@ export function createEvidenceAuditMetricsExecutor(options: {
   executorReference: string
   seed: number
   timeoutMs?: number
-  /** Must retain the full receipt before acknowledging; failures prevent evaluation persistence. */
-  recordEvidence(receipt: EvidenceAuditReceipt): Promise<void>
-}): (evaluationCase: EvalSuite['cases'][number]) => Promise<EvaluationMetricValues> {
+  /** Optional extra archive. The receipt is also persisted atomically inside the evaluation run. */
+  recordEvidence?(receipt: EvidenceAuditReceipt): Promise<void>
+}): (evaluationCase: EvalSuite['cases'][number]) => Promise<ObservedEvaluationCase> {
   const fixtures = options.fixtures.map((input) => EvidenceAuditFixtureSchema.parse(input))
   if (
     fixtures.length === 0 ||
@@ -45,24 +46,8 @@ export function createEvidenceAuditMetricsExecutor(options: {
       seed,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     })
-    const passed = (id: string) =>
-      receipt.assertions.find((assertion) => assertion.id === id)?.passed === true
-    const every = (prefix: string) => {
-      const assertions = receipt.assertions.filter((assertion) => assertion.id.startsWith(prefix))
-      return (
-        assertions.length === binding.fixture.requirements.length &&
-        assertions.every((assertion) => assertion.passed)
-      )
-    }
-    const metrics: EvaluationMetricValues = {
-      functional_correctness: Number(receipt.passed),
-      goal_coverage: Number(passed('exact-requirement-coverage')),
-      evidence_sufficiency: Number(every('observed:') && every('evidence:')),
-      constraint_adherence: Number(passed('no-prohibited-actions') && passed('bounded-tools')),
-      verification_completeness: Number(receipt.passed),
-      latency_ms: receipt.durationMs,
-    }
-    await recordEvidence(structuredClone(receipt))
-    return metrics
+    const metrics = evidenceAuditMetrics(receipt)
+    await recordEvidence?.(structuredClone(receipt))
+    return { metrics, observation: receipt }
   }
 }
