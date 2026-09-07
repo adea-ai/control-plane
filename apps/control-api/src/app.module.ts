@@ -1,5 +1,8 @@
 import { Module, type DynamicModule } from '@nestjs/common'
-import { createOpenTelemetryMetricAdapter, createOpenTelemetryTraceAdapter } from '@control-plane/telemetry/opentelemetry'
+import {
+  createOpenTelemetryMetricAdapter,
+  createOpenTelemetryTraceAdapter,
+} from '@control-plane/telemetry/opentelemetry'
 import { createConsoleTraceAdapter, createTelemetry } from '@control-plane/telemetry'
 import {
   DisabledServiceAuthenticator,

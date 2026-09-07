@@ -3,13 +3,20 @@
   "version": "1.3.2",
   "description": "Typed client for the Control Plane API with transport, response mapping, OpenAPI baseline, and testing helpers.",
   "keywords": [
-    "sdk",
-    "client",
-    "api",
     "agents",
+    "api",
+    "client",
+    "sdk",
     "typed"
   ],
+  "homepage": "https://github.com/adea-ai/control-plane#readme",
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/control-sdk"
+  },
   "files": [
     "dist",
     "openapi"
@@ -49,12 +56,5 @@
   },
   "engines": {
     "node": ">=24 <25"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/adea-ai/control-plane.git",
-    "directory": "packages/control-sdk"
-  },
-  "bugs": "https://github.com/adea-ai/control-plane/issues",
-  "homepage": "https://github.com/adea-ai/control-plane#readme"
+  }
 }

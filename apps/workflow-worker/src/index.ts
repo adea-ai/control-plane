@@ -11,7 +11,11 @@ import {
   createOpenTelemetryMetricAdapter,
   createOpenTelemetryTraceAdapter,
 } from '@control-plane/telemetry/opentelemetry'
-import { createConsoleTraceAdapter, createTelemetry, type TraceAdapter } from '@control-plane/telemetry'
+import {
+  createConsoleTraceAdapter,
+  createTelemetry,
+  type TraceAdapter,
+} from '@control-plane/telemetry'
 import { createRestateEndpointFactory, type RestateEndpointFactory } from './restate-worker.js'
 import {
   createManagedCloudWorkflowWorkerComposition,

@@ -22,11 +22,11 @@ bun add @adea-ai/runtime-gateway-protocol
 
 ## Subpath exports
 
-| Path | Contents |
-| --- | --- |
-| `.` | Protocol schemas, emulator, fixtures, authentication |
-| `./fixtures` | Golden and malformed fixture files for conformance testing |
-| `./schema/gateway-envelope.v1.json` | JSON Schema for gateway envelopes |
+| Path                                | Contents                                                   |
+| ----------------------------------- | ---------------------------------------------------------- |
+| `.`                                 | Protocol schemas, emulator, fixtures, authentication       |
+| `./fixtures`                        | Golden and malformed fixture files for conformance testing |
+| `./schema/gateway-envelope.v1.json` | JSON Schema for gateway envelopes                          |
 
 ## Usage
 
