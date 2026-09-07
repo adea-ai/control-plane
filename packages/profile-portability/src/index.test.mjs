@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { executionValidationCommandKey } from '@control-plane/execution-plan'
 import {
   contextPackageSerializationFixtures,
   contextAuthoringCommandKey,
@@ -152,6 +154,88 @@ class MemoryObjectStore {
 }
 
 describe('portable profile export and import', () => {
+  test('requires validation replay records to retain exact scoped plans and logical identities', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const command = {
+      scope: {
+        callerPrincipalId: 'svc_portable',
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        operation: 'execution.validate',
+        idempotencyKey: 'portable-validation-0001',
+      },
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: plan.correlation.requestId,
+      recordedAt: createdAt,
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+      executionPlan: { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
+    }
+    const planRecord = {
+      category: 'execution-plan',
+      logicalId: `execution-plans/${plan.executionPlanId}`,
+      revision: 0,
+      value: plan,
+    }
+    const commandRecord = {
+      category: 'execution-validation-command',
+      logicalId: `execution-validation-commands/${executionValidationCommandKey(command.scope)}`,
+      revision: 0,
+      value: command,
+    }
+    const manifestFor = async (records) =>
+      assertPortableManifest(
+        await exportPortableState(source({ records }), {
+          exportId: 'validation-fixture',
+          createdAt,
+        })
+      )
+    expect(
+      assertPortableManifest(await manifestFor([planRecord, commandRecord])).records
+    ).toHaveLength(2)
+    const otherScope = { ...command.scope, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' }
+    const aliasId = 'pln_01JBBCDEF0123456789ABCDEFG'
+    for (const records of [
+      [commandRecord],
+      [
+        planRecord,
+        { ...commandRecord, logicalId: `execution-validation-commands/${'0'.repeat(64)}` },
+      ],
+      [
+        planRecord,
+        {
+          ...commandRecord,
+          logicalId: `execution-validation-commands/${executionValidationCommandKey(otherScope)}`,
+          value: { ...command, scope: otherScope },
+        },
+      ],
+      [
+        planRecord,
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            executionPlan: { ...command.executionPlan, contentDigest: `sha256:${'0'.repeat(64)}` },
+          },
+        },
+      ],
+      [
+        planRecord,
+        { ...commandRecord, value: { ...command, requestId: 'req_01JBBCDEF0123456789ABCDEFG' } },
+      ],
+      [
+        { ...planRecord, logicalId: `execution-plans/${aliasId}` },
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            executionPlan: { ...command.executionPlan, executionPlanId: aliasId },
+          },
+        },
+      ],
+    ])
+      await expect(manifestFor(records)).rejects.toThrow()
+  })
+
   test('requires authoring replay identities to retain their exact scoped package', async () => {
     const package_ = contextPackageSerializationFixtures.futurePi
     const command = {

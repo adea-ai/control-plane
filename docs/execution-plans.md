@@ -57,8 +57,14 @@ metadata. Its candidates are asserted absent before rollback, so earlier shared-
 mask a leaked write. The existing recovery drills do not yet seed validation-command records;
 process restart and backup recovery for this record type are not certified by this test.
 
-Neither repository is yet wired into execution validation: profile portability and the API's
-first-result replay behavior remain required. The existing reference-only API still recompiles on
+Profile portability now carries `execution-validation-command` records with their exact plans.
+Manifest verification rejects missing plans, forged logical keys, aliases and scope/request/digest
+mismatches. Imports preserve SQLite's record-key prefix and insert PostgreSQL plans before commands.
+A real SQLite → PostgreSQL → SQLite round trip retains the command and every exported logical ID
+and record digest. Older importers may reject this added category; this is not live cutover evidence.
+
+Neither repository is yet wired into execution validation: the API's first-result replay behavior
+remains required. The existing reference-only API still recompiles on
 each call, so this groundwork does not close M11's validation replay or authoring reachability gate.
 
 ## Child execution authority

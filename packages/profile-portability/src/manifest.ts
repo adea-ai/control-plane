@@ -6,6 +6,12 @@ import {
   assertContextPackageIntegrity,
   contextAuthoringCommandKey,
 } from '@control-plane/context'
+import {
+  ExecutionValidationCommandRecordSchema,
+  executionValidationCommandKey,
+  assertExecutionPlanIntegrity,
+  assertExecutionValidationCommandPlan,
+} from '@control-plane/execution-plan'
 
 export const PORTABLE_EXPORT_SCHEMA_VERSION = 1 as const
 export const PORTABLE_CONTRACT_VERSION = 'control-plane-portable-state-v1' as const
@@ -34,6 +40,7 @@ export const PortableRecordCategorySchema = z.enum([
   'context-package',
   'context-authoring-command',
   'execution-plan',
+  'execution-validation-command',
   'policy-configuration',
   'runtime-configuration',
   'tool-configuration',
@@ -162,6 +169,26 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
       package_.projectState.projectId !== command.scope.projectId
     )
       throw new Error('PORTABLE_AUTHORING_PACKAGE_INVALID')
+  }
+  const plans = new Map(
+    manifest.records
+      .filter((record) => record.category === 'execution-plan')
+      .map((record) => [record.logicalId, record.value])
+  )
+  for (const record of manifest.records.filter(
+    (record) => record.category === 'execution-validation-command'
+  )) {
+    const command = ExecutionValidationCommandRecordSchema.parse(record.value)
+    if (
+      record.logicalId !==
+      `execution-validation-commands/${executionValidationCommandKey(command.scope)}`
+    ) {
+      throw new Error('PORTABLE_VALIDATION_IDENTITY_INVALID')
+    }
+    const plan = assertExecutionPlanIntegrity(
+      plans.get(`execution-plans/${command.executionPlan.executionPlanId}`)
+    )
+    assertExecutionValidationCommandPlan(command, plan)
   }
   return manifest
 }

@@ -349,3 +349,16 @@ The integration runner passed 28 tests (24 database, two LangGraph, one portabil
 and its existing connection-loss/restart/backup drills. Those drills do not yet seed validation-command
 records, so they are not proof of this record type's recovery. Full local lint/type/format/test gates
 also passed; profile portability, production API wiring and end-to-end validation replay remain open.
+
+## Validation-command portability follow-up
+
+The portable manifest category and SQLite/PostgreSQL mappings now retain validation-command
+records with their exact plans. Manifest verification rejects missing plans, forged keys, aliased plan
+IDs and scope/request/digest mismatches. The real SQLite → PostgreSQL → SQLite test verifies the
+record through both repositories and preserves all exported logical IDs and record digests. Its
+SQLite providers are closed during teardown even if an assertion fails.
+
+The full local lint/type/format/test chain passed (776 unit tests; 87.14% line and 83.81% function
+coverage), as did all 28 PostgreSQL integration tests and the existing recovery drills. The drills
+still do not seed validation commands. This closes the bounded record-portability check, not live
+cutover, production API replay or full milestone acceptance. No remote infrastructure was changed.

@@ -4,13 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
-import { PostgresContextAuthoringCommandRepository } from '@control-plane/database'
+import {
+  PostgresContextAuthoringCommandRepository,
+  PostgresExecutionValidationCommandRepository,
+} from '@control-plane/database'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
 import {
   SqlitePersistenceProvider,
   SqliteVersionedCatalogRepository,
   SqliteContextAuthoringCommandRepository,
+  SqliteExecutionValidationCommandRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   PersistencePortableStateDestination,
@@ -27,6 +32,7 @@ const enabled =
   process.env.RUN_DATABASE_INTEGRATION === 'true'
 const createdAt = '2026-08-30T12:00:00.000Z'
 const directories = []
+const providers = []
 let database
 
 beforeAll(async () => {
@@ -40,6 +46,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await Promise.all(providers.map((provider) => provider.close()))
   await database?.dispose()
   await Promise.all(directories.map((path) => rm(path, { recursive: true, force: true })))
 })
@@ -64,6 +71,25 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
       },
     }
     await new SqliteContextAuthoringCommandRepository(local).commit(command, package_)
+    const executionPlan = createExecutionPlanTestFixture()
+    const validation = {
+      scope: {
+        callerPrincipalId: 'svc_migration',
+        workspaceId: executionPlan.correlation.workspaceId,
+        projectId: executionPlan.correlation.projectId,
+        operation: 'execution.validate',
+        idempotencyKey: 'migration-validation-0001',
+      },
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: executionPlan.correlation.requestId,
+      payloadHash: `sha256:${'c'.repeat(64)}`,
+      executionPlan: {
+        executionPlanId: executionPlan.executionPlanId,
+        contentDigest: executionPlan.contentDigest,
+      },
+      recordedAt: createdAt,
+    }
+    await new SqliteExecutionValidationCommandRepository(local).commit(validation, executionPlan)
     const localManifest = await exportPortableState(
       new PersistencePortableStateSource({
         persistence: local,
@@ -85,6 +111,11 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
     expect(
       await new PostgresContextAuthoringCommandRepository(database.application).get(command.scope)
     ).toEqual(command)
+    expect(
+      await new PostgresExecutionValidationCommandRepository(database.application).get(
+        validation.scope
+      )
+    ).toEqual(validation)
     const replayPlan = await planPortableImport(localManifest, cloud)
     const replay = await applyPortableImport(localManifest, replayPlan, cloud, {}, () => createdAt)
     expect(replay).toMatchObject({ outcome: 'replayed' })
@@ -118,14 +149,15 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
     expect(await new SqliteContextAuthoringCommandRepository(restored).get(command.scope)).toEqual(
       command
     )
+    expect(
+      await new SqliteExecutionValidationCommandRepository(restored).get(validation.scope)
+    ).toEqual(validation)
     expect(restoredManifest.records.map(({ logicalId }) => logicalId)).toEqual(
       localManifest.records.map(({ logicalId }) => logicalId)
     )
     expect(restoredManifest.records.map(({ contentDigest }) => contentDigest)).toEqual(
       localManifest.records.map(({ contentDigest }) => contentDigest)
     )
-    local.close()
-    restored.close()
   })
 })
 
@@ -194,6 +226,7 @@ async function sqliteProvider(profile) {
   const directory = await mkdtemp(join(tmpdir(), `postgres-portability-${profile}-`))
   directories.push(directory)
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite'), profile })
+  providers.push(provider)
   await provider.migrate()
   return provider
 }

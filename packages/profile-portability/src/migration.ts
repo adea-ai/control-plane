@@ -3,6 +3,10 @@ import {
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
 } from '@control-plane/context'
+import {
+  ExecutionValidationCommandRecordSchema,
+  executionValidationCommandKey,
+} from '@control-plane/execution-plan'
 import type {
   DeploymentProfile,
   JsonValue,
@@ -391,6 +395,7 @@ export const PortablePersistenceNamespaces = Object.freeze({
   'context-packages': 'context-package',
   'context-authoring-commands': 'context-authoring-command',
   'execution-plans': 'execution-plan',
+  'execution-validation-commands': 'execution-validation-command',
 } as const)
 
 type PortablePersistenceNamespace = keyof typeof PortablePersistenceNamespaces
@@ -611,7 +616,7 @@ function persistenceIdentity(record: PortableRecord): {
   return {
     namespace,
     id:
-      namespace === 'context-authoring-commands'
+      namespace === 'context-authoring-commands' || namespace === 'execution-validation-commands'
         ? `r-${id}`
         : sqliteRecordId(
             namespace === 'project-states' || namespace === 'project-state-history'
@@ -626,6 +631,14 @@ function portableIdentity(
   value: JsonValue,
   fallback: string
 ): string {
+  if (namespace === 'execution-validation-commands') {
+    const key = executionValidationCommandKey(
+      ExecutionValidationCommandRecordSchema.parse(value).scope
+    )
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
   if (namespace === 'context-authoring-commands') {
     const key = contextAuthoringCommandKey(ContextAuthoringCommandRecordSchema.parse(value).scope)
     if (`r-${key}` !== fallback)
