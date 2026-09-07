@@ -92,6 +92,38 @@ afterEach(async () => {
 })
 
 describe('Control API', () => {
+  test('exposes only readiness through public component diagnostics', async () => {
+    let ready = true
+    let probeFails = false
+    const application = await createControlApiApplication({
+      health: () => ({ status: 'ok', metadata }),
+      logger: { write: () => undefined },
+      metadata,
+      readiness: () => ({ status: 'ready', metadata }),
+      dependencyReadiness: () => {
+        if (probeFails) throw new Error('/private/storage/internal-host')
+        return Promise.resolve(ready)
+      },
+      componentManifest: async () => {
+        throw new Error('The public route must never serialize private manifests')
+      },
+    })
+    applications.push(application)
+    const response = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['cache-control']).toBe('no-store')
+    expect(response.json()).toEqual({ schemaVersion: 1, ready: true })
+    ready = false
+    const unavailable = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(unavailable.statusCode).toBe(503)
+    expect(unavailable.json()).toEqual({ schemaVersion: 1, ready: false })
+    ready = true
+    probeFails = true
+    const failed = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(failed.statusCode).toBe(503)
+    expect(failed.json()).toEqual({ schemaVersion: 1, ready: false })
+  })
+
   test('verifies an authenticated service principal through the public contract', async () => {
     const application = await createApplication(
       [],

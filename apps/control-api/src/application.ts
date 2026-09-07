@@ -30,7 +30,15 @@ export async function createControlApiApplication(
   if (options.componentManifest !== undefined) {
     fastify.get('/v1/components', async (_request, response) => {
       response.header('cache-control', 'no-store')
-      return options.componentManifest?.()
+      const ready = await Promise.resolve()
+        .then(
+          async () =>
+            options.readiness().status === 'ready' &&
+            (await options.dependencyReadiness?.()) === true
+        )
+        .catch(() => false)
+      response.status(ready ? 200 : 503)
+      return { schemaVersion: 1, ready }
     })
   }
   const application = await NestFactory.create<NestFastifyApplication>(

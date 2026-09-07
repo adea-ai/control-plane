@@ -134,7 +134,16 @@ describe('Local Control Plane composition', () => {
       await server.start()
       const response = await globalThis.fetch(`${server.address}/v1/components`)
       expect(response.status).toBe(200)
-      expect(await response.json()).toEqual(manifest)
+      expect(await response.json()).toEqual({ schemaVersion: 1, ready: true })
+      const readiness = await globalThis.fetch(`${server.address}/ready`)
+      expect(await readiness.json()).toEqual({
+        status: 'ready',
+        metadata: { serviceName: 'local-control-plane' },
+      })
+      manifest.components[0].ready = false
+      const unavailable = await globalThis.fetch(`${server.address}/v1/components`)
+      expect(unavailable.status).toBe(503)
+      expect(await unavailable.json()).toEqual({ schemaVersion: 1, ready: false })
     } finally {
       await server.close()
     }

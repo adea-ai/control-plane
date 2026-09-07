@@ -93,6 +93,12 @@ Historical AWS/IAM/ECS controls do not substitute for Railway evidence.
 
 ## M10 security evidence
 
+Public `GET /v1/components` returns only `{ "schemaVersion": 1, "ready": true }`
+(or `ready: false` with HTTP 503). Host paths, component/provider details, and deployment topology
+remain in the in-process manifest and are not serialized by public diagnostics. The legacy Local
+`/ready` route also omits the manifest. Diagnostic consumers that previously read the detailed
+manifest over HTTP must use operator-side composition inspection instead.
+
 M10 adds tests for:
 
 - Local IPC/direct RuntimeTransport authorization;
