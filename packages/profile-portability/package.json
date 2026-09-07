@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "oxlint src",
-    "test": "bun test src/*.test.mjs",
+    "test": "bun test --path-ignore-patterns '**/*.integration.test.mjs' src/*.test.mjs",
     "test:integration": "bun test --timeout 30000 src/postgres.integration.test.mjs"
   },
   "dependencies": {

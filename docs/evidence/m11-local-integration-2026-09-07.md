@@ -1,5 +1,15 @@
 # M11 local integration checkpoint
 
+Standalone matrix refresh after `4668127`: `bun run test:m11-standalone` passed 77 repository
+scenarios plus 26 context, 7 Cortana-compatible adapter, 18 encrypted relay, 16 profile-portability
+and 11 deployment tests (155 total). The first run revealed an environment-skipped PostgreSQL test
+inside the ordinary portability glob. That command now explicitly selects non-integration tests;
+the separate PostgreSQL integration script is unchanged and remains required. The repeated standalone
+lane had no skips. This is an explicit lane boundary, not a waiver of PostgreSQL evidence or a
+claim of clean VPS/live-cloud acceptance. The canonical gates also passed with 800 unit tests,
+3,293 assertions, 87.33% line coverage and 84.17% function coverage. Test child processes settled;
+no provider, database or deployed resource was started for this refresh.
+
 Optional Runtime Worker startup follow-up: direct startup previously reported ready without an
 injected worker in production, and a failed worker readiness probe skipped worker cleanup. Both
 behaviors were reproduced by failing regressions. Staging/production now require an injected
