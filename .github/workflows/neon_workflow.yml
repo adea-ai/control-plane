@@ -147,6 +147,7 @@ jobs:
       - name: Verify migrations and transactions
         if: steps.credentials.outputs.available == 'true'
         run: |
+          bun run build
           bun --cwd=packages/database run db:check
           bun --cwd=packages/database run db:migrate
           bun run test:integration
