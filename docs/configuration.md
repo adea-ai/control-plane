@@ -57,8 +57,15 @@ networking, and Restate-to-service request identity are separate controls.
 through the Control Plane R2 `ObjectStore`. Railway production sets it to `disabled`; the worker and
 Restate endpoint remain healthy, but execution and interaction activities fail closed with
 `CLOUD_RUNTIME_DISABLED` without opening R2. Production cannot execute certification traffic and
-execution availability remains disabled until a separately implemented runtime is explicitly
-composed for launch. The certification runtime accepts only plans pinned to
+execution availability remains disabled until a runtime is explicitly selected and its deployment
+acceptance gates pass. `remote` selects the durable PostgreSQL-backed remote runtime: discovery
+selects an eligible scoped RuntimeConnection, the managed-Pi command factory queues attempt-bound
+commands, and the outcome waiter consumes persisted execution/event results. It does not open the
+certification R2 writer, fabricate a successful execution, register a runtime identity, or provision
+a Runtime Gateway. The independently configured gateway/RuntimeNode, trusted discovery records and
+Artifact/usage delivery must exist and pass end-to-end acceptance before this mode is enabled in a
+deployment. ACP and bounded-graph execution are not added by this mode. Existing Railway configuration
+is unchanged by this option. The certification runtime accepts only plans pinned to
 `contract://control-plane/m9-cloud-certification/v1`; ordinary execution plans fail before R2
 access. Unknown modes fail configuration validation.
 

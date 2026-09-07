@@ -1251,11 +1251,11 @@
         "observability": "packages/telemetry",
         "persistence": "PostgreSQL/Neon repositories",
         "processes": "Railway service lifecycle",
-        "runtimeTransport": "DisabledCloudRuntime or CloudCertificationRuntime",
+        "runtimeTransport": "DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime",
         "secrets": "Railway environment; no SecretsProvider",
         "workflow": "Restate"
       },
-      "assessment": "The exact merged staging candidate passed the bounded Railway, Neon, R2, and Restate certification, but its execution runtime remains disabled by default or certification-only and shared deployment ports are not uniformly composed.",
+      "assessment": "Historical staging passed bounded Railway/Neon/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
       "evidence": [
         {
           "kind": "source",
@@ -1274,9 +1274,9 @@
         "issue": 188,
         "severity": "critical",
         "owner": "managed-cloud-runtime",
-        "disposition": "Wire a production RuntimeTransport/activity implementation and concrete discovery/provider ports before claiming general Cloud execution readiness."
+        "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:180297a6f3898a30b200f32c5a9254da58f01d1aa352fbaf728ad465cf1106ef"
+      "sourceDigest": "sha256:faacfe22c5b7fad2f7bc2c38e2b29ce138b47286210f205f673cda218423737c"
     },
     {
       "id": "hosted-server",

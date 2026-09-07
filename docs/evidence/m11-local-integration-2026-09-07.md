@@ -542,6 +542,23 @@ was verified closed. No remote infrastructure or production data was changed.
 
 ## SQLite evaluation persistence and cross-profile receipt portability
 
+### Explicit cloud remote-runtime composition checkpoint
+
+The bundled workflow worker now accepts `CONTROL_PLANE_CLOUD_RUNTIME=remote` and constructs the
+existing durable remote runtime with PostgreSQL attempt/command/event/interaction/context repositories,
+the managed-Pi command factory, outcome polling and scoped discovery routing. Tests verify concrete
+adapter/router selection, production startup/shutdown without the certification R2 writer, and
+failure before connection allocation when an absent runtime is requested outside remote mode.
+Disabled and staging-only certification tests remain passing. No Railway mode, remote credential,
+runtime identity, gateway or production service was changed. This does not add ACP or graph execution.
+
+The architecture binding registry and generated map now reflect this explicit mode without upgrading
+readiness. Full local gates passed with 792 unit tests; the existing PostgreSQL integration and
+recovery suite also passed. That suite does not yet execute the new composition through a real
+Gateway/RuntimeNode: scoped dispatch, terminal Artifact/usage delivery and frozen deployed-candidate
+end-to-end acceptance remain required. The disposable `m11-cloud-remote-20260907` database, network
+and volume were removed and port 55149 was verified closed.
+
 Subsequent recovery coverage: the application-role restore drill now restores objects under the
 migration role while excluding source ACLs, verifies an application permission denial before
 bootstrap, reapplies the existing isolated migration/grant contract, and exercises receipt reads,

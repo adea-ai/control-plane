@@ -101,7 +101,7 @@ export const start = (options: WorkflowWorkerStartOptions = {}) => {
               ? undefined
               : createManagedCloudWorkflowWorkerComposition(
                   managedCloud,
-                  requiredWorkflowRuntime(cloudRuntime),
+                  cloudRuntime,
                   options.graphActivities,
                   options.postgresConnectionFactory
                 )
@@ -138,18 +138,12 @@ export const start = (options: WorkflowWorkerStartOptions = {}) => {
   })
 }
 
-function requiredWorkflowRuntime(
-  runtime: WorkflowRuntimeActivityPort | undefined
-): WorkflowRuntimeActivityPort {
-  if (runtime === undefined) throw new Error('MANAGED_CLOUD_RUNTIME_NOT_CONFIGURED')
-  return runtime
-}
-
 function createCloudRuntime(
   configuration: ManagedCloudConfiguration,
   environment: string,
   objectStoreFactory: typeof createR2ObjectStore = createR2ObjectStore
-): WorkflowRuntimeActivityPort {
+): WorkflowRuntimeActivityPort | undefined {
+  if (configuration.runtime?.mode === 'remote') return undefined
   if (configuration.runtime?.mode === 'disabled') return new DisabledCloudRuntime()
   if (configuration.runtime?.mode !== 'certification')
     throw new Error('MANAGED_CLOUD_RUNTIME_NOT_CONFIGURED')
