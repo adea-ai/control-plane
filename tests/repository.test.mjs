@@ -383,10 +383,7 @@ test('requires a dedicated Neon administration credential for remote isolated te
     .split('      - name: Verify migrations and transactions')[1]
     ?.split('  delete_neon_branch:')[0]
   assert.ok(verify)
-  assert.doesNotMatch(
-    verify,
-    /DATABASE_ADMIN_URL:/
-  )
+  assert.doesNotMatch(verify, /DATABASE_ADMIN_URL:/)
 })
 
 test('scaffolds every application with an executable placeholder target', async () => {
