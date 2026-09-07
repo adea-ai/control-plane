@@ -2,14 +2,11 @@
   "name": "@control-plane/database",
   "version": "1.7.2",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -31,18 +28,18 @@
     "db:check": "drizzle-kit check --config=drizzle.config.mjs",
     "db:generate": "drizzle-kit generate --config=drizzle.config.mjs",
     "db:migrate": "bun src/cli/migrate.ts",
-    "lint": "eslint src drizzle.config.mjs",
+    "lint": "oxlint src drizzle.config.mjs",
     "test": "bun test src/*.test.mjs",
     "test:integration": "bun test --timeout 30000 src/integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",
     "@control-plane/context": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
     "@control-plane/credential-vault": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
-    "@control-plane/contracts": "workspace:*",
     "@control-plane/memory-writeback": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
@@ -53,5 +50,8 @@
   },
   "devDependencies": {
     "drizzle-kit": "0.31.10"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

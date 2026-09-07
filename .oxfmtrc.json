@@ -1,0 +1,17 @@
+{
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "es5",
+  "printWidth": 100,
+  "ignorePatterns": [
+    "CHANGELOG.md",
+    ".github/.code-foundry",
+    ".github/actions/",
+    "dist",
+    "node_modules",
+    ".turbo",
+    "coverage",
+    "bun.lock",
+    ".agents/*/"
+  ]
+}
