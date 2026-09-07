@@ -171,7 +171,7 @@ describe('M11 standalone execution composition', () => {
               schemaVersion: plan.schemaVersion,
             },
             deadlineAt: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
-            retentionExpiresAt: new Date(Date.parse(issuedAt) + 86_400_000).toISOString(),
+            retentionExpiresAt: new Date(Date.parse(issuedAt) + 30 * 86_400_000).toISOString(),
           },
         },
         'svc_m11-standalone'
@@ -234,7 +234,7 @@ describe('M11 standalone execution composition', () => {
               schemaVersion: plan.schemaVersion,
             },
             deadlineAt: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
-            retentionExpiresAt: new Date(Date.parse(issuedAt) + 86_400_000).toISOString(),
+            retentionExpiresAt: new Date(Date.parse(issuedAt) + 30 * 86_400_000).toISOString(),
           },
         },
         'svc_m11-managed-pi-rpc'

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { CommandInboxService } from '@control-plane/domain'
+import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqliteCommandAcceptanceRepository,
@@ -51,16 +51,59 @@ function commandInput(overrides = {}) {
   }
 }
 
-function service(provider) {
+function service(provider, now = receivedAt) {
   return new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider),
     executionIdFactory: () => ids.executionId,
     executionPlanValidator: { validate: async () => true },
-    now: () => receivedAt,
+    now: () => now,
   })
 }
 
 describe('SQLite domain repositories', () => {
+  test.each([1, 30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    const deadline = new Date(Date.parse(receivedAt) + days * 86_400_000).toISOString()
+    const input = commandInput({ retentionExpiresAt: deadline })
+    try {
+      await provider.migrate()
+      let accepted
+      if (days < 30) {
+        const template = await new CommandInboxService({
+          repository: new InMemoryCommandAcceptanceRepository(),
+          executionIdFactory: () => ids.executionId,
+          executionPlanValidator: { validate: async () => true },
+          now: () => receivedAt,
+        }).acceptExecution(commandInput())
+        // Seed the pre-policy persisted shape without using new-acceptance validation.
+        accepted = await new SqliteCommandAcceptanceRepository(provider).accept(
+          { ...template.command, retentionExpiresAt: deadline },
+          template.execution
+        )
+      } else {
+        accepted = await service(provider).acceptExecution(input)
+      }
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const replay = await service(provider, deadline).acceptExecution(input)
+      expect(replay.replayed).toBe(true)
+      expect(replay.command.retentionExpiresAt).toBe(deadline)
+      expect(replay.execution).toEqual(accepted.execution)
+      await expect(
+        service(provider, new Date(Date.parse(deadline) + 1).toISOString()).acceptExecution(input)
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      expect(
+        await new SqliteCommandAcceptanceRepository(provider).getByExecutionId(ids.executionId)
+      ).toMatchObject({ retentionExpiresAt: deadline })
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('persists workspace-scoped runtime discovery projections across reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-discovery-'))
     const path = join(directory, 'control-plane.sqlite')

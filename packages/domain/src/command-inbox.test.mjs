@@ -68,6 +68,69 @@ function setup({ now = receivedAt, planValid = true } = {}) {
 }
 
 describe('CommandInbox execution acceptance', () => {
+  test('uses trusted acceptance time for the persisted retention floor', async () => {
+    const now = '2026-08-25T10:00:00.000Z'
+    const { service } = setup({ now })
+    const accepted = await service.acceptExecution(commandInput())
+    expect(Date.parse(accepted.command.retentionExpiresAt) - Date.parse(now)).toBe(30 * 86_400_000)
+  })
+
+  test('rejects an already expired new request without persisting an execution', async () => {
+    const { service, repository } = setup({ now: '2026-09-24T10:00:00.000Z' })
+    await expect(service.acceptExecution(commandInput())).rejects.toMatchObject({
+      code: 'COMMAND_RETENTION_EXPIRED',
+    })
+    expect(repository.executionCount).toBe(0)
+    expect(await repository.get(commandScope())).toBeUndefined()
+  })
+
+  test('preserves replay of an unexpired legacy record with shorter retention', async () => {
+    const { service } = setup()
+    const accepted = await service.acceptExecution(commandInput())
+    const legacyRepository = new InMemoryCommandAcceptanceRepository()
+    const legacyDeadline = new Date(Date.parse(receivedAt) + 86_400_000).toISOString()
+    await legacyRepository.accept(
+      { ...accepted.command, retentionExpiresAt: legacyDeadline },
+      accepted.execution
+    )
+    const restarted = new CommandInboxService({
+      repository: legacyRepository,
+      executionIdFactory: () => {
+        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+      },
+      executionPlanValidator: { validate: async () => false },
+      now: () => receivedAt,
+    })
+    const result = await restarted.acceptExecution(
+      commandInput({ retentionExpiresAt: legacyDeadline })
+    )
+    expect(result.replayed).toBe(true)
+    expect(result.command.retentionExpiresAt).toBe(legacyDeadline)
+    expect(legacyRepository.executionCount).toBe(1)
+  })
+
+  test.each([1, 30 * 24 * 60 * 60 * 1_000 - 1])(
+    'rejects acceptance with %i ms retention',
+    async (duration) => {
+      const { service, repository } = setup()
+      await expect(
+        service.acceptExecution(
+          commandInput({
+            retentionExpiresAt: new Date(Date.parse(receivedAt) + duration).toISOString(),
+          })
+        )
+      ).rejects.toThrow()
+      expect(repository.executionCount).toBe(0)
+    }
+  )
+
+  test.each([30, 31])('accepts the canonical retention floor or longer: %i days', async (days) => {
+    const { service } = setup()
+    const deadline = new Date(Date.parse(receivedAt) + days * 24 * 60 * 60 * 1_000).toISOString()
+    const accepted = await service.acceptExecution(commandInput({ retentionExpiresAt: deadline }))
+    expect(accepted.command.retentionExpiresAt).toBe(deadline)
+  })
+
   test('returns the original accepted execution for identical retries', async () => {
     const { repository, service } = setup()
     const first = await service.acceptExecution(commandInput())

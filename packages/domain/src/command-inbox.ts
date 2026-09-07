@@ -211,6 +211,16 @@ const AcceptExecutionSchema = z
     path: ['retentionExpiresAt'],
   })
 
+const NewExecutionAcceptanceSchema = AcceptExecutionSchema.refine(
+  (input) =>
+    Date.parse(input.retentionExpiresAt) - Date.parse(input.receivedAt) >=
+    30 * 24 * 60 * 60 * 1_000,
+  {
+    message: 'Command retention must cover at least 30 days after receipt',
+    path: ['retentionExpiresAt'],
+  }
+)
+
 const TransitionCommandSchema = z.object({
   callerPrincipalId: ServicePrincipalIdSchema,
   operation: z.literal('execution.accept'),
@@ -243,6 +253,7 @@ const TransitionExecutionCommandSchema = z
 export type CommandInboxErrorCode =
   | 'IDEMPOTENCY_PAYLOAD_CONFLICT'
   | 'INVALID_EXECUTION_PLAN_REFERENCE'
+  | 'INVALID_COMMAND_RETENTION'
   | 'COMMAND_RETENTION_EXPIRED'
   | 'COMMAND_MISSING'
   | 'STALE_COMMAND_VERSION'
@@ -290,6 +301,7 @@ export class CommandInboxService {
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
     if (existing) return this.#replay(existing, parsed.payloadHash)
+    if (!NewExecutionAcceptanceSchema.safeParse(parsed).success) fail('INVALID_COMMAND_RETENTION')
     if (
       !(await this.#executionPlanValidator.validate({
         executionPlan: parsed.executionPlan,
@@ -301,6 +313,12 @@ export class CommandInboxService {
     ) {
       fail('INVALID_EXECUTION_PLAN_REFERENCE')
     }
+    const acceptedAt = Date.parse(TimestampSchema.parse(this.#now()))
+    const requestedRetention = Date.parse(parsed.retentionExpiresAt)
+    if (requestedRetention < acceptedAt) fail('COMMAND_RETENTION_EXPIRED')
+    const retentionExpiresAt = new Date(
+      Math.max(requestedRetention, acceptedAt + 30 * 24 * 60 * 60 * 1_000)
+    ).toISOString()
     const executionId = IdentifierSchemas.executionId.parse(this.#executionIdFactory())
     const execution = ExecutionSchema.parse({
       executionId,
@@ -332,7 +350,7 @@ export class CommandInboxService {
       conflictCount: 0,
       receivedAt: parsed.receivedAt,
       lastSeenAt: parsed.receivedAt,
-      retentionExpiresAt: parsed.retentionExpiresAt,
+      retentionExpiresAt,
     })
     this.#failureInjector?.checkpoint('control_api.before_accept')
     const result = await this.repository.accept(command, execution)
