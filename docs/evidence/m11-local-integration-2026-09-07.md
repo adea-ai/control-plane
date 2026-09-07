@@ -651,5 +651,16 @@ The canonical lint, type-check, format and test command passed with 796 unit tes
 assertions. The PostgreSQL integration command passed the cloud drill and the existing restart
 and application-role restore drills. This is local plumbing evidence, not live Pi execution,
 Restate journaling, production identity provisioning, R2 certification or usage settlement.
-Cancellation payload timestamp replay and replay after command-factory eligibility/deadline
-checks remain separate acceptance work; this checkpoint does not claim those paths are complete.
+Replay after command-factory eligibility/deadline checks remains separate acceptance work;
+this checkpoint does not claim that path is complete.
+
+Cancellation follow-up: the real Managed Pi factory originally hashed a new `requestedAt` into
+every cancellation retry, causing a conflict even after envelope timestamp handling was fixed.
+The durable runtime now reconstructs a conflicting cancellation using the first persisted
+issuance time, then compares the full resulting envelope and payload. This internal replay input
+is not a public caller-supplied lease. The original record and expiry are never updated.
+The real-factory unit regression covers eight concurrent retries through reconstructed runtime
+instances after the original expiry, and verifies that a changed driver still conflicts.
+The full local gates passed with 797 unit tests and 3,277 assertions. The PostgreSQL cloud drill
+also checks the same immutable cancellation record across eight retries using a scripted waiter;
+that portion proves persistence, not delivery of cancellation or a provider stopping work.

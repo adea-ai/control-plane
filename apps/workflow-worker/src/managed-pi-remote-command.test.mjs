@@ -5,6 +5,8 @@ import {
 } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { ManagedPiRemoteCommandFactory } from './managed-pi-remote-command.js'
+import { InMemoryRuntimeCommandRepository } from '@control-plane/domain'
+import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.js'
 
 const ids = {
   executionId: 'exe_01JABCDEF0123456789ABCDEFG',
@@ -17,6 +19,60 @@ const ids = {
 }
 
 describe('managed Pi remote command factory', () => {
+  test('durable cancellation replay preserves the first payload and lease across clock changes', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const commands = new InMemoryRuntimeCommandRepository()
+    let clock = '2026-08-25T12:06:00.000Z'
+    let adapterVersion = '1.0.0'
+    const factory = new ManagedPiRemoteCommandFactory({
+      contextPackages: { get: async () => undefined },
+      runtimeDiscovery: {
+        getRuntimeConnection: async () =>
+          runtimeConnection({
+            versions: {
+              adapter: adapterVersion,
+              driver: '1.0.0',
+              harness: '0.52.1',
+              protocol: '1.5.0',
+            },
+          }),
+      },
+      executions: {
+        getExecution: async () => ({ executionId: ids.executionId, correlation: plan.correlation }),
+      },
+      interactions: { get: async () => undefined },
+      now: () => new Date(clock),
+    })
+    const observed = []
+    const createRuntime = () =>
+      new DurableRemoteWorkflowRuntime({
+        attempts: { getAttempt: async () => attempt() },
+        commands,
+        factory,
+        waiter: {
+          wait: async ({ command }) => {
+            observed.push(command)
+            return { outcome: 'cancelled' }
+          },
+        },
+      })
+    const input = {
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      effectKey: 'workflow:cancel:stable',
+      reason: 'user_request',
+    }
+    await createRuntime().cancel(input)
+    clock = '2026-08-25T12:12:00.000Z'
+    await Promise.all(Array.from({ length: 8 }, () => createRuntime().cancel(input)))
+    expect(observed).toHaveLength(9)
+    for (const replay of observed) expect(replay).toEqual(observed[0])
+    expect(observed[1].expiresAt).toBe('2026-08-25T12:11:00.000Z')
+    adapterVersion = '2.0.0'
+    await expect(createRuntime().cancel(input)).rejects.toThrow('REMOTE_RUNTIME_COMMAND_CONFLICT')
+    expect(await commands.get(observed[0].commandId)).toEqual(observed[0])
+  })
+
   test('builds one deterministic command from the frozen plan, route, and scoped grant', async () => {
     const contextPackage = composeProviderContextPackage(
       contextPackageSerializationFixtures.futurePi,

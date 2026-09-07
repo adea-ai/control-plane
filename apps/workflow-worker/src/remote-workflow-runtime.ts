@@ -35,6 +35,8 @@ export interface RemoteRuntimeCommandFactory {
   createCancel(
     input: RemoteRuntimeCommandInput & {
       readonly reason: 'user_request' | 'deadline'
+      // Internal replay input, read from the first persisted command, never a caller lease.
+      readonly issuedAt?: string
     }
   ): Promise<unknown> | unknown
 }
@@ -134,7 +136,15 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       })
     )
     if (command.operation !== 'runtime.cancel') throw new Error('REMOTE_RUNTIME_OPERATION_INVALID')
-    await this.#enqueueAndWait(command, attempt, command.workspaceId)
+    await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
+      this.#factory.createCancel({
+        executionId: input.executionId,
+        attempt,
+        effectKey: input.effectKey,
+        reason: input.reason,
+        issuedAt,
+      })
+    )
   }
 
   async cleanup(): Promise<void> {}
@@ -160,9 +170,10 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
   async #enqueueAndWait(
     command: GatewayCommandEnvelope,
     attempt: ExecutionAttempt,
-    workspaceId: string
+    workspaceId: string,
+    replayAt?: (issuedAt: string) => Promise<unknown> | unknown
   ): Promise<WorkflowRuntimeOutcome> {
-    const record = await this.#enqueue(command, attempt, workspaceId)
+    const record = await this.#enqueue(command, attempt, workspaceId, replayAt)
     return this.#waiter.wait({
       command: record,
       executionId: attempt.executionId,
@@ -173,7 +184,8 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
   async #enqueue(
     command: GatewayCommandEnvelope,
     attempt: ExecutionAttempt,
-    workspaceId: string
+    workspaceId: string,
+    replayAt?: (issuedAt: string) => Promise<unknown> | unknown
   ): Promise<RuntimeCommandRecord> {
     if (
       command.executionId !== attempt.executionId ||
@@ -192,8 +204,14 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       // This also handles JSONB object-key ordering without weakening payload,
       // driver, protocol, capability, idempotency or scope comparisons.
       const original = created.record.commandEnvelope
+      // Cancellation embeds requestedAt in its hashed payload. Rebuild it from
+      // persisted issuance time, then compare every semantic field as usual.
+      const candidate =
+        replayAt === undefined
+          ? command
+          : GatewayCommandEnvelopeSchema.parse(await replayAt(created.record.issuedAt))
       const replay = {
-        ...command,
+        ...candidate,
         sentAt: original['sentAt'],
         issuedAt: original['issuedAt'],
         expiresAt: original['expiresAt'],

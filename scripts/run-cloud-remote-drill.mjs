@@ -19,8 +19,11 @@ import {
   PostgresRuntimeEventEffectSink,
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
+  PostgresInteractionRepository,
 } from '../packages/database/src/index.ts'
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
+import { DurableRemoteWorkflowRuntime } from '../apps/workflow-worker/src/remote-workflow-runtime.ts'
+import { ManagedPiRemoteCommandFactory } from '../apps/workflow-worker/src/managed-pi-remote-command.ts'
 import {
   RuntimeCommandDeliveryService,
   RuntimeEventIngestionService,
@@ -343,8 +346,48 @@ try {
   )
   deepStrictEqual(quarantine, [])
   ok(result.result.artifact.sizeBytes > 0)
+  // Persistence-only cancellation replay: the waiter is scripted, so this does
+  // not certify cancellation transport or a provider stopping work.
+  let cancellationClock = new Date()
+  const cancellationFactory = new ManagedPiRemoteCommandFactory({
+    contextPackages: new PostgresContextPackageRepository(database.application),
+    runtimeDiscovery: {
+      getRuntimeConnection: ({ runtimeConnectionId, ...scope }) =>
+        discovery.getRuntimeConnection(scope, runtimeConnectionId),
+    },
+    executions,
+    interactions: new PostgresInteractionRepository(database.application),
+    now: () => cancellationClock,
+  })
+  const cancellationRecords = []
+  const cancellationRuntime = () =>
+    new DurableRemoteWorkflowRuntime({
+      attempts: executions,
+      commands,
+      factory: cancellationFactory,
+      waiter: {
+        wait: async ({ command }) => {
+          cancellationRecords.push(command)
+          return { outcome: 'cancelled' }
+        },
+      },
+    })
+  const cancellationInput = {
+    executionId,
+    attemptId,
+    effectKey: 'remote-drill:cancel',
+    reason: 'user_request',
+  }
+  await cancellationRuntime().cancel(cancellationInput)
+  cancellationClock = new Date(cancellationClock.getTime() + 6 * 60 * 1000)
+  await Promise.all(
+    Array.from({ length: 8 }, () => cancellationRuntime().cancel(cancellationInput))
+  )
+  strictEqual(cancellationRecords.length, 9)
+  for (const record of cancellationRecords) deepStrictEqual(record, cancellationRecords[0])
+  deepStrictEqual(await commands.get(cancellationRecords[0].commandId), cancellationRecords[0])
   console.log(
-    'Cloud remote drill passed: PostgreSQL dispatch, signed WebSocket ACK/result, Artifact-backed terminal state and immutable command replay. Scripted node; usage settlement and live provider execution remain unverified.'
+    'Cloud remote drill passed: PostgreSQL dispatch, signed WebSocket ACK/result, Artifact-backed terminal state, immutable dispatch replay and persistence-only cancellation replay. Scripted node and cancellation waiter; cancellation transport, usage settlement and live provider execution remain unverified.'
   )
 } finally {
   socket?.close()
