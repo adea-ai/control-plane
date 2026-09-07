@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.3...workspace-v1.8.4) (2026-09-07)
+
+
+### Maintenance
+
+* **ci:** upgrade code-foundry runtime to v1.3.1 and migrate to oxlint/oxfmt ([#384](https://github.com/adea-ai/control-plane/issues/384)) ([fc4d310](https://github.com/adea-ai/control-plane/commit/fc4d310056b2e6824907f8cb80d3d4f8fa5deb95))
+* release main ([eb6133e](https://github.com/adea-ai/control-plane/commit/eb6133e578f756da1e933bd52c6e8bf3902ad13c))
+
 ## [1.8.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.2...workspace-v1.8.3) (2026-09-07)
 
 
