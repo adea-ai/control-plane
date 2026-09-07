@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/runtime-worker",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/deployment",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "files": [
     "dist"

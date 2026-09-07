@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.2...workspace-v1.8.3) (2026-09-07)
+
+
+### Maintenance
+
+* brand-adea2 ([#378](https://github.com/adea-ai/control-plane/issues/378)) ([4f7b4fd](https://github.com/adea-ai/control-plane/commit/4f7b4fd3fc60134ebe084954148cb0a3b416a4ac))
+* **ci:** bump repository consistency pins to code-foundry v1.0.0 ([79848e6](https://github.com/adea-ai/control-plane/commit/79848e671ff5eccad7f0246682a78d5af9f7c869))
+* **ci:** upgrade code-foundry runtime to v1.0.0 ([5a86bfd](https://github.com/adea-ai/control-plane/commit/5a86bfdf6bd7169eace14123d3dd31f98b251e2b))
+* **ci:** upgrade code-foundry runtime to v1.3.1 and migrate to oxlint/oxfmt ([#384](https://github.com/adea-ai/control-plane/issues/384)) ([fc4d310](https://github.com/adea-ai/control-plane/commit/fc4d310056b2e6824907f8cb80d3d4f8fa5deb95))
+* release main ([79fa741](https://github.com/adea-ai/control-plane/commit/79fa7414fd60c49b74987034b125bc1e33793011))
+
 ## [1.8.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.1...workspace-v1.8.2) (2026-09-05)
 
 
