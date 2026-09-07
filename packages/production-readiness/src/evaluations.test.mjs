@@ -51,6 +51,137 @@ const suite = {
 }
 
 describe('production evaluation and release gates', () => {
+  test('does not replace a gate while its promotion audit is being persisted', async () => {
+    const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+    const run = await service.run({
+      evalRunId: 'concurrent-promotion',
+      suite,
+      configuration,
+      execute: async () => ({ functional_correctness: 1, latency_ms: 100, cost_usd: 0.01 }),
+    })
+    let releaseAudit
+    const persisted = new Promise((resolve) => {
+      releaseAudit = resolve
+    })
+    const registry = new ReleaseGateRegistry({
+      auditRepository: {
+        append: async () => persisted,
+        list: async () => [],
+      },
+    })
+    const input = {
+      releaseGateId: 'gate-concurrent',
+      candidate: run,
+      baseline: run,
+      maximumRegressions: {},
+    }
+    registry.evaluate(input)
+    const promotion = registry.promote(input.releaseGateId, 'operator://release')
+    try {
+      expect(() => registry.evaluate(input)).toThrow('RELEASE_GATE_UPDATE_IN_PROGRESS')
+      expect(registry.evaluate({ ...input, releaseGateId: 'independent-gate' }).status).toBe(
+        'passed'
+      )
+      await expect(
+        registry.rollback(input.releaseGateId, 'operator://rollback', 'test')
+      ).rejects.toThrow('RELEASE_GATE_UPDATE_IN_PROGRESS')
+      await expect(registry.promote(input.releaseGateId, 'operator://duplicate')).rejects.toThrow(
+        'RELEASE_GATE_UPDATE_IN_PROGRESS'
+      )
+    } finally {
+      releaseAudit()
+      await promotion
+    }
+    expect(registry.promoted(input.releaseGateId)).toEqual(run)
+    expect(registry.evaluate(input).status).toBe('passed')
+  })
+
+  test('does not let an execution adapter rewrite its authoritative scoring criteria', async () => {
+    const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+    const run = await service.run({
+      evalRunId: 'eval-run-mutable-adapter',
+      suite,
+      configuration,
+      execute: async (executionCase) => {
+        executionCase.scorers[0].threshold = 0
+        executionCase.scorers[1].required = false
+        executionCase.scorers[2].required = false
+        return { functional_correctness: 0 }
+      },
+    })
+    expect(run.status).toBe('failed')
+    expect(run.suite).toEqual(suite)
+    expect(run.results[0].failedRequiredMetrics).toEqual([
+      'functional_correctness',
+      'latency_ms',
+      'cost_usd',
+    ])
+  })
+
+  for (const metric of [
+    'goal_coverage',
+    'constraint_adherence',
+    'evidence_sufficiency',
+    'assumption_disclosure',
+    'uncertainty_calibration',
+    'scope_control',
+    'verification_completeness',
+    'cleanup_completeness',
+    'security',
+    'provenance_correctness',
+    'escalation_quality',
+    'reliability',
+    'efficiency',
+    'handoff_quality',
+    'reviewer_feedback',
+    'tokens',
+  ]) {
+    test(`blocks failed and missing required ${metric} evidence`, async () => {
+      const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+      const lowerIsBetter = metric === 'tokens'
+      const taskSuite = {
+        ...suite,
+        cases: [
+          {
+            ...suite.cases[0],
+            scorers: [
+              { metric, direction: lowerIsBetter ? 'max' : 'min', threshold: 1, required: true },
+            ],
+          },
+        ],
+      }
+      const baseline = await service.run({
+        evalRunId: `baseline-${metric}`,
+        suite: taskSuite,
+        configuration,
+        execute: async () => ({ [metric]: 1 }),
+      })
+      expect(baseline.status).toBe('passed')
+      for (const missing of [false, true]) {
+        const candidate = await service.run({
+          evalRunId: `candidate-${metric}-${missing}`,
+          suite: taskSuite,
+          configuration,
+          execute: async () => (missing ? {} : { [metric]: lowerIsBetter ? 2 : 0 }),
+        })
+        expect(candidate.status).toBe('failed')
+        expect(candidate.results[0].failedRequiredMetrics).toEqual([metric])
+        const registry = new ReleaseGateRegistry()
+        const decision = registry.evaluate({
+          releaseGateId: `gate-${metric}`,
+          candidate,
+          baseline,
+          maximumRegressions: { [metric]: 0 },
+        })
+        expect(decision.status).toBe('blocked')
+        if (!missing) expect(decision.reasons).toContain(`REGRESSION:${metric}`)
+        await expect(registry.promote(`gate-${metric}`, 'operator://release')).rejects.toThrow(
+          'RELEASE_GATE_BLOCKED'
+        )
+      }
+    })
+  }
+
   test('records exact immutable configuration for every deterministic result', async () => {
     const repository = new InMemoryEvaluationRepository()
     const service = new EvaluationService({ repository, now: () => '2026-08-25T12:00:00.000Z' })
@@ -194,6 +325,14 @@ describe('production evaluation and release gates', () => {
       'AUDIT_STORAGE_UNAVAILABLE'
     )
     expect(registry.promoted('gate-storage-failure')).toBeUndefined()
+    expect(
+      registry.evaluate({
+        releaseGateId: 'gate-storage-failure',
+        candidate,
+        baseline,
+        maximumRegressions: {},
+      }).status
+    ).toBe('passed')
   })
 
   test('fails closed when a live-provider suite is not explicitly enabled', async () => {

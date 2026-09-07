@@ -79,13 +79,14 @@ interface GateState {
   promoted?: EvalRun
 }
 
-const lowerIsBetter = new Set<EvaluationMetric>(['latency_ms', 'cost_usd'])
+const lowerIsBetter = new Set<EvaluationMetric>(['latency_ms', 'cost_usd', 'tokens'])
 
 export class ReleaseGateRegistry {
   readonly #now: () => string
   readonly #createId: () => string
   readonly #auditRepository: ReleaseAuditRepository
   readonly #gates = new Map<string, GateState>()
+  readonly #pendingUpdates = new Set<string>()
 
   constructor(
     options: {
@@ -105,6 +106,7 @@ export class ReleaseGateRegistry {
     readonly baseline: EvalRun
     readonly maximumRegressions: EvaluationMetricValues
   }): ReleaseGateDecision {
+    this.#assertUpdateAvailable(input.releaseGateId)
     const candidateRun = EvalRunSchema.parse(input.candidate)
     const baselineRun = EvalRunSchema.parse(input.baseline)
     const reasons = candidateRun.results.flatMap(({ failedRequiredMetrics }) =>
@@ -156,10 +158,7 @@ export class ReleaseGateRegistry {
       toRunId: gate.candidate.evalRunId,
       at: this.#now(),
     }
-    const parsed = ReleaseAuditRecordSchema.parse(record)
-    await this.#auditRepository.append(parsed)
-    gate.promoted = clone(gate.candidate)
-    return clone(parsed)
+    return this.#persistTransition(record, gate, gate.candidate)
   }
 
   async rollback(
@@ -178,10 +177,24 @@ export class ReleaseGateRegistry {
       reason: reason.slice(0, 256),
       at: this.#now(),
     }
+    return this.#persistTransition(record, gate, gate.baseline)
+  }
+
+  async #persistTransition(record: ReleaseAuditRecord, gate: GateState, target: EvalRun) {
+    this.#assertUpdateAvailable(record.releaseGateId)
     const parsed = ReleaseAuditRecordSchema.parse(record)
-    await this.#auditRepository.append(parsed)
-    gate.promoted = clone(gate.baseline)
-    return clone(parsed)
+    this.#pendingUpdates.add(record.releaseGateId)
+    try {
+      await this.#auditRepository.append(parsed)
+      gate.promoted = clone(target)
+      return clone(parsed)
+    } finally {
+      this.#pendingUpdates.delete(record.releaseGateId)
+    }
+  }
+
+  #assertUpdateAvailable(releaseGateId: string): void {
+    if (this.#pendingUpdates.has(releaseGateId)) throw new Error('RELEASE_GATE_UPDATE_IN_PROGRESS')
   }
 
   candidate(releaseGateId: string): EvalRun {
