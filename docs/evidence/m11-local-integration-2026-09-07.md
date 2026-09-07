@@ -568,3 +568,25 @@ The generated architecture inventory was refreshed for the two workspace depende
 readiness classification was changed. The disposable `m11-eval-portability-20260907` database,
 network and volume were removed and port 55119 was verified closed. No remote infrastructure or
 production data was changed.
+
+## Observed evaluation backup recovery and JSONB replay
+
+Receipt-specific recovery is now exercised beyond the earlier persistence/portability checks.
+The SQLite evaluation test backs up the real file, deletes the stored run, proves it absent,
+restores the snapshot and verifies the exact complete run both immediately and after reopening.
+The PostgreSQL disruption drill seeds a second, receipt-bearing run, verifies the full run after
+service restart and replays its immutable save. The dump/restore drill verifies its complete
+schema-validated JSONB evidence in the restored database. Legacy metric-only recovery checks remain.
+
+The first PostgreSQL drill exposed an actual immutable-save defect: JSONB reordered metric object
+keys, making JSON-string comparison reject an otherwise deeply identical run. A focused regression
+test reproduced this before the fix. PostgreSQL now uses structural equality, matching SQLite;
+reordered keys replay successfully while changed metric values still conflict.
+
+Final lint/type/format/test gates passed with 790 unit tests, and the full PostgreSQL integration
+command passed including both updated recovery drills. The disposable
+`m11-observed-recovery-20260907` container, network and volume were removed and port 55129 was
+verified closed. No provider, Neon or production resource was changed. PostgreSQL restore continues
+to exclude privileges and checks data as admin; application-role recovery, production composition,
+retention policy, actual agent executions and calibrated full-corpus acceptance remain open. These
+scripted controls prove storage behavior, not agent quality or whole-milestone completion.

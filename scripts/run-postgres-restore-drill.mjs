@@ -11,6 +11,7 @@ import {
 import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
 import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 import { validationRecoveryFixture } from './validation-recovery-fixture.mjs'
+import { evaluationRecoveryFixture } from './evaluation-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-restore-drill'
 const expectedDigest = `sha256:${'d'.repeat(64)}`
@@ -52,6 +53,8 @@ try {
     authoring.package_
   )
   const repository = new PostgresEvaluationRepository(source.application)
+  const observed = await evaluationRecoveryFixture(recoveryEvidence())
+  await repository.saveRun(observed.run)
   await repository.saveRun(recoveryEvidence())
   await source.application.insert(executions).values({
     executionId: 'exe_restore_drill',
@@ -166,6 +169,23 @@ try {
     throw new Error('PostgreSQL restore drill lost immutable recovery evidence')
   }
   // Restore excludes privileges: verify stored state as admin, not application replay readiness.
+  observed.assertRecovered(
+    JSON.parse(
+      String(
+        dockerPostgres([
+          'psql',
+          '--username',
+          'control_plane_admin',
+          '--dbname',
+          target.name,
+          '--tuples-only',
+          '--no-align',
+          '--command',
+          "SELECT evidence FROM evaluation_runs WHERE eval_run_id = 'eval-run-restore-drill-observed'",
+        ])
+      ).trim()
+    )
+  )
   const restoredAuthoring = JSON.parse(
     String(
       dockerPostgres([
@@ -205,7 +225,7 @@ try {
   )
   validation.assertRecovered(restoredValidation.record, restoredValidation.plan)
   console.log(
-    'PostgreSQL backup and restore drill preserved evaluation, execution, event, usage, authoring, and exact validation command/plan evidence.'
+    'PostgreSQL backup and restore drill preserved full observed evaluation receipts, execution, event, usage, authoring, and exact validation command/plan evidence.'
   )
 } finally {
   await Promise.allSettled([source.dispose(), target.dispose()])

@@ -91,7 +91,20 @@ test('atomically retains an observed evaluation run through concurrency, rollbac
     await provider.close()
     provider = new SqlitePersistenceProvider({ path })
     await provider.migrate()
-    const reopened = new SqliteEvaluationRepository(provider)
+    let reopened = new SqliteEvaluationRepository(provider)
+    expect(await reopened.getRun(run.evalRunId)).toEqual(run)
+    const snapshot = await provider.backup()
+    await provider.transaction(async (transaction) => {
+      const stored = (await transaction.list('evaluation-runs'))[0]
+      await transaction.delete(stored.namespace, stored.id, stored.revision)
+    })
+    expect(await reopened.getRun(run.evalRunId)).toBeUndefined()
+    await provider.restore(snapshot)
+    expect(await reopened.getRun(run.evalRunId)).toEqual(run)
+    await provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    reopened = new SqliteEvaluationRepository(provider)
     expect(await reopened.getRun(run.evalRunId)).toEqual(run)
     const detached = await reopened.getRun(run.evalRunId)
     detached.results[0].observation.report.status = 'complete'

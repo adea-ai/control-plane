@@ -10,6 +10,7 @@ import {
 import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
 import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 import { validationRecoveryFixture } from './validation-recovery-fixture.mjs'
+import { evaluationRecoveryFixture } from './evaluation-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-disruption-drill'
 const expectedDigest = `sha256:${'c'.repeat(64)}`
@@ -63,6 +64,9 @@ const repository = new PostgresEvaluationRepository(database.application)
 let serviceStopped = false
 
 try {
+  const observed = await evaluationRecoveryFixture(recoveryEvidence())
+  await repository.saveRun(observed.run)
+  observed.assertRecovered(await repository.getRun(observed.run.evalRunId))
   const validation = validationRecoveryFixture('disruption')
   const validationCommands = new PostgresExecutionValidationCommandRepository(database.application)
   const plans = new PostgresExecutionPlanRepository(database.application)
@@ -94,6 +98,9 @@ try {
   await waitForPostgres()
   serviceStopped = false
   const restored = await repository.getRun(expectedRunId)
+  observed.assertRecovered(await repository.getRun(observed.run.evalRunId))
+  await repository.saveRun(observed.run)
+  observed.assertRecovered(await repository.getRun(observed.run.evalRunId))
   validation.assertRecovered(
     await validationCommands.get(validation.record.scope),
     await plans.get(validation.record.executionPlan)
@@ -112,7 +119,7 @@ try {
   const recoverySeconds = (Date.now() - disruptionStartedAt) / 1_000
   if (recoverySeconds > maximumRecoverySeconds) throw new Error('POSTGRES_RTO_EXCEEDED')
   console.log(
-    'PostgreSQL service-restart drill preserved evidence, authoring packages, and exact validation command/plan replay.'
+    'PostgreSQL service-restart drill preserved full observed evaluation receipts, evidence, authoring packages, and exact validation command/plan replay.'
   )
 } finally {
   if (serviceStopped) {
