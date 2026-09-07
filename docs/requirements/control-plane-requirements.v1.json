@@ -201,10 +201,15 @@
       "composition": "Railway + Neon PostgreSQL + Cloudflare R2 + Restate + remote RuntimeTransport",
       "classification": "partially_verified",
       "owner": "managed-cloud",
-      "observedAt": "2026-08-28",
-      "commit": "3acb0db9fb4c9d2ad067429161ea9b75864ffe91",
-      "result": "Bounded Railway staging certification passed; production, current-candidate capacity, and timed disaster recovery were not certified.",
+      "observedAt": "2026-09-07",
+      "commit": "a76f27453e558525a05089e3c88085153a63a528",
+      "result": "Merged M11 candidate passed bounded deterministic Railway staging acceptance, terminal Neon state, R2 integrity, and replay after Restate rediscovery; managed Pi, production, current-candidate capacity, and timed disaster recovery were not certified.",
       "evidence": [
+        {
+          "kind": "environment",
+          "path": "docs/evidence/m11-cloud-certification-2026-09-07.md",
+          "profile": "cloud"
+        },
         {
           "kind": "environment",
           "path": "docs/evidence/m9-cloud-certification-2026-08-28.md",
@@ -215,7 +220,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "managed-cloud",
-        "disposition": "Reproduce staging and production-readiness evidence from the frozen M11 candidate, including capacity and timed recovery."
+        "disposition": "Extend bounded staging evidence to the full frozen M11 runtime and recovery matrix; certify production readiness, capacity, and timed recovery."
       }
     },
     {
