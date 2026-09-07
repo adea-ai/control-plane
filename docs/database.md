@@ -105,7 +105,7 @@ Requirements include:
 - conformance against PostgreSQL for deployment-independent domain semantics.
 
 The SQLite provider stages a restore in an owner-only temporary file and verifies
-its digest, SQLite integrity, internal schema version and required record columns
+its digest, SQLite integrity, internal schema version and canonical table/index definitions
 before replacing the live database. Invalid candidates are rejected as
 `SQLITE_BACKUP_INVALID`, leaving the current connection and records available.
 Validation normalizes the staged WAL-mode backup to a standalone file; normal
