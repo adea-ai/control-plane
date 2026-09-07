@@ -154,3 +154,38 @@ Image `control-plane/m11-simple-test:91956` is intentionally retained for inspec
 This is a single local idle-service shutdown measurement, not a performance bound,
 in-flight execution recovery test or fresh VPS acceptance. The earlier run whose
 output was lost is not counted as evidence. This follow-up does not close M11.
+
+## Updated-main candidate and SQLite restore follow-up
+
+Candidate `f0cf911e183a9cb09941d7d11cc4688d2b29d3ce` incorporates the previously
+combined work plus newer main changes and SQLite restore commits `c912c5a` and
+`5a14a88` (draft PR #401). Prior exact-tree results are historical, not certification
+of this candidate. Fresh frozen-lockfile installation, lint, type-check, format-check,
+build and full tests passed: 763 unit, 49 smoke and 98 E2E, with zero failures.
+Coverage was 87.49% lines and 83.89% functions.
+
+The SQLite fix stages and checks candidate backups before replacing live data.
+Seven new regression cases cover partial-write cleanup, corruption, unrelated or
+future-version databases, missing columns, missing constraints and missing indexes.
+Invalid-candidate cases preserve original records through close/reopen. The owning
+package passed 20 tests on its branch; independent follow-up review cleared the
+two findings concerning staging cleanup and canonical schema checks. This does not
+prove cross-process restore locking, filesystem replacement rollback or future
+schema migration; documented operator quiescence and trusted-checkpoint duties remain.
+
+The named `test:m10-conformance`, `test:m10-operability` and `test:m11-standalone`
+commands also passed on this candidate with only a documentation assessment correction
+in the worktree. The standalone command ran 145 passing tests. PostgreSQL profile
+migration was explicitly skipped in the credential-free invocation; older PostgreSQL
+evidence is not promoted to proof for this new tree.
+
+The architecture assessment now agrees with the source ledger that six formerly
+unavailable sources were retrieved. Its classification remains partially verified:
+exhaustive extraction, implementation mapping and topology reconciliation remain open.
+
+Remote run `34148375633`, job `101825207041`, for PR #401 at `5a14a88` failed
+creating its Neon branch with HTTP 422, before migrations or integration tests.
+The observed log does not establish the cause of that rejection. It is distinct
+from the earlier #392 SET ROLE failure, and neither is counted as passing CI.
+No external database permissions were changed, no main merge was performed, and
+the integration branch remains local only. Full M11 acceptance is still unproven.

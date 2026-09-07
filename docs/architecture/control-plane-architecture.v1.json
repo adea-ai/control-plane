@@ -1704,7 +1704,7 @@
         "M11.1 requirement ledger"
       ],
       "classification": "partially_verified",
-      "assessment": "Repository architecture reflects Restate/Railway/profile portability, while six canonical Drive sources remain unavailable and several retrieved sources retain superseded topology language.",
+      "assessment": "The M11.1 ledger records retrieval of the six previously unavailable canonical Drive sources on 2026-09-07. Atomic requirement extraction, current implementation/control mapping, and reconciliation of superseded topology language remain incomplete; retrieval alone does not verify implementation.",
       "evidence": [
         {
           "kind": "artifact",
