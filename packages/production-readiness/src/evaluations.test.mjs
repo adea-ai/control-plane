@@ -51,6 +51,92 @@ const suite = {
 }
 
 describe('production evaluation and release gates', () => {
+  test('does not let an execution adapter rewrite its authoritative scoring criteria', async () => {
+    const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+    const run = await service.run({
+      evalRunId: 'eval-run-mutable-adapter',
+      suite,
+      configuration,
+      execute: async (executionCase) => {
+        executionCase.scorers[0].threshold = 0
+        executionCase.scorers[1].required = false
+        executionCase.scorers[2].required = false
+        return { functional_correctness: 0 }
+      },
+    })
+    expect(run.status).toBe('failed')
+    expect(run.suite).toEqual(suite)
+    expect(run.results[0].failedRequiredMetrics).toEqual([
+      'functional_correctness',
+      'latency_ms',
+      'cost_usd',
+    ])
+  })
+
+  for (const metric of [
+    'goal_coverage',
+    'constraint_adherence',
+    'evidence_sufficiency',
+    'assumption_disclosure',
+    'uncertainty_calibration',
+    'scope_control',
+    'verification_completeness',
+    'cleanup_completeness',
+    'security',
+    'provenance_correctness',
+    'escalation_quality',
+    'reliability',
+    'efficiency',
+    'handoff_quality',
+    'reviewer_feedback',
+    'tokens',
+  ]) {
+    test(`blocks failed and missing required ${metric} evidence`, async () => {
+      const service = new EvaluationService({ repository: new InMemoryEvaluationRepository() })
+      const lowerIsBetter = metric === 'tokens'
+      const taskSuite = {
+        ...suite,
+        cases: [
+          {
+            ...suite.cases[0],
+            scorers: [
+              { metric, direction: lowerIsBetter ? 'max' : 'min', threshold: 1, required: true },
+            ],
+          },
+        ],
+      }
+      const baseline = await service.run({
+        evalRunId: `baseline-${metric}`,
+        suite: taskSuite,
+        configuration,
+        execute: async () => ({ [metric]: 1 }),
+      })
+      expect(baseline.status).toBe('passed')
+      for (const missing of [false, true]) {
+        const candidate = await service.run({
+          evalRunId: `candidate-${metric}-${missing}`,
+          suite: taskSuite,
+          configuration,
+          execute: async () => (missing ? {} : { [metric]: lowerIsBetter ? 2 : 0 }),
+        })
+        expect(candidate.status).toBe('failed')
+        expect(candidate.results[0].failedRequiredMetrics).toEqual([metric])
+        const registry = new ReleaseGateRegistry()
+        const decision = registry.evaluate({
+          releaseGateId: `gate-${metric}`,
+          candidate,
+          baseline,
+          maximumRegressions: { [metric]: 0 },
+        })
+        expect(decision.status).toBe('blocked')
+        if (!missing) expect(decision.reasons).toContain(`REGRESSION:${metric}`)
+        await expect(registry.promote(`gate-${metric}`, 'operator://release')).rejects.toThrow(
+          'RELEASE_GATE_BLOCKED'
+        )
+      }
+    })
+  }
+
   test('records exact immutable configuration for every deterministic result', async () => {
     const repository = new InMemoryEvaluationRepository()
     const service = new EvaluationService({ repository, now: () => '2026-08-25T12:00:00.000Z' })

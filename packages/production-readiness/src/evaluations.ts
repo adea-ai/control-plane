@@ -21,6 +21,22 @@ export const EvaluationMetricSchema = z.enum([
   'cost_usd',
   'policy_compliance',
   'runtime_compatibility',
+  'goal_coverage',
+  'constraint_adherence',
+  'evidence_sufficiency',
+  'assumption_disclosure',
+  'uncertainty_calibration',
+  'scope_control',
+  'verification_completeness',
+  'cleanup_completeness',
+  'security',
+  'provenance_correctness',
+  'escalation_quality',
+  'reliability',
+  'efficiency',
+  'handoff_quality',
+  'reviewer_feedback',
+  'tokens',
 ])
 
 export type EvaluationMetric = z.output<typeof EvaluationMetricSchema>
@@ -250,7 +266,8 @@ export class EvaluationService {
     const startedAt = this.#now()
     const results = []
     for (const evaluationCase of suite.cases) {
-      const metrics = MetricValuesSchema.parse(await input.execute(evaluationCase))
+      // The adapter may inspect its task, but cannot rewrite the scoring authority.
+      const metrics = MetricValuesSchema.parse(await input.execute(clone(evaluationCase)))
       const failedRequiredMetrics = evaluationCase.scorers
         .filter(
           ({ direction, metric, required, threshold }) =>

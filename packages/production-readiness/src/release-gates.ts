@@ -79,7 +79,7 @@ interface GateState {
   promoted?: EvalRun
 }
 
-const lowerIsBetter = new Set<EvaluationMetric>(['latency_ms', 'cost_usd'])
+const lowerIsBetter = new Set<EvaluationMetric>(['latency_ms', 'cost_usd', 'tokens'])
 
 export class ReleaseGateRegistry {
   readonly #now: () => string
