@@ -2,16 +2,13 @@
   "name": "@control-plane/runtime-gateway-protocol",
   "version": "1.2.1",
   "license": "Apache-2.0",
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist",
     "fixtures",
     "schema"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -28,7 +25,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "schema:check": "bun scripts/schema.mjs --check",
     "schema:generate": "bun scripts/schema.mjs",
     "test": "bun scripts/schema.mjs --check && bun test src"
@@ -36,7 +33,7 @@
   "dependencies": {
     "zod": "4.5.4"
   },
-  "devDependencies": {
-    "prettier": "3.9.6"
+  "engines": {
+    "node": ">=24 <25"
   }
 }

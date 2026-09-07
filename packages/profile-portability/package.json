@@ -2,18 +2,15 @@
   "name": "@control-plane/profile-portability",
   "version": "1.1.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
+  "bin": {
+    "control-plane-portability": "./dist/cli.js"
   },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
-  "bin": {
-    "control-plane-portability": "./dist/cli.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -23,7 +20,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/*.test.mjs",
     "test:integration": "bun test --timeout 30000 src/postgres.integration.test.mjs"
   },
@@ -36,5 +33,8 @@
     "@control-plane/sqlite-persistence": "workspace:*",
     "drizzle-orm": "0.45.2",
     "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

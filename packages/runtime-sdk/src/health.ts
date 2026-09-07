@@ -140,7 +140,10 @@ export interface RuntimeHealthIngestionOptions {
 }
 
 export type RuntimeHealthIngestionIgnoreReason =
-  'replayed_report' | 'stale_report' | 'no_health_report' | 'already_current'
+  | 'replayed_report'
+  | 'stale_report'
+  | 'no_health_report'
+  | 'already_current'
 
 export interface RuntimeHealthIngestionResult {
   readonly applied: boolean

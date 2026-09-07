@@ -359,7 +359,11 @@ export class FakeMemoryProviderWriter implements MemoryProviderWriter {
     readonly scopeDigest: string,
     readonly capabilities = { writeCommit: true, idempotentStatus: true },
     private readonly behavior:
-      'success' | 'reject' | 'timeout_before' | 'timeout_after' | 'ambiguous' = 'success'
+      | 'success'
+      | 'reject'
+      | 'timeout_before'
+      | 'timeout_after'
+      | 'ambiguous' = 'success'
   ) {}
   async write(request: MemoryProviderWriteRequest) {
     if (this.behavior === 'reject') return { status: 'rejected' as const }

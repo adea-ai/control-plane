@@ -3,7 +3,23 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { format } from 'prettier'
+
+function formatMarkdown(text) {
+  const result = spawnSync(
+    'bun',
+    [
+      'x',
+      'oxfmt',
+      '--stdin-filepath',
+      'report.md',
+      '--config',
+      resolve(repositoryRoot, '.oxfmtrc.json'),
+    ],
+    { input: text, encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(`oxfmt markdown formatting failed: ${result.stderr}`)
+  return result.stdout
+}
 
 const classifications = new Set([
   'verified',
@@ -259,7 +275,7 @@ export function refreshPriorMilestoneAudits(ledger, issues) {
     .filter((issue) => issue !== undefined)
   for (const issueNumber of new Set(gapIssues)) {
     const issue = issueByNumber.get(issueNumber)
-    if (issue?.state !== 'OPEN' || !/^M11:/.test(issue.milestone?.title ?? '')) {
+    if (issue?.state !== 'OPEN' || !(issue.milestone?.title ?? '').startsWith('M11:')) {
       throw new Error(`Gap issue #${issueNumber} must be open and assigned to M11`)
     }
   }
@@ -385,7 +401,7 @@ export async function renderRequirementsReport(ledger) {
     'Run `bun run requirements:check` after changing this ledger or any referenced evidence. The check validates row shape, stable IDs, source coverage, gap ownership, reachable repository paths, and byte-for-byte report drift.',
     '',
   ]
-  return format(lines.join('\n'), { parser: 'markdown', printWidth: 100 })
+  return formatMarkdown(lines.join('\n'))
 }
 
 function requireFields(errors, value, fields) {

@@ -3,15 +3,12 @@
   "version": "1.2.1",
   "private": true,
   "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "main": "./dist/index.js",
+  "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "bun src/start.ts",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src"
   },
   "dependencies": {
@@ -19,7 +16,10 @@
     "@control-plane/config": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
-    "@control-plane/runtime-sdk": "workspace:*",
-    "@control-plane/runtime-gateway-protocol": "workspace:*"
+    "@control-plane/runtime-gateway-protocol": "workspace:*",
+    "@control-plane/runtime-sdk": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

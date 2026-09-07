@@ -306,7 +306,7 @@ function toCedarRequest(
       entityId: request.principal.id,
       attributes: {
         workspaceId: request.principal.workspaceId,
-        ...(request.principal.attributes ?? {}),
+        ...request.principal.attributes,
       },
     },
     action: { entityType: 'Action', entityId: request.action },
@@ -321,7 +321,7 @@ function toCedarRequest(
     context: {
       workspaceId: request.context.workspaceId,
       requestedAt: request.context.requestedAt,
-      ...(request.context.attributes ?? {}),
+      ...request.context.attributes,
     },
   }
 }

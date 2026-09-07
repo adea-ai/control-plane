@@ -105,7 +105,8 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
 
   async health(): Promise<DeploymentComponentHealth> {
     const result = this.#assertOpen().prepare('PRAGMA quick_check').get() as
-      Readonly<Record<string, unknown>> | undefined
+      | Readonly<Record<string, unknown>>
+      | undefined
     return {
       ready: result !== undefined && Object.values(result)[0] === 'ok',
       component: 'sqlite-persistence',

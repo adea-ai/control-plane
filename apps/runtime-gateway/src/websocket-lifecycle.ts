@@ -222,6 +222,8 @@ export class RuntimeGatewayWebSocketLifecycle {
 
   async sweep(): Promise<void> {
     const now = this.#now()
+    // Snapshot the live connection map: #disconnect deletes entries during iteration.
+    // oxlint-disable-next-line unicorn/no-useless-spread
     for (const connection of [...this.#connections.values()]) {
       if (connection.state !== 'active' || connection.record === undefined) continue
       const silenceMs = now.getTime() - Date.parse(connection.record.lastHeartbeatAt)
@@ -237,6 +239,8 @@ export class RuntimeGatewayWebSocketLifecycle {
   async close(): Promise<void> {
     if (this.#draining) return
     this.#draining = true
+    // Snapshot the live connection map: #disconnect deletes entries during iteration.
+    // oxlint-disable-next-line unicorn/no-useless-spread
     for (const connection of [...this.#connections.values()]) {
       await this.#disconnect(connection, 1001, 'gateway_shutdown')
     }

@@ -7,9 +7,14 @@ import type { RuntimeCommandDeliveryService } from './runtime-command-delivery.j
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
 
 export type ReconnectInvalidReason =
-  'node_revoked' | 'grant_revoked' | 'runtime_incompatible' | 'capability_changed'
+  | 'node_revoked'
+  | 'grant_revoked'
+  | 'runtime_incompatible'
+  | 'capability_changed'
 export type ReconnectManualReason =
-  ReconnectInvalidReason | 'acknowledged_without_outcome' | 'unknown_retained_outcome'
+  | ReconnectInvalidReason
+  | 'acknowledged_without_outcome'
+  | 'unknown_retained_outcome'
 
 export interface ReconnectCommandValidator {
   validate(
