@@ -542,6 +542,16 @@ was verified closed. No remote infrastructure or production data was changed.
 
 ## SQLite evaluation persistence and cross-profile receipt portability
 
+Subsequent recovery coverage: the application-role restore drill now restores objects under the
+migration role while excluding source ACLs, verifies an application permission denial before
+bootstrap, reapplies the existing isolated migration/grant contract, and exercises receipt reads,
+evaluation/context-authoring/validation replay and a new evaluation write. It checks that the
+application identity is `control_plane_app`, with no superuser, database-creation, role-creation or
+public-schema creation privileges. This closes the earlier local admin-only restore limitation,
+not the managed Neon/hosted acceptance gap. The full local gates (790 unit tests) and PostgreSQL
+integration/recovery command passed. The disposable `m11-role-recovery-20260907` database,
+network and volume were removed and port 55139 was verified closed; no remote roles were changed.
+
 `SqliteEvaluationRepository` now stores complete schema-validated evaluation runs, including bound
 observation receipts, in one transaction. Identical concurrent saves retain one immutable record;
 changed content conflicts. Tests exercise injected transaction rollback, real file close/reopen,

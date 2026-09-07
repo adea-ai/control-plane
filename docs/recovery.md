@@ -97,6 +97,16 @@ Sensitive prompt, file, provider, credential, or HPKE plaintext content is prohi
 
 ## Current automated evidence
 
+The local PostgreSQL integration runner (`bun run test:integration`) includes a disposable
+dump/restore drill. It restores without source ownership or ACLs under the migration role, verifies
+complete stored evidence, proves application access is denied before bootstrap, and reapplies the
+isolated database migration/bootstrap contract. It then verifies application-role receipt reads,
+immutable evaluation/context-authoring/validation replay, and a new evaluation write. The role must
+not have public-schema creation, superuser, database-creation or role-creation privileges. This is
+a local role-separated recovery check, not a managed Neon PITR or full hosted application restart
+certification. Do not substitute broad production grants or administrator application credentials
+for the deployed environment's approved role/bootstrap procedure.
+
 Existing PostgreSQL/LangGraph/Temporal-era integration and recovery scripts are historical executable evidence. They do not by themselves certify the accepted Railway/Neon/R2/Restate cloud profile or the M10 Local/Hosted profiles.
 
 M9.7–M9.9 established the executable Cloud recovery matrix. M10 must extend that matrix for Local and

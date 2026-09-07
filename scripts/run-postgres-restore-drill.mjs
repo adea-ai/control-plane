@@ -4,7 +4,9 @@ import {
   executionEvents,
   executions,
   PostgresContextAuthoringCommandRepository,
+  PostgresContextPackageRepository,
   PostgresEvaluationRepository,
+  PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
   usageLedgerEntries,
 } from '../packages/database/src/index.ts'
@@ -128,6 +130,8 @@ try {
       'pg_restore',
       '--username',
       'control_plane_admin',
+      '--role',
+      'control_plane_migrator',
       '--dbname',
       target.name,
       '--no-owner',
@@ -168,7 +172,7 @@ try {
   ) {
     throw new Error('PostgreSQL restore drill lost immutable recovery evidence')
   }
-  // Restore excludes privileges: verify stored state as admin, not application replay readiness.
+  // First verify raw restored evidence as admin; application bootstrap/replay follows below.
   observed.assertRecovered(
     JSON.parse(
       String(
@@ -224,8 +228,51 @@ try {
     ).trim()
   )
   validation.assertRecovered(restoredValidation.record, restoredValidation.plan)
+  // No ACLs are imported. Prove the application cannot read until the existing
+  // migration/bootstrap contract reapplies its narrowly scoped grants.
+  const restoredEvaluations = new PostgresEvaluationRepository(target.application)
+  let deniedBeforeBootstrap = false
+  try {
+    await restoredEvaluations.getRun(observed.run.evalRunId)
+  } catch (error) {
+    if ((error.cause ?? error).code !== '42501') throw error
+    deniedBeforeBootstrap = true
+  }
+  if (!deniedBeforeBootstrap) throw new Error('RESTORE_APPLICATION_ACCESS_NOT_ISOLATED')
+  await target.migrate()
+  observed.assertRecovered(await restoredEvaluations.getRun(observed.run.evalRunId))
+  await restoredEvaluations.saveRun(observed.run)
+  observed.assertRecovered(await restoredEvaluations.getRun(observed.run.evalRunId))
+  const restoredCommands = new PostgresContextAuthoringCommandRepository(target.application)
+  const restoredPackages = new PostgresContextPackageRepository(target.application)
+  authoring.assertRecovered(
+    await restoredCommands.commit(authoring.record, authoring.package_),
+    await restoredPackages.get(authoring.record.contextPackage)
+  )
+  const restoredValidations = new PostgresExecutionValidationCommandRepository(target.application)
+  const restoredPlans = new PostgresExecutionPlanRepository(target.application)
+  validation.assertRecovered(
+    await restoredValidations.commit(validation.record, validation.plan),
+    await restoredPlans.get(validation.record.executionPlan)
+  )
+  await restoredEvaluations.saveRun({ ...observed.run, evalRunId: 'eval-run-after-restore' })
+  observed.assertRecovered({
+    ...(await restoredEvaluations.getRun('eval-run-after-restore')),
+    evalRunId: observed.run.evalRunId,
+  })
+  const [role] = await target.application.execute(
+    "SELECT current_user AS name, rolsuper, rolcreatedb, rolcreaterole, has_schema_privilege(current_user, 'public', 'CREATE') AS can_create FROM pg_roles WHERE rolname = current_user"
+  )
+  if (
+    role.name !== 'control_plane_app' ||
+    role.rolsuper ||
+    role.rolcreatedb ||
+    role.rolcreaterole ||
+    role.can_create
+  )
+    throw new Error('RESTORE_APPLICATION_ROLE_ESCALATED')
   console.log(
-    'PostgreSQL backup and restore drill preserved full observed evaluation receipts, execution, event, usage, authoring, and exact validation command/plan evidence.'
+    'PostgreSQL backup and restore drill preserved full evidence and restored application-role reads, immutable replay and new evaluation writes without DDL or role-administration privileges.'
   )
 } finally {
   await Promise.allSettled([source.dispose(), target.dispose()])
