@@ -8,9 +8,11 @@ import type { ManagedCloudConfiguration, RawEnvironment } from '@control-plane/c
 import { managedCloudOperationalPolicy } from '@control-plane/config'
 import { createR2ObjectStore, type ObjectStore } from '@control-plane/object-store'
 import {
-  createConsoleTraceAdapter,
   createOpenTelemetryMetricAdapter,
   createOpenTelemetryTraceAdapter,
+} from '@control-plane/telemetry/opentelemetry'
+import {
+  createConsoleTraceAdapter,
   createTelemetry,
   type TraceAdapter,
 } from '@control-plane/telemetry'

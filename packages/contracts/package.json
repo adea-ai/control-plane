@@ -1,7 +1,22 @@
 {
   "name": "@control-plane/contracts",
   "version": "1.5.2",
+  "description": "Runtime-independent service boundary between Adea and the Control Plane: canonical identifiers, envelopes, Control API schemas, pagination, and versioning.",
+  "keywords": [
+    "agents",
+    "api",
+    "contracts",
+    "schemas",
+    "zod"
+  ],
+  "homepage": "https://github.com/adea-ai/control-plane#readme",
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/contracts"
+  },
   "files": [
     "dist"
   ],
