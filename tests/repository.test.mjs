@@ -217,7 +217,7 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.match(config, /^dependency_review: auto$/m)
   assert.match(config, /^opencode_security: true$/m)
   assert.match(config, /^staging_validation_mode: audit$/m)
-  assert.match(config, /^runtime_ref: v1\.4\.1$/m)
+  assert.match(config, /^runtime_ref: v1\.5\.0$/m)
   for (const runner of [
     'runner',
     'ci_runner',
@@ -266,7 +266,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.4\.1/
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.5\.0/
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 2)
   assert.match(validation, /cancel-in-progress: true/)
@@ -274,7 +274,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(validation, /branches: \[main\]/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v1\.4\.1/)
+  assert.match(release, /release\.yml@v1\.5\.0/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
