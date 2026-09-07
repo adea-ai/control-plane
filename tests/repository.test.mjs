@@ -120,6 +120,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(!unit.includes('packages/database/src/integration.test.mjs'))
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
   assert.deepEqual(integration, [
+    'apps/control-api/src/validation-replay.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',

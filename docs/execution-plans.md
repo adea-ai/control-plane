@@ -82,7 +82,11 @@ does not backfill them, and outstanding pre-upgrade retries require rollout cons
 
 The Local composition test proves concurrent service calls and replay after a real SQLite close/reopen
 with compilation inputs and the clock unavailable. The HTTP test proves missing-credential rejection,
-stable replay and conflict status. PostgreSQL repository semantics are integration-tested separately;
+stable replay and conflict status. A PostgreSQL integration test uses the actual cloud composition and
+signed service credentials through HTTP injection: eight requests persist one command/plan pair,
+then replay succeeds after closing and recreating the application and connection with compilation
+inputs unavailable. Changed inputs return 409; invalid and revoked credentials return 401 even for
+recorded requests. This is in-process reconstruction, not an OS process crash or deployed restart;
 a live cloud/Hosted Server API restart matrix is still required. Inline context inputs remain disabled,
 and this does not close the production context-authoring reachability gate.
 

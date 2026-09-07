@@ -394,3 +394,20 @@ The integration runner and its connection-loss, restart and backup-restore drill
 `bun run lint && bun run type-check && bun run format:check && bun run test`. The disposable Compose
 project `m11-validation-recovery-20260907` used port 55069; its container, network and volume were
 removed after validation and the port was verified closed. No remote infrastructure was changed.
+
+## Cloud validation HTTP and PostgreSQL reconstruction
+
+The cloud composition integration test uses real PostgreSQL repositories, the actual HTTP handlers
+and signed Ed25519 service credentials. Eight concurrent requests persist one command/plan pair.
+After closing the application and its connection and reconstructing both, replay returns the exact
+plan with compilation readers and clock unavailable. Changed inputs return 409; invalid and revoked
+credentials return 401. HTTP injection does not open a listening socket and is not a separate-process
+crash or deployed restart test. Test-only configuration and locally generated keys are not production
+identity issuance evidence.
+
+The new case passed 25 assertions; all 29 integration tests and PostgreSQL recovery drills passed.
+The repository test-inventory assertion was updated to include this integration lane. Full lint,
+type-check, format and test gates passed (777 unit tests, 85.54% line / 74.59% function coverage).
+An initial HTTP status expectation was corrected from 201 to the route's documented 200; no
+production behavior was changed. The disposable `m11-cloud-replay-20260907` Compose resources were
+removed and port 55079 was verified closed. No remote infrastructure was changed.
