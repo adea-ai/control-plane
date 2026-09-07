@@ -163,7 +163,13 @@ export interface CompatibilityEnvironment {
 }
 
 export type ResolutionState =
-  'available' | 'deprecated' | 'superseded' | 'revoked' | 'unpublished' | 'missing' | 'incompatible'
+  | 'available'
+  | 'deprecated'
+  | 'superseded'
+  | 'revoked'
+  | 'unpublished'
+  | 'missing'
+  | 'incompatible'
 
 export type CatalogResolution<Version> =
   | {

@@ -2,14 +2,11 @@
   "name": "@control-plane/langgraph-adapter",
   "version": "1.1.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -20,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/*.test.mjs",
     "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
@@ -30,5 +27,8 @@
     "@langchain/langgraph": "1.4.13",
     "@langchain/langgraph-checkpoint-postgres": "1.0.5",
     "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

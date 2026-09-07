@@ -2,41 +2,41 @@
   "name": "@control-plane/local-control-plane",
   "version": "1.1.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
-  "main": "./dist/index.js",
   "files": [
     "dist"
   ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "bun src/start.ts",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/config": "workspace:*",
-    "@control-plane/contracts": "workspace:*",
     "@control-plane/context": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
     "@control-plane/control-api": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/managed-pi-adapter": "workspace:*",
     "@control-plane/object-store": "workspace:*",
-    "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/remote-control-relay": "workspace:*",
+    "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
-    "@restatedev/restate-server": "1.7.8",
     "@nestjs/common": "12.0.1",
+    "@restatedev/restate-server": "1.7.8",
     "fastify": "5.12.1"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

@@ -2,19 +2,16 @@
   "name": "@control-plane/hosted-control-plane",
   "version": "1.1.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
-  "main": "./dist/index.js",
   "files": [
     "dist"
   ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "browser": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "bun src/start.ts",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
@@ -26,10 +23,13 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/object-store": "workspace:*",
-    "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/remote-control-relay": "workspace:*",
+    "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

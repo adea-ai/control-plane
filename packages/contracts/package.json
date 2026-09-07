@@ -2,14 +2,11 @@
   "name": "@control-plane/contracts",
   "version": "1.5.1",
   "license": "Apache-2.0",
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -24,10 +21,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
     "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

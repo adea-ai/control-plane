@@ -2,14 +2,11 @@
   "name": "@control-plane/runtime-sdk",
   "version": "1.5.1",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -22,14 +19,14 @@
     "build": "tsc -p tsconfig.json",
     "compatibility:check": "bun scripts/compatibility.mjs --check",
     "compatibility:generate": "bun scripts/compatibility.mjs",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src"
   },
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "zod": "4.5.4"
   },
-  "devDependencies": {
-    "prettier": "3.9.6"
+  "engines": {
+    "node": ">=24 <25"
   }
 }

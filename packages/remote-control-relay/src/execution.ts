@@ -81,7 +81,8 @@ export interface RelayExecutionControlPort {
 export type RelayExecutionCommandResult = ExecutionAcceptanceResponse | RelayExecutionControlResult
 
 export type RelayExecutionCommandErrorCode =
-  'RELAY_COMMAND_INVALID' | 'RELAY_COMMAND_SCOPE_MISMATCH'
+  | 'RELAY_COMMAND_INVALID'
+  | 'RELAY_COMMAND_SCOPE_MISMATCH'
 
 export class RelayExecutionCommandError extends Error {
   constructor(readonly code: RelayExecutionCommandErrorCode) {

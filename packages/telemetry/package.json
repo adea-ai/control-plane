@@ -2,14 +2,11 @@
   "name": "@control-plane/telemetry",
   "version": "1.2.2",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -20,11 +17,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test src/index.test.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
     "@sentry/node": "10.73.0"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }
