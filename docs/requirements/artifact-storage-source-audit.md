@@ -62,6 +62,28 @@ authoring/authorization evidence. This is not a finding that an unauthenticated
 caller can bypass authorization. Determine the intended canonical authoring
 boundary before adding a public endpoint or assuming product authorization ownership.
 
+The canonical [Control Plane TDD](https://docs.google.com/document/d/1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg/edit)
+was retrieved on 2026-09-07 with source modification time
+`2026-08-28T06:03:21.899Z`. Sections 3, 8 and 23 establish that construction is
+Control Plane-owned, provider reads occur before execution under pinned policy,
+and ExecutionRequest v1 already references a ContextPackage. They do not specify
+a public compilation endpoint. The existing
+`apps/control-api/src/executions/execution-validation.service.ts` loads that
+package by ID/digest, checks workspace/project/revision/compiler pins and compiles
+an ExecutionPlan; it does not construct the ContextPackage. Therefore wiring a
+compiler into validation without a preceding authorized construction contract
+would change the request semantics rather than finish the existing path.
+
+The implementation follow-up must establish a pre-validation authoring service
+with independently supplied policy decisions and product Artifact lifecycle
+evidence, persist the immutable package, and then use the existing reference-based
+validation contract. Standalone acceptance can exercise that boundary through
+synthetic service principals and authoritative contract fixtures; a live Agent HQ
+deployment is not an ordinary M11 dependency. Required evidence includes rejection
+of cross-workspace, revoked and unscanned inputs, no-provider operation, pinned
+provider contributions, and durable package lookup across all deployment profiles.
+This identifies the missing service boundary, not an implemented or certified path.
+
 These 24 entries do not claim exhaustive extraction of all Agent HQ implementation
 requirements. Exact metadata field mappings, the complete product lifecycle/event
 taxonomy, idempotent API contracts, deletion/reference counting and legal holds,

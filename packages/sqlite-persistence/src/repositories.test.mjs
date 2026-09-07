@@ -3,11 +3,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import {
+  ContextPackageAuthoringService,
+  contextPackageSerializationFixtures,
+} from '@control-plane/context'
 import {
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
   SqlitePersistenceProvider,
+  SqliteProjectStateRepository,
   SqliteRuntimeDiscoveryRepository,
 } from './index.ts'
 
@@ -166,6 +170,84 @@ describe('SQLite domain repositories', () => {
       const repository = new SqliteContextPackageRepository(provider)
       expect(await repository.getById(package_.contextPackageId)).toEqual(package_)
       expect(await repository.getById('ctx_01JABCDEF0123456789ABCDEFG')).toBeUndefined()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('authors from durable state and resolves the resulting package after reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-authoring-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const projectStates = new SqliteProjectStateRepository(provider)
+      const scope = { workspaceId: ids.workspaceId, projectId: ids.projectId }
+      expect(
+        await projectStates.create({
+          schemaVersion: 1,
+          ...scope,
+          revision: 0,
+          items: [],
+          createdAt: receivedAt,
+          updatedAt: receivedAt,
+        })
+      ).toBe(true)
+      const packages = new SqliteContextPackageRepository(provider)
+      const authoring = new ContextPackageAuthoringService({
+        compilerVersion: '1.0.0',
+        projectStates,
+        packages,
+        now: () => new Date(receivedAt),
+        authority: {
+          async authorize(principalRef, request) {
+            if (
+              principalRef !== 'service:standalone' ||
+              request.workspaceId !== scope.workspaceId ||
+              request.projectId !== scope.projectId
+            )
+              return undefined
+            return {
+              ...scope,
+              principalRef,
+              expiresAt: '2026-08-24T11:00:00.000Z',
+              constraints: {
+                allowedSensitivities: ['public'],
+                allowedStateItemIds: [],
+                allowedArtifactIds: [],
+              },
+              permissions: [],
+              budgets: { maximumBytes: 1024, maximumTokens: 256 },
+            }
+          },
+          async resolveArtifact() {
+            throw new Error('Unexpected Artifact resolution')
+          },
+        },
+      })
+      const request = {
+        ...scope,
+        projectStateRevision: 0,
+        objective: 'Run with no optional context provider',
+        candidates: [],
+        successCriteria: ['Return the pinned package'],
+        returnContract: { contractRef: 'contract://standalone-result/v1' },
+        budgets: { maximumBytes: 2048, maximumTokens: 512 },
+      }
+      await expect(authoring.create('service:other', request)).rejects.toThrow(
+        'UNAUTHORIZED_CONTEXT'
+      )
+      const ref = await authoring.create('service:standalone', request)
+      const before = await packages.get(ref)
+      expect(before.budgets).toEqual({ maximumBytes: 1024, maximumTokens: 256 })
+      expect(before.providerComposition).toBeUndefined()
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const reopened = new SqliteContextPackageRepository(provider)
+      expect(await reopened.get(ref)).toEqual(before)
+      expect(await reopened.getById(ref.contextPackageId)).toEqual(before)
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

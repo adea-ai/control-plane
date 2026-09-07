@@ -4,7 +4,11 @@ import {
   IdentifierSchemas,
   type ContextContribution,
 } from '@control-plane/contracts'
-import { ProjectStateSchema, type ProjectStateItem } from '@control-plane/domain'
+import {
+  ProjectStateSchema,
+  type ProjectStateItem,
+  type ProjectStateRepository,
+} from '@control-plane/domain'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -364,6 +368,162 @@ export interface ContextPackageRepository {
   put(package_: ContextPackage): Promise<ContextPackageReference>
   get(reference: ContextPackageReference): Promise<ContextPackage | undefined>
   getById(contextPackageId: string): Promise<ContextPackage | undefined>
+}
+
+export const ContextAuthoringRequestSchema = z.strictObject({
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  projectStateRevision: z.number().int().nonnegative(),
+  objective: CompilationInputSchema.shape.objective,
+  candidates: z.array(CandidateSchema.omit({ authorized: true }).strict()).max(10_000),
+  successCriteria: CompilationInputSchema.shape.successCriteria,
+  returnContract: CompilationInputSchema.shape.returnContract,
+  budgets: CompilationInputSchema.shape.budgets,
+})
+
+type ContextAuthoringRequest = z.output<typeof ContextAuthoringRequestSchema>
+const AuthoringDecisionSchema = z.object({
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  principalRef: z.string().min(1).max(256),
+  expiresAt: TimestampSchema,
+  constraints: ContextPackageSchema.shape.constraints,
+  permissions: ContextPackageSchema.shape.permissions,
+  budgets: ContextPackageSchema.shape.budgets,
+})
+
+/** Composition-owned policy and Artifact adapters, never request payload fields. */
+export interface ContextAuthoringAuthority {
+  authorize(
+    principalRef: string,
+    request: ContextAuthoringRequest
+  ): Promise<z.output<typeof AuthoringDecisionSchema> | undefined>
+  resolveArtifact(input: {
+    principalRef: string
+    workspaceId: string
+    projectId: string
+    artifactId: string
+  }): Promise<
+    | (z.output<typeof ContextArtifactRefSchema> & {
+        workspaceId: string
+        projectId: string
+        authorized: boolean
+        state: 'available' | 'missing' | 'revoked' | 'unverified' | 'quarantined'
+      })
+    | undefined
+  >
+}
+
+/** Pre-validation construction. The authenticated principal is supplied by the host. */
+export class ContextPackageAuthoringService {
+  readonly #compiler: ContextPackageCompiler
+
+  constructor(
+    readonly options: {
+      compilerVersion: string
+      projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
+      packages: ContextPackageRepository
+      authority: ContextAuthoringAuthority
+      now: () => Date
+    }
+  ) {
+    this.#compiler = new ContextPackageCompiler(options.compilerVersion)
+  }
+
+  async create(principalInput: string, input: unknown): Promise<ContextPackageReference> {
+    const principalRef = z.string().min(1).max(256).parse(principalInput)
+    const request = ContextAuthoringRequestSchema.parse(input)
+    const decisionInput = await this.options.authority.authorize(
+      principalRef,
+      structuredClone(request)
+    )
+    if (!decisionInput) fail('UNAUTHORIZED_CONTEXT')
+    const decision = AuthoringDecisionSchema.parse(decisionInput)
+    if (
+      decision.principalRef !== principalRef ||
+      decision.workspaceId !== request.workspaceId ||
+      decision.projectId !== request.projectId
+    )
+      fail('UNAUTHORIZED_CONTEXT')
+    if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')
+    if (
+      request.candidates.some(
+        (candidate) => !decision.constraints.allowedStateItemIds.includes(candidate.itemId)
+      )
+    )
+      fail('UNAUTHORIZED_CONTEXT')
+
+    const stateInput = await this.options.projectStates.getAtRevision(
+      request.workspaceId,
+      request.projectId,
+      request.projectStateRevision
+    )
+    if (!stateInput) fail('STALE_PROJECT_STATE')
+    const state = ProjectStateSchema.parse(stateInput)
+    if (state.revision !== request.projectStateRevision) fail('STALE_PROJECT_STATE')
+    if (state.workspaceId !== request.workspaceId || state.projectId !== request.projectId)
+      fail('UNAUTHORIZED_CONTEXT')
+    const compiledAt = this.options.now().toISOString()
+    const candidatesById = new Map(
+      request.candidates.map((candidate) => [candidate.itemId, candidate])
+    )
+    const artifactIds = [
+      ...new Set(
+        state.items
+          .filter((item) => {
+            const candidate = candidatesById.get(item.itemId)
+            return (
+              candidate !== undefined &&
+              (candidate.required ||
+                !item.freshness.expiresAt ||
+                isAfter(item.freshness.expiresAt, compiledAt))
+            )
+          })
+          .flatMap((item) => item.provenance.artifactRefs)
+      ),
+    ].sort()
+    const artifacts: z.output<typeof ArtifactCandidateSchema>[] = []
+    for (const artifactId of artifactIds) {
+      if (!decision.constraints.allowedArtifactIds.includes(artifactId))
+        fail('UNAUTHORIZED_CONTEXT', artifactId)
+      const artifact = await this.options.authority.resolveArtifact({
+        principalRef,
+        workspaceId: request.workspaceId,
+        projectId: request.projectId,
+        artifactId,
+      })
+      if (!artifact) fail('MISSING_ARTIFACT', artifactId)
+      if (
+        artifact.workspaceId !== request.workspaceId ||
+        artifact.projectId !== request.projectId ||
+        artifact.artifactId !== artifactId ||
+        artifact.authorized !== true
+      )
+        fail('UNAUTHORIZED_CONTEXT', artifactId)
+      if (artifact.state === 'revoked') fail('REVOKED_ARTIFACT', artifactId)
+      if (artifact.state !== 'available') fail('MISSING_ARTIFACT', artifactId)
+      artifacts.push(ArtifactCandidateSchema.parse(artifact))
+    }
+    if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')
+    const package_ = this.#compiler.compile({
+      ...request,
+      projectState: state,
+      expectedProjectStateRevision: request.projectStateRevision,
+      candidates: request.candidates.map((candidate) => ({
+        ...candidate,
+        authorized: decision.constraints.allowedStateItemIds.includes(candidate.itemId),
+      })),
+      artifacts,
+      constraints: decision.constraints,
+      permissions: decision.permissions,
+      budgets: {
+        maximumBytes: Math.min(request.budgets.maximumBytes, decision.budgets.maximumBytes),
+        maximumTokens: Math.min(request.budgets.maximumTokens, decision.budgets.maximumTokens),
+      },
+      compiledAt,
+    })
+    return this.options.packages.put(package_)
+  }
 }
 
 export class InMemoryContextPackageRepository implements ContextPackageRepository {

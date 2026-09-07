@@ -258,3 +258,33 @@ Review also identified that the test subprocess timeout could bypass child clean
 the test runner now owns the temporary root and isolated process group and removes
 both after timeout. A forced-timeout regression confirms partial-file-tree cleanup.
 These follow-ups do not rewrite the historical raw samples or their candidate ID.
+
+## Context authoring service and SQLite persistence follow-up
+
+The pre-validation `ContextPackageAuthoringService` now separates request selection
+from composition-owned policy and Artifact adapters. Caller authorization flags,
+state content, Artifact metadata and compilation timestamps are rejected. Scope,
+principal, decision expiry, Artifact availability and policy budget ceilings are
+checked before persistence. Expired or disallowed item decisions fail before state
+reads. These are internal service semantics, not a new authenticated HTTP operation.
+
+On 2026-09-07, the candidate passed `bun run lint`, `bun run type-check`,
+`bun run format:check` and `bun run test`: 771 unit, 52 smoke and 98 E2E tests,
+with 87.56% line and 83.96% function coverage. The SQLite package's focused 24-test
+run also passed, including creation from persisted ProjectState, unauthorized
+principal rejection, policy budget narrowing, and identical package lookup by ID
+and digest after a file-backed database close/reopen. Its temporary database was
+removed in the test's finally block.
+
+Independent review identified premature Artifact resolution for stale optional
+items. Authoring now shares one trusted freshness timestamp with compilation and
+skips those references before resolution; a regression verifies successful
+`STALE_OPTIONAL` exclusion without Artifact reads. Policy expiry is rechecked
+after asynchronous resolution. Review also recorded that authoring observations
+do not establish ongoing lifecycle authorization: execution-time revocation or an
+authoritative revision/lease contract remains necessary.
+
+This does not establish production reachability, a product Artifact adapter,
+optional-provider enrichment, entrypoint authentication/idempotency or PostgreSQL
+authoring conformance. Those gates remain open under
+`COMPAT-CONTEXT-COMPILER-REACHABILITY`; no all-profile completion is claimed.
