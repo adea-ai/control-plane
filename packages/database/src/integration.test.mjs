@@ -1325,6 +1325,26 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(processing).toMatchObject({ status: 'processing', version: record.version + 1 })
     expect(await repository.getByExecutionId(processing.executionId)).toEqual(processing)
     expect((await service.acceptExecution(input)).command).toEqual(processing)
+    const atDeadline = new CommandInboxService({
+      repository: new PostgresCommandAcceptanceRepository(isolated.application),
+      executionIdFactory: () => {
+        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+      },
+      executionPlanValidator: { validate: async () => false },
+      now: () => input.retentionExpiresAt,
+    })
+    expect((await atDeadline.acceptExecution(input)).command).toEqual(processing)
+    const expired = new CommandInboxService({
+      repository: new PostgresCommandAcceptanceRepository(isolated.application),
+      executionIdFactory: () => {
+        throw new Error('EXPIRED_REPLAY_MUST_NOT_ALLOCATE')
+      },
+      executionPlanValidator: { validate: async () => false },
+      now: () => new Date(Date.parse(input.retentionExpiresAt) + 1).toISOString(),
+    })
+    await expect(expired.acceptExecution(input)).rejects.toMatchObject({
+      code: 'COMMAND_RETENTION_EXPIRED',
+    })
   })
 
   test('persists one authorized interaction response across service restarts', async () => {
