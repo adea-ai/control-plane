@@ -211,6 +211,16 @@ const AcceptExecutionSchema = z
     path: ['retentionExpiresAt'],
   })
 
+const NewExecutionAcceptanceSchema = AcceptExecutionSchema.refine(
+  (input) =>
+    Date.parse(input.retentionExpiresAt) - Date.parse(input.receivedAt) >=
+    30 * 24 * 60 * 60 * 1_000,
+  {
+    message: 'Command retention must cover at least 30 days after receipt',
+    path: ['retentionExpiresAt'],
+  }
+)
+
 const TransitionCommandSchema = z.object({
   callerPrincipalId: ServicePrincipalIdSchema,
   operation: z.literal('execution.accept'),
@@ -290,6 +300,7 @@ export class CommandInboxService {
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
     if (existing) return this.#replay(existing, parsed.payloadHash)
+    NewExecutionAcceptanceSchema.parse(parsed)
     if (
       !(await this.#executionPlanValidator.validate({
         executionPlan: parsed.executionPlan,

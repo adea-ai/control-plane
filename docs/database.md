@@ -119,6 +119,14 @@ Key rules:
 - idempotency records remain available for the declared replay/reconciliation window;
 - persistence cleanup may not remove a record while an upstream/downstream component can still legitimately redeliver the protected command.
 
+New execution acceptance rejects a requested inbox retention interval shorter than 30 days
+after receipt, before creating an execution. Exactly 30 days and longer intervals are accepted.
+Replay of an existing unexpired legacy record keeps its recorded result and deadline; the new
+minimum is not a migration or an implicit rewrite of old records. Expired legacy records retain
+the existing explicit retention-expired response. Deployments must separately reconcile legacy
+retention and ensure inbox data is retained at least as long as the protected execution. This
+acceptance check alone does not prove cleanup policy or physical retention across profiles.
+
 ## ExecutionEvent persistence
 
 Execution events are durable, ordered, redacted records. Required state transitions and their durable event/outbox records must commit atomically within the owning persistence adapter's transaction semantics. Raw prompt, credential, file, provider, or unrestricted runtime payloads are not event-log content.
