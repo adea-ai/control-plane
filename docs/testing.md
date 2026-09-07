@@ -41,7 +41,18 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   starts a Runtime Gateway process and does not require Railway, Neon, R2, PostgreSQL, Cortana, or
   reusable provider credentials. It also reruns the no-provider, disabled-provider, fake alternate,
   repository-local Cortana-compatible fixture, encrypted relay, profile migration, and deployment
-  conformance suites.
+  conformance suites. Profile-portability's ordinary test command explicitly excludes PostgreSQL
+  integration files; it does not report them as skipped or as passing evidence. The separate
+  `bun run test:integration` lane is required for PostgreSQL cross-profile migrations and recovery.
+  Passing the credential-free matrix alone cannot satisfy the full M11 acceptance gate.
+  It also runs a Local graph approval through the pinned real Restate runtime, stops/reconstructs
+  Local and Restate while awaiting input, and resumes from SQLite checkpoints to an Artifact-backed
+  terminal result. An invalid approval is rejected with HTTP 400 before a subsequent valid approval completes the same
+  workflow. Interaction value validation runs before durable promise resolution and again on consumption.
+  This test uses command-inbox acceptance, internal workflow submission and controlled graph operations.
+  It is controlled-restart evidence, not hard-crash, live-provider or
+  authenticated public graph-selection acceptance. Finished workflow output is retrieved using
+  Restate's documented [workflow attach endpoint](https://docs.restate.dev/services/invocation/http).
 - `bun run test:recovery-matrix` runs current disposable recovery fixtures.
 
 The Railway manifest validator checks repository-owned service composition. A green local validation

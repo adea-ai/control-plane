@@ -41,6 +41,7 @@ const portIds = [
 ]
 const compatibilityIds = [
   'COMPAT-CODEOWNERS',
+  'COMPAT-CONTEXT-COMPILER-REACHABILITY',
   'COMPAT-CORTANA-ADAPTER-REACHABILITY',
   'COMPAT-DEPENDENCY-DIRECTION',
   'COMPAT-DOCUMENTATION',
@@ -97,7 +98,8 @@ const profilePorts = {
     observability: 'packages/telemetry',
     persistence: 'PostgreSQL/Neon repositories',
     processes: 'Railway service lifecycle',
-    runtimeTransport: 'DisabledCloudRuntime or CloudCertificationRuntime',
+    runtimeTransport:
+      'DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime',
     secrets: 'Railway environment; no SecretsProvider',
     workflow: 'Restate',
   },

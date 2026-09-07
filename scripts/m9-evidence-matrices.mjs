@@ -169,12 +169,12 @@ export const recoveryEvidence = [
   integration(
     'postgres.failover',
     'scripts/run-postgres-disruption-drill.mjs',
-    'PostgreSQL service-restart failover drill preserved committed evidence.'
+    'PostgreSQL service-restart drill preserved full observed evaluation receipts, evidence, authoring packages, and exact validation command/plan replay.'
   ),
   integration(
     'postgres.restore',
     'scripts/run-postgres-restore-drill.mjs',
-    'PostgreSQL backup and restore drill preserved immutable evaluation, execution, event, and usage evidence.'
+    'PostgreSQL backup and restore drill preserved full evidence and restored application-role reads, immutable replay and new evaluation writes without DDL or role-administration privileges.'
   ),
   recovery(
     'restate.endpoint_crash',

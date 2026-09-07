@@ -55,14 +55,24 @@ export class LocalApiServer {
       }
       if (request.url === '/ready') {
         const readiness = this.#readiness()
-        const manifest = await this.#manifest()
+        const manifest = await this.#manifest().catch(() => undefined)
         const ready =
-          readiness.status === 'ready' && manifest.components.every((component) => component.ready)
-        writeJson(response, ready ? 200 : 503, { ...readiness, manifest })
+          readiness.status === 'ready' &&
+          manifest !== undefined &&
+          manifest.components.every((component) => component.ready)
+        writeJson(response, ready ? 200 : 503, {
+          ...readiness,
+          status: ready ? 'ready' : 'not_ready',
+        })
         return
       }
       if (request.url === '/v1/components') {
-        writeJson(response, 200, await this.#manifest())
+        const manifest = await this.#manifest().catch(() => undefined)
+        const ready =
+          this.#readiness().status === 'ready' &&
+          manifest !== undefined &&
+          manifest.components.every((component) => component.ready)
+        writeJson(response, ready ? 200 : 503, { schemaVersion: 1, ready })
         return
       }
       writeJson(response, 404, { code: 'NOT_FOUND' })

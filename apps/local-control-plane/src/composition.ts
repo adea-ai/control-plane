@@ -34,6 +34,7 @@ import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
   type ExecutionLifecycleActivities,
+  type GraphSegmentActivityPort,
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
@@ -44,6 +45,7 @@ import {
 } from '@control-plane/workflow-worker'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 
 const require = createRequire(import.meta.url)
 const COMPONENT_VERSION = '1.0.0'
@@ -66,6 +68,7 @@ export interface LocalComponentManifest {
 }
 
 export interface LocalControlPlaneCompositionOptions {
+  readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
   readonly workflowEndpointPort?: number
@@ -73,6 +76,10 @@ export interface LocalControlPlaneCompositionOptions {
   readonly workflowRuntime?: WorkflowRuntime
   readonly endpointFactory?: RestateEndpointFactory
   readonly activities?: ExecutionLifecycleActivities
+  readonly graphActivities?: GraphSegmentActivityPort
+  readonly graphActivitiesFactory?: (input: {
+    readonly persistence: SqlitePersistenceProvider
+  }) => GraphSegmentActivityPort
   readonly runtimeTransport?: RuntimeAdapterWithTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
@@ -124,6 +131,18 @@ export class LocalControlPlaneComposition {
   #started = false
 
   constructor(options: LocalControlPlaneCompositionOptions) {
+    const graphConfigured =
+      options.graphActivities !== undefined || options.graphActivitiesFactory !== undefined
+    if (options.graphActivities !== undefined && options.graphActivitiesFactory !== undefined)
+      throw new Error('LOCAL_GRAPH_FACTORY_CONFIGURATION_CONFLICT')
+    if (graphConfigured && options.activities !== undefined)
+      throw new Error('LOCAL_GRAPH_ACTIVITIES_CONFIGURATION_CONFLICT')
+    if (
+      graphConfigured &&
+      options.runtimeTransport === undefined &&
+      options.runtimeFactory === undefined
+    )
+      throw new Error('LOCAL_GRAPH_RUNTIME_REQUIRED')
     this.dataDirectory = resolve(options.dataDirectory)
     this.profile = options.profile ?? 'local'
     const processProvider = options.processProvider ?? new NodeProcessRuntimeProvider()
@@ -150,7 +169,11 @@ export class LocalControlPlaneComposition {
     if (options.runtimeTransport !== undefined && options.runtimeFactory !== undefined) {
       throw new Error('LOCAL_RUNTIME_CONFIGURATION_CONFLICT')
     }
-    const controlApi = new LocalControlApiComposition(this.persistence, 'http://127.0.0.1:8080')
+    const controlApi = new LocalControlApiComposition(
+      this.persistence,
+      'http://127.0.0.1:8080',
+      options.contextAuthoring
+    )
     const runtimeTransport =
       options.runtimeTransport ??
       options.runtimeFactory?.({
@@ -200,7 +223,10 @@ export class LocalControlPlaneComposition {
               this.objectStore,
               runtimeTransport
             ),
-            graph: new DisabledGraphSegmentActivities(),
+            graph:
+              options.graphActivities ??
+              options.graphActivitiesFactory?.({ persistence: this.persistence }) ??
+              new DisabledGraphSegmentActivities(),
             commands: this.commands,
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()

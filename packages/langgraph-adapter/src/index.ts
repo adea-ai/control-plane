@@ -464,3 +464,4 @@ function storageThreadId(input: {
 export const packageName = 'langgraph-adapter'
 
 export * from './postgres-checkpointer.js'
+export * from './sqlite-checkpointer.js'

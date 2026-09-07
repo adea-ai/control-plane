@@ -328,7 +328,7 @@ async function finishTerminal(
   }
 }
 
-function validateInteractionResponse(response: WorkflowInteractionResponse): void {
+export function validateInteractionResponse(response: WorkflowInteractionResponse): void {
   if ((response.action === 'input') !== (response.value !== undefined)) {
     throw new Error('INTERACTION_SIGNAL_VALUE_INVALID')
   }

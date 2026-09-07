@@ -153,6 +153,7 @@ services:
       RESTATE_NODE_NAME: control-plane-hosted-server-1
       RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE: 384 MiB
       RESTATE_SHUTDOWN_TIMEOUT: 20s
+      RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE: /restate-data/request-identity-private.pem
     volumes:
       - type: bind
         source: ${RESTATE_DATA_PATH:-./data/server/restate}
@@ -191,6 +192,7 @@ services:
       HOSTED_OBJECT_STORE: ${HOSTED_OBJECT_STORE:-filesystem}
       RESTATE_ADMIN_URL: http://restate:9070
       RESTATE_INGRESS_URL: http://restate:8080
+      RESTATE_REQUEST_IDENTITY_PUBLIC_KEY: ${RESTATE_REQUEST_IDENTITY_PUBLIC_KEY:-}
       SERVICE_VERSION: ${CONTROL_PLANE_VERSION:-0.0.0-self-hosted}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_BUCKET: ${S3_BUCKET:-}

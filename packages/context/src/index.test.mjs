@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   ContextCompilationError,
   ContextPackageCompiler,
+  ContextPackageAuthoringService,
   ContextPackageSchema,
   InMemoryContextPackageRepository,
   contextPackageSerializationFixtures,
@@ -15,6 +16,168 @@ const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
 const itemOneId = 'psi_01JABCDEF0123456789ABCDEFG'
 const itemTwoId = 'psi_01JBBCDEF0123456789ABCDEFG'
 const artifactId = 'art_01JABCDEF0123456789ABCDEFG'
+
+describe('trusted pre-validation context authoring', () => {
+  function fixture() {
+    const input = baseInput()
+    const packages = new InMemoryContextPackageRepository()
+    const decision = {
+      workspaceId,
+      projectId,
+      principalRef: 'service:reference-client',
+      expiresAt: '2026-08-23T13:00:00.000Z',
+      constraints: input.constraints,
+      permissions: input.permissions,
+      budgets: input.budgets,
+    }
+    const artifact = { ...input.artifacts[0], workspaceId, projectId }
+    const request = {
+      workspaceId,
+      projectId,
+      projectStateRevision: 7,
+      objective: input.objective,
+      candidates: input.candidates.map(({ authorized: _authorized, ...candidate }) => candidate),
+      successCriteria: input.successCriteria,
+      returnContract: input.returnContract,
+      budgets: input.budgets,
+    }
+    const authority = {
+      async authorize() {
+        return decision
+      },
+      async resolveArtifact() {
+        return artifact
+      },
+    }
+    const service = new ContextPackageAuthoringService({
+      compilerVersion: '1.0.0',
+      packages,
+      authority,
+      projectStates: {
+        async getAtRevision() {
+          return input.projectState
+        },
+      },
+      now: () => new Date(now),
+    })
+    return { service, packages, request, decision, artifact, input, authority }
+  }
+
+  test('persists a no-provider package using authoritative state and decisions', async () => {
+    const f = fixture()
+    const ref = await f.service.create('service:reference-client', f.request)
+    const package_ = await f.packages.get(ref)
+    expect(package_.stateItems).toHaveLength(2)
+    expect(package_.artifactRefs[0].artifactId).toBe(artifactId)
+    expect(package_.providerComposition).toBeUndefined()
+    expect(package_.permissions).toEqual(['artifact:read', 'project-state:read'])
+  })
+
+  test('rejects caller-supplied authorization and policy fields', async () => {
+    const f = fixture()
+    for (const extra of [{ permissions: ['admin'] }, { artifacts: [] }, { compiledAt: now }]) {
+      await expect(
+        f.service.create('service:reference-client', { ...f.request, ...extra })
+      ).rejects.toThrow()
+    }
+    f.request.candidates[0].authorized = true
+    await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow()
+  })
+
+  test('excludes stale optional items without resolving their unavailable artifacts', async () => {
+    const f = fixture()
+    f.request.candidates[0].required = false
+    f.input.projectState.items[0].freshness.expiresAt = '2026-08-23T11:00:00.000Z'
+    f.decision.constraints.allowedArtifactIds = []
+    let artifactReads = 0
+    f.authority.resolveArtifact = async () => {
+      artifactReads += 1
+      return undefined
+    }
+    const reference = await f.service.create('service:reference-client', f.request)
+    const package_ = await f.packages.get(reference)
+    expect(package_.stateItems.map((item) => item.itemId)).toEqual([itemTwoId])
+    expect(package_.truncation.excluded).toEqual([
+      { ref: `state-item:${itemOneId}`, reason: 'STALE_OPTIONAL' },
+    ])
+    expect(artifactReads).toBe(0)
+  })
+
+  test('rejects expired or unauthorized decisions before reading state', async () => {
+    for (const expire of [true, false]) {
+      const f = fixture()
+      if (expire) f.decision.expiresAt = now
+      else f.decision.constraints.allowedStateItemIds = []
+      let reads = 0
+      f.service.options.projectStates.getAtRevision = async () => {
+        reads += 1
+        return f.input.projectState
+      }
+      await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+        'UNAUTHORIZED_CONTEXT'
+      )
+      expect(reads).toBe(0)
+    }
+  })
+
+  test('rejects mismatched principal, workspace, state scope and artifact identity', async () => {
+    for (const change of [
+      (f) => {
+        f.decision.principalRef = 'service:other'
+      },
+      (f) => {
+        f.decision.workspaceId = 'wsp_01JBBCDEF0123456789ABCDEFG'
+      },
+      (f) => {
+        f.input.projectState.projectId = 'prj_01JBBCDEF0123456789ABCDEFG'
+      },
+      (f) => {
+        f.artifact.artifactId = 'art_01JBBCDEF0123456789ABCDEFG'
+      },
+      (f) => {
+        f.artifact.authorized = false
+      },
+    ]) {
+      const f = fixture()
+      change(f)
+      await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+        'UNAUTHORIZED_CONTEXT'
+      )
+    }
+  })
+
+  test('fails closed for unavailable lifecycle states and expired policy decisions', async () => {
+    for (const state of ['missing', 'revoked', 'unverified', 'quarantined']) {
+      const f = fixture()
+      f.artifact.state = state
+      await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+        state === 'revoked' ? 'REVOKED_ARTIFACT' : 'MISSING_ARTIFACT'
+      )
+    }
+    const f = fixture()
+    f.authority.resolveArtifact = async () => {
+      f.decision.expiresAt = now
+      return f.artifact
+    }
+    // The decision is snapshotted before resolver execution; expiry uses the trusted clock.
+    f.service.options.now = () => new Date('2026-08-23T13:00:00.000Z')
+    await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+      'UNAUTHORIZED_CONTEXT'
+    )
+  })
+
+  test('cannot widen policy budgets or mutate the request through the authority adapter', async () => {
+    const f = fixture()
+    f.authority.authorize = async (_principal, request) => {
+      request.objective = 'mutated'
+      return { ...f.decision, budgets: { maximumBytes: 1, maximumTokens: 1 } }
+    }
+    await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+      'REQUIRED_CONTEXT_EXCEEDS_BUDGET'
+    )
+    expect(f.request.objective).toBe(f.input.objective)
+  })
+})
 
 describe('reproducible ContextPackage compilation', () => {
   test('pins the exact ProjectState revision and selected item revisions', () => {

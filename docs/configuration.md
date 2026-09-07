@@ -57,8 +57,15 @@ networking, and Restate-to-service request identity are separate controls.
 through the Control Plane R2 `ObjectStore`. Railway production sets it to `disabled`; the worker and
 Restate endpoint remain healthy, but execution and interaction activities fail closed with
 `CLOUD_RUNTIME_DISABLED` without opening R2. Production cannot execute certification traffic and
-execution availability remains disabled until a separately implemented runtime is explicitly
-composed for launch. The certification runtime accepts only plans pinned to
+execution availability remains disabled until a runtime is explicitly selected and its deployment
+acceptance gates pass. `remote` selects the durable PostgreSQL-backed remote runtime: discovery
+selects an eligible scoped RuntimeConnection, the managed-Pi command factory queues attempt-bound
+commands, and the outcome waiter consumes persisted execution/event results. It does not open the
+certification R2 writer, fabricate a successful execution, register a runtime identity, or provision
+a Runtime Gateway. The independently configured gateway/RuntimeNode, trusted discovery records and
+Artifact/usage delivery must exist and pass end-to-end acceptance before this mode is enabled in a
+deployment. ACP and bounded-graph execution are not added by this mode. Existing Railway configuration
+is unchanged by this option. The certification runtime accepts only plans pinned to
 `contract://control-plane/m9-cloud-certification/v1`; ordinary execution plans fail before R2
 access. Unknown modes fail configuration validation.
 
@@ -97,6 +104,34 @@ selection fail startup.
 
 ## Current service surfaces
 
+`LangGraphSqliteCheckpointSaver` persists LangGraph v4 checkpoints and pending writes through an
+existing SQLite `PersistenceProvider`, under an explicit application-selected scope. It uses the
+provider's transactions, file permissions and backup/restore lifecycle; it owns no connection.
+Checkpoint IDs are immutable, ordinary task writes retain the first value, and LangGraph special
+write slots retain their update semantics. Serialized values carry corruption-detection checksums
+(not authentication signatures). Reads and deletion are scoped to one supplied thread and scope.
+Parent links must refer to an existing checkpoint; self-links are rejected.
+The first implementation lists the checkpoint namespace to resolve histories, so high-volume
+performance remains unmeasured. SQLite's existing per-record size bound applies. Older LangGraph
+checkpoint formats and profile-portability migration of these records are not supported by this
+adapter. The embedding application must select graph definitions, authorize operations and wire
+the saver into its graph activity port; the CLI does not enable graph execution automatically.
+
+Local (including Hosted Simple) and Hosted Server composition options accept `graphActivities`
+using the shared `GraphSegmentActivityPort`. The Hosted launcher preserves this option. The
+normal durable execution activities forward run, resume, continue and graph cancellation to it;
+omitting it retains the disabled-graph default. Local requires a runtime transport/factory for
+this composed path and rejects combining `graphActivities` with a replacement `activities` object.
+The injecting application owns the graph adapter's durable checkpoint store and resource lifecycle.
+Local and Hosted Simple can instead supply `graphActivitiesFactory({ persistence })`, which receives
+the composition-owned SQLite provider and constructs the graph activity port synchronously. The
+factory must not access the database before composition startup migrates it. This enables the
+SQLite graph saver to share application backup/restore and shutdown without opening another database.
+Supplying both the factory and a graph port, or combining either with replacement activities, fails
+configuration. The Local launcher preserves this factory through its composition options.
+This option alone does not provision graph definitions, a SQLite checkpointer, graph operation
+authorization or an environment-selected graph deployment; those remain acceptance work.
+
 The accepted Cloud process topology has two application services plus one infrastructure runtime:
 
 | Service           | Cloud surface                                                   |
@@ -108,6 +143,13 @@ The accepted Cloud process topology has two application services plus one infras
 The former runtime-worker, runtime-gateway, and tool-gateway process split is not a compatibility
 requirement. Local uses an all-in-one Control Plane plus local Restate, and Hosted selects only the
 processes its implemented topology requires.
+
+If a deployment explicitly starts the optional `runtime-worker` service in staging or production,
+it must inject a `HostedManagedPiWorker`; the bare entrypoint fails startup instead of reporting
+readiness without a worker. The injected worker is registered for cleanup before its readiness
+probe, so failed or throwing probes also release it. Test/development bootstrap without a worker
+remains available. This does not add the former service split to the accepted Cloud topology or
+provide a RuntimeNode gateway command-consumption loop.
 
 ## Validation and diagnostics
 

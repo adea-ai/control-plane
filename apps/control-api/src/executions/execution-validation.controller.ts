@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common'
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import type { FastifyRequest } from 'fastify'
 import { RequireServiceAuthentication } from '../auth/service-authentication.js'
 import {
   EXECUTION_VALIDATION_SERVICE,
@@ -19,7 +20,7 @@ export class ExecutionValidationController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Validate and persist an immutable execution plan' })
   @ApiOkResponse({ description: 'Persisted execution plan reference' })
-  validate(@Body() envelope: unknown) {
-    return this.service.validate(envelope)
+  validate(@Body() envelope: unknown, @Req() request: FastifyRequest) {
+    return this.service.validate(envelope, request.servicePrincipal?.principalId ?? '')
   }
 }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import type {
@@ -23,10 +23,27 @@ export * from './repositories.js'
 export * from './repositories-extra.js'
 export * from './durability-repositories.js'
 export * from './runtime-discovery-repository.js'
+export * from './evaluation-repository.js'
 
 const SCHEMA_VERSION = 1
 const MAX_RECORD_BYTES = 16 * 1024 * 1024
 const NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/
+const SCHEMA_STATEMENTS = {
+  control_plane_metadata: `CREATE TABLE IF NOT EXISTS control_plane_metadata (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+  ) STRICT`,
+  control_plane_records: `CREATE TABLE IF NOT EXISTS control_plane_records (
+    namespace TEXT NOT NULL,
+    id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    value TEXT NOT NULL CHECK (json_valid(value)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (namespace, id)
+  ) STRICT`,
+  control_plane_records_namespace_updated: `CREATE INDEX IF NOT EXISTS control_plane_records_namespace_updated
+    ON control_plane_records(namespace, updated_at, id)`,
+}
 
 export type SqlitePersistenceErrorCode =
   | 'SQLITE_INVALID_PATH'
@@ -72,22 +89,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
 
   async migrate(): Promise<void> {
     const database = await this.#open()
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS control_plane_metadata (
-        key TEXT PRIMARY KEY NOT NULL,
-        value TEXT NOT NULL
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS control_plane_records (
-        namespace TEXT NOT NULL,
-        id TEXT NOT NULL,
-        revision INTEGER NOT NULL CHECK (revision > 0),
-        value TEXT NOT NULL CHECK (json_valid(value)),
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (namespace, id)
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS control_plane_records_namespace_updated
-        ON control_plane_records(namespace, updated_at, id);
-    `)
+    database.exec(Object.values(SCHEMA_STATEMENTS).join(';'))
     const orm = this.#orm()
     const current = await orm
       .select({ value: metadata.value })
@@ -173,19 +175,28 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
       throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
     }
     if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
-    this.#native?.close()
-    this.#native = undefined
-    this.#drizzle = undefined
     const temporaryPath = `${this.#path}.restore-${randomUUID()}`
-    await writeFile(temporaryPath, snapshot.bytes, { mode: 0o600, flag: 'wx' })
-    await unlink(`${this.#path}-wal`).catch(() => undefined)
-    await unlink(`${this.#path}-shm`).catch(() => undefined)
-    await rename(temporaryPath, this.#path)
-    await chmod(this.#path, 0o600)
-    await this.#open()
-    await this.migrate()
-    const health = await this.health()
-    if (!health.ready) throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
+    const stagedFile = await open(temporaryPath, 'wx', 0o600)
+    try {
+      try {
+        await stagedFile.writeFile(snapshot.bytes)
+      } finally {
+        await stagedFile.close()
+      }
+      validateRestoreDatabase(temporaryPath)
+      // Staging is asynchronous; recheck before touching the live connection.
+      if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
+      this.#native?.close()
+      this.#native = undefined
+      this.#drizzle = undefined
+      await unlink(`${this.#path}-wal`).catch(() => undefined)
+      await unlink(`${this.#path}-shm`).catch(() => undefined)
+      await rename(temporaryPath, this.#path)
+      await chmod(this.#path, 0o600)
+      await this.#open()
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined)
+    }
   }
 
   close(): void {
@@ -222,6 +233,52 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     if (this.#native === undefined) throw new SqlitePersistenceError('SQLITE_CLOSED')
     return this.#native
   }
+}
+
+function validateRestoreDatabase(path: string): void {
+  let database: DatabaseSync | undefined
+  try {
+    // A WAL-mode backup may need sidecars even for reads. Only the disposable
+    // staged copy is opened here; normalize it to a standalone file before rename.
+    database = new DatabaseSync(path)
+    database.exec('PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE')
+    const checks = database.prepare('PRAGMA quick_check').all()
+    if (checks.length !== 1 || Object.values(checks[0] ?? {})[0] !== 'ok') {
+      throw new Error('Invalid SQLite integrity')
+    }
+    const version = database
+      .prepare("SELECT value FROM control_plane_metadata WHERE key = 'schema_version'")
+      .get()
+    if (version?.['value'] !== String(SCHEMA_VERSION)) {
+      throw new Error('Incompatible SQLite schema')
+    }
+    for (const [name, expected] of Object.entries(SCHEMA_STATEMENTS)) {
+      const actual = database.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name)
+      if (
+        typeof actual?.['sql'] !== 'string' ||
+        normalizeSchema(actual['sql']) !== normalizeSchema(expected)
+      ) {
+        throw new Error('Incompatible SQLite schema definition')
+      }
+    }
+    database
+      .prepare(
+        'SELECT namespace, id, revision, value, updated_at FROM control_plane_records LIMIT 0'
+      )
+      .all()
+  } catch {
+    throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
+  } finally {
+    database?.close()
+  }
+}
+
+function normalizeSchema(sql: string): string {
+  return sql
+    .replace(/IF NOT EXISTS/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
 }
 
 class SqliteRecordTransaction implements PersistenceTransaction {

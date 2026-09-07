@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { loadManagedCloudConfiguration } from '@control-plane/config'
 import { DurableExecutionLifecycleActivities } from './cloud-execution-activities.ts'
 import { createManagedCloudWorkflowWorkerComposition, start } from './index.ts'
+import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.ts'
+import { RuntimeDiscoveryAttemptRouter } from './runtime-attempt-router.ts'
 
 class FakeProcessAdapter {
   listeners = new Map()
@@ -15,6 +17,61 @@ class FakeProcessAdapter {
 }
 
 describe('workflow worker telemetry', () => {
+  test('wires explicit remote execution and discovery without a certification runtime', () => {
+    const configuration = loadManagedCloudConfiguration(
+      { ...managedCloudEnvironment(), CONTROL_PLANE_CLOUD_RUNTIME: 'remote' },
+      'workflow-worker'
+    )
+    const composition = createManagedCloudWorkflowWorkerComposition(
+      configuration,
+      undefined,
+      undefined,
+      () => ({ database: {}, check: async () => undefined, close: async () => undefined })
+    )
+    expect(composition.runtime).toBeInstanceOf(DurableRemoteWorkflowRuntime)
+    expect(composition.runtimeRouter).toBeInstanceOf(RuntimeDiscoveryAttemptRouter)
+    expect(composition.activities).toBeInstanceOf(DurableExecutionLifecycleActivities)
+    expect(() =>
+      createManagedCloudWorkflowWorkerComposition(
+        { ...configuration, runtime: { mode: 'disabled' } },
+        undefined,
+        undefined,
+        () => {
+          throw new Error('MUST_NOT_ALLOCATE')
+        }
+      )
+    ).toThrow('MANAGED_CLOUD_RUNTIME_NOT_CONFIGURED')
+  })
+
+  test('starts and closes production remote mode without opening the certification object store', async () => {
+    const lifecycle = []
+    const runtime = await start({
+      environment: {
+        ...managedCloudEnvironment(),
+        APP_ENV: 'production',
+        CONTROL_PLANE_CLOUD_RUNTIME: 'remote',
+      },
+      logger: { write: () => undefined },
+      processAdapter: new FakeProcessAdapter(),
+      restateEndpointFactory: {
+        create: async () => ({
+          run: async () => lifecycle.push('endpoint'),
+          shutdown: async () => lifecycle.push('endpoint-closed'),
+        }),
+      },
+      postgresConnectionFactory: () => ({
+        database: {},
+        check: async () => lifecycle.push('database'),
+        close: async () => lifecycle.push('database-closed'),
+      }),
+      objectStoreFactory: () => {
+        throw new Error('REMOTE_MUST_NOT_OPEN_CERTIFICATION_STORE')
+      },
+    })
+    expect(runtime.readiness().status).toBe('ready')
+    await runtime.shutdown('test-complete')
+    expect(lifecycle).toEqual(['database', 'endpoint', 'endpoint-closed', 'database-closed'])
+  })
   test('emits a correlated initialization span through an injectable adapter', async () => {
     const spans = []
     const logs = []

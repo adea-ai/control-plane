@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import {
   createQueuedRuntimeCommandRecord,
   type ExecutionAttempt,
@@ -34,6 +35,8 @@ export interface RemoteRuntimeCommandFactory {
   createCancel(
     input: RemoteRuntimeCommandInput & {
       readonly reason: 'user_request' | 'deadline'
+      // Internal replay input, read from the first persisted command, never a caller lease.
+      readonly issuedAt?: string
     }
   ): Promise<unknown> | unknown
 }
@@ -133,7 +136,15 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       })
     )
     if (command.operation !== 'runtime.cancel') throw new Error('REMOTE_RUNTIME_OPERATION_INVALID')
-    await this.#enqueueAndWait(command, attempt, command.workspaceId)
+    await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
+      this.#factory.createCancel({
+        executionId: input.executionId,
+        attempt,
+        effectKey: input.effectKey,
+        reason: input.reason,
+        issuedAt,
+      })
+    )
   }
 
   async cleanup(): Promise<void> {}
@@ -159,9 +170,10 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
   async #enqueueAndWait(
     command: GatewayCommandEnvelope,
     attempt: ExecutionAttempt,
-    workspaceId: string
+    workspaceId: string,
+    replayAt?: (issuedAt: string) => Promise<unknown> | unknown
   ): Promise<WorkflowRuntimeOutcome> {
-    const record = await this.#enqueue(command, attempt, workspaceId)
+    const record = await this.#enqueue(command, attempt, workspaceId, replayAt)
     return this.#waiter.wait({
       command: record,
       executionId: attempt.executionId,
@@ -172,7 +184,8 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
   async #enqueue(
     command: GatewayCommandEnvelope,
     attempt: ExecutionAttempt,
-    workspaceId: string
+    workspaceId: string,
+    replayAt?: (issuedAt: string) => Promise<unknown> | unknown
   ): Promise<RuntimeCommandRecord> {
     if (
       command.executionId !== attempt.executionId ||
@@ -185,7 +198,28 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
     }
     const record = createQueuedRuntimeCommandRecord(command, this.#now().toISOString())
     const created = await this.#commands.create(record)
-    if (created.outcome === 'conflict') throw new Error('REMOTE_RUNTIME_COMMAND_CONFLICT')
+    if (created.outcome === 'conflict') {
+      // A retry may be constructed at a later time. Never replace or renew the
+      // persisted lease: compare the complete command using its original times.
+      // This also handles JSONB object-key ordering without weakening payload,
+      // driver, protocol, capability, idempotency or scope comparisons.
+      const original = created.record.commandEnvelope
+      // Cancellation embeds requestedAt in its hashed payload. Rebuild it from
+      // persisted issuance time, then compare every semantic field as usual.
+      const candidate =
+        replayAt === undefined
+          ? command
+          : GatewayCommandEnvelopeSchema.parse(await replayAt(created.record.issuedAt))
+      const replay = {
+        ...candidate,
+        sentAt: original['sentAt'],
+        issuedAt: original['issuedAt'],
+        expiresAt: original['expiresAt'],
+      }
+      if (!isDeepStrictEqual(original, replay)) {
+        throw new Error('REMOTE_RUNTIME_COMMAND_CONFLICT')
+      }
+    }
     return created.record
   }
 }

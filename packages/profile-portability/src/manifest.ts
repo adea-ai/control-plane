@@ -1,6 +1,18 @@
 import { createHash } from 'node:crypto'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
+import { EvalRunSchema } from '@control-plane/production-readiness'
+import {
+  ContextAuthoringCommandRecordSchema,
+  assertContextPackageIntegrity,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
+import {
+  ExecutionValidationCommandRecordSchema,
+  executionValidationCommandKey,
+  assertExecutionPlanIntegrity,
+  assertExecutionValidationCommandPlan,
+} from '@control-plane/execution-plan'
 
 export const PORTABLE_EXPORT_SCHEMA_VERSION = 1 as const
 export const PORTABLE_CONTRACT_VERSION = 'control-plane-portable-state-v1' as const
@@ -27,7 +39,10 @@ export const PortableRecordCategorySchema = z.enum([
   'skill',
   'project-state',
   'context-package',
+  'context-authoring-command',
   'execution-plan',
+  'execution-validation-command',
+  'evaluation-run',
   'policy-configuration',
   'runtime-configuration',
   'tool-configuration',
@@ -132,12 +147,68 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     if (digestJson(recordUnsigned) !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
     }
+    if (record.category === 'evaluation-run') {
+      const run = EvalRunSchema.parse(record.value)
+      if (
+        record.logicalId !== `evaluation-runs/${portableEvaluationRunKey(run.evalRunId)}` ||
+        record.revision !== 0
+      )
+        throw new Error('PORTABLE_EVALUATION_IDENTITY_INVALID')
+    }
+  }
+  const packages = new Map(
+    manifest.records
+      .filter((record) => record.category === 'context-package')
+      .map((record) => [record.logicalId, record.value])
+  )
+  for (const record of manifest.records.filter(
+    (record) => record.category === 'context-authoring-command'
+  )) {
+    const command = ContextAuthoringCommandRecordSchema.parse(record.value)
+    if (
+      record.logicalId !== `context-authoring-commands/${contextAuthoringCommandKey(command.scope)}`
+    )
+      throw new Error('PORTABLE_AUTHORING_IDENTITY_INVALID')
+    const package_ = assertContextPackageIntegrity(
+      packages.get(`context-packages/${command.contextPackage.contextPackageId}`)
+    )
+    if (
+      package_.contextPackageId !== command.contextPackage.contextPackageId ||
+      package_.contentDigest !== command.contextPackage.contentDigest ||
+      package_.projectState.workspaceId !== command.scope.workspaceId ||
+      package_.projectState.projectId !== command.scope.projectId
+    )
+      throw new Error('PORTABLE_AUTHORING_PACKAGE_INVALID')
+  }
+  const plans = new Map(
+    manifest.records
+      .filter((record) => record.category === 'execution-plan')
+      .map((record) => [record.logicalId, record.value])
+  )
+  for (const record of manifest.records.filter(
+    (record) => record.category === 'execution-validation-command'
+  )) {
+    const command = ExecutionValidationCommandRecordSchema.parse(record.value)
+    if (
+      record.logicalId !==
+      `execution-validation-commands/${executionValidationCommandKey(command.scope)}`
+    ) {
+      throw new Error('PORTABLE_VALIDATION_IDENTITY_INVALID')
+    }
+    const plan = assertExecutionPlanIntegrity(
+      plans.get(`execution-plans/${command.executionPlan.executionPlanId}`)
+    )
+    assertExecutionValidationCommandPlan(command, plan)
   }
   return manifest
 }
 
 export function digestJson(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
+}
+
+export function portableEvaluationRunKey(evalRunId: string): string {
+  return createHash('sha256').update(EvalRunSchema.shape.evalRunId.parse(evalRunId)).digest('hex')
 }
 
 function normalizeManifestInput(

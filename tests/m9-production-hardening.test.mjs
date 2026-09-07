@@ -16,6 +16,7 @@ import {
 } from '../packages/domain/src/index.ts'
 import { ScenarioFailureInjector } from '../packages/production-readiness/src/index.ts'
 import { withGuaranteedCleanup } from '../scripts/guaranteed-cleanup.mjs'
+import { recoveryEvidence } from '../scripts/m9-evidence-matrices.mjs'
 
 const workspace = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherWorkspace = 'wsp_01JABCDEF0123456789ABCDEFH'
@@ -23,6 +24,12 @@ const cedar = 'permit(principal, action, resource);'
 const policyDigest = `sha256:${createHash('sha256').update(cedar).digest('hex')}`
 
 describe('M9 production hardening acceptance', () => {
+  test('keeps recovery integration evidence markers aligned with executable drills', async () => {
+    for (const entry of recoveryEvidence.filter(({ kind }) => kind === 'integration')) {
+      const source = await readFile(new URL(`../${entry.file}`, import.meta.url), 'utf8')
+      expect(source).toContain(entry.evidenceText)
+    }
+  })
   test('guarantees recovery resource cleanup when an integration command fails', async () => {
     const calls = []
     await expect(

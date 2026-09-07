@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto'
 import {
   ContextContributionSchema,
+  ContextAuthoringInputsSchema,
   IdentifierSchemas,
   type ContextContribution,
 } from '@control-plane/contracts'
-import { ProjectStateSchema, type ProjectStateItem } from '@control-plane/domain'
+import {
+  ProjectStateSchema,
+  type ProjectStateItem,
+  type ProjectStateRepository,
+} from '@control-plane/domain'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -364,6 +369,249 @@ export interface ContextPackageRepository {
   put(package_: ContextPackage): Promise<ContextPackageReference>
   get(reference: ContextPackageReference): Promise<ContextPackage | undefined>
   getById(contextPackageId: string): Promise<ContextPackage | undefined>
+}
+
+export const ContextAuthoringRequestSchema = ContextAuthoringInputsSchema.extend({
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  projectStateRevision: z.number().int().nonnegative(),
+})
+
+type ContextAuthoringRequest = z.output<typeof ContextAuthoringRequestSchema>
+
+export const ContextAuthoringCommandScopeSchema = z.strictObject({
+  principalRef: z.string().min(1).max(256),
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('context.author'),
+  idempotencyKey: z
+    .string()
+    .min(16)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/),
+})
+export const ContextAuthoringCommandRecordSchema = z.object({
+  scope: ContextAuthoringCommandScopeSchema,
+  payloadHash: DigestSchema,
+  contextPackage: ContextPackageReferenceSchema,
+})
+export type ContextAuthoringCommandScope = z.output<typeof ContextAuthoringCommandScopeSchema>
+export function contextAuthoringCommandKey(input: ContextAuthoringCommandScope): string {
+  const scope = ContextAuthoringCommandScopeSchema.parse(input)
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        scope.principalRef,
+        scope.workspaceId,
+        scope.projectId,
+        scope.operation,
+        scope.idempotencyKey,
+      ])
+    )
+    .digest('hex')
+}
+export type ContextAuthoringCommandRecord = z.output<typeof ContextAuthoringCommandRecordSchema>
+export interface ContextAuthoringCommandRepository {
+  get(scope: ContextAuthoringCommandScope): Promise<ContextAuthoringCommandRecord | undefined>
+  /** Atomically retain the first command result and its package, or reject a hash conflict. */
+  commit(
+    record: ContextAuthoringCommandRecord,
+    package_: ContextPackage
+  ): Promise<ContextAuthoringCommandRecord>
+}
+const AuthoringDecisionSchema = z.object({
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  principalRef: z.string().min(1).max(256),
+  expiresAt: TimestampSchema,
+  constraints: ContextPackageSchema.shape.constraints,
+  permissions: ContextPackageSchema.shape.permissions,
+  budgets: ContextPackageSchema.shape.budgets,
+})
+
+/** Composition-owned policy and Artifact adapters, never request payload fields. */
+export interface ContextAuthoringAuthority {
+  authorize(
+    principalRef: string,
+    request: ContextAuthoringRequest
+  ): Promise<z.output<typeof AuthoringDecisionSchema> | undefined>
+  resolveArtifact(input: {
+    principalRef: string
+    workspaceId: string
+    projectId: string
+    artifactId: string
+  }): Promise<
+    | (z.output<typeof ContextArtifactRefSchema> & {
+        workspaceId: string
+        projectId: string
+        authorized: boolean
+        state: 'available' | 'missing' | 'revoked' | 'unverified' | 'quarantined'
+      })
+    | undefined
+  >
+}
+
+/** Pre-validation construction. The authenticated principal is supplied by the host. */
+export interface ContextAuthoringCompositionOptions {
+  readonly authority: ContextAuthoringAuthority
+  readonly now?: () => Date
+}
+
+export class ContextPackageAuthoringService {
+  readonly #compiler: ContextPackageCompiler
+
+  constructor(
+    readonly options: {
+      compilerVersion: string
+      projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
+      packages: ContextPackageRepository
+      commands?: ContextAuthoringCommandRepository
+      authority: ContextAuthoringAuthority
+      now: () => Date
+    }
+  ) {
+    this.#compiler = new ContextPackageCompiler(options.compilerVersion)
+  }
+
+  async create(principalInput: string, input: unknown): Promise<ContextPackageReference> {
+    return this.options.packages.put(await this.#compile(principalInput, input))
+  }
+
+  async createForCommand(
+    principalRef: string,
+    idempotencyKey: string,
+    input: unknown
+  ): Promise<ContextPackageReference> {
+    const repository = this.options.commands
+    if (!repository) throw new Error('CONTEXT_AUTHORING_COMMANDS_NOT_CONFIGURED')
+    const request = ContextAuthoringRequestSchema.parse(input)
+    const scope = ContextAuthoringCommandScopeSchema.parse({
+      principalRef,
+      idempotencyKey,
+      operation: 'context.author',
+      workspaceId: request.workspaceId,
+      projectId: request.projectId,
+    })
+    const payloadHash = sha256(request)
+    const replay = (recordInput: ContextAuthoringCommandRecord): ContextPackageReference => {
+      const record = ContextAuthoringCommandRecordSchema.parse(recordInput)
+      if (canonical(record.scope) !== canonical(scope))
+        throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
+      if (record.payloadHash !== payloadHash) throw new Error('CONTEXT_AUTHORING_COMMAND_CONFLICT')
+      return record.contextPackage
+    }
+    const existing = await repository.get(scope)
+    if (existing) return replay(existing)
+    const package_ = await this.#compile(principalRef, request)
+    return replay(
+      await repository.commit(
+        {
+          scope,
+          payloadHash,
+          contextPackage: {
+            contextPackageId: package_.contextPackageId,
+            contentDigest: package_.contentDigest,
+          },
+        },
+        package_
+      )
+    )
+  }
+
+  async #compile(principalInput: string, input: unknown): Promise<ContextPackage> {
+    const principalRef = z.string().min(1).max(256).parse(principalInput)
+    const request = ContextAuthoringRequestSchema.parse(input)
+    const decisionInput = await this.options.authority.authorize(
+      principalRef,
+      structuredClone(request)
+    )
+    if (!decisionInput) fail('UNAUTHORIZED_CONTEXT')
+    const decision = AuthoringDecisionSchema.parse(decisionInput)
+    if (
+      decision.principalRef !== principalRef ||
+      decision.workspaceId !== request.workspaceId ||
+      decision.projectId !== request.projectId
+    )
+      fail('UNAUTHORIZED_CONTEXT')
+    if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')
+    if (
+      request.candidates.some(
+        (candidate) => !decision.constraints.allowedStateItemIds.includes(candidate.itemId)
+      )
+    )
+      fail('UNAUTHORIZED_CONTEXT')
+
+    const stateInput = await this.options.projectStates.getAtRevision(
+      request.workspaceId,
+      request.projectId,
+      request.projectStateRevision
+    )
+    if (!stateInput) fail('STALE_PROJECT_STATE')
+    const state = ProjectStateSchema.parse(stateInput)
+    if (state.revision !== request.projectStateRevision) fail('STALE_PROJECT_STATE')
+    if (state.workspaceId !== request.workspaceId || state.projectId !== request.projectId)
+      fail('UNAUTHORIZED_CONTEXT')
+    const compiledAt = this.options.now().toISOString()
+    const candidatesById = new Map(
+      request.candidates.map((candidate) => [candidate.itemId, candidate])
+    )
+    const artifactIds = [
+      ...new Set(
+        state.items
+          .filter((item) => {
+            const candidate = candidatesById.get(item.itemId)
+            return (
+              candidate !== undefined &&
+              (candidate.required ||
+                !item.freshness.expiresAt ||
+                isAfter(item.freshness.expiresAt, compiledAt))
+            )
+          })
+          .flatMap((item) => item.provenance.artifactRefs)
+      ),
+    ].sort()
+    const artifacts: z.output<typeof ArtifactCandidateSchema>[] = []
+    for (const artifactId of artifactIds) {
+      if (!decision.constraints.allowedArtifactIds.includes(artifactId))
+        fail('UNAUTHORIZED_CONTEXT', artifactId)
+      const artifact = await this.options.authority.resolveArtifact({
+        principalRef,
+        workspaceId: request.workspaceId,
+        projectId: request.projectId,
+        artifactId,
+      })
+      if (!artifact) fail('MISSING_ARTIFACT', artifactId)
+      if (
+        artifact.workspaceId !== request.workspaceId ||
+        artifact.projectId !== request.projectId ||
+        artifact.artifactId !== artifactId ||
+        artifact.authorized !== true
+      )
+        fail('UNAUTHORIZED_CONTEXT', artifactId)
+      if (artifact.state === 'revoked') fail('REVOKED_ARTIFACT', artifactId)
+      if (artifact.state !== 'available') fail('MISSING_ARTIFACT', artifactId)
+      artifacts.push(ArtifactCandidateSchema.parse(artifact))
+    }
+    if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')
+    const package_ = this.#compiler.compile({
+      ...request,
+      projectState: state,
+      expectedProjectStateRevision: request.projectStateRevision,
+      candidates: request.candidates.map((candidate) => ({
+        ...candidate,
+        authorized: decision.constraints.allowedStateItemIds.includes(candidate.itemId),
+      })),
+      artifacts,
+      constraints: decision.constraints,
+      permissions: decision.permissions,
+      budgets: {
+        maximumBytes: Math.min(request.budgets.maximumBytes, decision.budgets.maximumBytes),
+        maximumTokens: Math.min(request.budgets.maximumTokens, decision.budgets.maximumTokens),
+      },
+      compiledAt,
+    })
+    return package_
+  }
 }
 
 export class InMemoryContextPackageRepository implements ContextPackageRepository {

@@ -6,6 +6,7 @@ import {
 } from '@control-plane/orchestration'
 import {
   runExecutionLifecycle,
+  validateInteractionResponse,
   type ActivityRaceResult,
   type ExecutionLifecycleActivities,
   type ExecutionWorkflowResult,
@@ -56,6 +57,12 @@ export function createRestateWorkflowDefinition(
         ctx: restate.WorkflowSharedContext,
         response: WorkflowInteractionResponse
       ): Promise<void> => {
+        // Reject malformed values before they permanently resolve the durable promise.
+        try {
+          validateInteractionResponse(response)
+        } catch {
+          throw new restate.TerminalError('INTERACTION_SIGNAL_VALUE_INVALID', { errorCode: 400 })
+        }
         await ctx
           .promise<WorkflowInteractionResponse>(interactionPromiseName(response.interactionId))
           .resolve(response)

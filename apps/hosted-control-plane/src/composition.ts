@@ -1,6 +1,10 @@
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  ContextPackageAuthoringService,
+  type ContextAuthoringCompositionOptions,
+} from '@control-plane/context'
+import {
   DurableExecutionAcceptanceService,
   DurableExecutionValidationService,
   RestateExecutionWorkflowDispatcher,
@@ -14,8 +18,10 @@ import {
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
+  PostgresContextAuthoringCommandRepository,
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
+  PostgresExecutionValidationCommandRepository,
   PostgresExecutionRepository,
   PostgresInteractionRepository,
   PostgresProjectStateRepository,
@@ -50,6 +56,7 @@ import {
 } from '@control-plane/secrets'
 import {
   createRestateEndpointFactory,
+  type GraphSegmentActivityPort,
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
@@ -83,12 +90,14 @@ export interface HostedServerManifest {
 }
 
 export interface HostedServerCompositionOptions {
+  readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly databaseUrl: string
   readonly restateAdminUrl?: string
   readonly restateIngressUrl?: string
   readonly workflowDeploymentUri?: string
   readonly workflowEndpointPort?: number
+  readonly requestIdentityPublicKey?: string
   readonly endpointFactory?: RestateEndpointFactory
   readonly connection?: PostgresConnection
   readonly secrets?: SecretsProvider
@@ -100,6 +109,7 @@ export interface HostedServerCompositionOptions {
     acceptance: ExecutionAcceptancePort
   ) => RemoteControlHostAdapter<unknown>
   readonly runtimeActivityPort?: WorkflowRuntimeActivityPort
+  readonly graphActivities?: GraphSegmentActivityPort
 }
 
 export class HostedServerControlPlaneComposition {
@@ -120,6 +130,7 @@ export class HostedServerControlPlaneComposition {
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
+  readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
@@ -127,6 +138,12 @@ export class HostedServerControlPlaneComposition {
   #started = false
 
   constructor(options: HostedServerCompositionOptions) {
+    if (
+      options.endpointFactory === undefined &&
+      !/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(options.requestIdentityPublicKey ?? '')
+    ) {
+      throw new Error('HOSTED_RESTATE_REQUEST_IDENTITY_REQUIRED')
+    }
     this.dataDirectory = resolve(options.dataDirectory)
     this.connection =
       options.connection ??
@@ -173,7 +190,19 @@ export class HostedServerControlPlaneComposition {
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: COMPONENT_VERSION,
       contextPackages,
-      plans,
+      commands: new PostgresExecutionValidationCommandRepository(this.connection.database),
+      ...(options.contextAuthoring === undefined
+        ? {}
+        : {
+            contextAuthoring: new ContextPackageAuthoringService({
+              compilerVersion: COMPONENT_VERSION,
+              packages: contextPackages,
+              projectStates,
+              commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
+              authority: options.contextAuthoring.authority,
+              now: options.contextAuthoring.now ?? (() => new Date()),
+            }),
+          }),
       profiles: catalog,
       projectStates,
       skills: catalog,
@@ -217,7 +246,7 @@ export class HostedServerControlPlaneComposition {
       lifecycle: new ExecutionLifecycleService(executions),
       plans,
       runtime: this.runtimeActivityPort,
-      graph: new DisabledGraphSegmentActivities(),
+      graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
       runtimeRouter: this.runtimeAttemptRouter,
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
@@ -225,10 +254,18 @@ export class HostedServerControlPlaneComposition {
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
       }),
     })
+    this.executionLifecycleActivities = activities
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??
-      createRestateEndpointFactory({ host: '0.0.0.0', port: workflowEndpointPort, activities })
+      createRestateEndpointFactory({
+        host: '0.0.0.0',
+        port: workflowEndpointPort,
+        activities,
+        ...(options.requestIdentityPublicKey === undefined
+          ? {}
+          : { requestIdentityPublicKey: options.requestIdentityPublicKey }),
+      })
     this.workflow =
       options.workflowRuntime ??
       new RemoteRestateRuntime({

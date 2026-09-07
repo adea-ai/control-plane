@@ -8,12 +8,18 @@ import {
   RepositoryContextPackageResolutionService,
 } from '@control-plane/control-api'
 import { CommandInboxService } from '@control-plane/domain'
+import {
+  ContextPackageAuthoringService,
+  type ContextAuthoringCompositionOptions,
+} from '@control-plane/context'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import {
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
+  SqliteContextAuthoringCommandRepository,
   SqliteExecutionEventRepository,
   SqliteExecutionPlanRepository,
+  SqliteExecutionValidationCommandRepository,
   SqliteExecutionRepository,
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
@@ -47,7 +53,11 @@ export class LocalControlApiComposition {
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: SqliteRuntimeDiscoveryRepository
 
-  constructor(persistence: SqlitePersistenceProvider, restateIngressUrl: string) {
+  constructor(
+    persistence: SqlitePersistenceProvider,
+    restateIngressUrl: string,
+    contextAuthoring?: ContextAuthoringCompositionOptions
+  ) {
     this.commandRepository = new SqliteCommandAcceptanceRepository(persistence)
     this.catalog = new SqliteVersionedCatalogRepository(persistence)
     this.contextPackages = new SqliteContextPackageRepository(persistence)
@@ -73,7 +83,19 @@ export class LocalControlApiComposition {
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
       contextPackages: this.contextPackages,
-      plans: this.executionPlans,
+      commands: new SqliteExecutionValidationCommandRepository(persistence),
+      ...(contextAuthoring === undefined
+        ? {}
+        : {
+            contextAuthoring: new ContextPackageAuthoringService({
+              compilerVersion: '1.0.0',
+              packages: this.contextPackages,
+              projectStates: this.projectStates,
+              commands: new SqliteContextAuthoringCommandRepository(persistence),
+              authority: contextAuthoring.authority,
+              now: contextAuthoring.now ?? (() => new Date()),
+            }),
+          }),
       profiles: this.catalog,
       projectStates: this.projectStates,
       skills: this.catalog,

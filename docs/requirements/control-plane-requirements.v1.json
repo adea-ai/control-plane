@@ -44,31 +44,31 @@
     {
       "id": "control-plane-prd",
       "title": "Control Plane PRD",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0",
+      "uri": "https://docs.google.com/document/d/1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0/edit",
+      "updatedAt": "2026-08-28T07:15:36.403Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "cortana-prd",
       "title": "Cortana PRD",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY",
+      "uri": "https://docs.google.com/document/d/1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY/edit",
+      "updatedAt": "2026-08-28T04:57:08.721Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
@@ -110,61 +110,61 @@
     {
       "id": "runtime-node-spec",
       "title": "RuntimeNode & Desktop Protocol Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
+      "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
+      "updatedAt": "2026-08-28T07:21:06.166Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "execution-consistency-spec",
       "title": "Execution Consistency & Event Delivery Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
+      "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
+      "updatedAt": "2026-08-28T07:21:17.702Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "artifact-storage-spec",
       "title": "Artifact Storage Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I",
+      "uri": "https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit",
+      "updatedAt": "2026-08-28T07:05:15.684Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "security-trust-model",
       "title": "Security & Trust Model",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE",
+      "uri": "https://docs.google.com/document/d/14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE/edit",
+      "updatedAt": "2026-08-28T07:20:45.361Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
@@ -286,6 +286,1133 @@
     }
   ],
   "requirements": [
+    {
+      "id": "CP-ART-001",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Ownership (section 2)",
+      "requirement": "Control Plane produces Artifact candidates and execution provenance without assuming Agent HQ workspace authorization or product Artifact lifecycle authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-002",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Explicit promotion (section 2)",
+      "requirement": "Moving Local, Self-hosted or external bytes into cloud storage requires explicit promotion/upload authorization and provenance/policy checks; remote control alone does not authorize upload.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-003",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Local grant boundary (sections 2 and 11)",
+      "requirement": "Local and Self-hosted Artifact references resolve only through a current authorized LocalProjectGrant or local-artifact grant on the owning execution host.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-004",
+      "sourceId": "artifact-storage-spec",
+      "heading": "External ownership (sections 2 and 8)",
+      "requirement": "External Artifact bytes remain owned by the external harness/provider; consumers expose only its advertised retrieval operations and do not fabricate downloadable bytes.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-005",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Durable identity (sections 3 and 12)",
+      "requirement": "Control Plane state references Artifact IDs or provider-neutral candidates rather than treating provider URLs, signed URLs, absolute paths or access tokens as durable Artifact identity.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-006",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Independent cloud authority (sections 5 and 14)",
+      "requirement": "Control Plane cloud storage uses independently scoped buckets or environment-isolated bucket sets, credentials and lifecycle controls; its ObjectStore bucket and credentials do not substitute for Agent HQ Artifact authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "infrastructure/live-provider certification",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-007",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Replaceable R2 boundary (section 5)",
+      "requirement": "Managed Control Plane cloud bytes use the independently owned S3-compatible ObjectStore boundary with R2 initially; domain contracts must not assume AWS KMS, Object Lock, tagging or full S3 feature parity.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-008",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Private cloud access (section 5)",
+      "requirement": "Cloud objects remain private and access is mediated by the owning product authorization boundary; physical bucket names, account IDs and endpoints are deployment configuration rather than domain identity.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-009",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Developer artifact locality (section 5)",
+      "requirement": "Developer-MVP execution artifacts remain Local or Self-hosted by default; cloud Artifact promotion is not an implicit consequence of execution or remote control.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-010",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Content immutability (sections 6 and 11)",
+      "requirement": "Changed verified Artifact bytes create a new artifact identity, version or candidate; a changed local file is not silently accepted as the same verified Artifact.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "integration",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-011",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Runtime provenance (sections 7.2 and 12)",
+      "requirement": "Runtime Artifact candidates and ExecutionResult references retain metadata, digest and execution provenance for resolution by the product Artifact authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-012",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Local availability (section 11)",
+      "requirement": "Local references become unavailable when the node is offline, the grant is revoked, the file digest changes or the file is deleted.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-013",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Host-only path resolution (section 11)",
+      "requirement": "Remote Control Plane services never store absolute local Artifact paths; only the trusted execution host maps opaque local_reference_id values to canonical paths inside the approved grant.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-014",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Execution context authorization (section 12)",
+      "requirement": "ContextPackage contains only Artifact references authorized for that execution and records whether content is embedded, summarized or left retrievable.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-015",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Verification-state consumption (sections 4 and 10)",
+      "requirement": "Pending-verification, pending-scan, quarantined and failed product Artifacts are not delivered into model/runtime context; consumers must not equate upload finalization with ordinary availability.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-016",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Failed promotion locality (section 11)",
+      "requirement": "Failed or cancelled cloud promotion leaves the Local or Self-hosted Artifact reference authoritative and does not imply that bytes moved successfully.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "recovery/chaos",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-017",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Scoped transfer capabilities (sections 5, 7.2 and 8)",
+      "requirement": "Runtime cloud promotion uses a capability scoped to one Artifact/object key and operation with a 15-minute upload expiry, not reusable storage credentials; product download capabilities are read-only, audience-scoped and expire after 5 minutes.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-018",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Capability secrecy (sections 8 and 14)",
+      "requirement": "Signed Artifact URLs are bearer capabilities and are not persisted in messages, ProjectState, logs or durable API responses; reusable storage credentials and encryption keys never enter model context.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-019",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Environment isolation (section 14)",
+      "requirement": "Preview and staging Artifact stores or prefixes and credentials remain separate from production and cannot read production Artifacts.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "infrastructure/live-provider certification",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-020",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Explicit retention (section 13)",
+      "requirement": "Retention is explicit by Artifact class, including generated outputs, temporary execution files, audit evidence and benchmark fixtures; provider defaults do not replace product retention policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "integration",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-021",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Deletion ownership (section 13)",
+      "requirement": "Local deletion remains controlled by the user and RuntimeNode; removal of a product reference does not claim erasure of externally owned or native-harness bytes.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-022",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Provider migration (section 17)",
+      "requirement": "Artifact provider migration verifies copied digest and size, preserves Artifact IDs and references, and retains one authoritative provider location per version even during temporary dual-read or dual-write migration.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "recovery/chaos",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-023",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Untrusted content precedence (section 10)",
+      "requirement": "Parsed or indexed Artifact document content remains data and cannot override execution authority or higher-priority instructions.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-ART-024",
+      "sourceId": "artifact-storage-spec",
+      "heading": "Product promotion admission (sections 5, 7 and 18)",
+      "requirement": "An Agent HQ promotion request respects its 100 MiB ordinary bound or explicitly enabled 1 GiB multipart lane; consumer fixtures must not turn unsupported size/file classes, expired capabilities or failed verification/scanning into an available Artifact.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "artifact-integration",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "artifact-integration",
+        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+      }
+    },
+    {
+      "id": "CP-CONS-001",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Command inbox scope (section 4)",
+      "requirement": "State-changing commands enter durable CommandInbox before effects; caller service, workspace, operation and idempotency key define the replay scope.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-002",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Atomic acceptance and conflict (section 4)",
+      "requirement": "Validation, authorization, inbox insertion and logical execution creation are atomic where possible; conflicting payload hash reuse is rejected and replay returns the recorded response or processing state.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-003",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Inbox retention (section 4)",
+      "requirement": "Persist sufficient retry response data across restarts for at least 30 days and no less than the protected logical execution retention.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-004",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Attempt identity and usage (section 5)",
+      "requirement": "Runtime retries retain execution identity and create new attempt identities; transport duplicates do not create additional billable attempts and reassignment records explicit routing rationale.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-005",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Normalized event envelope (section 6)",
+      "requirement": "Normalized events carry stable identities, schema version, execution-scoped sequence, occurred and observed timestamps, correlation and source references, plan/workflow references where applicable, and sensitivity/redaction metadata; unrelated executions have no global ordering guarantee.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "execution-events",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "execution-events",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-006",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Unknown-outcome reconciliation (sections 1 and 8)",
+      "requirement": "After restart or reconnect reconcile active execution against workflow, command ledger and authoritative runtime state; ambiguous non-idempotent effects require reconciliation rather than automatic retry or fabricated progress.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-007",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Cancellation terminal precedence (section 9)",
+      "requirement": "If execution completion wins a cancellation race, return the existing terminal result without rewriting it as cancelled.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-008",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Durable input validity (section 9)",
+      "requirement": "Input submission references an explicit pending interaction and rejects stale, answered, unauthorized or schema-incompatible input under durable idempotency rules.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-009",
+      "sourceId": "execution-consistency-spec",
+      "heading": "ProjectState compare-and-swap (section 14)",
+      "requirement": "ProjectState mutations require expected revision; stale writers receive current revision and conflict metadata, while successful mutations increment aggregate revision and emit project_state.updated.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "project-state",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "project-state",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-010",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Pinned context authority (sections 14 and 15)",
+      "requirement": "Immutable ExecutionPlan pins ContextPackage, ProjectState versions and provider decision; context changes create a new version recorded on the attempt, and graph nodes cannot independently substitute mutable state.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-011",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Context reuse validation (section 15)",
+      "requirement": "Retry reuse requires valid ProjectState, authorization, provider mapping, contribution revision/digest, freshness and degradation policy; required-provider outage or revoked scope cannot silently select stale cached context.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-012",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider contribution cache identity (section 15.1)",
+      "requirement": "Contribution cache identity includes provider definition/contract, connection, mapped scope, request/objective, policy, capabilities, freshness, budget, authoritative revision/validator and adapter/compiler version; changed dimensions or selected items invalidate reuse.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-013",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider retrieval non-mutation (section 15.1)",
+      "requirement": "Provider retrieval creates neither state-promotion nor memory-write proposals nor provider-native memory; no-provider or disabled policy makes no provider request.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-014",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Memory-write proposal replay (section 15.1)",
+      "requirement": "Same-scope identical-content proposal delivery converges; conflicting reuse fails closed, and approval binds the exact proposal and becomes invalid when stale, revoked or already decided.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-015",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Approved memory-write reconciliation (section 15.1)",
+      "requirement": "Approved writes require advertised capability, stable idempotency, bounded payload and recorded policy/principal; ambiguous outcomes enter reconciliation_required without blind repetition.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-016",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Permanent rejection and dead letters (section 16)",
+      "requirement": "Permanent validation, schema, scope, authorization and digest failures are rejected or quarantined immediately; continuously retryable delivery reaches manual remediation after 24 hours unless intentionally in a valid durable wait.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-017",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Persistence authority (section 20)",
+      "requirement": "Execution, Attempt, ExecutionEvent and CommandInbox remain inspectable authority through SQLite for Local/Hosted simple and PostgreSQL for Hosted server/cloud; Restate history and optional graph checkpoints do not replace those records.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-001",
+      "sourceId": "runtime-node-spec",
+      "heading": "Ownership Model",
+      "requirement": "RuntimeNode registration, workspace authorization, pairing and key lifecycle remain Agent HQ-owned; Control Plane owns runtime connections, routing and normalized execution state.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-002",
+      "sourceId": "runtime-node-spec",
+      "heading": "Device Credential Model; Runtime Command Channel",
+      "requirement": "Remote node authentication requires a short-lived node-scoped credential and Ed25519 possession proof, with authorization and revocation revalidated on connection and periodically.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-003",
+      "sourceId": "runtime-node-spec",
+      "heading": "Runtime Command Channel",
+      "requirement": "Co-located runtime execution uses DirectLocalRuntimeTransport without a gateway or cloud dependency; remote relay and non-co-located Runtime Gateway are separate transports.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-004",
+      "sourceId": "runtime-node-spec",
+      "heading": "Delivery and Replay Semantics",
+      "requirement": "Remote commands expire within 24 hours and their owning interaction lifetime; ordinary gateway frames are capped at 1 MiB and terminal command records are retained for at least seven days.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-005",
+      "sourceId": "runtime-node-spec",
+      "heading": "Delivery and Replay Semantics",
+      "requirement": "Redelivery preserves one logical effect per command/idempotency key; ambiguous non-idempotent outcomes require reconciliation rather than automatic retry.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-006",
+      "sourceId": "runtime-node-spec",
+      "heading": "Offline and Reconnect Behavior",
+      "requirement": "Restart and reconnect reconcile active and recent terminal commands from durable state; stale inventory cannot silently reassign local-only execution or broaden provider scope.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-007",
+      "sourceId": "runtime-node-spec",
+      "heading": "Optional Local ContextProvider Capability",
+      "requirement": "Pairing, runtime discovery and ordinary execution remain valid with no ContextProvider; retrieval is read-only and provider writes require separately approved scope and idempotency.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec",
+      "heading": "LocalProjectGrant",
+      "requirement": "Cloud commands reference opaque grants rather than absolute paths; the node enforces workspace/node scope and root containment after symlink resolution.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
     {
       "id": "PI-CP-001",
       "sourceId": "project-index",
@@ -4003,6 +5130,202 @@
     }
   ],
   "requirementInventory": [
+    {
+      "id": "CP-ART-001",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-002",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-003",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-004",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-005",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-006",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-007",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-008",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-009",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-010",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-011",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-012",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-013",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-014",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-015",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-016",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-017",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-018",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-019",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-020",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-021",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-022",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-023",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-ART-024",
+      "sourceId": "artifact-storage-spec"
+    },
+    {
+      "id": "CP-CONS-001",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-002",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-003",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-004",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-005",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-006",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-007",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-008",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-009",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-010",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-011",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-012",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-013",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-014",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-015",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-016",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-017",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-RNODE-001",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-002",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-003",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-004",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-005",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-006",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-007",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec"
+    },
     {
       "id": "PI-CP-001",
       "sourceId": "project-index"

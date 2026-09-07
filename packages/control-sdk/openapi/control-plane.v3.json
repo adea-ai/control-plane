@@ -868,100 +868,288 @@
                   },
                   "operation": { "const": "execution.validate", "type": "string" },
                   "payload": {
-                    "properties": {
-                      "agentId": { "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
-                      "contextPackage": {
+                    "anyOf": [
+                      {
                         "properties": {
-                          "compilerVersion": { "maxLength": 64, "minLength": 1, "type": "string" },
-                          "contentDigest": { "pattern": "^sha256:[a-f0-9]{64}$", "type": "string" },
-                          "contextPackageId": {
-                            "pattern": "^ctx_[0-9A-HJKMNP-TV-Z]{26}$",
+                          "agentId": {
+                            "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$",
                             "type": "string"
                           },
-                          "schemaVersion": {
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "contextPackageId",
-                          "contentDigest",
-                          "schemaVersion",
-                          "compilerVersion"
-                        ],
-                        "type": "object"
-                      },
-                      "outputContractRef": { "maxLength": 512, "minLength": 1, "type": "string" },
-                      "policySnapshot": {
-                        "properties": {
-                          "contentDigest": { "pattern": "^sha256:[a-f0-9]{64}$", "type": "string" },
-                          "policySnapshotId": {
-                            "maxLength": 256,
+                          "contextInputs": { "not": {} },
+                          "contextPackage": {
+                            "properties": {
+                              "compilerVersion": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "contentDigest": {
+                                "pattern": "^sha256:[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "contextPackageId": {
+                                "pattern": "^ctx_[0-9A-HJKMNP-TV-Z]{26}$",
+                                "type": "string"
+                              },
+                              "schemaVersion": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "contextPackageId",
+                              "contentDigest",
+                              "schemaVersion",
+                              "compilerVersion"
+                            ],
+                            "type": "object"
+                          },
+                          "outputContractRef": {
+                            "maxLength": 512,
                             "minLength": 1,
                             "type": "string"
                           },
-                          "revision": {
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
-                          }
+                          "policySnapshot": {
+                            "properties": {
+                              "contentDigest": {
+                                "pattern": "^sha256:[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "policySnapshotId": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "revision": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": ["policySnapshotId", "revision", "contentDigest"],
+                            "type": "object"
+                          },
+                          "profileVersionId": {
+                            "pattern": "^pfv_[0-9A-HJKMNP-TV-Z]{26}$",
+                            "type": "string"
+                          },
+                          "projectState": {
+                            "properties": {
+                              "projectId": {
+                                "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "workspaceId": {
+                                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["workspaceId", "projectId", "revision"],
+                            "type": "object"
+                          },
+                          "runtimeRequirements": {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "maxItems": 128,
+                            "type": "array"
+                          },
+                          "skillVersionIds": {
+                            "items": {
+                              "pattern": "^skv_[0-9A-HJKMNP-TV-Z]{26}$",
+                              "type": "string"
+                            },
+                            "maxItems": 128,
+                            "type": "array"
+                          },
+                          "taskId": { "pattern": "^tsk_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
                         },
-                        "required": ["policySnapshotId", "revision", "contentDigest"],
+                        "required": [
+                          "taskId",
+                          "agentId",
+                          "profileVersionId",
+                          "skillVersionIds",
+                          "projectState",
+                          "policySnapshot",
+                          "runtimeRequirements",
+                          "outputContractRef",
+                          "contextPackage"
+                        ],
                         "type": "object"
                       },
-                      "profileVersionId": {
-                        "pattern": "^pfv_[0-9A-HJKMNP-TV-Z]{26}$",
-                        "type": "string"
-                      },
-                      "projectState": {
+                      {
                         "properties": {
-                          "projectId": {
-                            "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+                          "agentId": {
+                            "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$",
                             "type": "string"
                           },
-                          "revision": {
-                            "maximum": 9007199254740991,
-                            "minimum": 0,
-                            "type": "integer"
+                          "contextInputs": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "budgets": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "maximumBytes": {
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                  },
+                                  "maximumTokens": {
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": ["maximumBytes", "maximumTokens"],
+                                "type": "object"
+                              },
+                              "candidates": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "itemId": {
+                                      "pattern": "^psi_[0-9A-HJKMNP-TV-Z]{26}$",
+                                      "type": "string"
+                                    },
+                                    "itemRevision": {
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991,
+                                      "type": "integer"
+                                    },
+                                    "priority": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": -9007199254740991,
+                                      "type": "integer"
+                                    },
+                                    "required": { "type": "boolean" }
+                                  },
+                                  "required": ["itemId", "itemRevision", "required", "priority"],
+                                  "type": "object"
+                                },
+                                "maxItems": 10000,
+                                "type": "array"
+                              },
+                              "objective": { "maxLength": 16384, "minLength": 1, "type": "string" },
+                              "returnContract": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "contractRef": {
+                                    "maxLength": 512,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["contractRef"],
+                                "type": "object"
+                              },
+                              "successCriteria": {
+                                "items": { "maxLength": 4096, "minLength": 1, "type": "string" },
+                                "maxItems": 128,
+                                "minItems": 1,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "objective",
+                              "candidates",
+                              "successCriteria",
+                              "returnContract",
+                              "budgets"
+                            ],
+                            "type": "object"
                           },
-                          "workspaceId": {
-                            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$",
+                          "contextPackage": { "not": {} },
+                          "outputContractRef": {
+                            "maxLength": 512,
+                            "minLength": 1,
                             "type": "string"
-                          }
+                          },
+                          "policySnapshot": {
+                            "properties": {
+                              "contentDigest": {
+                                "pattern": "^sha256:[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "policySnapshotId": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "revision": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": ["policySnapshotId", "revision", "contentDigest"],
+                            "type": "object"
+                          },
+                          "profileVersionId": {
+                            "pattern": "^pfv_[0-9A-HJKMNP-TV-Z]{26}$",
+                            "type": "string"
+                          },
+                          "projectState": {
+                            "properties": {
+                              "projectId": {
+                                "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "workspaceId": {
+                                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["workspaceId", "projectId", "revision"],
+                            "type": "object"
+                          },
+                          "runtimeRequirements": {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "maxItems": 128,
+                            "type": "array"
+                          },
+                          "skillVersionIds": {
+                            "items": {
+                              "pattern": "^skv_[0-9A-HJKMNP-TV-Z]{26}$",
+                              "type": "string"
+                            },
+                            "maxItems": 128,
+                            "type": "array"
+                          },
+                          "taskId": { "pattern": "^tsk_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
                         },
-                        "required": ["workspaceId", "projectId", "revision"],
+                        "required": [
+                          "taskId",
+                          "agentId",
+                          "profileVersionId",
+                          "skillVersionIds",
+                          "projectState",
+                          "policySnapshot",
+                          "runtimeRequirements",
+                          "outputContractRef",
+                          "contextInputs"
+                        ],
                         "type": "object"
-                      },
-                      "runtimeRequirements": {
-                        "items": {
-                          "maxLength": 128,
-                          "minLength": 1,
-                          "pattern": "^[a-z][a-z0-9.-]*$",
-                          "type": "string"
-                        },
-                        "maxItems": 128,
-                        "type": "array"
-                      },
-                      "skillVersionIds": {
-                        "items": { "pattern": "^skv_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
-                        "maxItems": 128,
-                        "type": "array"
-                      },
-                      "taskId": { "pattern": "^tsk_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
-                    },
-                    "required": [
-                      "taskId",
-                      "agentId",
-                      "profileVersionId",
-                      "skillVersionIds",
-                      "projectState",
-                      "contextPackage",
-                      "policySnapshot",
-                      "runtimeRequirements",
-                      "outputContractRef"
-                    ],
-                    "type": "object"
+                      }
+                    ]
                   },
                   "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
                   "projectId": { "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },

@@ -75,6 +75,7 @@
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
+        "@control-plane/context": "workspace:*",
         "@control-plane/control-api": "workspace:*",
         "@control-plane/database": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -219,7 +220,7 @@
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
       },
@@ -306,11 +307,16 @@
       "name": "@control-plane/langgraph-adapter",
       "version": "1.1.2",
       "dependencies": {
+        "@control-plane/deployment": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
         "@langchain/langgraph": "1.4.13",
+        "@langchain/langgraph-checkpoint": "1.1.5",
         "@langchain/langgraph-checkpoint-postgres": "1.0.5",
         "zod": "4.5.4",
+      },
+      "devDependencies": {
+        "@control-plane/sqlite-persistence": "workspace:*",
       },
     },
     "packages/managed-pi-adapter": {
@@ -391,6 +397,7 @@
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
+        "@control-plane/production-readiness": "workspace:*",
         "@control-plane/sqlite-persistence": "workspace:*",
         "drizzle-orm": "0.45.2",
         "zod": "4.5.4",
@@ -427,7 +434,7 @@
     },
     "packages/runtime-sdk": {
       "name": "@control-plane/runtime-sdk",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",
@@ -458,6 +465,7 @@
         "@control-plane/domain": "workspace:*",
         "@control-plane/events": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
+        "@control-plane/production-readiness": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
         "drizzle-orm": "0.45.2",
       },
@@ -488,7 +496,7 @@
     },
     "packages/tool-sdk": {
       "name": "@control-plane/tool-sdk",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",

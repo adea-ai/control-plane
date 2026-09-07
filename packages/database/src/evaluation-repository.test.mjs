@@ -1,5 +1,29 @@
 import { expect, test } from 'bun:test'
-import { fromEvaluationRunRow, toEvaluationRunRow } from './evaluation-repository.js'
+import {
+  PostgresEvaluationRepository,
+  fromEvaluationRunRow,
+  toEvaluationRunRow,
+} from './evaluation-repository.js'
+
+test('immutable evaluation replay ignores JSONB metric key order but rejects changed values', async () => {
+  const run = evaluationRun()
+  run.results[0].metrics = { functional_correctness: 1, latency_ms: 2 }
+  run.aggregateMetrics = { functional_correctness: 1, latency_ms: 2 }
+  const stored = structuredClone(run)
+  stored.results[0].metrics = { latency_ms: 2, functional_correctness: 1 }
+  stored.aggregateMetrics = { latency_ms: 2, functional_correctness: 1 }
+  const repository = new PostgresEvaluationRepository({
+    insert: () => ({
+      values: () => ({ onConflictDoNothing: () => ({ returning: async () => [] }) }),
+    }),
+  })
+  repository.getRun = async () => fromEvaluationRunRow(toEvaluationRunRow(stored))
+  await expect(repository.saveRun(run)).resolves.toBeUndefined()
+  const changed = structuredClone(run)
+  changed.results[0].metrics.latency_ms = 3
+  changed.aggregateMetrics.latency_ms = 3
+  await expect(repository.saveRun(changed)).rejects.toThrow('EVALUATION_RUN_CONFLICT')
+})
 
 test('evaluation row conversion preserves exact release evidence', () => {
   const run = {

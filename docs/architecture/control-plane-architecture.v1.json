@@ -266,6 +266,7 @@
       "workspaceDependencies": [
         "@control-plane/bootstrap",
         "@control-plane/config",
+        "@control-plane/context",
         "@control-plane/control-api",
         "@control-plane/database",
         "@control-plane/deployment",
@@ -292,13 +293,18 @@
       "private": true,
       "browser": false,
       "exports": ["."],
-      "workspaceDependencies": ["@control-plane/orchestration", "@control-plane/telemetry"],
+      "workspaceDependencies": [
+        "@control-plane/deployment",
+        "@control-plane/orchestration",
+        "@control-plane/telemetry"
+      ],
       "externalDependencies": [
         "@langchain/langgraph",
+        "@langchain/langgraph-checkpoint",
         "@langchain/langgraph-checkpoint-postgres",
         "zod"
       ],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
@@ -468,6 +474,7 @@
         "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/execution-plan",
+        "@control-plane/production-readiness",
         "@control-plane/sqlite-persistence"
       ],
       "externalDependencies": ["drizzle-orm", "zod"],
@@ -545,8 +552,8 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.5.2",
-      "lockVersion": "1.5.2",
+      "version": "1.5.3",
+      "lockVersion": "1.5.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -597,8 +604,8 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.3.2",
-      "lockVersion": "1.3.2",
+      "version": "1.3.3",
+      "lockVersion": "1.3.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -640,6 +647,7 @@
         "@control-plane/domain",
         "@control-plane/events",
         "@control-plane/execution-plan",
+        "@control-plane/production-readiness",
         "@control-plane/runtime-sdk"
       ],
       "externalDependencies": ["drizzle-orm"],
@@ -702,8 +710,8 @@
     {
       "name": "@control-plane/tool-sdk",
       "path": "packages/tool-sdk",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.2.3",
+      "lockVersion": "1.2.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -1248,11 +1256,11 @@
         "observability": "packages/telemetry",
         "persistence": "PostgreSQL/Neon repositories",
         "processes": "Railway service lifecycle",
-        "runtimeTransport": "DisabledCloudRuntime or CloudCertificationRuntime",
+        "runtimeTransport": "DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime",
         "secrets": "Railway environment; no SecretsProvider",
         "workflow": "Restate"
       },
-      "assessment": "The exact merged staging candidate passed the bounded Railway, Neon, R2, and Restate certification, but its execution runtime remains disabled by default or certification-only and shared deployment ports are not uniformly composed.",
+      "assessment": "Historical staging passed bounded Railway/Neon/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
       "evidence": [
         {
           "kind": "source",
@@ -1271,9 +1279,9 @@
         "issue": 188,
         "severity": "critical",
         "owner": "managed-cloud-runtime",
-        "disposition": "Wire a production RuntimeTransport/activity implementation and concrete discovery/provider ports before claiming general Cloud execution readiness."
+        "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:73b512e434e1feebf407ae1a37083b9f11b903d9246f3902c2a73a8b1efab259"
+      "sourceDigest": "sha256:faacfe22c5b7fad2f7bc2c38e2b29ce138b47286210f205f673cda218423737c"
     },
     {
       "id": "hosted-server",
@@ -1312,7 +1320,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:49a9877ee89547783d9078823a2195b3c337fcf285d3b168bfc5c2cceaf16c30"
+      "sourceDigest": "sha256:e54804d5feb87337dbff7477de05ca4f2f1a3469b559f74a95a92afb3c509e2d"
     },
     {
       "id": "hosted-simple",
@@ -1351,7 +1359,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d683fe44252128c890abf5d79bc6570c1b91d893994213730ae87560bfa6fdef"
+      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
     },
     {
       "id": "local",
@@ -1390,7 +1398,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d683fe44252128c890abf5d79bc6570c1b91d893994213730ae87560bfa6fdef"
+      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
     }
   ],
   "ownership": [
@@ -1675,6 +1683,40 @@
       }
     },
     {
+      "id": "COMPAT-CONTEXT-COMPILER-REACHABILITY",
+      "representations": [
+        "ContextPackageCompiler library",
+        "cloud certification plan builder",
+        "authenticated context-package.resolve operation"
+      ],
+      "classification": "partially_verified",
+      "assessment": "The compiler is called by unit/acceptance fixtures and scripts/certify-m9-cloud.mjs, but no application composition caller was found. The authenticated API resolves existing scoped ContextPackages; it does not compile caller-supplied artifact authorization flags. Current evidence does not establish a supported production authoring path or authoritative upstream artifact lifecycle/permission mapping.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs"
+        },
+        {
+          "kind": "artifact",
+          "path": "scripts/certify-m9-cloud.mjs"
+        },
+        {
+          "kind": "artifact",
+          "path": "apps/control-api/src/queries/context-package-resolution.service.ts"
+        },
+        {
+          "kind": "artifact",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "context-integration",
+        "disposition": "Establish the intended supported ContextPackage authoring boundary from the canonical contracts, wire authoritative artifact authorization/state mapping there, and certify it across profiles. Do not invent an exposed compiler endpoint or duplicate Agent HQ authorization solely to close this gap."
+      }
+    },
+    {
       "id": "COMPAT-CORTANA-ADAPTER-REACHABILITY",
       "representations": [
         "cortana-context-adapter package",
@@ -1704,7 +1746,7 @@
         "M11.1 requirement ledger"
       ],
       "classification": "partially_verified",
-      "assessment": "Repository architecture reflects Restate/Railway/profile portability, while six canonical Drive sources remain unavailable and several retrieved sources retain superseded topology language.",
+      "assessment": "The M11.1 ledger records retrieval of the six previously unavailable canonical Drive sources on 2026-09-07. Atomic requirement extraction, current implementation/control mapping, and reconciliation of superseded topology language remain incomplete; retrieval alone does not verify implementation.",
       "evidence": [
         {
           "kind": "artifact",

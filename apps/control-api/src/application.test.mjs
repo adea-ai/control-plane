@@ -92,6 +92,38 @@ afterEach(async () => {
 })
 
 describe('Control API', () => {
+  test('exposes only readiness through public component diagnostics', async () => {
+    let ready = true
+    let probeFails = false
+    const application = await createControlApiApplication({
+      health: () => ({ status: 'ok', metadata }),
+      logger: { write: () => undefined },
+      metadata,
+      readiness: () => ({ status: 'ready', metadata }),
+      dependencyReadiness: () => {
+        if (probeFails) throw new Error('/private/storage/internal-host')
+        return Promise.resolve(ready)
+      },
+      componentManifest: async () => {
+        throw new Error('The public route must never serialize private manifests')
+      },
+    })
+    applications.push(application)
+    const response = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['cache-control']).toBe('no-store')
+    expect(response.json()).toEqual({ schemaVersion: 1, ready: true })
+    ready = false
+    const unavailable = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(unavailable.statusCode).toBe(503)
+    expect(unavailable.json()).toEqual({ schemaVersion: 1, ready: false })
+    ready = true
+    probeFails = true
+    const failed = await application.inject({ method: 'GET', url: '/v1/components' })
+    expect(failed.statusCode).toBe(503)
+    expect(failed.json()).toEqual({ schemaVersion: 1, ready: false })
+  })
+
   test('verifies an authenticated service principal through the public contract', async () => {
     const application = await createApplication(
       [],
@@ -411,38 +443,65 @@ describe('Control API', () => {
     const profile = executionProfile(constraints)
     const skill = executionSkill()
     const persistedPlans = []
+    let evidenceReads = 0
+    let allowEvidenceReads = true
+    let clockReads = 0
+    const commandRecords = new Map()
+    const readEvidence = (value) => {
+      if (!allowEvidenceReads) throw new Error('UNEXPECTED_REPLAY_EVIDENCE_READ')
+      evidenceReads += 1
+      return globalThis.structuredClone(value)
+    }
     const service = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
+      now: () =>
+        new Date(Date.parse('2026-09-07T12:00:00.000Z') + clockReads++ * 1000).toISOString(),
       contextPackages: {
-        get: async () => globalThis.structuredClone(contextPackage),
+        get: async () => readEvidence(contextPackage),
       },
-      plans: {
-        get: async () => undefined,
-        put: async (plan) => {
-          persistedPlans.push(globalThis.structuredClone(plan))
-          return {
-            executionPlanId: plan.executionPlanId,
-            contentDigest: plan.contentDigest,
+      commands: {
+        get: async (scope) => globalThis.structuredClone(commandRecords.get(JSON.stringify(scope))),
+        commit: async (record, plan) => {
+          const key = JSON.stringify(record.scope)
+          const existing = commandRecords.get(key)
+          if (existing) {
+            if (existing.payloadHash !== record.payloadHash)
+              throw new Error('EXECUTION_VALIDATION_COMMAND_CONFLICT')
+            return globalThis.structuredClone(existing)
           }
+          persistedPlans.push(globalThis.structuredClone(plan))
+          commandRecords.set(key, globalThis.structuredClone(record))
+          return record
         },
       },
-      profiles: { getAgentProfileVersion: async () => globalThis.structuredClone(profile) },
+      profiles: { getAgentProfileVersion: async () => readEvidence(profile) },
       projectStates: {
-        getAtRevision: async () => ({
-          schemaVersion: 1,
-          workspaceId: contextPackage.projectState.workspaceId,
-          projectId: contextPackage.projectState.projectId,
-          revision: contextPackage.projectState.revision,
-          items: [],
-          createdAt: '2026-08-23T11:00:00.000Z',
-          updatedAt: '2026-08-23T11:00:00.000Z',
-        }),
+        getAtRevision: async () =>
+          readEvidence({
+            schemaVersion: 1,
+            workspaceId: contextPackage.projectState.workspaceId,
+            projectId: contextPackage.projectState.projectId,
+            revision: contextPackage.projectState.revision,
+            items: [],
+            createdAt: '2026-08-23T11:00:00.000Z',
+            updatedAt: '2026-08-23T11:00:00.000Z',
+          }),
       },
-      skills: { getSkillVersion: async () => globalThis.structuredClone(skill) },
+      skills: { getSkillVersion: async () => readEvidence(skill) },
     })
     const request = executionValidationRequest(contextPackage, constraints)
 
-    const response = await service.validate(request)
+    await expect(service.validate(request, '')).rejects.toMatchObject({ status: 403 })
+    await expect(service.validate(request)).rejects.toMatchObject({ status: 403 })
+    await expect(service.validate(request, 'service:another-caller')).rejects.toMatchObject({
+      status: 403,
+    })
+    expect(persistedPlans).toHaveLength(0)
+    expect(evidenceReads).toBe(0)
+    const response = await service.validate(request, request.caller.servicePrincipalId)
+    expect(clockReads).toBe(1)
+    expect(persistedPlans[0].compiledAt).toBe('2026-09-07T12:00:00.000Z')
+    allowEvidenceReads = false
     const application = await createApplication(
       [],
       policyAuthenticator({
@@ -471,18 +530,139 @@ describe('Control API', () => {
     })
     expect(httpResponse.statusCode).toBe(200)
     expect(httpResponse.json().data.executionPlan).toEqual(response.data.executionPlan)
-    expect(persistedPlans).toHaveLength(2)
+    expect(persistedPlans).toHaveLength(1)
+    expect(evidenceReads).toBe(4)
+    expect(clockReads).toBe(1)
+    const retried = await service.validate(
+      {
+        ...request,
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        issuedAt: '2026-09-08T12:00:00.000Z',
+        payloadHash: '0'.repeat(64),
+      },
+      request.caller.servicePrincipalId
+    )
+    expect(retried.data.executionPlan).toEqual(response.data.executionPlan)
+    expect(retried.requestId).toBe('req_01ARZ3NDEKTSV4RRFFQ69G5FAV')
+    expect(clockReads).toBe(1)
+    const deniedReplay = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      payload: request,
+    })
+    expect(deniedReplay.statusCode).toBe(401)
 
     await expect(
-      service.validate({
-        ...request,
-        payload: {
-          ...request.payload,
-          policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+      service.validate(
+        {
+          ...request,
+          payload: {
+            ...request.payload,
+            policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+          },
         },
-      })
+        request.caller.servicePrincipalId
+      )
+    ).rejects.toMatchObject({ status: 409 })
+    const conflict = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      headers: { authorization: 'Bearer valid-agent-hq-token' },
+      payload: {
+        ...request,
+        payload: { ...request.payload, outputContractRef: 'contract://different/v1' },
+      },
+    })
+    expect(conflict.statusCode).toBe(409)
+    allowEvidenceReads = true
+    await expect(
+      service.validate(
+        {
+          ...request,
+          idempotencyKey: 'validation-rejection-0001',
+          payload: {
+            ...request.payload,
+            policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+          },
+        },
+        request.caller.servicePrincipalId
+      )
     ).rejects.toMatchObject({ status: 422 })
+    const competing = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        service.validate(
+          { ...request, idempotencyKey: 'validation-concurrent-0001' },
+          request.caller.servicePrincipalId
+        )
+      )
+    )
+    for (const result of competing)
+      expect(result.data.executionPlan).toEqual(competing[0].data.executionPlan)
     expect(persistedPlans).toHaveLength(2)
+    const inline = {
+      ...request,
+      idempotencyKey: 'inline-validation-0001',
+      payload: {
+        ...request.payload,
+        contextPackage: undefined,
+        contextInputs: {
+          objective: 'Complete the task',
+          candidates: [],
+          successCriteria: ['Done'],
+          returnContract: { contractRef: request.payload.outputContractRef },
+          budgets: { maximumBytes: 10000, maximumTokens: 1000 },
+        },
+      },
+    }
+    await expect(service.validate(inline, request.caller.servicePrincipalId)).rejects.toMatchObject(
+      { status: 503 }
+    )
+    const authoringCalls = []
+    service.options.contextAuthoring = {
+      createForCommand: async (...args) => {
+        authoringCalls.push(args)
+        return {
+          contextPackageId: contextPackage.contextPackageId,
+          contentDigest: contextPackage.contentDigest,
+        }
+      },
+    }
+    const inlineResponse = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      headers: { authorization: 'Bearer valid-agent-hq-token' },
+      payload: inline,
+    })
+    expect(inlineResponse.statusCode).toBe(200)
+    expect(authoringCalls).toEqual([
+      [
+        request.caller.servicePrincipalId,
+        inline.idempotencyKey,
+        {
+          ...inline.payload.contextInputs,
+          workspaceId: request.workspaceId,
+          projectId: request.projectId,
+          projectStateRevision: request.payload.projectState.revision,
+        },
+      ],
+    ])
+    allowEvidenceReads = false
+    service.options.contextAuthoring = undefined
+    const inlineReplay = await service.validate(inline, request.caller.servicePrincipalId)
+    expect(inlineReplay.data.executionPlan).toEqual(inlineResponse.json().data.executionPlan)
+    expect(authoringCalls).toHaveLength(1)
+    await expect(
+      service.validate(
+        {
+          ...inline,
+          payload: {
+            ...inline.payload,
+            contextInputs: { ...inline.payload.contextInputs, objective: 'Changed' },
+          },
+        },
+        request.caller.servicePrincipalId
+      )
+    ).rejects.toMatchObject({ status: 409 })
   })
 
   test('rejects malformed and unauthorized execution validation requests before composition', async () => {
@@ -566,6 +746,24 @@ describe('Control API', () => {
 
     expect(fixture.submissions).toHaveLength(1)
     expect(fixture.repository.executionCount).toBe(1)
+  })
+
+  test('reports short command retention as a client validation error before dispatch', async () => {
+    const fixture = executionAcceptanceFixture()
+    const original = ControlApiFixtures.executionAcceptance.request
+    const request = {
+      ...original,
+      payload: {
+        ...original.payload,
+        retentionExpiresAt: new Date(Date.parse(original.issuedAt) + 86_400_000).toISOString(),
+      },
+    }
+    await expect(fixture.service.accept(request, 'svc_agent-hq')).rejects.toMatchObject({
+      status: 400,
+      response: { code: 'INVALID_COMMAND_RETENTION' },
+    })
+    expect(fixture.submissions).toHaveLength(0)
+    expect(fixture.repository.executionCount).toBe(0)
   })
 
   test.each([

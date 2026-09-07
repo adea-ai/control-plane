@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import {
   EvalRunSchema,
   type EvalRun,
@@ -20,7 +21,7 @@ export class PostgresEvaluationRepository implements EvaluationRepository {
     if (inserted.length === 1) return
     const current = await this.getRun(run.evalRunId)
     if (current === undefined) throw new Error('EVALUATION_RUN_SAVE_RACE')
-    if (JSON.stringify(current) !== JSON.stringify(run)) throw new Error('EVALUATION_RUN_CONFLICT')
+    if (!isDeepStrictEqual(current, run)) throw new Error('EVALUATION_RUN_CONFLICT')
   }
 
   async getRun(evalRunId: string): Promise<EvalRun | undefined> {

@@ -17,6 +17,7 @@
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/config": "workspace:*",
+    "@control-plane/context": "workspace:*",
     "@control-plane/control-api": "workspace:*",
     "@control-plane/database": "workspace:*",
     "@control-plane/deployment": "workspace:*",
