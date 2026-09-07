@@ -113,3 +113,25 @@ Remaining: actual agent/runtime harness bindings with independent side-effect ob
 cleanup, complete executable tasks across all families, full configuration/usage/cost provenance,
 hidden-task governance, blinded human calibration, baseline statistics and promotion integration.
 Passing these scripted controls validates evaluator behavior, not agent quality or release readiness.
+
+### Observed-metric adapter
+
+`createEvidenceAuditMetricsExecutor` binds these observations to `EvaluationService.run` without
+forwarding scorers or an evidence recorder to the evaluated executor. It snapshots the host's fixture
+set and requires each case ID/input digest to match before invoking the executor. The host derives
+binary goal-coverage, evidence-sufficiency, constraint-adherence, verification-completeness and
+functional-correctness metrics from assertions; the executor cannot submit numerical scores.
+Here “functional correctness” means a correct evidence report, not completion of the underlying
+milestone. An honest partial report can pass this audit while the product remains incomplete.
+
+The required host-owned `recordEvidence` callback receives a detached full receipt and must
+acknowledge retention before scores are returned. Storage failure prevents `EvaluationService`
+from saving that run. The callback must bind receipts to the evaluation run/case and preserve
+their digests; no production receipt repository or atomic run/receipt transaction is supplied here.
+A failed later case can leave already-retained receipts without a completed run, requiring the
+host's reconciliation/retention policy. Mutation by the recorder cannot change derived metrics.
+
+Regression tests bind this adapter to the existing evaluation repository and release-gate registry:
+an honest control passes, a fabricated green report fails required assertions and blocks promotion,
+and a receipt-storage failure leaves no saved run. These scripted binary invariants are not
+statistical quality thresholds, a calibrated agent benchmark, or authorization to promote a product.

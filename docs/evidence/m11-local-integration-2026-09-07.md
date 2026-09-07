@@ -498,3 +498,21 @@ documentation; trusted adapters and full independent runtime observation remain 
 Full local lint/type/format/test gates passed with 785 unit tests and 85.59% line / 74.48% function
 coverage. No provider, database service, remote infrastructure or persistent task-owned server was
 started for this harness. PostgreSQL integration was not rerun for this isolated evaluator addition.
+
+## Observed evaluation-metric binding
+
+`createEvidenceAuditMetricsExecutor` snapshots fixtures and checks case ID/digest before execution.
+It derives binary audit metrics from the harness assertions, not executor-provided scores, and awaits
+the host evidence recorder before returning metrics. Recorder mutation cannot alter those metrics.
+Tests exercise the existing EvaluationService/release-gate path: honest partial reporting passes the
+audit, fabricated green reporting fails and blocks promotion, and evidence-storage failure leaves no
+saved run. Fixture mutation after adapter construction does not change the bound input digest.
+
+This is a scripted evaluator integration, not evidence that an agent completed a product milestone.
+The host must still implement durable receipt storage, run/case linkage and reconciliation for
+partially recorded suites. No calibrated statistical quality thresholds or production promotion
+authority were introduced. Complete corpus/runtime bindings and independent review remain open.
+
+The full local chain passed with 787 unit tests and 85.64% line / 74.57% function coverage. The final
+focused package suite and format check passed after strengthening the fixture-snapshot assertion.
+No provider or persistent service was started; database integration was not rerun for this adapter.

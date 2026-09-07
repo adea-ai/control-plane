@@ -225,6 +225,10 @@ export async function runEvidenceAuditEval(options: {
   return { ...evidence, evidenceDigest: digest(evidence), durationMs: performance.now() - started }
 }
 
+export function evidenceAuditFixtureDigest(input: unknown): string {
+  return digest(EvidenceAuditFixtureSchema.parse(input))
+}
+
 function digest(input: unknown): string {
   const canonical = (value: unknown): unknown =>
     Array.isArray(value)
