@@ -31,6 +31,27 @@ content integrity on every write. Retrieval returns an isolated copy suitable fo
 and reproduction. The plan contains only normalized references and policy requirements—never raw
 provider, connector, runtime-harness, secret-manager, or user credentials.
 
+## Validation-command replay groundwork
+
+`ExecutionValidationCommandRepository` defines an atomic first-result command/plan commit.
+The key binds authenticated caller principal, workspace, project, `execution.validate` and
+idempotency key. Records preserve the original command/request IDs, plan reference and receipt
+timestamp. The semantic hash is computed from the parsed contract version and complete validation
+payload; a caller-supplied hash, issued timestamp or retry metadata is not its authority.
+
+`SqliteExecutionValidationCommandRepository` stores the pair in one transaction. Same-key,
+same-hash commits return the first record without persisting a losing plan; changed hashes conflict.
+Reads verify scope and referenced plan integrity, including original request correlation. Records
+currently have no deletion path and are retained indefinitely; retention cleanup policy is not
+implemented here.
+
+The file-backed test covers concurrent distinct candidates, rollback after an injected command-write
+failure, full close/reopen, caller isolation, changed-input rejection and stored-scope corruption.
+These are same-provider SQLite tests, not multi-process or PostgreSQL certification. This repository
+is not yet wired into execution validation: PostgreSQL persistence, profile portability and the API's
+first-result replay behavior remain required. The existing reference-only API still recompiles on
+each call, so this groundwork does not close M11's validation replay or authoring reachability gate.
+
 ## Child execution authority
 
 A child plan records its parent plan ID and digest. Its workspace, project, and Agent remain fixed;

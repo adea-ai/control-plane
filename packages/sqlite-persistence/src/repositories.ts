@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import {
   CommandInboxRecordSchema,
   CommandInboxScopeSchema,
@@ -16,6 +20,13 @@ import {
 } from '@control-plane/domain'
 import {
   ExecutionPlanReferenceSchema,
+  ExecutionValidationCommandScopeSchema,
+  ExecutionValidationCommandRecordSchema,
+  executionValidationCommandKey,
+  assertExecutionValidationCommandPlan,
+  type ExecutionValidationCommandScope,
+  type ExecutionValidationCommandRecord,
+  type ExecutionValidationCommandRepository,
   assertExecutionPlanIntegrity,
   type ExecutionPlan,
   type ExecutionPlanReference,
@@ -286,6 +297,68 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       const plan = assertExecutionPlanIntegrity(record.value)
       return plan.contentDigest === reference.contentDigest ? plan : undefined
     })
+  }
+}
+
+export class SqliteExecutionValidationCommandRepository implements ExecutionValidationCommandRepository {
+  constructor(readonly provider: PersistenceProvider) {}
+
+  get(
+    input: ExecutionValidationCommandScope
+  ): Promise<ExecutionValidationCommandRecord | undefined> {
+    const scope = ExecutionValidationCommandScopeSchema.parse(input)
+    return this.provider.transaction((transaction) => this.#read(transaction, scope))
+  }
+
+  commit(
+    input: ExecutionValidationCommandRecord,
+    planInput: ExecutionPlan
+  ): Promise<ExecutionValidationCommandRecord> {
+    const plan = assertExecutionPlanIntegrity(planInput)
+    const record = assertExecutionValidationCommandPlan(input, plan)
+    return this.provider.transaction(async (transaction) => {
+      const existing = await this.#read(transaction, record.scope)
+      if (existing) {
+        if (existing.payloadHash !== record.payloadHash)
+          throw new Error('EXECUTION_VALIDATION_COMMAND_CONFLICT')
+        return existing
+      }
+      const id = recordId(plan.executionPlanId)
+      const stored = await transaction.get(namespaces.plans, id)
+      if (stored && !isDeepStrictEqual(assertExecutionPlanIntegrity(stored.value), plan)) {
+        throw new Error('EXECUTION_PLAN_ID_CONFLICT')
+      }
+      if (!stored) await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
+      await transaction.put({
+        namespace: 'execution-validation-commands',
+        id: `r-${executionValidationCommandKey(record.scope)}`,
+        value: json(record),
+      })
+      return record
+    })
+  }
+
+  async #read(
+    transaction: PersistenceTransaction,
+    scope: ExecutionValidationCommandScope
+  ): Promise<ExecutionValidationCommandRecord | undefined> {
+    const stored = await transaction.get(
+      'execution-validation-commands',
+      `r-${executionValidationCommandKey(scope)}`
+    )
+    if (!stored) return undefined
+    const record = ExecutionValidationCommandRecordSchema.parse(stored.value)
+    if (!isDeepStrictEqual(record.scope, scope))
+      throw new Error('EXECUTION_VALIDATION_COMMAND_SCOPE_MISMATCH')
+    const storedPlan = await transaction.get(
+      namespaces.plans,
+      recordId(record.executionPlan.executionPlanId)
+    )
+    if (!storedPlan) throw new Error('EXECUTION_VALIDATION_COMMAND_PLAN_MISSING')
+    return assertExecutionValidationCommandPlan(
+      record,
+      assertExecutionPlanIntegrity(storedPlan.value)
+    )
   }
 }
 
