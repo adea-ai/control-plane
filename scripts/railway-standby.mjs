@@ -50,7 +50,10 @@ export function planStandbyActions({ environment, services }) {
     const service = servicesByName.get(serviceName)
     if (service === undefined) continue
 
-    if (applicationServices.has(serviceName) && (service.repoTriggerCount ?? 0) > 0) {
+    if (
+      applicationServices.has(serviceName) &&
+      (service.source?.repo || (service.repoTriggerCount ?? 0) > 0)
+    ) {
       actions.push({
         type: 'disconnect-source',
         environment,
@@ -103,9 +106,9 @@ function wait(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
-function loadInventory(environment) {
+function loadInventory(environment, project) {
   const services = JSON.parse(
-    runRailway(['service', 'list', '--environment', environment, '--json'])
+    runRailway(['service', 'list', '--project', project, '--environment', environment, '--json'])
   )
   return services.map((service) => {
     const repoTriggerCount = applicationServices.has(service.name)
@@ -119,6 +122,8 @@ function loadInventory(environment) {
         runRailway([
           'deployment',
           'list',
+          '--project',
+          project,
           '--environment',
           environment,
           '--service',
@@ -130,14 +135,16 @@ function loadInventory(environment) {
   })
 }
 
-function verifyStandby(environment) {
+function verifyStandby(environment, project) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const inventory = loadInventory(environment)
+    const inventory = loadInventory(environment, project)
     const stillActive = inventory.filter(
       (service) => (service.replicas?.running ?? 0) !== 0 || service.deploymentStopped === false
     )
     const connectedApplications = inventory.filter(
-      (service) => applicationServices.has(service.name) && service.repoTriggerCount > 0
+      (service) =>
+        applicationServices.has(service.name) &&
+        (service.source?.repo || service.repoTriggerCount > 0)
     )
     const pendingDeployments = inventory.flatMap((service) =>
       service.deployments.filter(
@@ -176,7 +183,7 @@ export function railwayRepoTriggersArguments(serviceId) {
     '--raw-var',
     `id=${serviceId}`,
     '--compact',
-    'query ServiceRepoTriggers($id: String!) { service(id: $id) { repoTriggers { edges { node { id } } } } }',
+    'query ServiceRepoTriggers($id: String!) { service(id: $id) { repoTriggers { edges { node { id environmentId } } pageInfo { hasNextPage } } } }',
   ]
 }
 
@@ -210,12 +217,70 @@ function removeDeployment(action) {
 }
 
 function parseArguments(arguments_) {
+  const projectIndex = arguments_.indexOf('--project')
   const environmentIndex = arguments_.indexOf('--environment')
   const confirmIndex = arguments_.indexOf('--confirm')
   return {
+    project: projectIndex >= 0 ? arguments_[projectIndex + 1] : undefined,
     environment: environmentIndex >= 0 ? arguments_[environmentIndex + 1] : undefined,
     apply: arguments_.includes('--apply'),
     confirm: confirmIndex >= 0 ? arguments_[confirmIndex + 1] : undefined,
+  }
+}
+
+export function assertDisconnectScope(actions, otherServices) {
+  const disconnectIds = new Set(
+    actions
+      .filter((action) => action.type === 'disconnect-source')
+      .map((action) => action.serviceId)
+  )
+  if (otherServices.some((service) => disconnectIds.has(service.id) && service.source?.repo)) {
+    throw new Error('Service-wide source disconnection would affect another Railway environment.')
+  }
+}
+
+function verifyDisconnectScope(project, environment, actions) {
+  const response = JSON.parse(
+    runRailway([
+      'api',
+      '--raw-var',
+      `id=${project}`,
+      '--compact',
+      'query StandbyProject($id: String!) { project(id: $id) { environments { edges { node { id name } } pageInfo { hasNextPage } } } }',
+    ])
+  )
+  const connection = response.data?.project?.environments
+  if (
+    response.errors ||
+    !Array.isArray(connection?.edges) ||
+    connection.pageInfo?.hasNextPage !== false
+  )
+    throw new Error('Cannot verify complete Railway environment inventory.')
+  const environments = connection.edges.map((edge) => edge.node)
+  if (environments.filter((entry) => entry.name === environment).length !== 1)
+    throw new Error('Railway environment identity is ambiguous.')
+  const otherServices = environments
+    .filter((entry) => entry.name !== environment)
+    .flatMap((entry) =>
+      JSON.parse(
+        runRailway(['service', 'list', '--project', project, '--environment', entry.id, '--json'])
+      )
+    )
+  assertDisconnectScope(actions, otherServices)
+  const targetId = environments.find((entry) => entry.name === environment).id
+  for (const action of actions.filter((entry) => entry.type === 'disconnect-source')) {
+    const triggers = JSON.parse(runRailway(railwayRepoTriggersArguments(action.serviceId)))
+    const inventory = triggers.data?.service?.repoTriggers
+    if (
+      triggers.errors ||
+      inventory?.pageInfo?.hasNextPage !== false ||
+      !Array.isArray(inventory?.edges) ||
+      inventory.edges.some((edge) => edge.node?.environmentId !== targetId)
+    ) {
+      throw new Error(
+        'Cannot disconnect repository triggers outside the selected Railway environment.'
+      )
+    }
   }
 }
 
@@ -223,19 +288,22 @@ export function main(arguments_ = process.argv.slice(2)) {
   const options = parseArguments(arguments_)
   if (!environmentNames.has(options.environment)) {
     throw new Error(
-      'Usage: railway-standby --environment <staging|production> [--apply --confirm <environment>]'
+      'Usage: railway-standby --project <id> --environment <staging|production> [--apply --confirm <environment>]'
     )
   }
   if (options.apply && options.confirm !== options.environment) {
     throw new Error('Applying standby requires --confirm to exactly match the environment.')
   }
+  if (!options.project) throw new Error('Railway standby requires an explicit --project ID.')
 
-  const inventory = loadInventory(options.environment)
+  const inventory = loadInventory(options.environment, options.project)
   const actions = planStandbyActions({ environment: options.environment, services: inventory })
+  verifyDisconnectScope(options.project, options.environment, actions)
 
   if (options.apply) {
     for (const action of actions) {
       if (action.type === 'disconnect-source') {
+        verifyDisconnectScope(options.project, options.environment, [action])
         disconnectSource(action)
         continue
       }
@@ -243,7 +311,7 @@ export function main(arguments_ = process.argv.slice(2)) {
       removeDeployment(action)
     }
 
-    verifyStandby(options.environment)
+    verifyStandby(options.environment, options.project)
   }
 
   console.log(

@@ -164,18 +164,45 @@ test('defines a zero-compute production standby and bounded staging cost posture
 test('plans a deterministic Railway standby transition without deleting services', async () => {
   const {
     main,
+    assertDisconnectScope,
     planStandbyActions,
     railwayDisconnectArguments,
     railwayRemoveArguments,
     railwayRepoTriggersArguments,
   } = await import('../scripts/railway-standby.mjs')
+  const disconnect = [{ type: 'disconnect-source', serviceId: 'shared-api' }]
+  assert.throws(
+    () =>
+      assertDisconnectScope(disconnect, [
+        { id: 'shared-api', source: { repo: 'production/repo' } },
+      ]),
+    /another Railway environment/
+  )
+  assert.doesNotThrow(() =>
+    assertDisconnectScope(disconnect, [{ id: 'shared-api', source: { repo: null } }])
+  )
+  assert.throws(() => main(['--environment', 'staging']), /explicit --project/)
+  const sourceOnly = planStandbyActions({
+    environment: 'staging',
+    services: [
+      {
+        id: 'shared-api',
+        name: '@control-plane/control-api',
+        source: { repo: 'staging/repo' },
+        repoTriggerCount: 0,
+      },
+      { id: 'worker', name: '@control-plane/workflow-worker' },
+      { id: 'restate', name: 'restate' },
+    ],
+  })
+  assert.equal(sourceOnly[0].type, 'disconnect-source')
 
   assert.deepEqual(railwayRepoTriggersArguments('service-id'), [
     'api',
     '--raw-var',
     'id=service-id',
     '--compact',
-    'query ServiceRepoTriggers($id: String!) { service(id: $id) { repoTriggers { edges { node { id } } } } }',
+    'query ServiceRepoTriggers($id: String!) { service(id: $id) { repoTriggers { edges { node { id environmentId } } pageInfo { hasNextPage } } } }',
   ])
 
   assert.deepEqual(railwayDisconnectArguments('service-id'), [
