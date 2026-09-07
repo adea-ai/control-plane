@@ -91,6 +91,21 @@ repositories with a no-provider authority fixture. The HTTP test checks principa
 or production authority composition. Inline authoring still needs authoritative adapters wired from
 supported entrypoints across profiles; fixture injection is not proof of that production reachability.
 
+`ContextAuthoringCompositionOptions` supplies an authority adapter and optional trusted clock.
+Managed-cloud `start({ contextAuthoring })` forwards it to the cloud composition. Local and Hosted
+Simple accept `compositionOptions.contextAuthoring`, and Hosted Server forwards the same option
+through its launcher configuration. Each composition constructs the authoring service with its own
+package, ProjectState and atomic authoring-command repositories. Omitting the option keeps new
+inline requests unavailable; recorded validation results can still replay after authentication.
+These are server-side embedding options, never request fields or self-authorizing environment flags.
+The bundled launchers do not invent an adapter: product authorization and Artifact lifecycle mapping
+remain an explicit deployment integration obligation.
+
+The cloud PostgreSQL HTTP integration test now authors inline context through this option and
+replays it after application/connection reconstruction without the option. Local SQLite tests use
+constructor injection as well. Hosted tests verify option propagation and service construction;
+they do not yet certify inline authoring against a live Hosted Server database/API deployment.
+
 `createForCommand` supplies internal authoring replay through an injected
 `ContextAuthoringCommandRepository`. Its scope includes authenticated principal, workspace, project,
 the `context.author` operation and idempotency key. The service computes a canonical request hash;

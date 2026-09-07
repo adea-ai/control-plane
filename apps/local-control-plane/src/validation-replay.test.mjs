@@ -3,15 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ControlApiFixtures } from '@control-plane/contracts'
-import {
-  ContextPackageAuthoringService,
-  contextPackageSerializationFixtures,
-} from '@control-plane/context'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
-import {
-  SqliteContextAuthoringCommandRepository,
-  SqlitePersistenceProvider,
-} from '@control-plane/sqlite-persistence'
+import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
 
 test('local composition replays validation after a SQLite reopen without compilation inputs', async () => {
@@ -21,7 +15,27 @@ test('local composition replays validation after a SQLite reopen without compila
   const now = '2026-09-07T12:00:00.000Z'
   try {
     await persistence.migrate()
-    const composition = new LocalControlApiComposition(persistence, 'http://127.0.0.1:9')
+    let authorityCalls = 0
+    const composition = new LocalControlApiComposition(persistence, 'http://127.0.0.1:9', {
+      now: () => new Date(now),
+      authority: {
+        authorize: async (principalRef, input) => {
+          authorityCalls += 1
+          return {
+            principalRef,
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            expiresAt: '2026-09-07T13:00:00.000Z',
+            constraints: package_.constraints,
+            permissions: package_.permissions,
+            budgets: package_.budgets,
+          }
+        },
+        resolveArtifact: async () => {
+          throw new Error('UNEXPECTED_ARTIFACT_READ')
+        },
+      },
+    })
     const catalog = new VersionedCatalog(composition.catalog, composition.catalog)
     const profileId = 'prf_01JABCDEF0123456789ABCDEFG'
     const profileVersionId = 'pfv_01JABCDEF0123456789ABCDEFG'
@@ -99,32 +113,6 @@ test('local composition replays validation after a SQLite reopen without compila
       expect(await transaction.list('execution-validation-commands')).toHaveLength(1)
       expect(await transaction.list('execution-plans')).toHaveLength(1)
     })
-    let authorityCalls = 0
-    composition.executionValidationService.options.contextAuthoring =
-      new ContextPackageAuthoringService({
-        compilerVersion: '1.0.0',
-        packages: composition.contextPackages,
-        projectStates: composition.projectStates,
-        commands: new SqliteContextAuthoringCommandRepository(persistence),
-        now: () => new Date(now),
-        authority: {
-          authorize: async (principalRef, input) => {
-            authorityCalls += 1
-            return {
-              principalRef,
-              workspaceId: input.workspaceId,
-              projectId: input.projectId,
-              expiresAt: '2026-09-07T13:00:00.000Z',
-              constraints: package_.constraints,
-              permissions: package_.permissions,
-              budgets: package_.budgets,
-            }
-          },
-          resolveArtifact: async () => {
-            throw new Error('UNEXPECTED_ARTIFACT_READ')
-          },
-        },
-      })
     const inline = {
       ...request,
       idempotencyKey: 'local-inline-validation-0001',

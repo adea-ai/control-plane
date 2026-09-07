@@ -1,6 +1,10 @@
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  ContextPackageAuthoringService,
+  type ContextAuthoringCompositionOptions,
+} from '@control-plane/context'
+import {
   DurableExecutionAcceptanceService,
   DurableExecutionValidationService,
   RestateExecutionWorkflowDispatcher,
@@ -14,6 +18,7 @@ import {
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
+  PostgresContextAuthoringCommandRepository,
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
@@ -84,6 +89,7 @@ export interface HostedServerManifest {
 }
 
 export interface HostedServerCompositionOptions {
+  readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly databaseUrl: string
   readonly restateAdminUrl?: string
@@ -182,6 +188,18 @@ export class HostedServerControlPlaneComposition {
       compilerVersion: COMPONENT_VERSION,
       contextPackages,
       commands: new PostgresExecutionValidationCommandRepository(this.connection.database),
+      ...(options.contextAuthoring === undefined
+        ? {}
+        : {
+            contextAuthoring: new ContextPackageAuthoringService({
+              compilerVersion: COMPONENT_VERSION,
+              packages: contextPackages,
+              projectStates,
+              commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
+              authority: options.contextAuthoring.authority,
+              now: options.contextAuthoring.now ?? (() => new Date()),
+            }),
+          }),
       profiles: catalog,
       projectStates,
       skills: catalog,

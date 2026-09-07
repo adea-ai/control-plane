@@ -86,8 +86,33 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     const payload = Buffer.from(JSON.stringify(claims)).toString('base64url')
     const signingInput = `${header}.${payload}`
     const token = `${signingInput}.${sign(null, Buffer.from(signingInput), privateKey).toString('base64url')}`
-    async function open(config = configuration) {
-      const composition = createManagedCloudControlApiComposition(config, logger)
+    let authorityCalls = 0
+    const authoring = {
+      authority: {
+        authorize: async (principalRef, input) => {
+          authorityCalls += 1
+          return {
+            principalRef,
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            expiresAt: new Date(Date.now() + 300000).toISOString(),
+            constraints: package_.constraints,
+            permissions: package_.permissions,
+            budgets: package_.budgets,
+          }
+        },
+        resolveArtifact: async () => {
+          throw new Error('UNEXPECTED_ARTIFACT_READ')
+        },
+      },
+    }
+    async function open(config = configuration, contextAuthoring) {
+      const composition = createManagedCloudControlApiComposition(
+        config,
+        logger,
+        undefined,
+        contextAuthoring
+      )
       compositions.push(composition)
       const metadata = {
         serviceName: 'control-api',
@@ -150,7 +175,7 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         createdAt: now,
         updatedAt: now,
       })
-      const first = await open()
+      const first = await open(configuration, authoring)
       const results = await Promise.all(Array.from({ length: 8 }, () => send(first.app)))
       for (const result of results) {
         expect(result.statusCode).toBe(200)
@@ -161,6 +186,24 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       expect(plan).toBeDefined()
       expect(await database.application.select().from(executionPlans)).toHaveLength(1)
       expect(await database.application.select().from(executionValidationCommands)).toHaveLength(1)
+      const inline = {
+        ...request,
+        idempotencyKey: 'cloud-inline-validation-0001',
+        payload: {
+          ...request.payload,
+          contextPackage: undefined,
+          contextInputs: {
+            objective: 'Complete the fixture.',
+            candidates: [],
+            successCriteria: ['Done'],
+            returnContract: { contractRef: request.payload.outputContractRef },
+            budgets: package_.budgets,
+          },
+        },
+      }
+      const inlineResponse = await send(first.app, inline)
+      expect(inlineResponse.statusCode).toBe(200)
+      expect(authorityCalls).toBe(1)
       await first.app.close()
       applications.splice(applications.indexOf(first.app), 1)
       await first.composition.connection.close()
@@ -179,6 +222,16 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const replay = await send(reopened.app, { ...request, issuedAt: now })
       expect(replay.statusCode).toBe(200)
       expect(replay.json().data.executionPlan).toEqual(reference)
+      const inlineReplay = await send(reopened.app, inline)
+      expect(inlineReplay.statusCode).toBe(200)
+      expect(inlineReplay.json().data.executionPlan).toEqual(
+        inlineResponse.json().data.executionPlan
+      )
+      expect(authorityCalls).toBe(1)
+      expect(
+        (await send(reopened.app, { ...inline, idempotencyKey: 'cloud-unconfigured-inline-0001' }))
+          .statusCode
+      ).toBe(503)
       expect(
         await new PostgresExecutionPlanRepository(reopened.composition.connection.database).get(
           reference

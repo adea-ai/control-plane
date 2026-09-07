@@ -452,6 +452,11 @@ export interface ContextAuthoringAuthority {
 }
 
 /** Pre-validation construction. The authenticated principal is supplied by the host. */
+export interface ContextAuthoringCompositionOptions {
+  readonly authority: ContextAuthoringAuthority
+  readonly now?: () => Date
+}
+
 export class ContextPackageAuthoringService {
   readonly #compiler: ContextPackageCompiler
 

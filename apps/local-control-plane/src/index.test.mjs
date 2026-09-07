@@ -61,6 +61,7 @@ describe('Local Control Plane composition', () => {
   test('starts one zero-external-service topology with durable local adapters', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-local-'))
     const calls = []
+    const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
     const workflow = {
       profile: 'local',
       start: async () => calls.push('workflow:start'),
@@ -69,6 +70,7 @@ describe('Local Control Plane composition', () => {
     }
     const composition = new LocalControlPlaneComposition({
       dataDirectory: directory,
+      contextAuthoring: { authority },
       workflowRuntime: workflow,
       runtimeTransport: { transportKind: 'direct-local' },
       endpointFactory: {
@@ -79,6 +81,9 @@ describe('Local Control Plane composition', () => {
       },
     })
     try {
+      expect(
+        composition.executionValidationService.options.contextAuthoring.options.authority
+      ).toBe(authority)
       await composition.start()
       const manifest = await composition.manifest()
       expect(calls).toEqual(['endpoint:start', 'workflow:start'])

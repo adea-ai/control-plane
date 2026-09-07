@@ -1,10 +1,15 @@
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import type { ManagedCloudConfiguration } from '@control-plane/config'
 import {
+  ContextPackageAuthoringService,
+  type ContextAuthoringCompositionOptions,
+} from '@control-plane/context'
+import {
   createPostgresConnection,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
+  PostgresContextAuthoringCommandRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
   PostgresProjectStateRepository,
@@ -62,7 +67,8 @@ export class ControlApiCloudCompositionError extends Error {
 export function createManagedCloudControlApiComposition(
   configuration: ManagedCloudConfiguration,
   logger: StructuredLogger,
-  connectionFactory: PostgresConnectionFactory = createPostgresConnection
+  connectionFactory: PostgresConnectionFactory = createPostgresConnection,
+  contextAuthoring?: ContextAuthoringCompositionOptions
 ): ManagedCloudControlApiComposition {
   if (
     configuration.service !== 'control-api' ||
@@ -118,6 +124,18 @@ export function createManagedCloudControlApiComposition(
       compilerVersion: executionPlanCompilerVersion,
       contextPackages,
       commands: new PostgresExecutionValidationCommandRepository(connection.database),
+      ...(contextAuthoring === undefined
+        ? {}
+        : {
+            contextAuthoring: new ContextPackageAuthoringService({
+              compilerVersion: executionPlanCompilerVersion,
+              packages: contextPackages,
+              projectStates,
+              commands: new PostgresContextAuthoringCommandRepository(connection.database),
+              authority: contextAuthoring.authority,
+              now: contextAuthoring.now ?? (() => new Date()),
+            }),
+          }),
       profiles: catalog,
       projectStates,
       skills: catalog,

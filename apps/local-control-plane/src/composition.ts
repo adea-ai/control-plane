@@ -44,6 +44,7 @@ import {
 } from '@control-plane/workflow-worker'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 
 const require = createRequire(import.meta.url)
 const COMPONENT_VERSION = '1.0.0'
@@ -66,6 +67,7 @@ export interface LocalComponentManifest {
 }
 
 export interface LocalControlPlaneCompositionOptions {
+  readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
   readonly workflowEndpointPort?: number
@@ -150,7 +152,11 @@ export class LocalControlPlaneComposition {
     if (options.runtimeTransport !== undefined && options.runtimeFactory !== undefined) {
       throw new Error('LOCAL_RUNTIME_CONFIGURATION_CONFLICT')
     }
-    const controlApi = new LocalControlApiComposition(this.persistence, 'http://127.0.0.1:8080')
+    const controlApi = new LocalControlApiComposition(
+      this.persistence,
+      'http://127.0.0.1:8080',
+      options.contextAuthoring
+    )
     const runtimeTransport =
       options.runtimeTransport ??
       options.runtimeFactory?.({

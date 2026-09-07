@@ -433,3 +433,23 @@ All 29 PostgreSQL integration tests and the connection-loss/restart/restore dril
 remain reference-validation PostgreSQL evidence, not inline-authoring coverage on that backend.
 The disposable `m11-inline-validation-20260907` database resources were removed and port 55089
 verified closed. No remote infrastructure, production authority, or compatibility baseline changed.
+
+## Authoring composition wiring
+
+All composition families now accept server-owned `ContextAuthoringCompositionOptions` and construct
+the authoring service with their durable repositories. Managed-cloud startup and the embedded/Hosted
+launcher options forward the configuration. Missing configuration remains unavailable for new inline
+requests. No environment variable or request flag grants authority, and no product adapter was
+fabricated. Concrete policy/Artifact adapters and deployed all-profile acceptance remain open.
+
+Local SQLite coverage now uses constructor injection. The cloud PostgreSQL HTTP case now authors
+inline context and replays it after application/connection reconstruction without the authoring option;
+it passed 31 assertions. Hosted tests check launcher propagation and service construction, not live
+Hosted inline execution. All 29 PostgreSQL integration tests and recovery drills passed. Full local
+gates passed with 779 unit tests and 85.53% line / 74.38% function coverage.
+
+The Hosted application gained its explicit workspace Context dependency. Lockfile generation also
+reconciled already-existing SDK manifest versions (1.3.3, 1.5.3, 1.2.3); no external package was
+upgraded. Architecture inventory/fingerprints were refreshed without readiness reclassification.
+The disposable `m11-authoring-composition-20260907` container, network and volume were removed;
+port 55099 was verified closed. No remote infrastructure was changed.

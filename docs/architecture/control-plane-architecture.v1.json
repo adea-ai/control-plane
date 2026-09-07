@@ -266,6 +266,7 @@
       "workspaceDependencies": [
         "@control-plane/bootstrap",
         "@control-plane/config",
+        "@control-plane/context",
         "@control-plane/control-api",
         "@control-plane/database",
         "@control-plane/deployment",
@@ -546,7 +547,7 @@
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
       "version": "1.5.3",
-      "lockVersion": "1.5.2",
+      "lockVersion": "1.5.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -598,7 +599,7 @@
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
       "version": "1.3.3",
-      "lockVersion": "1.3.2",
+      "lockVersion": "1.3.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -703,7 +704,7 @@
       "name": "@control-plane/tool-sdk",
       "path": "packages/tool-sdk",
       "version": "1.2.3",
-      "lockVersion": "1.2.2",
+      "lockVersion": "1.2.3",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -1273,7 +1274,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Wire a production RuntimeTransport/activity implementation and concrete discovery/provider ports before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:0846fff142e56d9ace3d0d762f33bc8ee80135a43e44a616782287dee41e62f1"
+      "sourceDigest": "sha256:180297a6f3898a30b200f32c5a9254da58f01d1aa352fbaf728ad465cf1106ef"
     },
     {
       "id": "hosted-server",
@@ -1312,7 +1313,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:4ca8f3a91f6c5371c8d02c9d634a9d1b1305106d98f99910e749788573e4945e"
+      "sourceDigest": "sha256:ac179067428b6a156ba926911a5e2a81070a77375939991d3a37bfde36d7802c"
     },
     {
       "id": "hosted-simple",
@@ -1351,7 +1352,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d683fe44252128c890abf5d79bc6570c1b91d893994213730ae87560bfa6fdef"
+      "sourceDigest": "sha256:f74d31ba80fe612232e13bf31cd2df205afaa26deacdfe78b1bc09fc10071a21"
     },
     {
       "id": "local",
@@ -1390,7 +1391,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d683fe44252128c890abf5d79bc6570c1b91d893994213730ae87560bfa6fdef"
+      "sourceDigest": "sha256:f74d31ba80fe612232e13bf31cd2df205afaa26deacdfe78b1bc09fc10071a21"
     }
   ],
   "ownership": [

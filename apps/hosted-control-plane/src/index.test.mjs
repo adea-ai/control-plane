@@ -38,6 +38,9 @@ describe('Hosted server composition', () => {
   })
 
   test('propagates the supported remote runtime activity port through the production launcher', () => {
+    const contextAuthoring = {
+      authority: { authorize: async () => undefined, resolveArtifact: async () => undefined },
+    }
     const runtimeActivityPort = {
       dispatch: async () => ({ outcome: 'cancelled' }),
       applyInteraction: async () => ({ outcome: 'cancelled' }),
@@ -48,10 +51,11 @@ describe('Hosted server composition', () => {
         DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
         CONTROL_PLANE_DATA_DIR: '/var/lib/control-plane',
       },
-      { runtimeActivityPort }
+      { runtimeActivityPort, contextAuthoring }
     )
 
     expect(configuration.runtimeActivityPort).toBe(runtimeActivityPort)
+    expect(configuration.contextAuthoring).toBe(contextAuthoring)
     expect(configuration).toMatchObject({
       dataDirectory: '/var/lib/control-plane',
       databaseUrl: 'postgresql://app:secret@postgres/control_plane',
@@ -61,6 +65,7 @@ describe('Hosted server composition', () => {
   test('reports PostgreSQL and separate Restate dependencies without changing core contracts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-'))
     const calls = []
+    const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
     const connection = {
       database: {},
       check: async () => calls.push('database:check'),
@@ -73,6 +78,7 @@ describe('Hosted server composition', () => {
       stop: async () => calls.push('workflow:stop'),
     }
     const composition = new HostedServerControlPlaneComposition({
+      contextAuthoring: { authority },
       dataDirectory: directory,
       databaseUrl: 'postgresql://app:secret@postgres/control_plane',
       connection,
@@ -98,6 +104,9 @@ describe('Hosted server composition', () => {
       },
     })
     try {
+      expect(
+        composition.executionValidationService.options.contextAuthoring.options.authority
+      ).toBe(authority)
       await composition.start()
       expect(await composition.manifest()).toMatchObject({
         profile: 'hosted-server',
