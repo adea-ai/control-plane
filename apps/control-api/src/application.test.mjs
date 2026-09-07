@@ -568,6 +568,24 @@ describe('Control API', () => {
     expect(fixture.repository.executionCount).toBe(1)
   })
 
+  test('reports short command retention as a client validation error before dispatch', async () => {
+    const fixture = executionAcceptanceFixture()
+    const original = ControlApiFixtures.executionAcceptance.request
+    const request = {
+      ...original,
+      payload: {
+        ...original.payload,
+        retentionExpiresAt: new Date(Date.parse(original.issuedAt) + 86_400_000).toISOString(),
+      },
+    }
+    await expect(fixture.service.accept(request, 'svc_agent-hq')).rejects.toMatchObject({
+      status: 400,
+      response: { code: 'INVALID_COMMAND_RETENTION' },
+    })
+    expect(fixture.submissions).toHaveLength(0)
+    expect(fixture.repository.executionCount).toBe(0)
+  })
+
   test.each([
     ['at or before issuance', '2026-08-23T12:00:00.000Z', '2026-09-22T12:00:00.000Z'],
     ['after command retention', '2026-08-24T11:00:00.000Z', '2026-08-24T10:00:00.000Z'],

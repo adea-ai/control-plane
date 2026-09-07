@@ -253,6 +253,7 @@ const TransitionExecutionCommandSchema = z
 export type CommandInboxErrorCode =
   | 'IDEMPOTENCY_PAYLOAD_CONFLICT'
   | 'INVALID_EXECUTION_PLAN_REFERENCE'
+  | 'INVALID_COMMAND_RETENTION'
   | 'COMMAND_RETENTION_EXPIRED'
   | 'COMMAND_MISSING'
   | 'STALE_COMMAND_VERSION'
@@ -300,7 +301,7 @@ export class CommandInboxService {
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
     if (existing) return this.#replay(existing, parsed.payloadHash)
-    NewExecutionAcceptanceSchema.parse(parsed)
+    if (!NewExecutionAcceptanceSchema.safeParse(parsed).success) fail('INVALID_COMMAND_RETENTION')
     if (
       !(await this.#executionPlanValidator.validate({
         executionPlan: parsed.executionPlan,
