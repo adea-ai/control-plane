@@ -146,6 +146,8 @@ jobs:
 
       - name: Verify migrations and transactions
         if: steps.credentials.outputs.available == 'true'
+        env:
+          DATABASE_ADMIN_URL: ${{ steps.create_neon_branch.outputs.db_url }}
         run: |
           bun run build
           bun --cwd=packages/database run db:check
