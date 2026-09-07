@@ -313,6 +313,12 @@ export class CommandInboxService {
     ) {
       fail('INVALID_EXECUTION_PLAN_REFERENCE')
     }
+    const acceptedAt = Date.parse(TimestampSchema.parse(this.#now()))
+    const requestedRetention = Date.parse(parsed.retentionExpiresAt)
+    if (requestedRetention < acceptedAt) fail('COMMAND_RETENTION_EXPIRED')
+    const retentionExpiresAt = new Date(
+      Math.max(requestedRetention, acceptedAt + 30 * 24 * 60 * 60 * 1_000)
+    ).toISOString()
     const executionId = IdentifierSchemas.executionId.parse(this.#executionIdFactory())
     const execution = ExecutionSchema.parse({
       executionId,
@@ -344,7 +350,7 @@ export class CommandInboxService {
       conflictCount: 0,
       receivedAt: parsed.receivedAt,
       lastSeenAt: parsed.receivedAt,
-      retentionExpiresAt: parsed.retentionExpiresAt,
+      retentionExpiresAt,
     })
     this.#failureInjector?.checkpoint('control_api.before_accept')
     const result = await this.repository.accept(command, execution)

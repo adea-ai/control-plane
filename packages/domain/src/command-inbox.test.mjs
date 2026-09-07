@@ -68,6 +68,22 @@ function setup({ now = receivedAt, planValid = true } = {}) {
 }
 
 describe('CommandInbox execution acceptance', () => {
+  test('uses trusted acceptance time for the persisted retention floor', async () => {
+    const now = '2026-08-25T10:00:00.000Z'
+    const { service } = setup({ now })
+    const accepted = await service.acceptExecution(commandInput())
+    expect(Date.parse(accepted.command.retentionExpiresAt) - Date.parse(now)).toBe(30 * 86_400_000)
+  })
+
+  test('rejects an already expired new request without persisting an execution', async () => {
+    const { service, repository } = setup({ now: '2026-09-24T10:00:00.000Z' })
+    await expect(service.acceptExecution(commandInput())).rejects.toMatchObject({
+      code: 'COMMAND_RETENTION_EXPIRED',
+    })
+    expect(repository.executionCount).toBe(0)
+    expect(await repository.get(commandScope())).toBeUndefined()
+  })
+
   test('preserves replay of an unexpired legacy record with shorter retention', async () => {
     const { service } = setup()
     const accepted = await service.acceptExecution(commandInput())

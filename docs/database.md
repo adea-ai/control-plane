@@ -120,7 +120,12 @@ Key rules:
 - persistence cleanup may not remove a record while an upstream/downstream component can still legitimately redeliver the protected command.
 
 New execution acceptance rejects a requested inbox retention interval shorter than 30 days
-after receipt, before creating an execution. Exactly 30 days and longer intervals are accepted.
+after the supplied receipt timestamp, before creating an execution. Exactly 30 days and longer
+requested intervals are accepted. After plan validation, the service samples its trusted clock:
+an already-expired new request is rejected before persistence, and the stored deadline is the
+later of the requested deadline or 30 days after that trusted acceptance time. Transport or
+validation delay therefore cannot consume the minimum replay window. This does not extend
+the execution's authorization or workflow deadline.
 Replay of an existing unexpired legacy record keeps its recorded result and deadline; the new
 minimum is not a migration or an implicit rewrite of old records. Expired legacy records retain
 the existing explicit retention-expired response. Deployments must separately reconcile legacy
