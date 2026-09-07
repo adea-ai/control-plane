@@ -31,7 +31,7 @@ content integrity on every write. Retrieval returns an isolated copy suitable fo
 and reproduction. The plan contains only normalized references and policy requirements—never raw
 provider, connector, runtime-harness, secret-manager, or user credentials.
 
-## Validation-command replay groundwork
+## Validation-command replay
 
 `ExecutionValidationCommandRepository` defines an atomic first-result command/plan commit.
 The key binds authenticated caller principal, workspace, project, `execution.validate` and
@@ -63,9 +63,25 @@ mismatches. Imports preserve SQLite's record-key prefix and insert PostgreSQL pl
 A real SQLite → PostgreSQL → SQLite round trip retains the command and every exported logical ID
 and record digest. Older importers may reject this added category; this is not live cutover evidence.
 
-Neither repository is yet wired into execution validation: the API's first-result replay behavior
-remains required. The existing reference-only API still recompiles on
-each call, so this groundwork does not close M11's validation replay or authoring reachability gate.
+The validation service now uses this repository in the cloud, Hosted Server and shared
+Local/Hosted Simple compositions. It checks the authenticated caller before looking up a record.
+Identical semantic inputs replay the stored plan without reading profile, state, context or Skill
+inputs and without invoking the compilation clock. A changed payload under the same key returns
+409, even if the caller reuses its declared payload hash. First validation uses a composition-owned
+clock rather than `issuedAt`, and commits the plan and result atomically before returning success.
+Concurrent first calls may compile candidates, but only the winning pair persists.
+
+Response correlation identifies the current request while the stored plan retains its original request
+correlation. Replay reports a historical validation result; it is not fresh authorization to execute
+under a revoked policy or Artifact grant. Execution-time authorization remains a separate gate.
+Calls predating validation-command recording have no recorded validation-command entry; this change
+does not backfill them, and outstanding pre-upgrade retries require rollout consideration.
+
+The Local composition test proves concurrent service calls and replay after a real SQLite close/reopen
+with compilation inputs and the clock unavailable. The HTTP test proves missing-credential rejection,
+stable replay and conflict status. PostgreSQL repository semantics are integration-tested separately;
+a live cloud/Hosted Server API restart matrix is still required. Inline context inputs remain disabled,
+and this does not close the production context-authoring reachability gate.
 
 ## Child execution authority
 

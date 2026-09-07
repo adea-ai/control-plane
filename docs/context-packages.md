@@ -80,8 +80,11 @@ guard separately from the body. The durable validation service rejects a missing
 principal before reading evidence or persisting a plan. This is an explicit composition boundary,
 not credential verification inside the service: non-HTTP callers must supply a principal from their
 own trusted authenticator. The protected HTTP route remains responsible for credential, scope and
-revocation checks. Validation-command replay is still missing; this boundary alone does not make
-inline authoring ready.
+revocation checks. Reference-only validation now records and replays its command/plan pair through
+the durable repository in each composition; see [execution-plan replay](execution-plans.md#validation-command-replay).
+The Local reopen and HTTP tests do not certify the cloud/Hosted API restart matrix. Inline authoring
+still needs authoritative adapters and its supported input path; replay infrastructure alone is not
+proof of that reachability.
 
 `createForCommand` supplies internal authoring replay through an injected
 `ContextAuthoringCommandRepository`. Its scope includes authenticated principal, workspace, project,

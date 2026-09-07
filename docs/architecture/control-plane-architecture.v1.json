@@ -545,7 +545,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "lockVersion": "1.5.2",
       "kind": "package",
       "private": false,
@@ -597,7 +597,7 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": false,
@@ -702,7 +702,7 @@
     {
       "name": "@control-plane/tool-sdk",
       "path": "packages/tool-sdk",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "lockVersion": "1.2.2",
       "kind": "package",
       "private": false,
@@ -1273,7 +1273,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Wire a production RuntimeTransport/activity implementation and concrete discovery/provider ports before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:73b512e434e1feebf407ae1a37083b9f11b903d9246f3902c2a73a8b1efab259"
+      "sourceDigest": "sha256:0846fff142e56d9ace3d0d762f33bc8ee80135a43e44a616782287dee41e62f1"
     },
     {
       "id": "hosted-server",
@@ -1312,7 +1312,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:f257549ce9f598853f4e5da5ed4a40952fd27830952437d423b8127ece807df2"
+      "sourceDigest": "sha256:4ca8f3a91f6c5371c8d02c9d634a9d1b1305106d98f99910e749788573e4945e"
     },
     {
       "id": "hosted-simple",
@@ -1684,13 +1684,22 @@
       "classification": "partially_verified",
       "assessment": "The compiler is called by unit/acceptance fixtures and scripts/certify-m9-cloud.mjs, but no application composition caller was found. The authenticated API resolves existing scoped ContextPackages; it does not compile caller-supplied artifact authorization flags. Current evidence does not establish a supported production authoring path or authoritative upstream artifact lifecycle/permission mapping.",
       "evidence": [
-        { "kind": "test", "path": "packages/context/src/index.test.mjs" },
-        { "kind": "artifact", "path": "scripts/certify-m9-cloud.mjs" },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs"
+        },
+        {
+          "kind": "artifact",
+          "path": "scripts/certify-m9-cloud.mjs"
+        },
         {
           "kind": "artifact",
           "path": "apps/control-api/src/queries/context-package-resolution.service.ts"
         },
-        { "kind": "artifact", "path": "docs/requirements/artifact-storage-source-audit.md" }
+        {
+          "kind": "artifact",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
       ],
       "gap": {
         "issue": 188,

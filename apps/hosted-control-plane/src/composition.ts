@@ -16,6 +16,7 @@ import {
   PostgresContextPackageRepository,
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
+  PostgresExecutionValidationCommandRepository,
   PostgresExecutionRepository,
   PostgresInteractionRepository,
   PostgresProjectStateRepository,
@@ -180,7 +181,7 @@ export class HostedServerControlPlaneComposition {
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: COMPONENT_VERSION,
       contextPackages,
-      plans,
+      commands: new PostgresExecutionValidationCommandRepository(this.connection.database),
       profiles: catalog,
       projectStates,
       skills: catalog,

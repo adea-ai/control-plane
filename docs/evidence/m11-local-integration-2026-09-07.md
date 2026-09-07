@@ -362,3 +362,21 @@ The full local lint/type/format/test chain passed (776 unit tests; 87.14% line a
 coverage), as did all 28 PostgreSQL integration tests and the existing recovery drills. The drills
 still do not seed validation commands. This closes the bounded record-portability check, not live
 cutover, production API replay or full milestone acceptance. No remote infrastructure was changed.
+
+## Validation service replay wiring
+
+The reference-only validation service now uses the atomic command repository in managed cloud,
+Hosted Server and shared Local/Hosted Simple compositions. It verifies the authenticated principal
+before lookup, computes semantic input identity itself, uses a trusted compilation clock for new
+records, replays the recorded plan without rereading compilation inputs, and returns 409 for changed
+inputs under the same key. The HTTP test covers replay, missing credentials and conflicts. A real
+Local SQLite test covers eight concurrent service calls, one stored command/plan pair and replay
+from a reconstructed composition after closing/reopening the database with inputs/clock unavailable.
+
+The full lint/type/format/test chain passed with 777 unit tests and 87.15% line / 83.80% function
+coverage. Architecture evidence was regenerated for the reviewed composition changes; it also
+picked up the already-adopted SDK patch versions, without changing readiness classifications.
+No persistent server or agent was started for these tests, and their temporary SQLite files were
+removed. No remote infrastructure was changed. Cloud/Hosted API restart certification, historical
+validation retry rollout handling, execution-time revocation and inline authoring remain separate
+acceptance gates; replay is not a fresh grant of execution authority.

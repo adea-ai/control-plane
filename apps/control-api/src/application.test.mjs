@@ -444,23 +444,34 @@ describe('Control API', () => {
     const skill = executionSkill()
     const persistedPlans = []
     let evidenceReads = 0
+    let allowEvidenceReads = true
+    let clockReads = 0
+    const commandRecords = new Map()
     const readEvidence = (value) => {
+      if (!allowEvidenceReads) throw new Error('UNEXPECTED_REPLAY_EVIDENCE_READ')
       evidenceReads += 1
       return globalThis.structuredClone(value)
     }
     const service = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
+      now: () =>
+        new Date(Date.parse('2026-09-07T12:00:00.000Z') + clockReads++ * 1000).toISOString(),
       contextPackages: {
         get: async () => readEvidence(contextPackage),
       },
-      plans: {
-        get: async () => undefined,
-        put: async (plan) => {
-          persistedPlans.push(globalThis.structuredClone(plan))
-          return {
-            executionPlanId: plan.executionPlanId,
-            contentDigest: plan.contentDigest,
+      commands: {
+        get: async (scope) => globalThis.structuredClone(commandRecords.get(JSON.stringify(scope))),
+        commit: async (record, plan) => {
+          const key = JSON.stringify(record.scope)
+          const existing = commandRecords.get(key)
+          if (existing) {
+            if (existing.payloadHash !== record.payloadHash)
+              throw new Error('EXECUTION_VALIDATION_COMMAND_CONFLICT')
+            return globalThis.structuredClone(existing)
           }
+          persistedPlans.push(globalThis.structuredClone(plan))
+          commandRecords.set(key, globalThis.structuredClone(record))
+          return record
         },
       },
       profiles: { getAgentProfileVersion: async () => readEvidence(profile) },
@@ -488,6 +499,9 @@ describe('Control API', () => {
     expect(persistedPlans).toHaveLength(0)
     expect(evidenceReads).toBe(0)
     const response = await service.validate(request, request.caller.servicePrincipalId)
+    expect(clockReads).toBe(1)
+    expect(persistedPlans[0].compiledAt).toBe('2026-09-07T12:00:00.000Z')
+    allowEvidenceReads = false
     const application = await createApplication(
       [],
       policyAuthenticator({
@@ -516,7 +530,27 @@ describe('Control API', () => {
     })
     expect(httpResponse.statusCode).toBe(200)
     expect(httpResponse.json().data.executionPlan).toEqual(response.data.executionPlan)
-    expect(persistedPlans).toHaveLength(2)
+    expect(persistedPlans).toHaveLength(1)
+    expect(evidenceReads).toBe(4)
+    expect(clockReads).toBe(1)
+    const retried = await service.validate(
+      {
+        ...request,
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        issuedAt: '2026-09-08T12:00:00.000Z',
+        payloadHash: '0'.repeat(64),
+      },
+      request.caller.servicePrincipalId
+    )
+    expect(retried.data.executionPlan).toEqual(response.data.executionPlan)
+    expect(retried.requestId).toBe('req_01ARZ3NDEKTSV4RRFFQ69G5FAV')
+    expect(clockReads).toBe(1)
+    const deniedReplay = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      payload: request,
+    })
+    expect(deniedReplay.statusCode).toBe(401)
 
     await expect(
       service.validate(
@@ -529,7 +563,41 @@ describe('Control API', () => {
         },
         request.caller.servicePrincipalId
       )
+    ).rejects.toMatchObject({ status: 409 })
+    const conflict = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      headers: { authorization: 'Bearer valid-agent-hq-token' },
+      payload: {
+        ...request,
+        payload: { ...request.payload, outputContractRef: 'contract://different/v1' },
+      },
+    })
+    expect(conflict.statusCode).toBe(409)
+    allowEvidenceReads = true
+    await expect(
+      service.validate(
+        {
+          ...request,
+          idempotencyKey: 'validation-rejection-0001',
+          payload: {
+            ...request.payload,
+            policySnapshot: { ...request.payload.policySnapshot, revision: 999 },
+          },
+        },
+        request.caller.servicePrincipalId
+      )
     ).rejects.toMatchObject({ status: 422 })
+    const competing = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        service.validate(
+          { ...request, idempotencyKey: 'validation-concurrent-0001' },
+          request.caller.servicePrincipalId
+        )
+      )
+    )
+    for (const result of competing)
+      expect(result.data.executionPlan).toEqual(competing[0].data.executionPlan)
     expect(persistedPlans).toHaveLength(2)
   })
 

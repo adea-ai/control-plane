@@ -1,14 +1,17 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common'
+import { isDeepStrictEqual } from 'node:util'
 import type { ContextPackageRepository } from '@control-plane/context'
 import {
   ExecutionRequestValidationRequestSchema,
   ExecutionRequestValidationResponseSchema,
   type ExecutionRequestValidationResponse,
+  type ExecutionRequestValidationRequest,
 } from '@control-plane/contracts'
 import {
   ProjectStateSchema,
@@ -19,7 +22,10 @@ import {
 import {
   ExecutionPlanCompiler,
   ExecutionPlanError,
-  type ExecutionPlanRepository,
+  ExecutionValidationCommandRecordSchema,
+  executionValidationPayloadHash,
+  type ExecutionValidationCommandRepository,
+  type ExecutionValidationCommandScope,
 } from '@control-plane/execution-plan'
 
 export const EXECUTION_VALIDATION_SERVICE = Symbol('EXECUTION_VALIDATION_SERVICE')
@@ -34,7 +40,8 @@ export interface ExecutionValidationService {
 export interface DurableExecutionValidationServiceOptions {
   readonly compilerVersion: string
   readonly contextPackages: ContextPackageRepository
-  readonly plans: ExecutionPlanRepository
+  readonly commands: ExecutionValidationCommandRepository
+  readonly now?: () => string
   readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
   readonly projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
   readonly skills: Pick<SkillRepository, 'getSkillVersion'>
@@ -60,6 +67,16 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     }
     const projectId = request.projectId
     if (projectId === undefined) reject()
+    const scope: ExecutionValidationCommandScope = {
+      callerPrincipalId,
+      workspaceId: request.workspaceId,
+      projectId,
+      operation: request.operation,
+      idempotencyKey: request.idempotencyKey,
+    }
+    const payloadHash = executionValidationPayloadHash(request)
+    const existing = await this.options.commands.get(scope)
+    if (existing) return replayResponse(request, scope, payloadHash, existing)
 
     const [profile, projectState, contextPackage, ...skills] = await Promise.all([
       this.options.profiles.getAgentProfileVersion(request.payload.profileVersionId),
@@ -100,6 +117,7 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     }
 
     try {
+      const compiledAt = (this.options.now ?? (() => new Date().toISOString()))()
       const plan = this.#compiler.compile({
         correlation: {
           workspaceId: request.workspaceId,
@@ -119,20 +137,55 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
           minimumSupport: 'supported' as const,
         })),
         outputContract: { contractRef: request.payload.outputContractRef },
-        compiledAt: request.issuedAt,
+        compiledAt,
       })
-      const executionPlan = await this.options.plans.put(plan)
-      return ExecutionRequestValidationResponseSchema.parse({
-        contractVersion: request.contractVersion,
-        requestId: request.requestId,
-        correlation: request.correlation,
-        data: { valid: true, executionPlan },
-      })
+      const record = await this.options.commands.commit(
+        {
+          scope,
+          commandId: request.commandId,
+          requestId: request.requestId,
+          payloadHash,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+          },
+          recordedAt: compiledAt,
+        },
+        plan
+      )
+      return replayResponse(request, scope, payloadHash, record)
     } catch (error) {
       if (error instanceof ExecutionPlanError) reject()
+      if (error instanceof Error && error.message === 'EXECUTION_VALIDATION_COMMAND_CONFLICT')
+        conflict()
       throw error
     }
   }
+}
+
+function replayResponse(
+  request: ExecutionRequestValidationRequest,
+  scope: ExecutionValidationCommandScope,
+  payloadHash: string,
+  input: unknown
+): ExecutionRequestValidationResponse {
+  const record = ExecutionValidationCommandRecordSchema.parse(input)
+  if (!isDeepStrictEqual(record.scope, scope))
+    throw new Error('EXECUTION_VALIDATION_COMMAND_SCOPE_MISMATCH')
+  if (record.payloadHash !== payloadHash) conflict()
+  return ExecutionRequestValidationResponseSchema.parse({
+    contractVersion: request.contractVersion,
+    requestId: request.requestId,
+    correlation: request.correlation,
+    data: { valid: true, executionPlan: record.executionPlan },
+  })
+}
+
+function conflict(): never {
+  throw new ConflictException({
+    code: 'EXECUTION_VALIDATION_COMMAND_CONFLICT',
+    message: 'Idempotency key was already used with different validation inputs',
+  })
 }
 
 @Injectable()

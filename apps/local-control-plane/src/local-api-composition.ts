@@ -14,6 +14,7 @@ import {
   SqliteContextPackageRepository,
   SqliteExecutionEventRepository,
   SqliteExecutionPlanRepository,
+  SqliteExecutionValidationCommandRepository,
   SqliteExecutionRepository,
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
@@ -73,7 +74,7 @@ export class LocalControlApiComposition {
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
       contextPackages: this.contextPackages,
-      plans: this.executionPlans,
+      commands: new SqliteExecutionValidationCommandRepository(persistence),
       profiles: this.catalog,
       projectStates: this.projectStates,
       skills: this.catalog,

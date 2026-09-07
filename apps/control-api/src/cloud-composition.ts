@@ -6,6 +6,7 @@ import {
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
   PostgresExecutionPlanRepository,
+  PostgresExecutionValidationCommandRepository,
   PostgresProjectStateRepository,
   PostgresRuntimeDiscoveryRepository,
   type PostgresConnection,
@@ -116,7 +117,7 @@ export function createManagedCloudControlApiComposition(
     executionValidationService: new DurableExecutionValidationService({
       compilerVersion: executionPlanCompilerVersion,
       contextPackages,
-      plans,
+      commands: new PostgresExecutionValidationCommandRepository(connection.database),
       profiles: catalog,
       projectStates,
       skills: catalog,
