@@ -44,31 +44,31 @@
     {
       "id": "control-plane-prd",
       "title": "Control Plane PRD",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0",
+      "uri": "https://docs.google.com/document/d/1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0/edit",
+      "updatedAt": "2026-08-28T07:15:36.403Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "cortana-prd",
       "title": "Cortana PRD",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY",
+      "uri": "https://docs.google.com/document/d/1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY/edit",
+      "updatedAt": "2026-08-28T04:57:08.721Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
@@ -110,61 +110,61 @@
     {
       "id": "runtime-node-spec",
       "title": "RuntimeNode & Desktop Protocol Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
+      "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
+      "updatedAt": "2026-08-28T07:21:06.166Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "execution-consistency-spec",
       "title": "Execution Consistency & Event Delivery Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
+      "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
+      "updatedAt": "2026-08-28T07:21:17.702Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "artifact-storage-spec",
       "title": "Artifact Storage Specification",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I",
+      "uri": "https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit",
+      "updatedAt": "2026-08-28T07:05:15.684Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
       "id": "security-trust-model",
       "title": "Security & Trust Model",
-      "provider": "unavailable",
-      "sourceId": "not-indexed-2026-08-30",
-      "uri": "https://github.com/adea-ai/control-plane/issues/186",
-      "updatedAt": "unavailable; audited 2026-08-30",
-      "retrievalStatus": "missing",
+      "provider": "google-drive",
+      "sourceId": "14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE",
+      "uri": "https://docs.google.com/document/d/14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE/edit",
+      "updatedAt": "2026-08-28T07:20:45.361Z",
+      "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Restore canonical source indexing, record its stable revision, and replace the retrieval placeholder with extracted atomic requirements."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
@@ -286,6 +286,190 @@
     }
   ],
   "requirements": [
+    {
+      "id": "CP-RNODE-001",
+      "sourceId": "runtime-node-spec",
+      "heading": "Ownership Model",
+      "requirement": "RuntimeNode registration, workspace authorization, pairing and key lifecycle remain Agent HQ-owned; Control Plane owns runtime connections, routing and normalized execution state.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-002",
+      "sourceId": "runtime-node-spec",
+      "heading": "Device Credential Model; Runtime Command Channel",
+      "requirement": "Remote node authentication requires a short-lived node-scoped credential and Ed25519 possession proof, with authorization and revocation revalidated on connection and periodically.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-003",
+      "sourceId": "runtime-node-spec",
+      "heading": "Runtime Command Channel",
+      "requirement": "Co-located runtime execution uses DirectLocalRuntimeTransport without a gateway or cloud dependency; remote relay and non-co-located Runtime Gateway are separate transports.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-004",
+      "sourceId": "runtime-node-spec",
+      "heading": "Delivery and Replay Semantics",
+      "requirement": "Remote commands expire within 24 hours and their owning interaction lifetime; ordinary gateway frames are capped at 1 MiB and terminal command records are retained for at least seven days.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "contract/schema",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-005",
+      "sourceId": "runtime-node-spec",
+      "heading": "Delivery and Replay Semantics",
+      "requirement": "Redelivery preserves one logical effect per command/idempotency key; ambiguous non-idempotent outcomes require reconciliation rather than automatic retry.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-006",
+      "sourceId": "runtime-node-spec",
+      "heading": "Offline and Reconnect Behavior",
+      "requirement": "Restart and reconnect reconcile active and recent terminal commands from durable state; stale inventory cannot silently reassign local-only execution or broaden provider scope.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-protocol",
+      "lane": "end-to-end",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-protocol",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-007",
+      "sourceId": "runtime-node-spec",
+      "heading": "Optional Local ContextProvider Capability",
+      "requirement": "Pairing, runtime discovery and ordinary execution remain valid with no ContextProvider; retrieval is read-only and provider writes require separately approved scope and idempotency.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec",
+      "heading": "LocalProjectGrant",
+      "requirement": "Cloud commands reference opaque grants rather than absolute paths; the node enforces workspace/node scope and root containment after symlink resolution.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [188, 190, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
     {
       "id": "PI-CP-001",
       "sourceId": "project-index",
@@ -4003,6 +4187,38 @@
     }
   ],
   "requirementInventory": [
+    {
+      "id": "CP-RNODE-001",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-002",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-003",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-004",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-005",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-006",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-007",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec"
+    },
     {
       "id": "PI-CP-001",
       "sourceId": "project-index"

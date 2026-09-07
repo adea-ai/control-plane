@@ -116,9 +116,8 @@ describe('M11.1 requirements ledger', () => {
     ).toContain('priorIssueInventory and priorMilestoneAudits must contain the same issue IDs')
 
     const missingSourceOwnership = clone(ledger)
-    delete missingSourceOwnership.sources.find(
-      ({ retrievalStatus }) => retrievalStatus === 'missing'
-    ).gap
+    missingSourceOwnership.sources[0].retrievalStatus = 'missing'
+    delete missingSourceOwnership.sources[0].gap
     expect(
       (
         await validateRequirementsLedger(missingSourceOwnership, {
