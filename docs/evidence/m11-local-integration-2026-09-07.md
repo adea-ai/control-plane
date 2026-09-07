@@ -31,7 +31,7 @@ that expected rejection is not an observed authentication failure for valid requ
 
 ## Remaining acceptance
 
-No PostgreSQL integration, live Hosted Compose, Railway/Neon/R2, fresh Linux VPS, load/soak,
+At the initial checkpoint no PostgreSQL integration, live Hosted Compose, Railway/Neon/R2, fresh Linux VPS, load/soak,
 adversarial live-provider, human calibration or independent final audit was run on this
 combined candidate. Earlier branch-specific evidence must not be relabeled as exact-candidate
 evidence. The existing requirements ledger candidate remains a historical audit record, not
@@ -45,3 +45,23 @@ legacy remediation remain separate from the accepted-command retention boundary 
 The local integration worktree is intentionally retained for subsequent candidate testing.
 No new persistent server or database container was created by this checkpoint. Existing
 unrelated containers were left untouched.
+
+## PostgreSQL follow-up
+
+At `9a76a046e375f6c18fc9b4870f917655e2524954` (only this report differs from the
+validated code candidate), an isolated PostgreSQL 18.3 Compose project ran on an
+automatically allocated loopback port with repository-owned local fixture roles.
+The direct database suite passed 22 tests. `bun run test:integration` then passed
+the 22 database tests, one shared-harness isolation test and one profile-migration
+test, with 33 successful build/integration tasks. The backup/restore drill preserved
+the asserted evaluation, execution, event and usage evidence.
+
+The migration test covers its named catalog subset; it is not full product-data
+migration certification. The integration runner explicitly skipped the disruption
+drill because the container was already running when that runner began. That skip
+is not a pass, and no database-process interruption is claimed in this follow-up.
+
+Compose project `m11-integration-db` was removed with its container, network and
+volume; label-filtered container and volume inventories were empty afterward.
+No remote credentials or Neon permission changes were used. Cloud/VPS, full recovery,
+physical retention and independent final acceptance remain open.
