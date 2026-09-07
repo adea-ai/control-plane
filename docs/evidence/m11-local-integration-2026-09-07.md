@@ -288,3 +288,19 @@ This does not establish production reachability, a product Artifact adapter,
 optional-provider enrichment, entrypoint authentication/idempotency or PostgreSQL
 authoring conformance. Those gates remain open under
 `COMPAT-CONTEXT-COMPILER-REACHABILITY`; no all-profile completion is claimed.
+
+## Context authoring PostgreSQL recovery follow-up
+
+The recovery scripts now seed an atomic authoring command/package pair in addition to their
+existing evidence. The service-restart drill compares the exact record and full package through
+application repositories before and after a real PostgreSQL stop/start. The backup/restore drill
+compares both JSON values and validates package integrity in a separate restored database using
+admin SQL. Restore excludes privileges, so this is data recovery evidence, not restored application
+permissions or end-to-end execution-validation replay evidence.
+
+The integration runner passed on 2026-09-07, including its integration suites, connection-loss
+check and both extended recovery drills. The canonical lint, type-check, format-check and test
+chain also exited successfully (773 unit tests; 87.28% line and 83.85% function coverage).
+Disposable project `m11-authoring-recovery-20260907`, its PostgreSQL volume and network were
+removed; loopback port 55039 was verified closed. No new agents or persistent servers were started.
+The candidate remains local-only and full M11 acceptance remains unproven.

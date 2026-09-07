@@ -3,10 +3,12 @@ import process from 'node:process'
 import {
   executionEvents,
   executions,
+  PostgresContextAuthoringCommandRepository,
   PostgresEvaluationRepository,
   usageLedgerEntries,
 } from '../packages/database/src/index.ts'
 import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
+import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-restore-drill'
 const expectedDigest = `sha256:${'d'.repeat(64)}`
@@ -37,6 +39,11 @@ const source = await createIsolatedPostgres({ migrate: true })
 const target = await createIsolatedPostgres({ migrate: false })
 
 try {
+  const authoring = contextAuthoringRecoveryFixture('restore')
+  await new PostgresContextAuthoringCommandRepository(source.application).commit(
+    authoring.record,
+    authoring.package_
+  )
   const repository = new PostgresEvaluationRepository(source.application)
   await repository.saveRun(recoveryEvidence())
   await source.application.insert(executions).values({
@@ -151,8 +158,28 @@ try {
   ) {
     throw new Error('PostgreSQL restore drill lost immutable recovery evidence')
   }
+  // Restore excludes privileges: verify stored state as admin, not application replay readiness.
+  const restoredAuthoring = JSON.parse(
+    String(
+      dockerPostgres([
+        'psql',
+        '--username',
+        'control_plane_admin',
+        '--dbname',
+        target.name,
+        '--tuples-only',
+        '--no-align',
+        '--command',
+        `SELECT json_build_object('record', c.record, 'package', p.context_package)
+         FROM context_authoring_commands c
+         JOIN context_packages p ON p.context_package_id = c.context_package_id
+         WHERE c.command_key = '${authoring.commandKey}'`,
+      ])
+    ).trim()
+  )
+  authoring.assertRecovered(restoredAuthoring.record, restoredAuthoring.package)
   console.log(
-    'PostgreSQL backup and restore drill preserved immutable evaluation, execution, event, and usage evidence.'
+    'PostgreSQL backup and restore drill preserved immutable evaluation, execution, event, usage, and exact context authoring records/packages.'
   )
 } finally {
   await Promise.allSettled([source.dispose(), target.dispose()])

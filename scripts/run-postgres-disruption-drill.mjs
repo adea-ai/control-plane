@@ -1,7 +1,12 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
-import { PostgresEvaluationRepository } from '../packages/database/src/index.ts'
+import {
+  PostgresContextAuthoringCommandRepository,
+  PostgresContextPackageRepository,
+  PostgresEvaluationRepository,
+} from '../packages/database/src/index.ts'
 import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
+import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-disruption-drill'
 const expectedDigest = `sha256:${'c'.repeat(64)}`
@@ -55,6 +60,14 @@ const repository = new PostgresEvaluationRepository(database.application)
 let serviceStopped = false
 
 try {
+  const authoring = contextAuthoringRecoveryFixture('disruption')
+  const commands = new PostgresContextAuthoringCommandRepository(database.application)
+  const packages = new PostgresContextPackageRepository(database.application)
+  await commands.commit(authoring.record, authoring.package_)
+  authoring.assertRecovered(
+    await commands.get(authoring.record.scope),
+    await packages.get(authoring.record.contextPackage)
+  )
   await repository.saveRun(recoveryEvidence())
   if ((await repository.getRun(expectedRunId))?.evalRunId !== expectedRunId) {
     throw new Error('DISRUPTION_MARKER_MISSING')
@@ -70,12 +83,18 @@ try {
   await waitForPostgres()
   serviceStopped = false
   const restored = await repository.getRun(expectedRunId)
+  authoring.assertRecovered(
+    await commands.get(authoring.record.scope),
+    await packages.get(authoring.record.contextPackage)
+  )
   if (restored?.configuration.executionPlanDigest !== expectedDigest) {
     throw new Error('DISRUPTION_EVIDENCE_LOST')
   }
   const recoverySeconds = (Date.now() - disruptionStartedAt) / 1_000
   if (recoverySeconds > maximumRecoverySeconds) throw new Error('POSTGRES_RTO_EXCEEDED')
-  console.log('PostgreSQL service-restart failover drill preserved committed evidence.')
+  console.log(
+    'PostgreSQL service-restart failover drill preserved committed evidence and exact context authoring records/packages.'
+  )
 } finally {
   if (serviceStopped) {
     docker(['up', '-d', 'postgres'])

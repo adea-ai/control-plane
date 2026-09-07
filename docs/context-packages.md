@@ -115,9 +115,13 @@ concurrent authoring commits through the fixture's four-connection pool, duplica
 handling, principal isolation, repository reconstruction and injected transaction rollback. This
 includes review-requested corruption checks for workspace, project, package-ID and stored-principal
 scope metadata: each fails closed on read and is restored within the isolated test database. This
-authoring test is not a process-restart test. The suite's separate connection-loss, service-restart
-and backup/restore drills also passed for their existing evaluation/execution/event/usage evidence;
-they do not yet certify authoring-command recovery. The disposable Docker resources were removed.
+authoring test is not a process-restart test. The separate service-restart drill now also verifies
+the exact committed authoring record and complete package through application repositories before
+and after PostgreSQL stops/restarts. The backup/restore drill compares both restored JSON values
+and checks package integrity after restoring into a different isolated database. Because that drill
+excludes privileges, its admin SQL checks establish stored-data recovery, not application replay
+readiness or restored role grants. Both drills passed on 2026-09-07; their disposable Docker
+container, volume and network were removed and the loopback port was verified closed.
 
 The SQLite regression exercises eight concurrent calls with differing trusted timestamps, confirms
 exactly one stored package/command, reopens the file and replays without invoking authorization or
