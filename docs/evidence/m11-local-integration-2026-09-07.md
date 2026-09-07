@@ -117,3 +117,18 @@ This proves the exercised local Hosted Server startup/signing/recreation path. I
 prove full representative execution, remote runtime identity integration, Hosted Simple,
 fresh VPS deployment, cross-product relay or managed-cloud acceptance. The local temporary
 harness was `/tmp/m11-hosted-signing-live.mjs`; it is not a versioned release command.
+
+## Live Hosted Simple startup follow-up
+
+At `8522e32` (code unchanged from the combined candidate), isolated Compose project
+`m11-integration-simple-83214` built and started the Simple image with one application
+container and its embedded Restate runtime. No separate PostgreSQL or Runtime Gateway
+service was started. Readiness returned 200 and the SQLite file existed on the bind-mounted
+data path. Force-recreation against the same directory passed those checks again.
+
+This checks startup/recreation and file presence, not recovery of an accepted execution,
+exactly-once effects, graceful shutdown or fresh VPS behavior. The temporary harness was
+`/tmp/m11-hosted-simple-live.mjs`. It exited zero and removed the container, network and
+temporary application data, including local credentials. Follow-up checks found no container
+with that project label and confirmed the data directory absent. Test image
+`control-plane/m11-simple-test:83214` is intentionally retained for inspection.
