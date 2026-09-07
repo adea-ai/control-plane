@@ -166,6 +166,46 @@ describe('Agent HQ Control API contracts', () => {
     ).toEqual(ControlApiFixtures.executionValidation.response)
   })
 
+  test('accepts exactly one context source and rejects caller authority in inline inputs', () => {
+    const base = ControlApiFixtures.executionValidation.request
+    const contextInputs = {
+      objective: 'Complete the task',
+      candidates: [],
+      successCriteria: ['Done'],
+      returnContract: { contractRef: base.payload.outputContractRef },
+      budgets: { maximumBytes: 10000, maximumTokens: 1000 },
+    }
+    const inline = {
+      ...base,
+      payload: { ...base.payload, contextPackage: undefined, contextInputs },
+    }
+    expect(ExecutionRequestValidationRequestSchema.safeParse(inline).success).toBe(true)
+    expect(
+      ExecutionRequestValidationRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, contextInputs },
+      }).success
+    ).toBe(false)
+    expect(
+      ExecutionRequestValidationRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, contextPackage: undefined },
+      }).success
+    ).toBe(false)
+    for (const extra of [
+      { authorized: true },
+      { permissions: ['admin'] },
+      { compiledAt: base.issuedAt },
+    ]) {
+      expect(
+        ExecutionRequestValidationRequestSchema.safeParse({
+          ...inline,
+          payload: { ...inline.payload, contextInputs: { ...contextInputs, ...extra } },
+        }).success
+      ).toBe(false)
+    }
+  })
+
   test('accepts execution commands with durable replay and lifecycle responses', () => {
     expect(
       ExecutionAcceptanceRequestSchema.parse(ControlApiFixtures.executionAcceptance.request)

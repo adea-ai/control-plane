@@ -599,6 +599,70 @@ describe('Control API', () => {
     for (const result of competing)
       expect(result.data.executionPlan).toEqual(competing[0].data.executionPlan)
     expect(persistedPlans).toHaveLength(2)
+    const inline = {
+      ...request,
+      idempotencyKey: 'inline-validation-0001',
+      payload: {
+        ...request.payload,
+        contextPackage: undefined,
+        contextInputs: {
+          objective: 'Complete the task',
+          candidates: [],
+          successCriteria: ['Done'],
+          returnContract: { contractRef: request.payload.outputContractRef },
+          budgets: { maximumBytes: 10000, maximumTokens: 1000 },
+        },
+      },
+    }
+    await expect(service.validate(inline, request.caller.servicePrincipalId)).rejects.toMatchObject(
+      { status: 503 }
+    )
+    const authoringCalls = []
+    service.options.contextAuthoring = {
+      createForCommand: async (...args) => {
+        authoringCalls.push(args)
+        return {
+          contextPackageId: contextPackage.contextPackageId,
+          contentDigest: contextPackage.contentDigest,
+        }
+      },
+    }
+    const inlineResponse = await application.inject({
+      method: 'POST',
+      url: '/v1/executions/validate',
+      headers: { authorization: 'Bearer valid-agent-hq-token' },
+      payload: inline,
+    })
+    expect(inlineResponse.statusCode).toBe(200)
+    expect(authoringCalls).toEqual([
+      [
+        request.caller.servicePrincipalId,
+        inline.idempotencyKey,
+        {
+          ...inline.payload.contextInputs,
+          workspaceId: request.workspaceId,
+          projectId: request.projectId,
+          projectStateRevision: request.payload.projectState.revision,
+        },
+      ],
+    ])
+    allowEvidenceReads = false
+    service.options.contextAuthoring = undefined
+    const inlineReplay = await service.validate(inline, request.caller.servicePrincipalId)
+    expect(inlineReplay.data.executionPlan).toEqual(inlineResponse.json().data.executionPlan)
+    expect(authoringCalls).toHaveLength(1)
+    await expect(
+      service.validate(
+        {
+          ...inline,
+          payload: {
+            ...inline.payload,
+            contextInputs: { ...inline.payload.contextInputs, objective: 'Changed' },
+          },
+        },
+        request.caller.servicePrincipalId
+      )
+    ).rejects.toMatchObject({ status: 409 })
   })
 
   test('rejects malformed and unauthorized execution validation requests before composition', async () => {

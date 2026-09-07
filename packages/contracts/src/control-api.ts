@@ -271,20 +271,30 @@ export const RuntimeListResponseSchema = successResponse(
   z.object({ runtimes: z.array(RuntimeReadModelSchema).max(1_000) })
 )
 
+const ExecutionValidationPayloadSchema = z.object({
+  taskId: IdentifierSchemas.taskId,
+  agentId: IdentifierSchemas.agentId,
+  profileVersionId: IdentifierSchemas.profileVersionId,
+  skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
+  projectState: ProjectStateReferenceSchema,
+  policySnapshot: PolicySnapshotPublicReferenceSchema,
+  runtimeRequirements: z.array(CapabilityNameSchema).max(128),
+  outputContractRef: z.string().min(1).max(512),
+})
+
 export const ExecutionRequestValidationRequestSchema = CommandContextSchema.extend({
   operation: z.literal('execution.validate'),
   issuedAt: TimestampSchema,
-  payload: z.object({
-    taskId: IdentifierSchemas.taskId,
-    agentId: IdentifierSchemas.agentId,
-    profileVersionId: IdentifierSchemas.profileVersionId,
-    skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
-    projectState: ProjectStateReferenceSchema,
-    contextPackage: ContextPackagePublicReferenceSchema,
-    policySnapshot: PolicySnapshotPublicReferenceSchema,
-    runtimeRequirements: z.array(CapabilityNameSchema).max(128),
-    outputContractRef: z.string().min(1).max(512),
-  }),
+  payload: z.union([
+    ExecutionValidationPayloadSchema.extend({
+      contextPackage: ContextPackagePublicReferenceSchema,
+      contextInputs: z.never().optional(),
+    }),
+    ExecutionValidationPayloadSchema.extend({
+      contextPackage: z.never().optional(),
+      contextInputs: ContextAuthoringInputsSchema,
+    }),
+  ]),
 }).superRefine((request, context) => {
   if (
     request.payload.projectState.workspaceId !== request.workspaceId ||

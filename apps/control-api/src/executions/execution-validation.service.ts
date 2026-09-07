@@ -6,7 +6,11 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { isDeepStrictEqual } from 'node:util'
-import type { ContextPackageRepository } from '@control-plane/context'
+import {
+  ContextCompilationError,
+  type ContextPackageAuthoringService,
+  type ContextPackageRepository,
+} from '@control-plane/context'
 import {
   ExecutionRequestValidationRequestSchema,
   ExecutionRequestValidationResponseSchema,
@@ -41,6 +45,7 @@ export interface DurableExecutionValidationServiceOptions {
   readonly compilerVersion: string
   readonly contextPackages: ContextPackageRepository
   readonly commands: ExecutionValidationCommandRepository
+  readonly contextAuthoring?: Pick<ContextPackageAuthoringService, 'createForCommand'>
   readonly now?: () => string
   readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
   readonly projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
@@ -78,33 +83,27 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     const existing = await this.options.commands.get(scope)
     if (existing) return replayResponse(request, scope, payloadHash, existing)
 
-    const [profile, projectState, contextPackage, ...skills] = await Promise.all([
+    if (request.payload.contextInputs && !this.options.contextAuthoring) {
+      throw new ServiceUnavailableException({
+        code: 'CONTEXT_AUTHORING_NOT_CONFIGURED',
+        message: 'Context input authoring is unavailable',
+      })
+    }
+    const [profile, projectState, ...skills] = await Promise.all([
       this.options.profiles.getAgentProfileVersion(request.payload.profileVersionId),
       this.options.projectStates.getAtRevision(
         request.workspaceId,
         projectId,
         request.payload.projectState.revision
       ),
-      this.options.contextPackages.get({
-        contextPackageId: request.payload.contextPackage.contextPackageId,
-        contentDigest: request.payload.contextPackage.contentDigest,
-      }),
       ...request.payload.skillVersionIds.map((skillVersionId) =>
         this.options.skills.getSkillVersion(skillVersionId)
       ),
     ])
-    if (!profile || !projectState || !contextPackage || skills.some((skill) => !skill)) reject()
+    if (!profile || !projectState || skills.some((skill) => !skill)) reject()
 
     const state = ProjectStateSchema.parse(projectState)
-    if (
-      state.workspaceId !== request.workspaceId ||
-      state.projectId !== projectId ||
-      contextPackage.projectState.workspaceId !== request.workspaceId ||
-      contextPackage.projectState.projectId !== projectId ||
-      contextPackage.projectState.revision !== state.revision ||
-      contextPackage.schemaVersion !== request.payload.contextPackage.schemaVersion ||
-      contextPackage.compiler.version !== request.payload.contextPackage.compilerVersion
-    ) {
+    if (state.workspaceId !== request.workspaceId || state.projectId !== projectId) {
       reject()
     }
     const policy = profile.definition.executionConstraints.policySnapshot
@@ -117,6 +116,29 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     }
 
     try {
+      const reference =
+        request.payload.contextPackage ??
+        (await this.options.contextAuthoring!.createForCommand(
+          callerPrincipalId,
+          request.idempotencyKey,
+          {
+            ...request.payload.contextInputs,
+            workspaceId: request.workspaceId,
+            projectId,
+            projectStateRevision: request.payload.projectState.revision,
+          }
+        ))
+      const contextPackage = await this.options.contextPackages.get(reference)
+      if (
+        !contextPackage ||
+        contextPackage.projectState.workspaceId !== request.workspaceId ||
+        contextPackage.projectState.projectId !== projectId ||
+        contextPackage.projectState.revision !== state.revision ||
+        (request.payload.contextPackage &&
+          (contextPackage.schemaVersion !== request.payload.contextPackage.schemaVersion ||
+            contextPackage.compiler.version !== request.payload.contextPackage.compilerVersion))
+      )
+        reject()
       const compiledAt = (this.options.now ?? (() => new Date().toISOString()))()
       const plan = this.#compiler.compile({
         correlation: {
@@ -155,8 +177,13 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       )
       return replayResponse(request, scope, payloadHash, record)
     } catch (error) {
-      if (error instanceof ExecutionPlanError) reject()
-      if (error instanceof Error && error.message === 'EXECUTION_VALIDATION_COMMAND_CONFLICT')
+      if (error instanceof ExecutionPlanError || error instanceof ContextCompilationError) reject()
+      if (
+        error instanceof Error &&
+        ['EXECUTION_VALIDATION_COMMAND_CONFLICT', 'CONTEXT_AUTHORING_COMMAND_CONFLICT'].includes(
+          error.message
+        )
+      )
         conflict()
       throw error
     }

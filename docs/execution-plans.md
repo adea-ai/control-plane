@@ -87,8 +87,9 @@ signed service credentials through HTTP injection: eight requests persist one co
 then replay succeeds after closing and recreating the application and connection with compilation
 inputs unavailable. Changed inputs return 409; invalid and revoked credentials return 401 even for
 recorded requests. This is in-process reconstruction, not an OS process crash or deployed restart;
-a live cloud/Hosted Server API restart matrix is still required. Inline context inputs remain disabled,
-and this does not close the production context-authoring reachability gate.
+a live cloud/Hosted Server API restart matrix is still required. Inline context inputs are supported
+by the contract and validation service when an authoring service is injected; missing composition
+returns 503. The production context-authoring authority and entrypoint reachability gate remains open.
 
 ## Child execution authority
 

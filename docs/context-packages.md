@@ -69,11 +69,14 @@ acceptance and the entrypoint's authentication/idempotency contract remain requi
 context-authoring reachability gap can close. Calling the service with a fixture is not proof that a
 shipped application exposes a supported authoring path.
 
-The canonical API specification permits context inputs as an alternative to a package reference,
-but the current execution-validation operation still accepts references only. Enabling the input
-form must also provide durable command replay: the authoring clock and permission observations
-must not create a different package on each identical retry. The shared input schema is preparation
-for that integration, not a claim that inline execution authoring is enabled.
+The execution-validation contract now accepts exactly one of a package reference or `contextInputs`.
+The input form invokes a composition-supplied authoring service with the authenticated principal,
+envelope scope, pinned state revision and idempotency key. The complete original validation payload
+is hashed before authoring; recorded final results replay without rereading authoring inputs. The
+authoring service separately retains its first package, so a retry between package persistence and
+plan persistence does not recompile context. Missing authoring composition returns 503, rather than
+inventing policy or Artifact authority. Both/neither source forms and caller authority fields are
+rejected. The generated OpenAPI describes the alternatives; the v3 baseline remains unchanged.
 
 The execution-validation controller now forwards the principal established by its service-authentication
 guard separately from the body. The durable validation service rejects a missing or mismatched
@@ -82,9 +85,11 @@ not credential verification inside the service: non-HTTP callers must supply a p
 own trusted authenticator. The protected HTTP route remains responsible for credential, scope and
 revocation checks. Reference-only validation now records and replays its command/plan pair through
 the durable repository in each composition; see [execution-plan replay](execution-plans.md#validation-command-replay).
-The Local reopen and HTTP tests do not certify the cloud/Hosted API restart matrix. Inline authoring
-still needs authoritative adapters and its supported input path; replay infrastructure alone is not
-proof of that reachability.
+The Local reopen test now also creates inline context through the real authoring service and SQLite
+repositories with a no-provider authority fixture. The HTTP test checks principal/scope forwarding,
+503 when unconfigured, replay and conflicts. These do not certify the cloud/Hosted API restart matrix
+or production authority composition. Inline authoring still needs authoritative adapters wired from
+supported entrypoints across profiles; fixture injection is not proof of that production reachability.
 
 `createForCommand` supplies internal authoring replay through an injected
 `ContextAuthoringCommandRepository`. Its scope includes authenticated principal, workspace, project,

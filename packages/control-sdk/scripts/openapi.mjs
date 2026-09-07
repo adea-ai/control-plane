@@ -104,6 +104,38 @@ function compareSchema(previous, next, context) {
     )
     return
   }
+  // A request may add alternatives when one entire branch still accepts the old shape.
+  // Only handle a plain union here: sibling constraints must not be silently discarded.
+  if (
+    context.direction === 'request' &&
+    (previous.anyOf !== undefined || next.anyOf !== undefined)
+  ) {
+    const branches = (schema) =>
+      schema.anyOf === undefined
+        ? [schema]
+        : Array.isArray(schema.anyOf) &&
+            schema.anyOf.length > 0 &&
+            Object.keys(schema).every((key) => ['anyOf', 'title', 'description'].includes(key))
+          ? schema.anyOf
+          : undefined
+    const before = branches(previous)
+    const after = branches(next)
+    if (
+      !before ||
+      !after ||
+      !before.every((oldBranch) =>
+        after.some((newBranch) => {
+          const changes = []
+          compareSchema(oldBranch, newBranch, { ...context, changes })
+          return changes.length === 0
+        })
+      )
+    )
+      context.changes.push(
+        `${label} ${context.operationLabel} has no compatible request alternative at ${displayPath(context.path)}`
+      )
+    return
+  }
   if (JSON.stringify(previous.type) !== JSON.stringify(next.type)) {
     context.changes.push(
       `${label} ${context.operationLabel} changed type at ${displayPath(context.path)}`

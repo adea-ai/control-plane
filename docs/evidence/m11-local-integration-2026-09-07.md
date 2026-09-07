@@ -411,3 +411,25 @@ type-check, format and test gates passed (777 unit tests, 85.54% line / 74.59% f
 An initial HTTP status expectation was corrected from 201 to the route's documented 200; no
 production behavior was changed. The disposable `m11-cloud-replay-20260907` Compose resources were
 removed and port 55079 was verified closed. No remote infrastructure was changed.
+
+## Inline context-input validation boundary
+
+The validation request now accepts exactly one context source: the existing immutable reference or
+strict caller-selection inputs. The service forwards authenticated scope/principal to an injected
+authoring service, hashes the full validation payload, and retains final plan replay. Missing authoring
+composition returns 503. HTTP tests cover forwarding, unavailable composition, replay without the
+authoring service and changed-input conflict. A real SQLite fixture creates an authored package and
+validation plan, closes/reopens persistence, and replays the same result without compilation inputs.
+The fixture is not a production policy/Artifact adapter and does not close entrypoint reachability.
+
+OpenAPI was regenerated without changing the v3 baseline. The compatibility checker now handles
+plain request unions conservatively: every old branch must remain accepted by at least one new
+branch; removed/narrowed alternatives and unsupported sibling constraints fail the gate. Focused
+regressions cover those cases. An initial Local test used stale built API output; rebuilding the
+dependency resolved it without changing persistence behavior.
+
+Full lint/type/format/test checks passed (779 unit tests, 85.56% line / 74.61% function coverage).
+All 29 PostgreSQL integration tests and the connection-loss/restart/restore drills passed; these
+remain reference-validation PostgreSQL evidence, not inline-authoring coverage on that backend.
+The disposable `m11-inline-validation-20260907` database resources were removed and port 55089
+verified closed. No remote infrastructure, production authority, or compatibility baseline changed.
