@@ -189,3 +189,20 @@ The observed log does not establish the cause of that rejection. It is distinct
 from the earlier #392 SET ROLE failure, and neither is counted as passing CI.
 No external database permissions were changed, no main merge was performed, and
 the integration branch remains local only. Full M11 acceptance is still unproven.
+
+## Neon preview capacity diagnosis
+
+Read-only authenticated CLI inspection on 2026-09-07 resolved the repository's
+`NEON_PROJECT_ID` to the Control Plane project. Its project record reports
+`owner.branches_limit = 10`; the branch inventory contains exactly 10 branches:
+production, staging and previews for PRs #392, #393, #394, #395, #396, #397, #399
+and #400. Six previews belong to this milestone's proposed changes. There is no
+preview for #401. PRs #397 and #400 remain open, and the M11 PRs remain open;
+none of these previews is established as stale cleanup material.
+
+The exhausted branch capacity strongly explains #401's HTTP 422 creation failure,
+but the action log omits the detailed API rejection body, so this is an inference
+from current account state rather than a quoted server reason. No branch was
+created, deleted or modified during diagnosis; no billing or role settings changed.
+Freeing capacity requires an explicit preview-retirement choice or a limit change.
+That decision is separate from the previously observed migrator role-membership gate.
