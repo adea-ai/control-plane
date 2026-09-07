@@ -206,3 +206,25 @@ from current account state rather than a quoted server reason. No branch was
 created, deleted or modified during diagnosis; no billing or role settings changed.
 Freeing capacity requires an explicit preview-retirement choice or a limit change.
 That decision is separate from the previously observed migrator role-membership gate.
+
+## Current-candidate PostgreSQL integration and recovery
+
+At `7c32969` (runtime code unchanged from `f0cf911`), `bun run test:integration`
+completed with isolated Compose project `m11-candidate-pg-20260907` and fixed
+loopback port 55009. It used only repository fixture credentials and PostgreSQL
+18.3, not Neon or any shared database. All 24 integration tests passed: database
+22, profile-portability migration 1 and isolated-test harness 1. The previously
+skipped SQLite-to-PostgreSQL-to-SQLite catalog migration therefore has fresh
+passing evidence on this candidate. All 33 orchestration tasks succeeded.
+
+Because this runner created the fixture, it also executed its disruption drill:
+access failed while PostgreSQL was stopped and the committed evaluation digest
+survived service restart. Its backup/restore drill preserved the asserted immutable
+evaluation, execution, event and usage evidence. These remain bounded local
+single-instance tests, not replicated failover, managed-cloud certification,
+complete domain migration or measured production recovery guarantees.
+
+The command exited zero and stopped its service. Explicit follow-up removed its
+container, network and disposable volume; label-filtered inventories were empty
+and port 55009 had no listener. Unrelated database and release containers were
+left untouched. The Neon capacity and role-authorization gates remain separate.
