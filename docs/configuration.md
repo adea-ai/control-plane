@@ -123,6 +123,12 @@ normal durable execution activities forward run, resume, continue and graph canc
 omitting it retains the disabled-graph default. Local requires a runtime transport/factory for
 this composed path and rejects combining `graphActivities` with a replacement `activities` object.
 The injecting application owns the graph adapter's durable checkpoint store and resource lifecycle.
+Local and Hosted Simple can instead supply `graphActivitiesFactory({ persistence })`, which receives
+the composition-owned SQLite provider and constructs the graph activity port synchronously. The
+factory must not access the database before composition startup migrates it. This enables the
+SQLite graph saver to share application backup/restore and shutdown without opening another database.
+Supplying both the factory and a graph port, or combining either with replacement activities, fails
+configuration. The Local launcher preserves this factory through its composition options.
 This option alone does not provision graph definitions, a SQLite checkpointer, graph operation
 authorization or an environment-selected graph deployment; those remain acceptance work.
 

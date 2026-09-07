@@ -77,6 +77,9 @@ export interface LocalControlPlaneCompositionOptions {
   readonly endpointFactory?: RestateEndpointFactory
   readonly activities?: ExecutionLifecycleActivities
   readonly graphActivities?: GraphSegmentActivityPort
+  readonly graphActivitiesFactory?: (input: {
+    readonly persistence: SqlitePersistenceProvider
+  }) => GraphSegmentActivityPort
   readonly runtimeTransport?: RuntimeAdapterWithTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
@@ -128,10 +131,14 @@ export class LocalControlPlaneComposition {
   #started = false
 
   constructor(options: LocalControlPlaneCompositionOptions) {
-    if (options.graphActivities !== undefined && options.activities !== undefined)
+    const graphConfigured =
+      options.graphActivities !== undefined || options.graphActivitiesFactory !== undefined
+    if (options.graphActivities !== undefined && options.graphActivitiesFactory !== undefined)
+      throw new Error('LOCAL_GRAPH_FACTORY_CONFIGURATION_CONFLICT')
+    if (graphConfigured && options.activities !== undefined)
       throw new Error('LOCAL_GRAPH_ACTIVITIES_CONFIGURATION_CONFLICT')
     if (
-      options.graphActivities !== undefined &&
+      graphConfigured &&
       options.runtimeTransport === undefined &&
       options.runtimeFactory === undefined
     )
@@ -216,7 +223,10 @@ export class LocalControlPlaneComposition {
               this.objectStore,
               runtimeTransport
             ),
-            graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
+            graph:
+              options.graphActivities ??
+              options.graphActivitiesFactory?.({ persistence: this.persistence }) ??
+              new DisabledGraphSegmentActivities(),
             commands: this.commands,
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()

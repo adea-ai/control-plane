@@ -1,5 +1,16 @@
 # M11 local integration checkpoint
 
+Local graph factory follow-up: `graphActivitiesFactory` receives the composition-owned SQLite
+provider so a graph saver can use application startup, backup and shutdown without another
+connection. Conflicting graph port/factory/replacement-activity configurations fail before factory
+invocation. The composition smoke suite now runs an actual LangGraph approval interruption through
+the durable graph activity wrapper for both Local and Hosted Simple, closes/reconstructs the
+composition, and resumes from its persisted checkpoint with exactly one prepare and one finalize
+operation. Restate endpoint/workflow components and graph operations remain controlled test ports;
+this is not Restate crash/restart, live runtime/tool authorization or full graph acceptance.
+Canonical lint/type/format/test gates passed with 803 unit tests and the expanded graph smoke suite.
+Temporary databases were closed and removed; no external provider/database/deployment was changed.
+
 SQLite graph checkpoint follow-up: `LangGraphSqliteCheckpointSaver` implements the pinned v4
 checkpoint contract over the existing SQLite transaction provider, including immutable checkpoints,
 parent links, pending task writes, history listing/filtering and scoped thread deletion. A real
