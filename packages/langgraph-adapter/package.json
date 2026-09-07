@@ -22,11 +22,16 @@
     "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
   "dependencies": {
+    "@control-plane/deployment": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
     "@langchain/langgraph": "1.4.13",
+    "@langchain/langgraph-checkpoint": "1.1.5",
     "@langchain/langgraph-checkpoint-postgres": "1.0.5",
     "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {
     "node": ">=24 <25"

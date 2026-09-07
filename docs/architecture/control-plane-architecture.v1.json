@@ -293,13 +293,18 @@
       "private": true,
       "browser": false,
       "exports": ["."],
-      "workspaceDependencies": ["@control-plane/orchestration", "@control-plane/telemetry"],
+      "workspaceDependencies": [
+        "@control-plane/deployment",
+        "@control-plane/orchestration",
+        "@control-plane/telemetry"
+      ],
       "externalDependencies": [
         "@langchain/langgraph",
+        "@langchain/langgraph-checkpoint",
         "@langchain/langgraph-checkpoint-postgres",
         "zod"
       ],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },

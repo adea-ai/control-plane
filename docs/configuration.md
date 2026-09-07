@@ -104,6 +104,19 @@ selection fail startup.
 
 ## Current service surfaces
 
+`LangGraphSqliteCheckpointSaver` persists LangGraph v4 checkpoints and pending writes through an
+existing SQLite `PersistenceProvider`, under an explicit application-selected scope. It uses the
+provider's transactions, file permissions and backup/restore lifecycle; it owns no connection.
+Checkpoint IDs are immutable, ordinary task writes retain the first value, and LangGraph special
+write slots retain their update semantics. Serialized values carry corruption-detection checksums
+(not authentication signatures). Reads and deletion are scoped to one supplied thread and scope.
+Parent links must refer to an existing checkpoint; self-links are rejected.
+The first implementation lists the checkpoint namespace to resolve histories, so high-volume
+performance remains unmeasured. SQLite's existing per-record size bound applies. Older LangGraph
+checkpoint formats and profile-portability migration of these records are not supported by this
+adapter. The embedding application must select graph definitions, authorize operations and wire
+the saver into its graph activity port; the CLI does not enable graph execution automatically.
+
 Local (including Hosted Simple) and Hosted Server composition options accept `graphActivities`
 using the shared `GraphSegmentActivityPort`. The Hosted launcher preserves this option. The
 normal durable execution activities forward run, resume, continue and graph cancellation to it;

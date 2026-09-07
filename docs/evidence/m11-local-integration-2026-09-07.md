@@ -1,5 +1,19 @@
 # M11 local integration checkpoint
 
+SQLite graph checkpoint follow-up: `LangGraphSqliteCheckpointSaver` implements the pinned v4
+checkpoint contract over the existing SQLite transaction provider, including immutable checkpoints,
+parent links, pending task writes, history listing/filtering and scoped thread deletion. A real
+LangGraph interrupt test closes/reopens SQLite and reconstructs the adapter before approval resume;
+the pre-approval operation is not rerun. Additional tests cover concurrent immutable saves, first
+ordinary-write retention, backup/restore, missing/self parents, scope/namespace isolation, injected
+transaction rollback and serialized-state corruption. The canonical gates passed with 803 unit
+tests and 3,313 assertions, 87.40% line and 84.32% function coverage. Temporary SQLite directories
+were closed and removed; no external database/provider was started. Dependency additions use the
+already-installed checkpoint 1.1.5 and a test-only SQLite workspace dependency; no external package
+version changed. This remains a persistence adapter: supported launcher selection, full graph
+authorization/composition, portable checkpoint migration, older format upgrades and load/soak
+acceptance remain open. Checksums detect corruption, not malicious storage tampering.
+
 Graph composition follow-up: Local/Hosted Simple and Hosted Server now accept the shared graph
 activity port instead of unconditionally discarding the possibility of a configured adapter.
 Hosted launcher option propagation is covered. A registered smoke test invokes run, resume,
