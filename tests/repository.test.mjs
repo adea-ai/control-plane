@@ -143,6 +143,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-architecture-audit.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',
     'tests/repository.test.mjs',
+    'tests/restate-identity.test.mjs',
   ])
   const inventory = await discoverTestInventory()
   const owned = [...unit, ...integration, ...e2e, ...smoke]

@@ -89,6 +89,7 @@ export interface HostedServerCompositionOptions {
   readonly restateIngressUrl?: string
   readonly workflowDeploymentUri?: string
   readonly workflowEndpointPort?: number
+  readonly requestIdentityPublicKey?: string
   readonly endpointFactory?: RestateEndpointFactory
   readonly connection?: PostgresConnection
   readonly secrets?: SecretsProvider
@@ -127,6 +128,12 @@ export class HostedServerControlPlaneComposition {
   #started = false
 
   constructor(options: HostedServerCompositionOptions) {
+    if (
+      options.endpointFactory === undefined &&
+      !/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(options.requestIdentityPublicKey ?? '')
+    ) {
+      throw new Error('HOSTED_RESTATE_REQUEST_IDENTITY_REQUIRED')
+    }
     this.dataDirectory = resolve(options.dataDirectory)
     this.connection =
       options.connection ??
@@ -228,7 +235,14 @@ export class HostedServerControlPlaneComposition {
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??
-      createRestateEndpointFactory({ host: '0.0.0.0', port: workflowEndpointPort, activities })
+      createRestateEndpointFactory({
+        host: '0.0.0.0',
+        port: workflowEndpointPort,
+        activities,
+        ...(options.requestIdentityPublicKey === undefined
+          ? {}
+          : { requestIdentityPublicKey: options.requestIdentityPublicKey }),
+      })
     this.workflow =
       options.workflowRuntime ??
       new RemoteRestateRuntime({
