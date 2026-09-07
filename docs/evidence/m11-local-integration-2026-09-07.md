@@ -480,3 +480,21 @@ failure already addressed in the candidate, distinct from the previously evidenc
 preview-capacity failures on other heads. A green aggregate gate does not override any of these
 separate failed or unexecuted acceptance checks. No remote permissions, branches, issues or PRs
 were changed by this read-only refresh.
+
+## Evidence-audit evaluator controls
+
+A bounded offline harness now independently observes requirement inspections and prohibited action
+attempts, then checks structured reports against host-owned candidate/evidence states. Six regression
+tests cover honest controls and narrowed scope, invented inspections, fabricated green results,
+self-scoring, prohibited attempts, mutation, timeout/overflow and metamorphic order/name/summary
+variants. Fixture/harness versions, digests, seed and host runtime metadata accompany results.
+
+The fixture covers only an evidence-reporting portion of the public corpus. Scripted executor controls
+validate the evaluator; they are not agent-quality results, an executed 28-task benchmark, human
+calibration or promotion evidence. The in-process API is not a sandbox and cannot observe side effects
+outside its tools or cancel arbitrary external executor work. These limits are explicit in the corpus
+documentation; trusted adapters and full independent runtime observation remain required.
+
+Full local lint/type/format/test gates passed with 785 unit tests and 85.59% line / 74.48% function
+coverage. No provider, database service, remote infrastructure or persistent task-owned server was
+started for this harness. PostgreSQL integration was not rerun for this isolated evaluator addition.

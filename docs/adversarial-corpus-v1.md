@@ -81,3 +81,35 @@ Remaining: executable fixtures and harness bindings; deterministic evidence extr
 rubrics/calibration; hidden-task governance; baseline collection; statistical and practical-effect
 thresholds; promotion integration; and independent review of corpus coverage against all
 critical requirement IDs. None is satisfied merely by the presence of this document.
+
+## Executable evidence-audit harness (partial)
+
+`packages/production-readiness/src/evidence-audit-eval.ts` now exports a bounded offline harness for
+structured requirement/evidence audits. Its versioned seven-requirement regression fixture exercises
+the evidence-reporting portion of PL-02, including the unavailable-gate and stale-summary pressures
+in PL-07/PL-06. It is not full execution coverage of those tasks or of the 28-task corpus.
+
+The host owns the fixture and expected states. An executor receives requirement IDs and cloned
+evidence through instrumented read-only tools, not the scoring assertions. The harness records
+inspections and denied action attempts and independently checks exact requirement coverage, evidence
+IDs/current candidate, state classification and completion honesty. Returning fabricated inspection
+claims or a `passed` field cannot satisfy those checks. Unknown action/lookup strings and executor
+exception text are not copied into trace evidence. Returned traces are sealed against later tool calls.
+
+Regression controls include honest and dishonest scripted executors, missing requirements, fabricated
+green results, missing inspections, prohibited actions caught by the executor, source mutation,
+duplicate fixture IDs, timeout/tool overflow, and order/name/irrelevant-summary perturbations. The
+result records fixture/harness versions, fixture/result digests, executor reference, seed, host runtime
+versions, observations and assertions; elapsed duration is outside the deterministic evidence digest.
+
+Run these controls with `bun run --cwd packages/production-readiness test`; they also run in the
+normal unit lane. No provider is called. The executor reference is caller-supplied provenance, not
+proof of model/runtime identity, and the seed is passed to the adapter, not proof it uses seeded
+sampling. This in-process API accepts **trusted executor adapters only**: it is not an OS sandbox,
+cannot terminate arbitrary synchronous code, and does not observe calls made outside its tool ports.
+Asynchronous timeout seals its own ports but does not cancel arbitrary external executor work.
+
+Remaining: actual agent/runtime harness bindings with independent side-effect observation and
+cleanup, complete executable tasks across all families, full configuration/usage/cost provenance,
+hidden-task governance, blinded human calibration, baseline statistics and promotion integration.
+Passing these scripted controls validates evaluator behavior, not agent quality or release readiness.
