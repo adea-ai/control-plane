@@ -207,6 +207,12 @@ proof of rollback, restart recovery, load, isolation, secret-canary, or cost acc
 
 Local uses all-in-one Control Plane + SQLite + single-node Restate + filesystem storage + direct RuntimeTransport.
 
+SQLite startup checks the stored schema version before running schema DDL. The version check,
+schema creation, and version stamp share one transaction: unsupported versions are rejected, and
+failed schema statements roll back without leaving partially created tables. This is not automatic
+downgrade support or a cross-version migration guarantee. Preserve a verified backup and use a
+compatible binary when `SQLITE_SCHEMA_INCOMPATIBLE` blocks startup.
+
 The packaging, checkpoint, sleep/wake, upgrade, rollback, incident, host-loss, and measured resource
 contracts are executable from [`local-deployment.md`](local-deployment.md).
 

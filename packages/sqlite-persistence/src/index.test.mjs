@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SqlitePersistenceError, SqlitePersistenceProvider } from './index.ts'
@@ -22,6 +23,46 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('rejects a future schema without creating current-version objects', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-version-'))
+    const path = join(directory, 'state.sqlite')
+    const native = new DatabaseSync(path)
+    native.exec(
+      "CREATE TABLE control_plane_metadata (key TEXT PRIMARY KEY, value TEXT); INSERT INTO control_plane_metadata VALUES ('schema_version', '999')"
+    )
+    const before = native.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all()
+    const instance = new SqlitePersistenceProvider({ path })
+    try {
+      await expect(instance.migrate()).rejects.toMatchObject({ code: 'SQLITE_SCHEMA_INCOMPATIBLE' })
+      expect(native.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all()).toEqual(
+        before
+      )
+    } finally {
+      instance.close()
+      native.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rolls back schema creation when a migration statement fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-migration-'))
+    const path = join(directory, 'state.sqlite')
+    const native = new DatabaseSync(path)
+    native.exec('CREATE TABLE control_plane_records (id TEXT)')
+    const before = native.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all()
+    const instance = new SqlitePersistenceProvider({ path })
+    try {
+      await expect(instance.migrate()).rejects.toThrow()
+      expect(native.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all()).toEqual(
+        before
+      )
+    } finally {
+      instance.close()
+      native.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('uses WAL, owner-only files, and optimistic durable records', async () => {
     const { directory, instance } = await provider()
     const created = await instance.transaction((transaction) =>
