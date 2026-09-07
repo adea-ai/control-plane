@@ -241,6 +241,10 @@ test('emits the required gate contexts and documents the direct-workflow policy'
   assert.match(contributing, /feature PRs land on `main` with squash merges/)
   assert.match(ci, /Feature branches must squash into `main`/)
   assert.doesNotMatch(contributing, /feature PRs land on `staging` with squash merges/)
+  assert.doesNotMatch(contributing, /staging-release|git switch staging|origin staging/)
+  assert.doesNotMatch(contributing, /(?:from|targeting|at) `staging`/)
+  assert.match(contributing, /configured Git workflow is `direct`/)
+  assert.match(contributing, /not an intermediate Git integration branch/)
 })
 
 test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {
