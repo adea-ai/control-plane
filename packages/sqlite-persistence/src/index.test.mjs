@@ -6,13 +6,17 @@ import { join } from 'node:path'
 import { SqlitePersistenceError, SqlitePersistenceProvider } from './index.ts'
 
 const providers = []
+const directories = []
 
-afterEach(() => {
+afterEach(async () => {
   for (const provider of providers.splice(0)) provider.close()
+  for (const directory of directories.splice(0))
+    await rm(directory, { recursive: true, force: true })
 })
 
 async function provider() {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-'))
+  directories.push(directory)
   const instance = new SqlitePersistenceProvider({
     path: join(directory, 'control-plane.sqlite'),
     now: () => new Date('2026-08-29T00:00:00.000Z'),
