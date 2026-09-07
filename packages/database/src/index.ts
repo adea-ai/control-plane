@@ -37,6 +37,7 @@ export {
   commandInbox,
   commandInboxStatus,
   contextPackages,
+  contextAuthoringCommands,
   agentProfileVersions,
   agentProfiles,
   catalogVersionLifecycle,

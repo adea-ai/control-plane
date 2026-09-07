@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto'
+import {
+  ContextAuthoringCommandRecordSchema,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
 import type {
   DeploymentProfile,
   JsonValue,
@@ -385,6 +389,7 @@ export const PortablePersistenceNamespaces = Object.freeze({
   'project-states': 'project-state',
   'project-state-history': 'project-state',
   'context-packages': 'context-package',
+  'context-authoring-commands': 'context-authoring-command',
   'execution-plans': 'execution-plan',
 } as const)
 
@@ -605,11 +610,14 @@ function persistenceIdentity(record: PortableRecord): {
   }
   return {
     namespace,
-    id: sqliteRecordId(
-      namespace === 'project-states' || namespace === 'project-state-history'
-        ? id.replaceAll(':', '\u001f')
-        : id
-    ),
+    id:
+      namespace === 'context-authoring-commands'
+        ? `r-${id}`
+        : sqliteRecordId(
+            namespace === 'project-states' || namespace === 'project-state-history'
+              ? id.replaceAll(':', '\u001f')
+              : id
+          ),
   }
 }
 
@@ -618,6 +626,12 @@ function portableIdentity(
   value: JsonValue,
   fallback: string
 ): string {
+  if (namespace === 'context-authoring-commands') {
+    const key = contextAuthoringCommandKey(ContextAuthoringCommandRecordSchema.parse(value).scope)
+    if (`r-${key}` !== fallback)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [key])
+    return key
+  }
   if (!isJsonObject(value)) return fallback
   if (namespace === 'agent-profiles' && typeof value['profileId'] === 'string') {
     return value['profileId']

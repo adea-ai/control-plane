@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
+import {
+  ContextAuthoringCommandRecordSchema,
+  assertContextPackageIntegrity,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
 
 export const PORTABLE_EXPORT_SCHEMA_VERSION = 1 as const
 export const PORTABLE_CONTRACT_VERSION = 'control-plane-portable-state-v1' as const
@@ -27,6 +32,7 @@ export const PortableRecordCategorySchema = z.enum([
   'skill',
   'project-state',
   'context-package',
+  'context-authoring-command',
   'execution-plan',
   'policy-configuration',
   'runtime-configuration',
@@ -132,6 +138,30 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     if (digestJson(recordUnsigned) !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
     }
+  }
+  const packages = new Map(
+    manifest.records
+      .filter((record) => record.category === 'context-package')
+      .map((record) => [record.logicalId, record.value])
+  )
+  for (const record of manifest.records.filter(
+    (record) => record.category === 'context-authoring-command'
+  )) {
+    const command = ContextAuthoringCommandRecordSchema.parse(record.value)
+    if (
+      record.logicalId !== `context-authoring-commands/${contextAuthoringCommandKey(command.scope)}`
+    )
+      throw new Error('PORTABLE_AUTHORING_IDENTITY_INVALID')
+    const package_ = assertContextPackageIntegrity(
+      packages.get(`context-packages/${command.contextPackage.contextPackageId}`)
+    )
+    if (
+      package_.contextPackageId !== command.contextPackage.contextPackageId ||
+      package_.contentDigest !== command.contextPackage.contentDigest ||
+      package_.projectState.workspaceId !== command.scope.workspaceId ||
+      package_.projectState.projectId !== command.scope.projectId
+    )
+      throw new Error('PORTABLE_AUTHORING_PACKAGE_INVALID')
   }
   return manifest
 }

@@ -1,8 +1,13 @@
-import { ContextPackageSchema } from '@control-plane/context'
+import {
+  ContextPackageSchema,
+  ContextAuthoringCommandRecordSchema,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
 import {
   agentProfileVersions,
   agentProfiles,
   contextPackages,
+  contextAuthoringCommands,
   executionPlans,
   executions,
   profileMigrations,
@@ -81,6 +86,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       stateRows,
       stateHistoryRows,
       contextRows,
+      authoringRows,
       planRows,
       executionRows,
     ] = await Promise.all([
@@ -91,6 +97,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       this.#database.select().from(projectStates),
       this.#database.select().from(projectStateRevisions),
       this.#database.select().from(contextPackages),
+      this.#database.select().from(contextAuthoringCommands),
       this.#database.select().from(executionPlans),
       this.#database
         .select({ executionId: executions.executionId, state: executions.state })
@@ -157,6 +164,22 @@ export class PostgresPortableStateSource implements PortableStateSource {
         revision: 0,
         value: portableJson(ContextPackageSchema.parse(row.contextPackage)),
       })),
+      ...authoringRows.map((row) => {
+        const record = ContextAuthoringCommandRecordSchema.parse(row.record)
+        if (
+          row.commandKey !== contextAuthoringCommandKey(record.scope) ||
+          row.workspaceId !== record.scope.workspaceId ||
+          row.projectId !== record.scope.projectId ||
+          row.contextPackageId !== record.contextPackage.contextPackageId
+        )
+          throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [row.commandKey])
+        return {
+          category: 'context-authoring-command' as const,
+          logicalId: `context-authoring-commands/${row.commandKey}`,
+          revision: 0,
+          value: portableJson(record),
+        }
+      }),
       ...planRows.map((row) => ({
         category: 'execution-plan' as const,
         logicalId: `execution-plans/${row.executionPlanId}`,
@@ -417,6 +440,26 @@ async function writeRecord(
     )
     return
   }
+  if (namespace === 'context-authoring-commands') {
+    const value = ContextAuthoringCommandRecordSchema.parse(record.value)
+    if (id !== contextAuthoringCommandKey(value.scope))
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+    await inserted(
+      transaction
+        .insert(contextAuthoringCommands)
+        .values({
+          commandKey: id,
+          workspaceId: value.scope.workspaceId,
+          projectId: value.scope.projectId,
+          contextPackageId: value.contextPackage.contextPackageId,
+          record: value,
+        })
+        .onConflictDoNothing()
+        .returning({ id: contextAuthoringCommands.commandKey }),
+      record
+    )
+    return
+  }
   if (namespace === 'execution-plans') {
     const value = ExecutionPlanSchema.parse(record.value)
     await inserted(
@@ -476,6 +519,7 @@ function byWriteOrder(left: PortableRecord, right: PortableRecord): number {
     'project-states',
     'project-state-history',
     'context-packages',
+    'context-authoring-commands',
     'execution-plans',
   ]
   return (

@@ -94,7 +94,21 @@ inputs. Application wiring remains open.
 scope; full scope equality is still verified from the stored record. The package and command are
 inserted in one transaction, with a foreign key retaining referential integrity. A lock-hash collision
 can serialize unrelated commands but cannot make their command records equivalent. Migration must
-run before using this adapter. Cross-profile export/import of authoring commands remains unverified.
+run before using this adapter.
+
+Portable manifests now include `context-authoring-command` records with their referenced packages.
+Import validates canonical command identity and package ID/digest/workspace/project binding. The
+portable key is a bare SHA-256 digest; SQLite retains its existing `r-` physical-key prefix while
+PostgreSQL uses the bare key. PostgreSQL import orders packages before commands to satisfy the
+foreign key. Updated importers are required; older parsers may reject the new record category.
+
+On 2026-09-07, the real SQLite-to-PostgreSQL-to-SQLite integration test preserved the authoring
+record's scope, payload hash and package reference, with direct repository lookup on both sides and
+equal portable record digests after the round trip. The first run caught a missing SQLite `r-`
+translation; the corrected run passed all 27 integration tests and existing recovery drills. Full
+validation passed 773 unit, 52 smoke and 98 E2E tests, lint, type-check and formatting (87.28% line,
+83.85% function coverage). This covers the exercised quiescent subset, not live migration,
+production cutover, authoring-command crash recovery or entrypoint idempotency.
 
 A disposable PostgreSQL 18.3 run on 2026-09-07 passed 27 integration tests, including eight
 concurrent authoring commits through the fixture's four-connection pool, duplicate/hash-conflict

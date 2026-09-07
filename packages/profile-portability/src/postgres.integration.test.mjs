@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
+import { PostgresContextAuthoringCommandRepository } from '@control-plane/database'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
 import {
   SqlitePersistenceProvider,
   SqliteVersionedCatalogRepository,
+  SqliteContextAuthoringCommandRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   PersistencePortableStateDestination,
@@ -45,6 +48,22 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
   test('moves a supported catalog subset SQLite to PostgreSQL and back with stable identity', async () => {
     const local = await sqliteProvider('local')
     await seedCatalog(local)
+    const package_ = contextPackageSerializationFixtures.futurePi
+    const command = {
+      scope: {
+        principalRef: 'service:migration-fixture',
+        workspaceId: package_.projectState.workspaceId,
+        projectId: package_.projectState.projectId,
+        operation: 'context.author',
+        idempotencyKey: 'migration-authoring-0001',
+      },
+      payloadHash: `sha256:${'b'.repeat(64)}`,
+      contextPackage: {
+        contextPackageId: package_.contextPackageId,
+        contentDigest: package_.contentDigest,
+      },
+    }
+    await new SqliteContextAuthoringCommandRepository(local).commit(command, package_)
     const localManifest = await exportPortableState(
       new PersistencePortableStateSource({
         persistence: local,
@@ -63,6 +82,9 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
     await expect(
       applyPortableImport(localManifest, cloudPlan, cloud, {}, () => createdAt)
     ).resolves.toMatchObject({ outcome: 'applied' })
+    expect(
+      await new PostgresContextAuthoringCommandRepository(database.application).get(command.scope)
+    ).toEqual(command)
     const replayPlan = await planPortableImport(localManifest, cloud)
     const replay = await applyPortableImport(localManifest, replayPlan, cloud, {}, () => createdAt)
     expect(replay).toMatchObject({ outcome: 'replayed' })
@@ -92,6 +114,9 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
         componentVersions: { contracts: '1.0.0' },
       }),
       { exportId: 'restored', createdAt }
+    )
+    expect(await new SqliteContextAuthoringCommandRepository(restored).get(command.scope)).toEqual(
+      command
     )
     expect(restoredManifest.records.map(({ logicalId }) => logicalId)).toEqual(
       localManifest.records.map(({ logicalId }) => logicalId)

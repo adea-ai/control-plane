@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
 import {
+  contextPackageSerializationFixtures,
+  contextAuthoringCommandKey,
+} from '@control-plane/context'
+import {
   SqlitePersistenceProvider,
   SqliteProjectStateRepository,
   SqliteVersionedCatalogRepository,
@@ -148,6 +152,84 @@ class MemoryObjectStore {
 }
 
 describe('portable profile export and import', () => {
+  test('requires authoring replay identities to retain their exact scoped package', async () => {
+    const package_ = contextPackageSerializationFixtures.futurePi
+    const command = {
+      scope: {
+        principalRef: 'service:portable',
+        workspaceId: package_.projectState.workspaceId,
+        projectId: package_.projectState.projectId,
+        operation: 'context.author',
+        idempotencyKey: 'portable-authoring-0001',
+      },
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+      contextPackage: {
+        contextPackageId: package_.contextPackageId,
+        contentDigest: package_.contentDigest,
+      },
+    }
+    const packageRecord = {
+      category: 'context-package',
+      logicalId: `context-packages/${package_.contextPackageId}`,
+      revision: 0,
+      value: package_,
+    }
+    const commandRecord = {
+      category: 'context-authoring-command',
+      logicalId: `context-authoring-commands/${contextAuthoringCommandKey(command.scope)}`,
+      revision: 0,
+      value: command,
+    }
+    const manifestFor = (records) =>
+      exportPortableState(source({ records }), { exportId: 'authoring-fixture', createdAt })
+    expect(
+      assertPortableManifest(await manifestFor([packageRecord, commandRecord])).records
+    ).toHaveLength(2)
+    const otherScope = { ...command.scope, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' }
+    const aliasId = 'ctx_01JBBCDEF0123456789ABCDEFG'
+    for (const records of [
+      [commandRecord],
+      [
+        packageRecord,
+        {
+          ...commandRecord,
+          logicalId: `context-authoring-commands/${contextAuthoringCommandKey(otherScope)}`,
+          value: { ...command, scope: otherScope },
+        },
+      ],
+      [
+        { ...packageRecord, logicalId: `context-packages/${aliasId}` },
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            contextPackage: { ...command.contextPackage, contextPackageId: aliasId },
+          },
+        },
+      ],
+      [
+        packageRecord,
+        { ...commandRecord, logicalId: `context-authoring-commands/${'0'.repeat(64)}` },
+      ],
+      [
+        packageRecord,
+        {
+          ...commandRecord,
+          value: {
+            ...command,
+            contextPackage: {
+              ...command.contextPackage,
+              contentDigest: `sha256:${'0'.repeat(64)}`,
+            },
+          },
+        },
+      ],
+    ]) {
+      await expect(
+        (async () => assertPortableManifest(await manifestFor(records)))()
+      ).rejects.toThrow()
+    }
+  })
   test('creates a deterministic, versioned, digest-verified manifest without history by default', async () => {
     const first = await exportPortableState(source(), {
       exportId: 'export-1',

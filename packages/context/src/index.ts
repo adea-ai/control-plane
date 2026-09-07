@@ -396,6 +396,20 @@ export const ContextAuthoringCommandRecordSchema = z.object({
   contextPackage: ContextPackageReferenceSchema,
 })
 export type ContextAuthoringCommandScope = z.output<typeof ContextAuthoringCommandScopeSchema>
+export function contextAuthoringCommandKey(input: ContextAuthoringCommandScope): string {
+  const scope = ContextAuthoringCommandScopeSchema.parse(input)
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        scope.principalRef,
+        scope.workspaceId,
+        scope.projectId,
+        scope.operation,
+        scope.idempotencyKey,
+      ])
+    )
+    .digest('hex')
+}
 export type ContextAuthoringCommandRecord = z.output<typeof ContextAuthoringCommandRecordSchema>
 export interface ContextAuthoringCommandRepository {
   get(scope: ContextAuthoringCommandScope): Promise<ContextAuthoringCommandRecord | undefined>

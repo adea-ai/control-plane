@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ContextAuthoringCommandRecordSchema,
   ContextAuthoringCommandScopeSchema,
+  contextAuthoringCommandKey as commandKey,
   assertContextPackageIntegrity,
   type ContextAuthoringCommandRecord,
   type ContextAuthoringCommandRepository,
@@ -84,18 +84,4 @@ async function read(
   )
     throw new Error('CONTEXT_AUTHORING_COMMAND_SCOPE_MISMATCH')
   return record
-}
-
-function commandKey(scope: ContextAuthoringCommandScope): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
-        scope.principalRef,
-        scope.workspaceId,
-        scope.projectId,
-        scope.operation,
-        scope.idempotencyKey,
-      ])
-    )
-    .digest('hex')
 }

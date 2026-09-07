@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import {
   ContextPackageReferenceSchema,
   ContextAuthoringCommandScopeSchema,
+  contextAuthoringCommandKey,
   ContextAuthoringCommandRecordSchema,
   type ContextAuthoringCommandScope,
   type ContextAuthoringCommandRecord,
@@ -264,15 +265,7 @@ export class SqliteContextAuthoringCommandRepository implements ContextAuthoring
 }
 
 function authoringCommandId(scope: ContextAuthoringCommandScope): string {
-  return recordId(
-    JSON.stringify([
-      scope.principalRef,
-      scope.workspaceId,
-      scope.projectId,
-      scope.operation,
-      scope.idempotencyKey,
-    ])
-  )
+  return `r-${contextAuthoringCommandKey(scope)}`
 }
 
 export class SqliteContextPackageRepository implements ContextPackageRepository {
