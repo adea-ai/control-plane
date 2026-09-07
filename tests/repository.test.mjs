@@ -360,6 +360,22 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /parallel/i)
 })
 
+test('requires a dedicated Neon administration credential for remote isolated tests', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(workflow, /NEON_CI_ADMIN_PASSWORD/)
+  assert.match(workflow, /DATABASE_ADMIN_PASSWORD/)
+  assert.match(workflow, /control_plane_admin/)
+  assert.match(workflow, /DATABASE_ADMIN_URL=\$\{adminUrl\}/)
+  assert.doesNotMatch(
+    workflow,
+    /DATABASE_ADMIN_URL:\s*\$\{\{ steps\.create_neon_branch\.outputs\.db_url \}\}/
+  )
+})
+
 test('scaffolds every application with an executable placeholder target', async () => {
   for (const app of apps) {
     const manifest = await readJson(`apps/${app}/package.json`)

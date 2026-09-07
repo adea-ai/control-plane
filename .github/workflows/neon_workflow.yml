@@ -42,20 +42,23 @@ jobs:
       - name: Get branch expiration date
         run: echo "EXPIRES_AT=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
-      # Until NEON_CI_APP_PASSWORD / NEON_CI_MIGRATION_PASSWORD are
-      # configured, skip preview creation instead of failing every PR.
-      # Once the secrets exist this gate is permanently true and the
-      # workflow behaves exactly like adea's.
+      # Preview integration tests create disposable databases and therefore
+      # require all three least-privilege credentials. Until the dedicated
+      # admin password is configured, skip preview creation instead of
+      # pretending that the Neon action's owner URL is an admin URL.
       - name: Check Neon preview credentials
         id: credentials
         env:
           DATABASE_APP_PASSWORD: ${{ secrets.NEON_CI_APP_PASSWORD }}
           DATABASE_MIGRATION_PASSWORD: ${{ secrets.NEON_CI_MIGRATION_PASSWORD }}
+          DATABASE_ADMIN_PASSWORD: ${{ secrets.NEON_CI_ADMIN_PASSWORD }}
         run: |
-          if [ -n "$DATABASE_APP_PASSWORD" ] && [ -n "$DATABASE_MIGRATION_PASSWORD" ]; then
+          if [ -n "$DATABASE_APP_PASSWORD" ] &&
+             [ -n "$DATABASE_MIGRATION_PASSWORD" ] &&
+             [ -n "$DATABASE_ADMIN_PASSWORD" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice title=Neon preview skipped::NEON_CI_APP_PASSWORD / NEON_CI_MIGRATION_PASSWORD are not configured; skipping ephemeral Neon testing."
+            echo "::notice title=Neon preview skipped::NEON_CI_APP_PASSWORD / NEON_CI_MIGRATION_PASSWORD / NEON_CI_ADMIN_PASSWORD are not all configured; skipping ephemeral Neon testing."
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -90,6 +93,7 @@ jobs:
           DATABASE_HOST_POOLED: ${{ steps.create_neon_branch.outputs.db_host_pooled }}
           DATABASE_APP_PASSWORD: ${{ secrets.NEON_CI_APP_PASSWORD }}
           DATABASE_MIGRATION_PASSWORD: ${{ secrets.NEON_CI_MIGRATION_PASSWORD }}
+          DATABASE_ADMIN_PASSWORD: ${{ secrets.NEON_CI_ADMIN_PASSWORD }}
         run: |
           node <<'NODE'
           const { appendFileSync } = require("node:fs");
@@ -97,6 +101,7 @@ jobs:
             DATABASE_APP_PASSWORD,
             DATABASE_HOST,
             DATABASE_HOST_POOLED,
+            DATABASE_ADMIN_PASSWORD,
             DATABASE_MIGRATION_PASSWORD,
             GITHUB_ENV,
           } = process.env;
@@ -105,12 +110,13 @@ jobs:
             !DATABASE_HOST ||
             !DATABASE_HOST_POOLED ||
             !DATABASE_MIGRATION_PASSWORD ||
+            !DATABASE_ADMIN_PASSWORD ||
             !GITHUB_ENV
           ) {
             throw new Error("Neon migration connection inputs are unavailable");
           }
-          const connectionUrl = (role, password, host) => {
-            const url = new URL(`postgresql://${role}@localhost/neondb`);
+          const connectionUrl = (role, password, host, database = "neondb") => {
+            const url = new URL(`postgresql://${role}@localhost/${database}`);
             url.hostname = host;
             url.password = password;
             url.searchParams.set("sslmode", "require");
@@ -131,12 +137,19 @@ jobs:
             DATABASE_MIGRATION_PASSWORD,
             DATABASE_HOST,
           );
+          const adminUrl = connectionUrl(
+            "control_plane_admin",
+            DATABASE_ADMIN_PASSWORD,
+            DATABASE_HOST,
+            "postgres",
+          );
           console.log(`::add-mask::${runtimeUrl}`);
           console.log(`::add-mask::${runtimeUnpooledUrl}`);
           console.log(`::add-mask::${migrationUrl}`);
+          console.log(`::add-mask::${adminUrl}`);
           appendFileSync(
             GITHUB_ENV,
-            `DATABASE_URL=${runtimeUrl}\nDATABASE_URL_UNPOOLED=${runtimeUrl}\nDATABASE_MIGRATION_URL=${migrationUrl}\n`,
+            `DATABASE_URL=${runtimeUrl}\nDATABASE_URL_UNPOOLED=${runtimeUnpooledUrl}\nDATABASE_MIGRATION_URL=${migrationUrl}\nDATABASE_ADMIN_URL=${adminUrl}\n`,
           );
           NODE
 
@@ -146,8 +159,6 @@ jobs:
 
       - name: Verify migrations and transactions
         if: steps.credentials.outputs.available == 'true'
-        env:
-          DATABASE_ADMIN_URL: ${{ steps.create_neon_branch.outputs.db_url }}
         run: |
           bun run build
           bun --cwd=packages/database run db:check
