@@ -39,6 +39,10 @@
     "@control-plane/contracts": "workspace:*",
     "zod": "4.5.4"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=24 <25"
   }
