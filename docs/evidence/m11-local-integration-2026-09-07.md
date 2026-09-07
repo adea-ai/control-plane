@@ -1,5 +1,13 @@
 # M11 local integration checkpoint
 
+Neon preview follow-up: PR #412 initially exhausted the project's ten branch slots. With explicit
+approval, only PR #399's superseded preview was deleted; staging and production were untouched.
+The new preview then exposed an administrator membership with SET disabled for the migration role.
+Enabling SET only for the preview administrator allowed the complete Neon migration/integration
+job to pass (run 34164593317, job 101874347822). Preview CI now performs that narrowly scoped setup
+using the create-branch action's administrator URL and matching host; application credentials are
+not elevated. This is preview evidence, not production deployment or managed recovery certification.
+
 PR #412 recovery gate follow-up: CI exposed two stale integration evidence labels in the recovery
 registry after the PostgreSQL drills were expanded. The registry now matches the actual successful
 drill outputs; a regression test verifies all integration labels remain present in their executable

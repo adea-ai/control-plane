@@ -49,6 +49,19 @@ const previewBranch = {
 }
 
 describe('Neon preview cleanup lookup', () => {
+  test('scopes test database ownership setup to the freshly resolved preview administrator', () => {
+    const setup = workflow
+      .split('      - name: Prepare isolated preview database ownership')[1]
+      ?.split('      - name: Verify migrations and transactions')[0]
+    expect(setup).toContain('DATABASE_ADMIN_URL: ${{ steps.create_neon_branch.outputs.db_url }}')
+    expect(setup).toContain(
+      'PREVIEW_DATABASE_HOST: ${{ steps.create_neon_branch.outputs.db_host }}'
+    )
+    expect(setup).toContain('url.hostname !== process.env.PREVIEW_DATABASE_HOST')
+    expect(setup).toContain('url.username !== "neondb_owner"')
+    expect(setup).toContain('GRANT control_plane_migrator TO neondb_owner WITH SET TRUE')
+    expect(setup).not.toContain('GRANT control_plane_app')
+  })
   test('treats a successfully verified absent preview as a no-op', async () => {
     expect(cleanupScript).toBeString()
     const result = await findCleanupBranch([{ body: { branches: [] } }])
