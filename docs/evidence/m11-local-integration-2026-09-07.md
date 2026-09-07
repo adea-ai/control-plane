@@ -453,3 +453,30 @@ reconciled already-existing SDK manifest versions (1.3.3, 1.5.3, 1.2.3); no exte
 upgraded. Architecture inventory/fingerprints were refreshed without readiness reclassification.
 The disposable `m11-authoring-composition-20260907` container, network and volume were removed;
 port 55099 was verified closed. No remote infrastructure was changed.
+
+## Live milestone and CI gate refresh
+
+Authenticated GitHub reads after the authoring composition checkpoint confirmed that upstream
+`main` remains `301aa7a650fcdaf19b5b3a3a3127b74d8245524c`, already contained in this candidate.
+Issues #186, #187 and #189 are closed, but their closure is not current acceptance evidence.
+Issues #188 and #190–#197 remain open; their current criteria still require full standalone feature,
+security, eval, maintainability, performance, operations, source reconciliation, Skill and independent
+frozen-candidate verification. The candidate's recent local work has not been pushed or deployed.
+
+PRs #392–#396, #399 and #401 remain open with failing `Migrate Neon Branch` checks despite green
+`Validation / Gate` checks. OpenCode scanning is skipped on those ordinary feature PRs by the
+workflow's release-PR/manual-dispatch trigger, not because a completed scan found no issues.
+
+On release PR #397, [OpenCode run 34152343159](https://github.com/adea-ai/control-plane/actions/runs/34152343159/job/101837093271)
+stopped during preparation with `OpenCode reported an unknown error` and exit code 2. The artifact
+upload found no output files. This is unavailable security evidence, not a vulnerability report or
+a passing scan; the log does not establish the underlying provider/runtime cause. Its configured
+scanner source is `137698ef3545204af8fad00fc8bd64d663c8122e` and model is
+`opencode-go/muse-spark-1.3-contributor`. No paid scan was retried or model/budget changed.
+
+The release PR's separate [Neon run 34152342719](https://github.com/adea-ai/control-plane/actions/runs/34152342719/job/101837056645)
+failed before migration with `Cannot find module '@control-plane/config'`. That is the build-order
+failure already addressed in the candidate, distinct from the previously evidenced SET ROLE and
+preview-capacity failures on other heads. A green aggregate gate does not override any of these
+separate failed or unexecuted acceptance checks. No remote permissions, branches, issues or PRs
+were changed by this read-only refresh.
