@@ -629,3 +629,27 @@ verified closed. No provider, Neon or production resource was changed. PostgreSQ
 to exclude privileges and checks data as admin; application-role recovery, production composition,
 retention policy, actual agent executions and calibrated full-corpus acceptance remain open. These
 scripted controls prove storage behavior, not agent quality or whole-milestone completion.
+
+## Cloud remote dispatch and replay checkpoint
+
+The integration runner now exercises the managed-cloud `remote` composition against an
+isolated PostgreSQL database, with a real loopback WebSocket and signed synthetic RuntimeNode
+identity. It routes a compiled, integrity-valid grant-bearing plan, persists and delivers the
+command, accepts its ACK, stores a scripted successful result through the filesystem Artifact
+store, and ingests the Artifact-backed terminal event. Repeating dispatch must return the same
+result, leave the full terminal command unchanged, and retain exactly one execution event.
+
+This drill exposed a real replay defect: reconstructing a command with a later wall-clock time
+conflicted with its previously persisted envelope. The workflow runtime now compares a conflicting
+candidate using the original envelope's three issuance/transport timestamps and returns the
+original record without updating it. All remaining envelope fields must be structurally equal;
+the repository's immutable identity rule is unchanged. Focused tests cover advancing clocks,
+eight concurrent retries, and conflicts for changed payload, capabilities, driver or idempotency
+key. Structural comparison also avoids treating PostgreSQL JSONB key ordering as a semantic change.
+
+The canonical lint, type-check, format and test command passed with 796 unit tests and 3,263
+assertions. The PostgreSQL integration command passed the cloud drill and the existing restart
+and application-role restore drills. This is local plumbing evidence, not live Pi execution,
+Restate journaling, production identity provisioning, R2 certification or usage settlement.
+Cancellation payload timestamp replay and replay after command-factory eligibility/deadline
+checks remain separate acceptance work; this checkpoint does not claim those paths are complete.

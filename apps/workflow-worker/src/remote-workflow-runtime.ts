@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import {
   createQueuedRuntimeCommandRecord,
   type ExecutionAttempt,
@@ -185,7 +186,22 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
     }
     const record = createQueuedRuntimeCommandRecord(command, this.#now().toISOString())
     const created = await this.#commands.create(record)
-    if (created.outcome === 'conflict') throw new Error('REMOTE_RUNTIME_COMMAND_CONFLICT')
+    if (created.outcome === 'conflict') {
+      // A retry may be constructed at a later time. Never replace or renew the
+      // persisted lease: compare the complete command using its original times.
+      // This also handles JSONB object-key ordering without weakening payload,
+      // driver, protocol, capability, idempotency or scope comparisons.
+      const original = created.record.commandEnvelope
+      const replay = {
+        ...command,
+        sentAt: original['sentAt'],
+        issuedAt: original['issuedAt'],
+        expiresAt: original['expiresAt'],
+      }
+      if (!isDeepStrictEqual(original, replay)) {
+        throw new Error('REMOTE_RUNTIME_COMMAND_CONFLICT')
+      }
+    }
     return created.record
   }
 }

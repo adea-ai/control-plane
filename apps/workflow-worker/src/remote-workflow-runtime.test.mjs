@@ -5,6 +5,30 @@ import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.js'
 
 describe('durable remote workflow runtime', () => {
+  test('replay retains the first command lease when the factory clock advances', async () => {
+    const commands = new InMemoryRuntimeCommandRepository()
+    let invocation = 0
+    const runtime = fixture(commands, { wait: async () => ({ outcome: 'completed' }) }, () => {
+      const offset = invocation++ * 1000
+      return {
+        ...golden.command,
+        sentAt: new Date(Date.parse(golden.command.sentAt) + offset).toISOString(),
+        issuedAt: new Date(Date.parse(golden.command.issuedAt) + offset).toISOString(),
+        expiresAt: new Date(Date.parse(golden.command.expiresAt) + offset).toISOString(),
+      }
+    })
+    const input = {
+      executionId: golden.command.executionId,
+      attemptId: golden.command.attemptId,
+      executionPlan: createExecutionPlanTestFixture(),
+      effectKey: 'workflow:dispatch:stable',
+    }
+    await runtime.dispatch(input)
+    const original = await commands.get(golden.command.commandId)
+    expect(await runtime.dispatch(input)).toEqual({ outcome: 'completed' })
+    expect(await commands.get(golden.command.commandId)).toEqual(original)
+  })
+
   test('queues one attempt-bound command and converges replay on the same outcome', async () => {
     const commands = new InMemoryRuntimeCommandRepository()
     const waits = []
@@ -39,6 +63,49 @@ describe('durable remote workflow runtime', () => {
     })
     expect(waits).toHaveLength(2)
     expect(waits[0].command.commandId).toBe(golden.command.commandId)
+  })
+
+  test('concurrent clock-shifted retries retain one command without renewing its lease', async () => {
+    const commands = new InMemoryRuntimeCommandRepository()
+    let invocation = 0
+    const runtime = fixture(commands, { wait: async () => ({ outcome: 'completed' }) }, () => ({
+      ...golden.command,
+      sentAt: new Date(Date.parse(golden.command.sentAt) + invocation++ * 1000).toISOString(),
+    }))
+    const input = {
+      executionId: golden.command.executionId,
+      attemptId: golden.command.attemptId,
+      executionPlan: createExecutionPlanTestFixture(),
+      effectKey: 'workflow:dispatch:stable',
+    }
+    await Promise.all(Array.from({ length: 8 }, () => runtime.dispatch(input)))
+    expect((await commands.get(golden.command.commandId)).commandEnvelope).toEqual(golden.command)
+  })
+
+  test('clock-shifted replay still rejects changed command semantics', async () => {
+    for (const change of [
+      { payload: { ...golden.command.payload, parameters: { changed: true } } },
+      { requiredCapabilities: ['execution.cancel'] },
+      { driver: { ...golden.command.driver, version: '99.0.0' } },
+      { idempotencyKey: 'remote:different-effect-key' },
+    ]) {
+      const commands = new InMemoryRuntimeCommandRepository()
+      let replay = false
+      const runtime = fixture(commands, { wait: async () => ({ outcome: 'completed' }) }, () => ({
+        ...golden.command,
+        ...(replay ? { ...change, sentAt: '2026-08-25T12:00:01.000Z' } : {}),
+      }))
+      const input = {
+        executionId: golden.command.executionId,
+        attemptId: golden.command.attemptId,
+        executionPlan: createExecutionPlanTestFixture(),
+        effectKey: 'workflow:dispatch:stable',
+      }
+      await runtime.dispatch(input)
+      replay = true
+      await expect(runtime.dispatch(input)).rejects.toThrow('REMOTE_RUNTIME_COMMAND_CONFLICT')
+      expect((await commands.get(golden.command.commandId)).commandEnvelope).toEqual(golden.command)
+    }
   })
 
   test('fails closed before persistence when the command widens frozen attempt scope', async () => {

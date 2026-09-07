@@ -108,6 +108,7 @@ try {
   run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1'], {
     environment: integrationEnvironment,
   })
+  run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
   if (remoteDatabase) {
     console.log('Skipping PostgreSQL disruption and restore drills against a remote target.')
   } else {

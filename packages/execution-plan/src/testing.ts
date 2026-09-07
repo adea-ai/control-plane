@@ -1,4 +1,4 @@
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { contextPackageSerializationFixtures, type ContextPackage } from '@control-plane/context'
 import { executionConstraintFixtures } from '@control-plane/domain'
 import type { RuntimeCapabilityName } from '@control-plane/runtime-sdk'
 import { ExecutionPlanCompiler, type ExecutionPlan } from './index.js'
@@ -6,6 +6,7 @@ import { ExecutionPlanCompiler, type ExecutionPlan } from './index.js'
 const digest = (character: string) => `sha256:${character.repeat(64)}`
 
 export interface ExecutionPlanTestFixtureOptions {
+  readonly contextPackage?: ContextPackage
   readonly profileCapabilityRequirements?: readonly RuntimeCapabilityName[]
   readonly skillRequiredCapabilities?: readonly RuntimeCapabilityName[]
 }
@@ -77,7 +78,9 @@ export function createExecutionPlanTestFixture(
         lifecycleMetadata: { publishedAt: '2026-08-22T12:00:00.000Z' },
       },
     ],
-    contextPackage: structuredClone(contextPackageSerializationFixtures.futurePi),
+    contextPackage: structuredClone(
+      options.contextPackage ?? contextPackageSerializationFixtures.futurePi
+    ),
     constraints,
     requestConstraints: [],
     runtimeRequirements: [
