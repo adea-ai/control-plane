@@ -17,7 +17,7 @@ import {
   type AsyncRemoteCallback,
   type SqliteRemoteDatabase,
 } from 'drizzle-orm/sqlite-proxy'
-import { metadata, records, sqliteSchema } from './schema.js'
+import { records, sqliteSchema } from './schema.js'
 
 export * from './repositories.js'
 export * from './repositories-extra.js'
@@ -89,19 +89,32 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
 
   async migrate(): Promise<void> {
     const database = await this.#open()
-    database.exec(Object.values(SCHEMA_STATEMENTS).join(';'))
-    const orm = this.#orm()
-    const current = await orm
-      .select({ value: metadata.value })
-      .from(metadata)
-      .where(eq(metadata.key, 'schema_version'))
-      .limit(1)
-    const version = current[0]?.value
-    if (version !== undefined && version !== String(SCHEMA_VERSION)) {
-      throw new SqlitePersistenceError('SQLITE_SCHEMA_INCOMPATIBLE')
-    }
-    if (version === undefined) {
-      await orm.insert(metadata).values({ key: 'schema_version', value: String(SCHEMA_VERSION) })
+    // Keep the version guard, schema changes, and version stamp under one write lock.
+    // An older binary must not alter an unsupported database before rejecting it.
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const hasMetadata = database
+        .prepare("SELECT 1 FROM sqlite_schema WHERE name = 'control_plane_metadata'")
+        .get()
+      const current = hasMetadata
+        ? database
+            .prepare("SELECT value FROM control_plane_metadata WHERE key = 'schema_version'")
+            .get()
+        : undefined
+      const version = current?.['value']
+      if (version !== undefined && version !== String(SCHEMA_VERSION)) {
+        throw new SqlitePersistenceError('SQLITE_SCHEMA_INCOMPATIBLE')
+      }
+      database.exec(Object.values(SCHEMA_STATEMENTS).join(';'))
+      if (version === undefined) {
+        database
+          .prepare('INSERT INTO control_plane_metadata (key, value) VALUES (?, ?)')
+          .run('schema_version', String(SCHEMA_VERSION))
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 
