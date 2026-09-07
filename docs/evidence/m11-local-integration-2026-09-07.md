@@ -132,3 +132,25 @@ exactly-once effects, graceful shutdown or fresh VPS behavior. The temporary har
 temporary application data, including local credentials. Follow-up checks found no container
 with that project label and confirmed the data directory absent. Test image
 `control-plane/m11-simple-test:83214` is intentionally retained for inspection.
+
+## Hosted Simple shutdown correction
+
+The combined candidate at `892cfd39894fac82cb9289642e3c6804be82f0cc` includes
+the process stop-timer cleanup. Its sequential lint, type-check, format-check and
+full test command exited zero; the unit suite reported 756 passes and no failures.
+Independent review identified a possible orphan child in the regression test's
+timeout path. Commit `e523ec9` isolates the launcher process group and cleans it
+up in `finally`; a second review found no remaining actionable issue. The owning
+package passed all 11 tests, with repository formatting and lint checks passing.
+
+At combined candidate `af5a22f78c3e916ccbdc1aba23b0e024221f9eda`, isolated project
+`m11-integration-simple-91956` rebuilt the Simple image and passed readiness 200
+and persistent SQLite file checks. Explicit Compose stop completed in 351 ms;
+container inspection reported exit code 0 and OOMKilled false. Force-recreation
+against the same data directory passed the probes again. The harness exited zero.
+The process, container, network and temporary data directory were verified absent.
+Image `control-plane/m11-simple-test:91956` is intentionally retained for inspection.
+
+This is a single local idle-service shutdown measurement, not a performance bound,
+in-flight execution recovery test or fresh VPS acceptance. The earlier run whose
+output was lost is not counted as evidence. This follow-up does not close M11.
