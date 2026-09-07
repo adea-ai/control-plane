@@ -544,6 +544,18 @@ was verified closed. No remote infrastructure or production data was changed.
 
 ### Explicit cloud remote-runtime composition checkpoint
 
+Network-boundary follow-up: `apps/runtime-gateway/src/websocket-network.test.mjs` now runs the
+native Bun WebSocket server on an OS-assigned loopback port and connects a real client. It verifies
+non-upgrade rejection, unsigned upgrade rejection, device-signed synthetic identity authentication,
+hello negotiation, exact outbound command bytes, incoming acknowledgement/source routing, credential
+revocation and denied reauthentication. Shutdown closes the socket, removes channel coordination
+and refuses a subsequent HTTP connection. The signing authority, upgrade-header convention and
+in-memory coordination are test fixtures; no production identity API or distributed coordination
+claim is introduced. This does not yet cover PostgreSQL-backed cloud execution, RuntimeNode host
+launch, terminal Artifact transfer or usage settlement through the socket. Full local gates passed
+with 793 unit tests. No persistent server/provider was started; PostgreSQL integration was not rerun
+for this isolated transport test.
+
 The bundled workflow worker now accepts `CONTROL_PLANE_CLOUD_RUNTIME=remote` and constructs the
 existing durable remote runtime with PostgreSQL attempt/command/event/interaction/context repositories,
 the managed-Pi command factory, outcome polling and scoped discovery routing. Tests verify concrete
