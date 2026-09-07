@@ -49,6 +49,7 @@ for (const fixture of [
   'missing-record-columns',
   'missing-record-constraints',
   'missing-index',
+  'changed-migration-history',
 ]) {
   test(`rejects a digest-valid ${fixture} backup without replacing live records`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'sqlite-restore-validation-'))
@@ -63,7 +64,11 @@ for (const fixture of [
       const path = join(directory, 'fixture.sqlite')
       const database = new DatabaseSync(path)
       try {
-        if (fixture === 'missing-record-constraints' || fixture === 'missing-index') {
+        if (
+          fixture === 'missing-record-constraints' ||
+          fixture === 'missing-index' ||
+          fixture === 'changed-migration-history'
+        ) {
           const source = new DatabaseSync(join(directory, 'live.sqlite'))
           try {
             for (const row of source
@@ -75,7 +80,11 @@ for (const fixture of [
             source.close()
           }
           database.exec("INSERT INTO control_plane_metadata VALUES ('schema_version', '1')")
-          if (fixture === 'missing-index') {
+          if (fixture === 'changed-migration-history') {
+            database.exec(
+              "INSERT INTO control_plane_metadata VALUES ('migration:1', 'incorrect-checksum')"
+            )
+          } else if (fixture === 'missing-index') {
             database.exec('DROP INDEX control_plane_records_namespace_updated')
           } else {
             database.exec(
