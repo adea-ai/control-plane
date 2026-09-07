@@ -1675,6 +1675,31 @@
       }
     },
     {
+      "id": "COMPAT-CONTEXT-COMPILER-REACHABILITY",
+      "representations": [
+        "ContextPackageCompiler library",
+        "cloud certification plan builder",
+        "authenticated context-package.resolve operation"
+      ],
+      "classification": "partially_verified",
+      "assessment": "The compiler is called by unit/acceptance fixtures and scripts/certify-m9-cloud.mjs, but no application composition caller was found. The authenticated API resolves existing scoped ContextPackages; it does not compile caller-supplied artifact authorization flags. Current evidence does not establish a supported production authoring path or authoritative upstream artifact lifecycle/permission mapping.",
+      "evidence": [
+        { "kind": "test", "path": "packages/context/src/index.test.mjs" },
+        { "kind": "artifact", "path": "scripts/certify-m9-cloud.mjs" },
+        {
+          "kind": "artifact",
+          "path": "apps/control-api/src/queries/context-package-resolution.service.ts"
+        },
+        { "kind": "artifact", "path": "docs/requirements/artifact-storage-source-audit.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "context-integration",
+        "disposition": "Establish the intended supported ContextPackage authoring boundary from the canonical contracts, wire authoritative artifact authorization/state mapping there, and certify it across profiles. Do not invent an exposed compiler endpoint or duplicate Agent HQ authorization solely to close this gap."
+      }
+    },
+    {
       "id": "COMPAT-CORTANA-ADAPTER-REACHABILITY",
       "representations": [
         "cortana-context-adapter package",

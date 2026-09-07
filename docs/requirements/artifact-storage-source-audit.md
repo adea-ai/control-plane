@@ -53,6 +53,15 @@ Initial current-code inspection identifies these verification entrypoints:
 These inspected entrypoints are a starting map, not evidence sufficient to upgrade
 any CP-ART row from `tbd`.
 
+Follow-up call-site tracing found `ContextPackageCompiler` invoked by its unit
+tests, the core-domain acceptance helper and `scripts/certify-m9-cloud.mjs`; no
+application composition caller was found. The API exposes scoped resolution of
+existing packages, not compilation of arbitrary candidate flags. The architecture
+audit records `COMPAT-CONTEXT-COMPILER-REACHABILITY` for the missing production
+authoring/authorization evidence. This is not a finding that an unauthenticated
+caller can bypass authorization. Determine the intended canonical authoring
+boundary before adding a public endpoint or assuming product authorization ownership.
+
 These 24 entries do not claim exhaustive extraction of all Agent HQ implementation
 requirements. Exact metadata field mappings, the complete product lifecycle/event
 taxonomy, idempotent API contracts, deletion/reference counting and legal holds,
