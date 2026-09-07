@@ -9,18 +9,22 @@
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/domain",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -28,13 +32,18 @@
     {
       "name": "@control-plane/bootstrap",
       "path": "packages/bootstrap",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.1",
+      "lockVersion": "1.2.1",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/config", "@control-plane/telemetry"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/config",
+        "@control-plane/telemetry"
+      ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
@@ -43,14 +52,20 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.3.2",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": [],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/telemetry"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -58,14 +73,21 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.3.2",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/domain"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/domain"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -73,14 +95,18 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.5.0",
-      "lockVersion": "1.5.0",
+      "version": "1.5.2",
+      "lockVersion": "1.5.2",
       "kind": "package",
       "private": false,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -88,8 +114,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.3.2",
+      "lockVersion": "1.3.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -111,6 +137,7 @@
         "@nestjs/core",
         "@nestjs/platform-fastify",
         "@nestjs/swagger",
+        "@opentelemetry/api",
         "class-transformer",
         "class-validator",
         "drizzle-orm",
@@ -118,25 +145,31 @@
         "reflect-metadata",
         "rxjs"
       ],
-      "developmentWorkspaceDependencies": ["@control-plane/testing"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/testing"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
     {
       "name": "@control-plane/cortana-context-adapter",
       "path": "packages/cortana-context-adapter",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/contracts",
         "@control-plane/runtime-gateway-protocol"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -144,14 +177,21 @@
     {
       "name": "@control-plane/credential-vault",
       "path": "packages/credential-vault",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/policy"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/policy"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -159,12 +199,16 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.7.0",
-      "lockVersion": "1.7.0",
+      "version": "1.7.3",
+      "lockVersion": "1.7.3",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": [".", "./migration", "./testing"],
+      "exports": [
+        ".",
+        "./migration",
+        "./testing"
+      ],
       "workspaceDependencies": [
         "@control-plane/config",
         "@control-plane/context",
@@ -179,20 +223,27 @@
         "@control-plane/runtime-sdk",
         "@control-plane/usage-ledger"
       ],
-      "externalDependencies": ["drizzle-orm", "postgres"],
+      "externalDependencies": [
+        "drizzle-orm",
+        "postgres"
+      ],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["drizzle-kit"],
+      "developmentExternalDependencies": [
+        "drizzle-kit"
+      ],
       "layer": "adapter-infrastructure"
     },
     {
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.1",
+      "lockVersion": "1.1.1",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
@@ -202,14 +253,20 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.5.0",
-      "lockVersion": "1.5.0",
+      "version": "1.5.2",
+      "lockVersion": "1.5.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -217,18 +274,22 @@
     {
       "name": "@control-plane/events",
       "path": "packages/events",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.3.2",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/contracts",
         "@control-plane/domain",
         "@control-plane/telemetry"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -236,19 +297,24 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": [".", "./testing"],
+      "exports": [
+        ".",
+        "./testing"
+      ],
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/contracts",
         "@control-plane/domain",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -256,8 +322,8 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -285,13 +351,18 @@
     {
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/orchestration", "@control-plane/telemetry"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/orchestration",
+        "@control-plane/telemetry"
+      ],
       "externalDependencies": [
         "@langchain/langgraph",
         "@langchain/langgraph-checkpoint-postgres",
@@ -304,8 +375,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -329,7 +400,11 @@
         "@control-plane/workflow-runtime",
         "@control-plane/workflow-worker"
       ],
-      "externalDependencies": ["@nestjs/common", "@restatedev/restate-server", "fastify"],
+      "externalDependencies": [
+        "@nestjs/common",
+        "@restatedev/restate-server",
+        "fastify"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -337,33 +412,46 @@
     {
       "name": "@control-plane/managed-pi-adapter",
       "path": "packages/managed-pi-adapter",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/domain",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
-      "developmentWorkspaceDependencies": ["@control-plane/execution-plan"],
+      "externalDependencies": [
+        "zod"
+      ],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/execution-plan"
+      ],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
     {
       "name": "@control-plane/memory-writeback",
       "path": "packages/memory-writeback",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/domain"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/domain"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -371,18 +459,22 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/contracts",
         "@control-plane/domain",
         "@control-plane/policy"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -390,14 +482,20 @@
     {
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/deployment"],
-      "externalDependencies": ["@aws-sdk/client-s3"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/deployment"
+      ],
+      "externalDependencies": [
+        "@aws-sdk/client-s3"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -405,19 +503,23 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/contracts",
         "@control-plane/domain",
         "@control-plane/execution-plan"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -425,14 +527,20 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -440,14 +548,18 @@
     {
       "name": "@control-plane/production-readiness",
       "path": "packages/production-readiness",
-      "version": "1.1.1",
-      "lockVersion": "1.1.1",
+      "version": "1.1.3",
+      "lockVersion": "1.1.3",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -455,12 +567,14 @@
     {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/database",
@@ -469,7 +583,10 @@
         "@control-plane/execution-plan",
         "@control-plane/sqlite-persistence"
       ],
-      "externalDependencies": ["drizzle-orm", "zod"],
+      "externalDependencies": [
+        "drizzle-orm",
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -477,28 +594,44 @@
     {
       "name": "@control-plane/remote-control-relay",
       "path": "packages/remote-control-relay",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts", "@control-plane/deployment"],
-      "externalDependencies": ["@hpke/core", "@hpke/dhkem-x25519", "zod"],
-      "developmentWorkspaceDependencies": ["@control-plane/control-api", "@control-plane/domain"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts",
+        "@control-plane/deployment"
+      ],
+      "externalDependencies": [
+        "@hpke/core",
+        "@hpke/dhkem-x25519",
+        "zod"
+      ],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/control-api",
+        "@control-plane/domain"
+      ],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
     {
       "name": "@control-plane/restate-runtime",
       "path": "packages/restate-runtime",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/deployment"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/deployment"
+      ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
@@ -507,8 +640,8 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -529,14 +662,20 @@
     {
       "name": "@control-plane/runtime-gateway-protocol",
       "path": "packages/runtime-gateway-protocol",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": false,
       "browser": false,
-      "exports": [".", "./fixtures", "./schema/gateway-envelope.v1.json"],
+      "exports": [
+        ".",
+        "./fixtures",
+        "./schema/gateway-envelope.v1.json"
+      ],
       "workspaceDependencies": [],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -544,14 +683,20 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.5.0",
-      "lockVersion": "1.5.0",
+      "version": "1.5.2",
+      "lockVersion": "1.5.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -559,8 +704,8 @@
     {
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
-      "version": "1.4.0",
-      "lockVersion": "1.4.0",
+      "version": "1.4.2",
+      "lockVersion": "1.4.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -573,7 +718,9 @@
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -581,14 +728,20 @@
     {
       "name": "@control-plane/sandbox",
       "path": "packages/sandbox",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -596,28 +749,39 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.3.0",
-      "lockVersion": "1.3.0",
+      "version": "1.3.2",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": false,
       "browser": false,
-      "exports": [".", "./testing"],
-      "workspaceDependencies": ["@control-plane/contracts"],
+      "exports": [
+        ".",
+        "./testing"
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
-      "developmentExternalDependencies": ["zod"],
+      "developmentExternalDependencies": [
+        "zod"
+      ],
       "layer": "adapter-infrastructure"
     },
     {
       "name": "@control-plane/secrets",
       "path": "packages/secrets",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.1",
+      "lockVersion": "1.1.1",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/deployment"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/deployment"
+      ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
@@ -626,12 +790,14 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        "."
+      ],
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/contracts",
@@ -641,7 +807,9 @@
         "@control-plane/execution-plan",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["drizzle-orm"],
+      "externalDependencies": [
+        "drizzle-orm"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -649,14 +817,22 @@
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.2.1",
-      "lockVersion": "1.2.1",
+      "version": "1.2.3",
+      "lockVersion": "1.2.3",
       "kind": "package",
-      "private": true,
+      "private": false,
       "browser": false,
-      "exports": ["."],
+      "exports": [
+        ".",
+        "./catalog",
+        "./opentelemetry",
+        "./sentry"
+      ],
       "workspaceDependencies": [],
-      "externalDependencies": ["@opentelemetry/api", "@sentry/node"],
+      "externalDependencies": [
+        "@opentelemetry/api",
+        "@sentry/node"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -664,13 +840,19 @@
     {
       "name": "@control-plane/testing",
       "path": "packages/testing",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.1.3",
+      "lockVersion": "1.1.3",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": [".", "./postgres"],
-      "workspaceDependencies": ["@control-plane/config", "@control-plane/database"],
+      "exports": [
+        ".",
+        "./postgres"
+      ],
+      "workspaceDependencies": [
+        "@control-plane/config",
+        "@control-plane/database"
+      ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
@@ -679,8 +861,8 @@
     {
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
-      "version": "1.2.1",
-      "lockVersion": "1.2.1",
+      "version": "1.2.3",
+      "lockVersion": "1.2.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -693,7 +875,9 @@
         "@control-plane/policy",
         "@control-plane/tool-sdk"
       ],
-      "externalDependencies": ["ajv"],
+      "externalDependencies": [
+        "ajv"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -701,14 +885,20 @@
     {
       "name": "@control-plane/tool-sdk",
       "path": "packages/tool-sdk",
-      "version": "1.2.0",
-      "lockVersion": "1.2.0",
+      "version": "1.2.2",
+      "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -716,14 +906,20 @@
     {
       "name": "@control-plane/usage-ledger",
       "path": "packages/usage-ledger",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/contracts"],
-      "externalDependencies": ["zod"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/contracts"
+      ],
+      "externalDependencies": [
+        "zod"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -731,14 +927,21 @@
     {
       "name": "@control-plane/workflow-runtime",
       "path": "packages/workflow-runtime",
-      "version": "1.1.0",
-      "lockVersion": "1.1.0",
+      "version": "1.1.2",
+      "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
-      "workspaceDependencies": ["@control-plane/config", "@control-plane/orchestration"],
-      "externalDependencies": ["@restatedev/restate-sdk"],
+      "exports": [
+        "."
+      ],
+      "workspaceDependencies": [
+        "@control-plane/config",
+        "@control-plane/orchestration"
+      ],
+      "externalDependencies": [
+        "@restatedev/restate-sdk"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "core-port"
@@ -746,8 +949,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.4.0",
-      "lockVersion": "1.4.0",
+      "version": "1.4.2",
+      "lockVersion": "1.4.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -769,7 +972,10 @@
         "@control-plane/telemetry",
         "@control-plane/workflow-runtime"
       ],
-      "externalDependencies": ["@restatedev/restate-sdk"],
+      "externalDependencies": [
+        "@opentelemetry/api",
+        "@restatedev/restate-sdk"
+      ],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -809,7 +1015,10 @@
         }
       ],
       "openApiOperationId": "authentication.verify",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -846,7 +1055,10 @@
         }
       ],
       "openApiOperationId": "context-package.resolve",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -875,7 +1087,10 @@
         }
       ],
       "openApiOperationId": "execution.accept",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -904,7 +1119,10 @@
         }
       ],
       "openApiOperationId": "execution.validate",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -941,7 +1159,10 @@
         }
       ],
       "openApiOperationId": "external-session.get",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -978,7 +1199,10 @@
         }
       ],
       "openApiOperationId": "external-session.list",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1015,7 +1239,10 @@
         }
       ],
       "openApiOperationId": "marketplace.catalog.read",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1056,7 +1283,10 @@
         }
       ],
       "openApiOperationId": "marketplace.install.request",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1093,7 +1323,10 @@
         }
       ],
       "openApiOperationId": "profile.resolve",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1130,7 +1363,10 @@
         }
       ],
       "openApiOperationId": "project-state.resolve",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1163,7 +1399,10 @@
         }
       ],
       "openApiOperationId": "runtime-connection.get",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1196,7 +1435,10 @@
         }
       ],
       "openApiOperationId": "runtime-connection.list",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     },
@@ -1229,7 +1471,10 @@
         }
       ],
       "openApiOperationId": "runtime.list",
-      "openApiResponseStatuses": ["200", "default"],
+      "openApiResponseStatuses": [
+        "200",
+        "default"
+      ],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
     }
@@ -1628,7 +1873,11 @@
     },
     {
       "id": "COMPAT-EXPORTS",
-      "representations": ["package exports", "dependency manifests", "deep-import boundary checks"],
+      "representations": [
+        "package exports",
+        "dependency manifests",
+        "deep-import boundary checks"
+      ],
       "classification": "verified",
       "assessment": "Declared internal imports resolve through package exports; no undeclared deep imports were found.",
       "evidence": [
@@ -1657,7 +1906,11 @@
     },
     {
       "id": "COMPAT-CODEOWNERS",
-      "representations": ["package inventory", "repository ownership policy", "CODEOWNERS"],
+      "representations": [
+        "package inventory",
+        "repository ownership policy",
+        "CODEOWNERS"
+      ],
       "classification": "not_implemented",
       "assessment": "The repository-wide CODEOWNERS rule still names the placeholder @OWNER and therefore provides no actionable review authority.",
       "evidence": [

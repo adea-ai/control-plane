@@ -21,6 +21,7 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
+    "@control-plane/telemetry": "workspace:*",
     "zod": "4.5.4"
   },
   "engines": {

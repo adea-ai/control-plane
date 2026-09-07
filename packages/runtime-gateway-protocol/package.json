@@ -1,6 +1,15 @@
 {
   "name": "@control-plane/runtime-gateway-protocol",
   "version": "1.2.2",
+  "description": "Versioned wire protocol between the Control Plane and external runtimes: schemas, emulator, fixtures, and authentication.",
+  "keywords": [
+    "protocol",
+    "gateway",
+    "runtime",
+    "zod",
+    "schemas",
+    "agents"
+  ],
   "license": "Apache-2.0",
   "files": [
     "dist",
@@ -35,5 +44,12 @@
   },
   "engines": {
     "node": ">=24 <25"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/runtime-gateway-protocol"
+  },
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
+  "homepage": "https://github.com/adea-ai/control-plane#readme"
 }

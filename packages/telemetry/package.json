@@ -1,7 +1,24 @@
 {
   "name": "@control-plane/telemetry",
   "version": "1.2.3",
-  "private": true,
+  "description": "Fail-open observability toolkit: structured logging, secret redaction, trace-context propagation, deterministic sampling, and pluggable OpenTelemetry, Sentry, and LangSmith adapters.",
+  "keywords": [
+    "telemetry",
+    "observability",
+    "logging",
+    "tracing",
+    "redaction",
+    "opentelemetry",
+    "sentry",
+    "langsmith"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adea-ai/control-plane.git",
+    "directory": "packages/telemetry"
+  },
+  "bugs": "https://github.com/adea-ai/control-plane/issues",
   "files": [
     "dist"
   ],
@@ -13,16 +30,43 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./opentelemetry": {
+      "types": "./dist/opentelemetry.d.ts",
+      "node": "./dist/opentelemetry.js",
+      "default": "./dist/opentelemetry.js"
+    },
+    "./sentry": {
+      "types": "./dist/sentry.d.ts",
+      "node": "./dist/sentry.js",
+      "default": "./dist/sentry.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "node": "./dist/catalog.js",
+      "default": "./dist/catalog.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/index.test.mjs"
   },
-  "dependencies": {
+  "peerDependencies": {
     "@opentelemetry/api": "1.9.1",
     "@sentry/node": "10.73.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "@sentry/node": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=24 <25"
