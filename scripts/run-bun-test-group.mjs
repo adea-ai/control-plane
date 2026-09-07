@@ -28,6 +28,7 @@ const repositoryGroups = {
     'tests/m11-architecture-audit.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',
     'tests/repository.test.mjs',
+    'tests/restate-identity.test.mjs',
   ],
 }
 

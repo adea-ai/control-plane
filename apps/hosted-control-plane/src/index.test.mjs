@@ -14,6 +14,29 @@ import {
 } from './index.ts'
 
 describe('Hosted server composition', () => {
+  test('maps the Restate request identity from the production environment', () => {
+    const key = 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f'
+    expect(
+      resolveHostedCompositionConfiguration({
+        DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
+        RESTATE_REQUEST_IDENTITY_PUBLIC_KEY: key,
+      }).requestIdentityPublicKey
+    ).toBe(key)
+  })
+
+  test('rejects missing or malformed Hosted signing configuration before allocating resources', () => {
+    for (const requestIdentityPublicKey of [undefined, '', 'invalid', 'publickeyv1_0']) {
+      expect(
+        () =>
+          new HostedServerControlPlaneComposition({
+            dataDirectory: '/unused-hosted-test',
+            databaseUrl: 'invalid-database-url',
+            requestIdentityPublicKey,
+          })
+      ).toThrow('HOSTED_RESTATE_REQUEST_IDENTITY_REQUIRED')
+    }
+  })
+
   test('propagates the supported remote runtime activity port through the production launcher', () => {
     const runtimeActivityPort = {
       dispatch: async () => ({ outcome: 'cancelled' }),
@@ -212,6 +235,7 @@ describe('Hosted server composition', () => {
       () =>
         new HostedServerControlPlaneComposition({
           dataDirectory: '/tmp/control-plane-invalid-object-store',
+          requestIdentityPublicKey: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',
           databaseUrl: 'postgresql://app:secret@postgres/control_plane',
           connection: { database: {}, check: async () => undefined, close: async () => undefined },
           objectStoreKind: 's3-compatible',
