@@ -136,7 +136,7 @@ jobs:
           console.log(`::add-mask::${migrationUrl}`);
           appendFileSync(
             GITHUB_ENV,
-            `DATABASE_URL=${runtimeUrl}\nDATABASE_URL_UNPOOLED=${runtimeUrl}\nDATABASE_MIGRATION_URL=${migrationUrl}\n`,
+            `DATABASE_URL=${runtimeUrl}\nDATABASE_URL_UNPOOLED=${runtimeUnpooledUrl}\nDATABASE_MIGRATION_URL=${migrationUrl}\n`,
           );
           NODE
 
