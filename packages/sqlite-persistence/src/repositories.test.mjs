@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { CommandInboxService } from '@control-plane/domain'
+import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqliteCommandAcceptanceRepository,
@@ -61,7 +61,7 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
-  test.each([30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
+  test.each([1, 30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
     const path = join(directory, 'control-plane.sqlite')
     let provider = new SqlitePersistenceProvider({ path })
@@ -69,7 +69,22 @@ describe('SQLite domain repositories', () => {
     const input = commandInput({ retentionExpiresAt: deadline })
     try {
       await provider.migrate()
-      const accepted = await service(provider).acceptExecution(input)
+      let accepted
+      if (days < 30) {
+        const template = await new CommandInboxService({
+          repository: new InMemoryCommandAcceptanceRepository(),
+          executionIdFactory: () => ids.executionId,
+          executionPlanValidator: { validate: async () => true },
+          now: () => receivedAt,
+        }).acceptExecution(commandInput())
+        // Seed the pre-policy persisted shape without using new-acceptance validation.
+        accepted = await new SqliteCommandAcceptanceRepository(provider).accept(
+          { ...template.command, retentionExpiresAt: deadline },
+          template.execution
+        )
+      } else {
+        accepted = await service(provider).acceptExecution(input)
+      }
       provider.close()
       provider = new SqlitePersistenceProvider({ path })
       await provider.migrate()
