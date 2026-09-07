@@ -1,8 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// Compiled dist files keep the workspace import specifiers they were built
+// from, so the staged tarball must rewrite @control-plane/* specifiers to
+// their published @adea-ai/* names alongside the manifest dependency names.
 
 // Publishes the stable, deployment-neutral packages to the public npm registry
 // under the @adea-ai scope (the npm org that already exists for the product
@@ -73,6 +77,21 @@ async function rewriteSection(section, workspaceName) {
   return rewritten
 }
 
+async function rewriteDistSpecifiers(packageDir) {
+  const entries = await readdir(packageDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const path = join(packageDir, entry.name)
+    if (entry.isDirectory()) {
+      await rewriteDistSpecifiers(path)
+    } else if (/\.(js|d\.ts|cjs|mjs)$/.test(entry.name)) {
+      const source = await readFile(path, 'utf8')
+      if (source.includes('@control-plane/')) {
+        await writeFile(path, source.replaceAll('@control-plane/', `${PUBLIC_SCOPE}/`))
+      }
+    }
+  }
+}
+
 for (const relative of PUBLISH_PACKAGES) {
   const source = resolve(repoRoot, relative)
   const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
@@ -97,6 +116,7 @@ for (const relative of PUBLISH_PACKAGES) {
   for (const section of ['dependencies', 'devDependencies', 'peerDependencies']) {
     staged[section] = await rewriteSection(staged[section], name)
   }
+  await rewriteDistSpecifiers(join(stage, 'package', 'dist'))
   await writeFile(stagedManifestPath, `${JSON.stringify(staged, null, 2)}\n`)
   // Ship the repository license inside the tarball so registry consumers and
   // license scanners see it without visiting the repository.
