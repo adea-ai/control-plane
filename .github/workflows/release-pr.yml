@@ -13,9 +13,8 @@ jobs:
   release-pr:
     if: vars.CI_BILLING_PAUSED != 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     name: Release PR
-    uses: 0xPlayerOne/code-foundry/.github/workflows/release-pr.yml@v0.40.1
+    uses: 0xPlayerOne/code-foundry/.github/workflows/release-pr.yml@v1.3.1
     with:
       runner: ubuntu-latest
     secrets:
       CODE_FOUNDRY_TOKEN: ${{ secrets.CODE_FOUNDRY_TOKEN }}
-      RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}

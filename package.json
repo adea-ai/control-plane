@@ -2,16 +2,11 @@
   "name": "@control-plane/workspace",
   "version": "1.8.2",
   "private": true,
-  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
-  "packageManager": "bun@1.4.0",
-  "engines": {
-    "node": ">=24 <25",
-    "bun": ">=1.4.0 <2"
-  },
+  "type": "module",
   "scripts": {
     "build": "turbo run build",
     "type-check": "turbo run build openapi:check && bun run db:check && bun run compatibility:check && bun run requirements:check && bun run architecture:check && bun run infra:typecheck",
@@ -22,7 +17,7 @@
     "requirements:check": "bun scripts/requirements-ledger.mjs",
     "requirements:write": "bun scripts/requirements-ledger.mjs --write",
     "requirements:refresh": "bun scripts/requirements-ledger.mjs --refresh-issues",
-    "lint": "turbo run lint && eslint eslint.config.js tests && bun run check:boundaries",
+    "lint": "turbo run lint && oxlint tests && bun run check:boundaries",
     "openapi:check": "turbo run openapi:check",
     "test": "bun run build && bun run --parallel 'test:group:*'",
     "test:group:unit": "bun scripts/run-bun-test-group.mjs unit --coverage --timeout 30000",
@@ -53,8 +48,8 @@
     "test:m8-acceptance": "bun run build && bun test tests/m8-multi-agent-orchestration.test.mjs",
     "test:coverage": "bun run test:unit",
     "test:shard": "bun run build && bun scripts/run-bun-test-group.mjs unit --timeout 30000",
-    "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
-    "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "check:boundaries": "turbo boundaries",
     "security:scan": "bun scripts/scan-secrets.mjs",
     "containers:build": "docker buildx bake -f infrastructure/containers/docker-bake.hcl",
@@ -68,8 +63,8 @@
   },
   "devDependencies": {
     "@control-plane/acp-adapter": "workspace:*",
-    "@control-plane/context": "workspace:*",
     "@control-plane/config": "workspace:*",
+    "@control-plane/context": "workspace:*",
     "@control-plane/contracts": "workspace:*",
     "@control-plane/credential-vault": "workspace:*",
     "@control-plane/database": "workspace:*",
@@ -92,17 +87,20 @@
     "@control-plane/sqlite-persistence": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
-    "@eslint/js": "10.0.1",
     "@langchain/langgraph": "1.4.13",
     "@types/node": "26.4.1",
-    "eslint": "10.9.1",
-    "prettier": "3.9.6",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
     "railway": "3.11.0",
     "turbo": "2.10.12",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.69.0"
+    "typescript": "6.0.3"
   },
   "overrides": {
     "esbuild": "0.28.2"
-  }
+  },
+  "engines": {
+    "bun": ">=1.4.0 <2",
+    "node": ">=24 <25"
+  },
+  "packageManager": "bun@1.4.0"
 }

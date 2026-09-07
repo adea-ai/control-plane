@@ -248,9 +248,9 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
         })
         return
       } catch (error) {
-        if (!(
-          error instanceof ExecutionLifecycleError && error.code === 'STALE_EXECUTION_VERSION'
-        )) {
+        if (
+          !(error instanceof ExecutionLifecycleError && error.code === 'STALE_EXECUTION_VERSION')
+        ) {
           throw error
         }
       }

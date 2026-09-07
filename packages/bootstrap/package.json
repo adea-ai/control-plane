@@ -2,14 +2,11 @@
   "name": "@control-plane/bootstrap",
   "version": "1.2.0",
   "private": true,
-  "type": "module",
-  "browser": false,
-  "engines": {
-    "node": ">=24 <25"
-  },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "browser": false,
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -20,11 +17,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",
     "@control-plane/telemetry": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }
