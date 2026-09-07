@@ -116,6 +116,13 @@ The former runtime-worker, runtime-gateway, and tool-gateway process split is no
 requirement. Local uses an all-in-one Control Plane plus local Restate, and Hosted selects only the
 processes its implemented topology requires.
 
+If a deployment explicitly starts the optional `runtime-worker` service in staging or production,
+it must inject a `HostedManagedPiWorker`; the bare entrypoint fails startup instead of reporting
+readiness without a worker. The injected worker is registered for cleanup before its readiness
+probe, so failed or throwing probes also release it. Test/development bootstrap without a worker
+remains available. This does not add the former service split to the accepted Cloud topology or
+provide a RuntimeNode gateway command-consumption loop.
+
 ## Validation and diagnostics
 
 - Missing/invalid startup configuration reports names and safe classifications, never values.

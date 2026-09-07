@@ -1,5 +1,14 @@
 # M11 local integration checkpoint
 
+Optional Runtime Worker startup follow-up: direct startup previously reported ready without an
+injected worker in production, and a failed worker readiness probe skipped worker cleanup. Both
+behaviors were reproduced by failing regressions. Staging/production now require an injected
+worker and register its cleanup before probing; local bootstrap remains available. The full
+lint/type/format/test command passed with 800 unit tests and 3,293 assertions. No external worker,
+database, provider or deployment was started for these tests. This closes a false-readiness and
+startup-cleanup gap in the optional service, not the missing gateway command-consumption loop or
+live cancellation acceptance. It does not change the accepted two-application-service Cloud topology.
+
 Decision: incomplete milestone; local integration passed. This is not final release approval.
 
 Validated candidate: `dac6dd6a15272a345aa57f4ad586ed9a5d8de7c4` on local branch
