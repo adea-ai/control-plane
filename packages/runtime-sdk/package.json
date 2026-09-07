@@ -30,6 +30,10 @@
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "compatibility:check": "bun scripts/compatibility.mjs --check",
@@ -40,10 +44,6 @@
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "zod": "4.5.4"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
   },
   "engines": {
     "node": ">=24 <25"
