@@ -65,3 +65,20 @@ Compose project `m11-integration-db` was removed with its container, network and
 volume; label-filtered container and volume inventories were empty afterward.
 No remote credentials or Neon permission changes were used. Cloud/VPS, full recovery,
 physical retention and independent final acceptance remain open.
+
+## PostgreSQL disruption follow-up
+
+At `5a54200` (code unchanged from the combined candidate), the dedicated local
+`m11-integration-disruption` project ran `scripts/run-postgres-disruption-drill.mjs`.
+The initial attempt failed: Docker changed the ephemeral port from 55005 to 55006
+on service restart, leaving the test client aimed at a closed port. That attempt
+is not passing recovery evidence. After pinning the same test project's loopback
+port to 55005, the unchanged drill exited zero: database access failed while the
+service was stopped, and the committed evaluation digest survived restart.
+
+This is a single-instance stop/start test, not replicated failover, full execution
+recovery, or a measured production RTO certification. The script enforces its
+configured recovery bound but does not emit an exact recovery duration.
+The test container, network and volume (including data from the failed first
+attempt) were removed; label-filtered inventories were empty. No shared database,
+Neon role or production service was modified.
