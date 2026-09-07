@@ -5,10 +5,12 @@ import {
   executions,
   PostgresContextAuthoringCommandRepository,
   PostgresEvaluationRepository,
+  PostgresExecutionValidationCommandRepository,
   usageLedgerEntries,
 } from '../packages/database/src/index.ts'
 import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
 import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
+import { validationRecoveryFixture } from './validation-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-restore-drill'
 const expectedDigest = `sha256:${'d'.repeat(64)}`
@@ -39,6 +41,11 @@ const source = await createIsolatedPostgres({ migrate: true })
 const target = await createIsolatedPostgres({ migrate: false })
 
 try {
+  const validation = validationRecoveryFixture('restore')
+  await new PostgresExecutionValidationCommandRepository(source.application).commit(
+    validation.record,
+    validation.plan
+  )
   const authoring = contextAuthoringRecoveryFixture('restore')
   await new PostgresContextAuthoringCommandRepository(source.application).commit(
     authoring.record,
@@ -178,8 +185,27 @@ try {
     ).trim()
   )
   authoring.assertRecovered(restoredAuthoring.record, restoredAuthoring.package)
+  const restoredValidation = JSON.parse(
+    String(
+      dockerPostgres([
+        'psql',
+        '--username',
+        'control_plane_admin',
+        '--dbname',
+        target.name,
+        '--tuples-only',
+        '--no-align',
+        '--command',
+        `SELECT json_build_object('record', c.record, 'plan', p.plan)
+     FROM execution_validation_commands c
+     JOIN execution_plans p ON p.execution_plan_id = c.execution_plan_id
+     WHERE c.command_key = '${validation.commandKey}'`,
+      ])
+    ).trim()
+  )
+  validation.assertRecovered(restoredValidation.record, restoredValidation.plan)
   console.log(
-    'PostgreSQL backup and restore drill preserved immutable evaluation, execution, event, usage, and exact context authoring records/packages.'
+    'PostgreSQL backup and restore drill preserved evaluation, execution, event, usage, authoring, and exact validation command/plan evidence.'
   )
 } finally {
   await Promise.allSettled([source.dispose(), target.dispose()])

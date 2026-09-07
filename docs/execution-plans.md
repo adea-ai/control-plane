@@ -54,8 +54,11 @@ transaction-scoped advisory lock and the `execution_validation_commands` table (
 The PostgreSQL integration test exercises eight competing commits through four connections,
 injected rollback, repository reconstruction, caller isolation and corrupted scope/request/digest
 metadata. Its candidates are asserted absent before rollback, so earlier shared-suite fixtures cannot
-mask a leaked write. The existing recovery drills do not yet seed validation-command records;
-process restart and backup recovery for this record type are not certified by this test.
+mask a leaked write. The PostgreSQL service-restart drill additionally verifies the exact stored
+command/plan pair and retries the repository commit after restart. The backup-restore drill checks
+both restored objects and their integrity through an administrator connection. Since that restore
+excludes ownership and privileges, it proves data recovery, not restored application permissions or
+API replay readiness. A live cloud/Hosted Server API restart matrix remains required.
 
 Profile portability now carries `execution-validation-command` records with their exact plans.
 Manifest verification rejects missing plans, forged logical keys, aliases and scope/request/digest

@@ -380,3 +380,17 @@ No persistent server or agent was started for these tests, and their temporary S
 removed. No remote infrastructure was changed. Cloud/Hosted API restart certification, historical
 validation retry rollout handling, execution-time revocation and inline authoring remain separate
 acceptance gates; replay is not a fresh grant of execution authority.
+
+## Validation-command recovery drills
+
+The PostgreSQL restart drill now seeds a validation command and its exact execution plan, verifies
+both after stopping and restarting PostgreSQL, and retries the repository commit to prove the same
+record is returned. The backup-restore drill checks the exact restored command/plan pair plus plan
+integrity and command binding. This supersedes the earlier notes that these drills did not seed
+validation commands. Restore uses an administrator connection and excludes ownership/privileges;
+it is data-recovery evidence, not application permission restoration or an API restart certification.
+
+The integration runner and its connection-loss, restart and backup-restore drills exited zero, as did
+`bun run lint && bun run type-check && bun run format:check && bun run test`. The disposable Compose
+project `m11-validation-recovery-20260907` used port 55069; its container, network and volume were
+removed after validation and the port was verified closed. No remote infrastructure was changed.
