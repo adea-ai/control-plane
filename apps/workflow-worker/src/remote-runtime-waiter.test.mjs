@@ -28,12 +28,10 @@ describe('remote runtime durable outcome waiter', () => {
           },
         },
         events: {
-          queryAfter: async () => [
-            {
-              type: 'interaction.requested',
-              payload: { interactionId: polls === 1 ? interactionId : nextId },
-            },
-          ],
+          latestInteraction: async () => ({
+            type: 'interaction.requested',
+            payload: { interactionId: polls === 1 ? interactionId : nextId },
+          }),
         },
       })
       expect(
@@ -87,11 +85,14 @@ describe('remote runtime durable outcome waiter', () => {
 
   test('returns the durable interaction identity and terminal command failures', async () => {
     const interaction = fixture({
-      executions: { getExecution: async () => ({ state: 'awaiting_input' }) },
+      executions: {
+        getExecution: async () => ({ executionId: input.executionId, state: 'awaiting_input' }),
+      },
       events: {
-        queryAfter: async () => [
-          { type: 'interaction.requested', payload: { interactionId: 'int_01JABC' } },
-        ],
+        latestInteraction: async (executionId, attemptId) => {
+          expect([executionId, attemptId]).toEqual([input.executionId, input.attemptId])
+          return { type: 'interaction.requested', payload: { interactionId: 'int_01JABC' } }
+        },
       },
     })
     expect(await interaction.wait(input)).toEqual({
@@ -133,9 +134,10 @@ describe('remote runtime durable outcome waiter', () => {
       executions: { getExecution: async () => ({ state: 'awaiting_input' }) },
       commands: { get: async () => ({ status: 'succeeded' }) },
       events: {
-        queryAfter: async () => [
-          { type: 'interaction.requested', payload: { interactionId: 'int_old' } },
-        ],
+        latestInteraction: async () => ({
+          type: 'interaction.requested',
+          payload: { interactionId: 'int_old' },
+        }),
       },
       sleep: async () => {
         sleeps += 1
@@ -170,7 +172,7 @@ function fixture(overrides = {}) {
   return new PollingRemoteRuntimeOutcomeWaiter({
     executions: overrides.executions ?? { getExecution: async () => ({ state: 'running' }) },
     commands: overrides.commands ?? { get: async () => ({ status: 'acknowledged' }) },
-    events: overrides.events ?? { queryAfter: async () => [] },
+    events: overrides.events ?? { latestInteraction: async () => undefined },
     now: overrides.now ?? (() => new Date('2026-08-25T12:00:00.000Z')),
     sleep: overrides.sleep ?? (async () => undefined),
     pollIntervalMs: 10,

@@ -1812,6 +1812,39 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
     expect(delivered.map(({ eventId }) => eventId)).toHaveLength(3)
     expect(await repository.queryPending(10)).toEqual([])
+    const [template] = await isolated.application
+      .select()
+      .from(executionEvents)
+      .where(eq(executionEvents.executionId, executionId))
+      .limit(1)
+    const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
+    await isolated.application.insert(executionEvents).values(
+      Array.from({ length: 1002 }, (_, index) => ({
+        ...template,
+        eventId: `evt_${String(index).padStart(26, '0')}`,
+        sequence: index + 4,
+        attemptId,
+        eventType: index === 1000 ? 'interaction.requested' : 'execution.progressed',
+      }))
+    )
+    expect(
+      (await repository.queryAfter(executionId, 0, 1000)).some(
+        (event) => event.type === 'interaction.requested'
+      )
+    ).toBe(false)
+    expect(await repository.latestInteraction(executionId, attemptId)).toMatchObject({
+      sequence: 1004,
+      type: 'interaction.requested',
+      attemptId,
+    })
+    expect(
+      await repository.latestInteraction(executionId, 'att_01JABCDEF0123456789ABCDEFH')
+    ).toBeUndefined()
+    await isolated.application
+      .update(executionEvents)
+      .set({ archivedAt: new Date() })
+      .where(eq(executionEvents.eventId, `evt_${String(1000).padStart(26, '0')}`))
+    expect(await repository.latestInteraction(executionId, attemptId)).toBeUndefined()
   })
 
   test('commits inbox and outbox writes atomically and rolls them back together', async () => {

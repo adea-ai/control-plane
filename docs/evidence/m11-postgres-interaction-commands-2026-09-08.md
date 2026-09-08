@@ -91,3 +91,15 @@ Cancellation ignores nonterminal interaction state while still honoring terminal
 execution state, command failure/confirmation, and durable expiry. A distinct
 subsequent interaction remains observable. All six focused waiter tests pass.
 These are controlled repository observations, not additional live-runtime proof.
+
+## Interaction lookup beyond the replay page
+
+The remote waiter now queries the latest unarchived interaction for the exact
+execution and attempt instead of scanning only the first 1,000 events. The
+PostgreSQL regression inserts a history with an interaction at sequence 1,004:
+the former first-page query misses it, while the scoped lookup finds it and
+excludes another attempt and an archived interaction. All 25 database integration
+tests and the complete integration command passed, including the remote drill
+and database outage, restart, and restore checks. All six focused waiter tests
+also passed. This is correctness evidence, not a measured performance claim or
+full native-runtime acceptance.

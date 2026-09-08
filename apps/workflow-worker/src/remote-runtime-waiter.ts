@@ -13,11 +13,7 @@ export interface RemoteRuntimeCommandReader {
 }
 
 export interface RemoteRuntimeEventReader {
-  queryAfter(
-    executionId: string,
-    afterSequence: number,
-    limit: number
-  ): Promise<readonly ExecutionEvent[]>
+  latestInteraction(executionId: string, attemptId: string): Promise<ExecutionEvent | undefined>
 }
 
 export interface PollingRemoteRuntimeOutcomeWaiterOptions {
@@ -74,6 +70,7 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
       if (execution === undefined) throw new Error('REMOTE_RUNTIME_EXECUTION_MISSING')
       const outcome = await this.#executionOutcome(
         execution,
+        input.attemptId,
         operation === 'runtime.cancel',
         respondedInteractionId
       )
@@ -107,6 +104,7 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
 
   async #executionOutcome(
     execution: Execution,
+    attemptId: string,
     cancelling: boolean,
     respondedInteractionId?: string
   ): Promise<WorkflowRuntimeOutcome | undefined> {
@@ -131,10 +129,7 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     // re-suspend on the interaction this command answered, or let any pending
     // interaction hide cancellation confirmation/expiry.
     if (execution.state !== 'awaiting_input' || cancelling) return undefined
-    const events = await this.#events.queryAfter(execution.executionId, 0, 1_000)
-    const interaction = [...events]
-      .reverse()
-      .find((event) => event.type === 'interaction.requested')
+    const interaction = await this.#events.latestInteraction(execution.executionId, attemptId)
     const interactionId = interaction?.payload['interactionId']
     return typeof interactionId === 'string' && interactionId !== respondedInteractionId
       ? { outcome: 'awaiting_input', interactionId }

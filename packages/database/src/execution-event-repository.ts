@@ -7,7 +7,7 @@ import {
   type ExecutionEventDraft,
   type ExecutionEventRepository,
 } from '@control-plane/events'
-import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { toExecutionUpdate } from './execution-repository.js'
 import { executionEvents } from './schema/events.js'
@@ -74,6 +74,26 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       .orderBy(asc(executionEvents.sequence))
       .limit(limit)
     return rows.map(fromExecutionEventRow)
+  }
+
+  async latestInteraction(
+    executionId: string,
+    attemptId: string
+  ): Promise<ExecutionEvent | undefined> {
+    const [row] = await this.database
+      .select()
+      .from(executionEvents)
+      .where(
+        and(
+          eq(executionEvents.executionId, executionId),
+          eq(executionEvents.attemptId, attemptId),
+          eq(executionEvents.eventType, 'interaction.requested'),
+          isNull(executionEvents.archivedAt)
+        )
+      )
+      .orderBy(desc(executionEvents.sequence))
+      .limit(1)
+    return row ? fromExecutionEventRow(row) : undefined
   }
 
   async queryPending(limit: number, dueAt?: string) {
