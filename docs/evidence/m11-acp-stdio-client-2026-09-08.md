@@ -21,7 +21,7 @@ cleanup escalates if child closure is not observed within two seconds. Windows
 uses direct-child signaling. This is not certification of descendant cleanup or
 Windows behavior against a real agent runtime.
 
-The focused process suite passed 9 tests / 26 assertions using disposable Bun
+The focused process suite passed 11 tests / 30 assertions using disposable Bun
 children, covering correlation, native request IDs, environment isolation,
 fragmented UTF-8, malformed/oversized/invalid-UTF-8 output, process exit,
 outstanding-request limits, timeout, abort, native errors, and missing binaries.
@@ -30,13 +30,22 @@ dispatch is now idempotent. An initial type-check found an optional-field
 assignment incompatible with the repository's strict TypeScript configuration;
 the field now explicitly includes `undefined`, and package build passed.
 
+A follow-up review added native error responses and stopped buffered-frame
+delivery immediately after a handler closes the client. Both regressions failed
+before their fixes: unsupported native requests could not receive an error
+response, and a second frame in the same output chunk reached the callback after
+closure. Tests now verify the original request ID, a usable connection after an
+error response, duplicate-response rejection, and no post-close callback.
+
 Parameters are constrained to objects or arrays as required by the
 [JSON-RPC specification](https://www.jsonrpc.org/specification#parameter_structures);
 a rejected outbound scalar leaves the connection usable. After integrating main
 with the v1/permission fixes, root lint, type-check, formatting, build, and tests
-passed again after the parameter-shape refinement. Unit tests passed 833 tests /
+passed again after the parameter-shape refinement. That run's unit tests passed 833 tests /
 3414 assertions (87.50% line and 84.48% function coverage); E2E passed 101 tests /
 571 assertions. Existing lint warnings remain visible.
+The complete root sequence also passed after the native-error and post-close
+delivery fixes, with E2E unchanged at 101 tests / 571 assertions.
 
 This is not an `AcpTransport` implementation or a native agent certification.
 Session creation, streaming update translation, permission normalization, prompt

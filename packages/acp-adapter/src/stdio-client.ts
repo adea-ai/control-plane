@@ -142,6 +142,12 @@ export class AcpStdioClient {
     this.#incoming.delete(id)
   }
 
+  respondError(id: RpcId, code: number, message: string): void {
+    if (!this.#incoming.has(id)) throw new Error('ACP_PROCESS_REQUEST_UNKNOWN')
+    this.#write({ jsonrpc: '2.0', id, error: { code, message } })
+    this.#incoming.delete(id)
+  }
+
   close(): Promise<void> {
     this.#close ??= this.#stop()
     return this.#close
@@ -204,6 +210,7 @@ export class AcpStdioClient {
         const line = new TextDecoder('utf-8', { fatal: true }).decode(this.#buffer)
         this.#buffer = Buffer.alloc(0)
         this.#message(JSON.parse(line))
+        if (this.#failure) return
         start = end + 1
       }
       this.#append(chunk.subarray(start))

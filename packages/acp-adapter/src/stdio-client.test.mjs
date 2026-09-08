@@ -3,6 +3,7 @@ import { AcpStdioClient } from './stdio-client.ts'
 
 const program = `
 let buffer = '';
+let errorCaller;
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
 process.stdin.on('data', chunk => {
   buffer += chunk;
@@ -23,6 +24,9 @@ process.stdin.on('data', chunk => {
     if (message.method === 'exit') process.exit(0);
     if (message.method === 'rpc-error') send({jsonrpc:'2.0', id:message.id, error:{code:-32601,message:'private diagnostic'}});
     if (message.method === 'permission') send({jsonrpc:'2.0', id:'native-42',method:'session/request_permission',params:{sessionId:'s1'}});
+    if (message.method === 'error-permission') { errorCaller=message.id; send({jsonrpc:'2.0',id:'unsupported-42',method:'unsupported/native',params:{}}); }
+    if (message.id === 'unsupported-42' && message.error) send({jsonrpc:'2.0',id:errorCaller,result:message.error});
+    if (message.method === 'close-burst') process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'close-now'})+'\\n'+JSON.stringify({jsonrpc:'2.0',method:'after-close'})+'\\n');
     if (message.id === 'native-42' && message.result) send({jsonrpc:'2.0',method:'answered',params:message.result});
   }
 });
@@ -39,6 +43,45 @@ function client(overrides = {}) {
     ...overrides,
   })
 }
+
+test('stdio can reject unsupported native requests with their original ID', async () => {
+  const rpc = client({ onRequest: (id) => rpc.respondError(id, -32601, 'Method not supported') })
+  try {
+    await rpc.start()
+    expect(await rpc.request('error-permission', {})).toEqual({
+      code: -32601,
+      message: 'Method not supported',
+    })
+    expect(() => rpc.respondError('unsupported-42', -32601, 'duplicate')).toThrow(
+      'ACP_PROCESS_REQUEST_UNKNOWN'
+    )
+    expect(await rpc.request('echo', {})).toEqual({})
+  } finally {
+    await rpc.close()
+  }
+})
+
+test('stdio stops delivering frames already buffered when a handler closes the client', async () => {
+  const seen = []
+  let resolveClosed
+  const closed = new Promise((resolve) => {
+    resolveClosed = resolve
+  })
+  const rpc = client({
+    onNotification: (method) => {
+      seen.push(method)
+      if (method === 'close-now') rpc.close().then(resolveClosed)
+    },
+  })
+  try {
+    await rpc.start()
+    rpc.notify('close-burst', {})
+    await closed
+    expect(seen).toEqual(['close-now'])
+  } finally {
+    await rpc.close()
+  }
+})
 
 test('stdio exchanges correlated requests with an explicit child environment', async () => {
   const rpc = client()
