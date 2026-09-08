@@ -28,3 +28,22 @@ execution. That scenario, live deployed-profile verification, command retention
 and reconciliation, and all broader M11 acceptance gates remain open. Architecture
 profile dispositions remain partial; only changed composition digests were
 refreshed.
+
+## Authenticated HTTP restart and lost-ACK regression
+
+The Cloud integration suite now exercises the actual TCP response endpoint with
+an Ed25519 service credential and the real Cloud composition backed by isolated
+PostgreSQL. A seeded accepted execution and pending permission establish the
+test preconditions; plan validation and native execution are not covered here.
+A loopback HTTP fixture records the Restate signal and closes its first response
+without acknowledging it. The API returns 503 but retains both the interaction
+response and unconfirmed command receipt.
+
+After closing the API application and its PostgreSQL connection, a new
+composition receives a retry with a different command ID. It sends the original
+response ID and identical signal idempotency key, accepts the fixture's
+`PreviouslyAccepted` response, and persists acknowledgement. A further replay
+sends no signal. Altered payloads return 409; invalid authentication returns 401
+and a project outside the credential's scope returns 403. The regression uses
+real HTTP and storage, but its Restate responder is simulated. It does not prove
+remote RuntimeNode approval execution or live deployment parity.
