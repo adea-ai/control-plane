@@ -64,11 +64,18 @@ driver resolves this input before creating a native session, applies its request
 rejects empty or greater-than-256-KiB UTF-8 prompts. Failed or timed-out resolution cannot later
 launch a session. Resolvers must be read-only and honor the supplied AbortSignal.
 
-This task-data resolver does not materialize profile/Skill instructions, configure or certify the
+The context-only resolver does not materialize profile/Skill instructions, configure or certify the
 native model route, install/authenticate a harness, grant filesystem/tool authority, or solve
 native aggregate usage and restart recovery. Those remain separate acceptance gates. The generic
 driver retains its reference-only metadata prompt for compatibility; the concrete Local factory
 does not silently select that fallback.
+
+When the repository-backed ACP prompt resolver is also supplied the published catalog, it checks
+the exact profile and Skill version identities, revisions, digests, schema versions and publication
+states using the same validation as managed Pi. Validated profile/Skill instructions are included
+as structured task inputs, without adding Pi-only restrictions or replacing native harness-owned
+instructions. The context-only injection seam remains available for existing callers. This shared
+materialization does not yet enable a standalone ACP launcher or validate its native model route.
 
 Runtime interactions use the same durable workflow signal as other profiles. Input responses carry
 the bounded structured value validated by the interaction domain and are translated to the direct

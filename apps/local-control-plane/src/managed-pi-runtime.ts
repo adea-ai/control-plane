@@ -3,10 +3,8 @@ import {
   type ContextPackageRepository,
 } from '@control-plane/context'
 import {
-  AgentProfileVersionSchema,
   ModelCapabilitySchema,
   ModelProviderClassSchema,
-  SkillVersionSchema,
   type AgentProfileRepository,
   type SkillRepository,
 } from '@control-plane/domain'
@@ -21,6 +19,7 @@ import {
   DirectLocalRuntimeTransport,
   type RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
+import { resolvePublishedRuntimeInputs } from './published-runtime-inputs.js'
 
 export interface LocalManagedPiRuntimeOptions {
   readonly executablePath: string
@@ -106,49 +105,16 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
 
   async resolve(configurationInput: unknown) {
     const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
-    const [profileValue, contextPackage, ...skillValues] = await Promise.all([
-      this.#catalog.getAgentProfileVersion(configuration.profile.profileVersionId),
+    const [{ profile, skills }, contextPackage] = await Promise.all([
+      resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI'),
       this.#contextPackages.get(
         ContextPackageReferenceSchema.parse({
           contextPackageId: configuration.contextPackage.contextPackageId,
           contentDigest: configuration.contextPackage.contentDigest,
         })
       ),
-      ...configuration.skills.map((skill) => this.#catalog.getSkillVersion(skill.skillVersionId)),
     ])
-    const profile =
-      profileValue === undefined ? undefined : AgentProfileVersionSchema.parse(profileValue)
-    const skills = skillValues.map((skill) =>
-      skill === undefined ? undefined : SkillVersionSchema.parse(skill)
-    )
-    if (
-      profile === undefined ||
-      profile.profileId !== configuration.profile.profileId ||
-      profile.version !== configuration.profile.version ||
-      profile.revision !== configuration.profile.revision ||
-      profile.definition.schemaVersion !== configuration.profile.schemaVersion ||
-      profile.contentDigest !== configuration.profile.contentDigest ||
-      profile.lifecycle !== 'published'
-    ) {
-      throw new Error('MANAGED_PI_PROFILE_PIN_UNRESOLVED')
-    }
     if (contextPackage === undefined) throw new Error('MANAGED_PI_CONTEXT_PIN_UNRESOLVED')
-    for (let index = 0; index < configuration.skills.length; index += 1) {
-      const pin = configuration.skills[index]
-      const skill = skills[index]
-      if (
-        pin === undefined ||
-        skill === undefined ||
-        skill.skillId !== pin.skillId ||
-        skill.revision !== pin.revision ||
-        skill.manifest.schemaVersion !== pin.schemaVersion ||
-        skill.manifest.semanticVersion !== pin.semanticVersion ||
-        skill.manifest.contentDigest !== pin.contentDigest ||
-        skill.lifecycle !== 'published'
-      ) {
-        throw new Error('MANAGED_PI_SKILL_PIN_UNRESOLVED')
-      }
-    }
     const modelPolicy = configuration.modelPolicy.find(
       (candidate) => candidate.alias === this.#modelAlias
     )

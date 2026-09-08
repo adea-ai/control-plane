@@ -12,6 +12,10 @@ import {
 } from '@control-plane/context'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { LocalRuntimeTransport } from './composition.js'
+import {
+  resolvePublishedRuntimeInputs,
+  type LocalRuntimeCatalog,
+} from './published-runtime-inputs.js'
 
 export interface LocalAcpRuntimeOptions extends AcpProcessTransportOptions {
   readonly externalSessionId: AcpDriverOptions['externalSessionId']
@@ -42,9 +46,10 @@ export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRun
   })
 }
 
-/** Materialize task data only; native harness instructions and configuration stay native-owned. */
+/** Materialize pinned inputs; native harness instructions and configuration stay native-owned. */
 export function createRepositoryAcpTaskPromptResolver(
-  repository: Pick<ContextPackageRepository, 'get'>
+  repository: Pick<ContextPackageRepository, 'get'>,
+  catalog?: LocalRuntimeCatalog
 ): NonNullable<AcpDriverOptions['resolvePrompt']> {
   return async (request, signal) => {
     signal.throwIfAborted()
@@ -62,6 +67,9 @@ export function createRepositoryAcpTaskPromptResolver(
       context.projectState.projectId !== plan.correlation.projectId
     )
       throw new Error('ACP_CONTEXT_PIN_MISMATCH')
+    const published =
+      catalog === undefined ? undefined : await resolvePublishedRuntimeInputs(catalog, plan, 'ACP')
+    signal.throwIfAborted()
     const prompt = [
       'Perform the authorized task described by the following JSON task data.',
       'Preserve native harness-owned instructions, permissions, tools and session ownership.',
@@ -79,6 +87,20 @@ export function createRepositoryAcpTaskPromptResolver(
         permissions: context.permissions,
         successCriteria: context.successCriteria,
         outputContract: plan.outputContract,
+        ...(published === undefined
+          ? {}
+          : {
+              profileInstructions: {
+                role: published.profile.definition.roleInstructions,
+                persona: published.profile.definition.personaInstructions,
+                hard: published.profile.definition.hardInstructions,
+                defaults: published.profile.definition.defaultInstructions,
+              },
+              skillInstructions: published.skills.map((skill, index) => ({
+                pin: plan.skills[index],
+                instructions: skill.content.instructions,
+              })),
+            }),
       }),
     ].join('\n')
     if (Buffer.byteLength(prompt) > 262_144) throw new Error('ACP_TASK_PROMPT_TOO_LARGE')

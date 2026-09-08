@@ -3,8 +3,43 @@ import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { translateExecutionPlanToManagedPi } from '@control-plane/managed-pi-adapter'
 import { RepositoryManagedPiProcessInputResolver } from './managed-pi-runtime.ts'
+import { createRepositoryAcpTaskPromptResolver } from './acp-runtime.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
+
+test('ACP uses the same published pins without adopting Pi-only instruction restrictions', async () => {
+  const context = contextPackageSerializationFixtures.futurePi
+  const plan = createExecutionPlanTestFixture({ contextPackage: context })
+  let profile = profileVersion()
+  let skill = skillVersion()
+  const resolver = createRepositoryAcpTaskPromptResolver(
+    { get: async () => context },
+    { getAgentProfileVersion: async () => profile, getSkillVersion: async () => skill }
+  )
+  const request = {
+    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+    idempotencyKey: 'acp-pins',
+    executionPlan: plan,
+  }
+  const signal = new AbortController().signal
+  const prompt = await resolver(request, signal)
+  expect(prompt).toContain('Complete the assigned task safely.')
+  expect(prompt).toContain('Inspect and update project files.')
+  expect(prompt).toContain('Preserve native harness-owned instructions')
+  expect(prompt).not.toContain('Do not use ambient project files')
+  profile = undefined
+  await expect(resolver(request, signal)).rejects.toThrow('ACP_PROFILE_PIN_UNRESOLVED')
+  profile = { ...profileVersion(), contentDigest: digest('f') }
+  await expect(resolver(request, signal)).rejects.toThrow('ACP_PROFILE_PIN_UNRESOLVED')
+  profile = profileVersion()
+  profile.profileVersionId = 'pfv_01JABCDEF0123456789ABCDEFH'
+  await expect(resolver(request, signal)).rejects.toThrow('ACP_PROFILE_PIN_UNRESOLVED')
+  profile = profileVersion()
+  skill.skillVersionId = 'skv_01JABCDEF0123456789ABCDEFH'
+  await expect(resolver(request, signal)).rejects.toThrow('ACP_SKILL_PIN_UNRESOLVED')
+  skill = { ...skillVersion(), lifecycle: 'draft' }
+  await expect(resolver(request, signal)).rejects.toThrow('ACP_SKILL_PIN_UNRESOLVED')
+})
 
 describe('RepositoryManagedPiProcessInputResolver', () => {
   test('materializes only exact published immutable inputs into authority-separated prompts', async () => {
