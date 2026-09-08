@@ -574,13 +574,13 @@ export class AcpDriver implements RuntimeAdapter {
     handleInput: RuntimeExecutionHandle,
     requestInput: RuntimeInputRequest
   ): Promise<RuntimeExecutionStatus> {
-    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const { handle } = this.#execution(handleInput)
     const request = RuntimeInputRequestSchema.parse(requestInput)
     return this.#idempotentAction(
       `input:${request.idempotencyKey}`,
       { handle, request },
       async () => {
-        const interaction = this.#interactions.get(request.interactionId)
+        const interaction = this.#interactions.get(`${handle.handleId}:${request.interactionId}`)
         if (!interaction || interaction.kind !== 'input') {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
@@ -600,13 +600,13 @@ export class AcpDriver implements RuntimeAdapter {
     handleInput: RuntimeExecutionHandle,
     requestInput: RuntimeApprovalRequest
   ): Promise<RuntimeExecutionStatus> {
-    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const { handle } = this.#execution(handleInput)
     const request = RuntimeApprovalRequestSchema.parse(requestInput)
     return this.#idempotentAction(
       `approval:${request.idempotencyKey}`,
       { handle, request },
       async () => {
-        const interaction = this.#interactions.get(request.interactionId)
+        const interaction = this.#interactions.get(`${handle.handleId}:${request.interactionId}`)
         if (!interaction || interaction.kind !== 'permission') {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
@@ -1232,7 +1232,7 @@ export class AcpDriver implements RuntimeAdapter {
     }
     if (update.sessionUpdate === 'request_permission') {
       const interactionId = this.#interactionId(update.requestId)
-      this.#interactions.set(interactionId, {
+      this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
         requestId: update.requestId,
         kind: 'permission',
         options: update.options.map(({ kind, optionId }) => ({ kind, optionId })),
@@ -1250,7 +1250,10 @@ export class AcpDriver implements RuntimeAdapter {
     }
     if (update.sessionUpdate === 'elicitation') {
       const interactionId = this.#interactionId(update.requestId)
-      this.#interactions.set(interactionId, { requestId: update.requestId, kind: 'input' })
+      this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
+        requestId: update.requestId,
+        kind: 'input',
+      })
       return RuntimeExecutionProgressSchema.parse({
         ...common,
         type: 'interaction',
