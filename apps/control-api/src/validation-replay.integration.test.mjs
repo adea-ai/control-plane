@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
@@ -15,12 +15,39 @@ import { createIsolatedPostgres } from '@control-plane/testing/postgres'
 import { createManagedCloudControlApiComposition } from './cloud-composition.ts'
 import { createControlApiApplication } from './application.ts'
 
+let database
+const applications = []
+const compositions = []
+
+// Remote schema installation has its own budget; keep the replay behavior's
+// 30-second deadline independent of provisioning every migration over the network.
+beforeAll(async () => {
+  if (process.env.RUN_DATABASE_INTEGRATION !== 'true') return
+  database = await createIsolatedPostgres({ migrate: false })
+  await database.migrate()
+}, 60000)
+
+afterAll(async () => {
+  try {
+    await Promise.all(applications.map((app) => app.close()))
+  } finally {
+    try {
+      await Promise.all(compositions.map((composition) => composition.connection.close()))
+    } finally {
+      await database?.dispose()
+    }
+  }
+}, 30000)
+
 test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
   'cloud HTTP validation replays after closing its application and PostgreSQL connection',
   async () => {
-    const database = await createIsolatedPostgres()
-    const applications = []
-    const compositions = []
+    const startedAt = performance.now()
+    function checkpoint(stage) {
+      if (process.env.INTEGRATION_TIMING === 'true')
+        console.info(`validation-replay ${stage}: ${Math.round(performance.now() - startedAt)}ms`)
+    }
+    checkpoint('database-ready')
     const logger = { write() {} }
     const { privateKey, publicKey } = generateKeyPairSync('ed25519')
     const now = new Date().toISOString()
@@ -176,7 +203,9 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         updatedAt: now,
       })
       const first = await open(configuration, authoring)
+      checkpoint('application-ready')
       const results = await Promise.all(Array.from({ length: 8 }, () => send(first.app)))
+      checkpoint('concurrent-validation-complete')
       for (const result of results) {
         expect(result.statusCode).toBe(200)
         expect(result.json().data.executionPlan).toEqual(results[0].json().data.executionPlan)
@@ -204,11 +233,15 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const inlineResponse = await send(first.app, inline)
       expect(inlineResponse.statusCode).toBe(200)
       expect(authorityCalls).toBe(1)
+      checkpoint('inline-validation-complete')
       await first.app.close()
+      checkpoint('application-closed')
       applications.splice(applications.indexOf(first.app), 1)
       await first.composition.connection.close()
+      checkpoint('connection-closed')
       compositions.splice(compositions.indexOf(first.composition), 1)
       const reopened = await open()
+      checkpoint('application-reopened')
       const unexpected = () => {
         throw new Error('REPLAY_RECOMPILED')
       }
@@ -220,6 +253,7 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         contextPackages: { get: unexpected },
       })
       const replay = await send(reopened.app, { ...request, issuedAt: now })
+      checkpoint('replay-complete')
       expect(replay.statusCode).toBe(200)
       expect(replay.json().data.executionPlan).toEqual(reference)
       const inlineReplay = await send(reopened.app, inline)
@@ -252,9 +286,7 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       })
       expect((await send(revoked.app)).statusCode).toBe(401)
     } finally {
-      await Promise.all(applications.map((app) => app.close()))
-      await Promise.all(compositions.map((composition) => composition.connection.close()))
-      await database.dispose()
+      checkpoint('behavior-complete')
     }
   }
 )
