@@ -13,7 +13,7 @@ async function main() {
           fileURLToPath(new URL('../cjs/src/index.js', import.meta.resolve('postgres')))
         )
       : postgresEsm
-  const client = postgres(process.env.TEST_APPLICATION_URL, { max: 2, prepare: false })
+  const client = postgres(process.env.TEST_APPLICATION_URL, { max: 1, prepare: false })
   try {
     for (const mode of ['idle', 'query']) {
       phase = `${mode}:timeout`

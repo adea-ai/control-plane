@@ -14,10 +14,21 @@ import { createPostgresRuntimeHealthInTransaction } from './runtime-health-inges
 import { runtimeChannelOwnership } from './schema/runtime-channel-ownership.js'
 
 export class PostgresRuntimeInventoryUnitOfWork {
+  readonly #transactionTimeoutMs: number
+
   constructor(
     readonly database: Pick<ControlPlaneDatabase, 'transaction'>,
-    readonly policy: RuntimeHealthIngestionPolicy
-  ) {}
+    readonly policy: RuntimeHealthIngestionPolicy,
+    options: { readonly transactionTimeoutMs?: number } = {}
+  ) {
+    this.#transactionTimeoutMs = options.transactionTimeoutMs ?? 10_000
+    if (
+      !Number.isSafeInteger(this.#transactionTimeoutMs) ||
+      this.#transactionTimeoutMs < 1 ||
+      this.#transactionTimeoutMs > 30_000
+    )
+      throw new Error('Invalid inventory transactionTimeoutMs')
+  }
 
   async run<Result>(
     scope: { workspaceId: string; runtimeNodeRefId: string; channel: RuntimeChannelOwnership },
@@ -34,6 +45,9 @@ export class PostgresRuntimeInventoryUnitOfWork {
     if (channel.nodeId !== nodeId || channel.workspaceId !== workspaceId)
       throw new Error('INVENTORY_SCOPE_MISMATCH')
     return this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select set_config('transaction_timeout', ${String(this.#transactionTimeoutMs)}, true)`
+      )
       await transaction.execute(sql`SET LOCAL lock_timeout = '5s'`)
       // Claims, heartbeats and releases take this same lock. Keep ownership
       // stable through commit, always before acquiring the inventory lock.

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
+import { rejects } from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { ControlApiFixtures } from '@control-plane/contracts'
@@ -1893,6 +1894,62 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(
       await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
     ).toBeUndefined()
+    for (const timeout of [0, -1, 30_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        () =>
+          new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy, {
+            transactionTimeoutMs: timeout,
+          })
+      ).toThrow('Invalid inventory transactionTimeoutMs')
+    }
+    for (const stall of ['idle', 'query']) {
+      let finished
+      let wrote = false
+      const settled = new Promise((resolve) => {
+        finished = resolve
+      })
+      const timeoutDatabase = {
+        transaction: (operation) =>
+          isolated.application.transaction(async (transaction) => {
+            try {
+              const result = await operation(transaction)
+              if (stall === 'query') await transaction.execute(sql`select pg_sleep(1)`)
+              return result
+            } finally {
+              finished()
+            }
+          }),
+      }
+      const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy, {
+        transactionTimeoutMs: 500,
+      })
+      let phase = 'timeout'
+      try {
+        await rejects(
+          bounded.run(inventoryScope, async (ports) => {
+            await applyInventory(ports)
+            wrote = true
+            if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 1_000))
+          })
+        )
+        await settled
+        expect(wrote).toBe(true)
+        phase = 'registry'
+        expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+        phase = 'outbox'
+        expect(await readPending()).toHaveLength(eventCount)
+        phase = 'checkpoint'
+        expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+        phase = 'projection'
+        expect(
+          await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+        ).toBeUndefined()
+        phase = 'heartbeat'
+        expect(await inventoryOwnership.heartbeat(inventoryScope.channel)).toBe(true)
+      } catch (error) {
+        throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
+      }
+    }
     await unit.run(inventoryScope, applyInventory)
     expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
     expect(await readPending()).toHaveLength(eventCount + 1)

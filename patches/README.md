@@ -10,8 +10,16 @@ and [proposed upstream fix 1209](https://github.com/porsager/postgres/pull/1209)
 reviewed at commit `a2588b3073b5bd125f0fb3b419bdc9f2e8524291` on September 8, 2026. The upstream proposal was unmerged and the latest release was still
 3.4.9. This is a repository-maintained patch, not an upstream release claim.
 
+The `closed()` error-response reset is a separate repository-authored extension,
+not part of that upstream proposal. A one-connection probe reproduced a fatal
+`25P04` from the previous backend being applied to the next read after reconnect.
+The driver saved `errorResponse` until `ReadyForQuery` but did not clear it on
+socket closure. Resetting it on close prevents that stale response from poisoning
+the new connection; normal in-flight rejection handling is retained.
+
 The database integration suite launches the transaction-timeout probe in child
-processes for both entry points. It checks idle and in-flight query termination,
+processes for both entry points with a one-connection pool. It checks that writes
+occur before idle and in-flight query termination,
 rollback, a subsequent transaction, no uncaught-error output and bounded process
 shutdown. Child isolation and a ten-second parent deadline contain regressions
 that would otherwise crash or hang the complete integration suite. Application
@@ -22,7 +30,9 @@ copy patches before frozen dependency installation; hosted production installati
 also retains them. Do not edit a shared dependency cache directly.
 
 This does not certify every `reserve()`/pipeline/disconnect interleaving, remove
-the need for bounded pool shutdown, or enable transaction timeouts in production.
+the need for bounded pool shutdown, or establish complete-request deadlines.
+The inventory unit of work separately enables and tests a transaction-local
+database deadline.
 Before removing the patch, verify a pinned upstream release includes equivalent
 handling in both entry points and rerun the child probes, full integration and
 recovery suite, and both production container builds.

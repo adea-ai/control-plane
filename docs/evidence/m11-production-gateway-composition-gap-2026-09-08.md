@@ -1,5 +1,29 @@
 # M11 production Runtime Gateway composition gap
 
+## Inventory deadline with patched driver recovery
+
+The inventory unit of work now sets transaction-local `transaction_timeout`
+before ownership locking. The default is 10 seconds, with a constructor override
+restricted to integers from 1 through 30,000 milliseconds. The five-second
+per-lock acquisition timeout remains. No global setting or migration is changed.
+
+The inventory-specific PostgreSQL case writes registry/health, outbox, projection
+and checkpoint state before an idle-callback or active-query stall. A
+500-millisecond test deadline must reject each transaction, roll back every
+write, release the channel lock for a heartbeat, and allow subsequent normal
+ingestion through the same pool. The test waits for the abandoned callback to
+settle and verifies writes actually occurred before the stall. Invalid timeout
+values are rejected before a transaction starts. The earlier unpatched experiment
+below remains historical evidence, not the current implementation.
+
+This depends on PostgreSQL transaction-timeout support and the pinned client
+patch. The repository PostgreSQL 18.3 baseline supports the setting; actual Neon
+server/pool acceptance remains required. Unsupported servers fail closed. The
+deadline covers the server transaction after setup, not pool acquisition,
+normalization, network failure detection or JavaScript callback completion.
+Callbacks must not perform external effects. Bounded history work and complete
+request deadlines remain separate gates.
+
 ## Closed-socket driver recovery follow-up
 
 The timeout experiment below led to an upstream-matching defect in the pinned
@@ -13,8 +37,7 @@ shutdown with no uncaught-error output. Both entry points passed within the
 31-test PostgreSQL integration suite and complete integration/recovery run.
 The full suite also passed 1,224 unit/E2E/smoke tests and 41 builds.
 This addresses the reproduced crash path, not every
-driver failure mode. Inventory transaction deadlines remain disabled pending
-reapplication and verification of the inventory-specific timeout matrix.
+driver failure mode. The inventory-specific deadline matrix is described above.
 
 ## Transaction deadline experiment: not promoted
 
@@ -39,11 +62,9 @@ recovery assertions were not reached and remain unverified.
 PostgreSQL documents that this timeout terminates the session:
 [transaction timeout documentation](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-TRANSACTION-TIMEOUT).
 The experimental implementation and failing matrix were removed from the
-candidate. No dependency, database setting or migration was changed. Inventory
-still has only its five-second lock-acquisition timeout, not a transaction
-deadline. A verified client cancellation/recovery strategy is required before
-enabling server-enforced termination. Complete-request bounds must also cover
-pool acquisition, normalization and network failure detection.
+candidate at that time. The subsequent client patch and inventory-specific
+deadline are described above. Complete-request bounds must still cover pool
+acquisition, normalization and network failure detection.
 
 ## Transactional inventory channel fencing
 
