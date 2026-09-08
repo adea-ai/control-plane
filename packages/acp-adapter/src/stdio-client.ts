@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 
 type Json = z.util.JSONType
+type RpcParams = Record<string, Json> | Json[]
 type RpcId = string | number
 type Pending = { resolve(value: Json): void; reject(error: Error): void }
 const MessageLimit = 1_048_576
@@ -13,7 +14,7 @@ const MessageSchema = z
     jsonrpc: z.literal('2.0'),
     id: IdSchema.optional(),
     method: z.string().min(1).max(256).optional(),
-    params: z.json().optional(),
+    params: z.union([z.record(z.string(), z.json()), z.array(z.json())]).optional(),
     result: z.json().optional(),
     error: z
       .object({ code: z.number().int(), message: z.string(), data: z.json().optional() })
@@ -90,7 +91,7 @@ export class AcpStdioClient {
 
   request(
     method: string,
-    params: Json,
+    params: RpcParams,
     options: { timeoutMs?: number; signal?: AbortSignal } = {}
   ): Promise<Json> {
     const timeoutMs = options.timeoutMs ?? 30_000
@@ -131,7 +132,7 @@ export class AcpStdioClient {
     })
   }
 
-  notify(method: string, params: Json): void {
+  notify(method: string, params: RpcParams): void {
     this.#write({ jsonrpc: '2.0', method, params })
   }
 

@@ -45,8 +45,8 @@ test('stdio exchanges correlated requests with an explicit child environment', a
   try {
     await rpc.start()
     expect(
-      await Promise.all([rpc.request('echo', { text: 'unicode: ✓' }), rpc.request('echo', 42)])
-    ).toEqual([{ text: 'unicode: ✓' }, 42])
+      await Promise.all([rpc.request('echo', { text: 'unicode: ✓' }), rpc.request('echo', [42])])
+    ).toEqual([{ text: 'unicode: ✓' }, [42]])
     expect(await rpc.request('env', {})).toEqual({
       provided: 'explicit-value',
       hasParentPath: false,
@@ -132,7 +132,10 @@ test('stdio bounds request waits and does not leak remote error messages', async
     controller.abort()
     await expect(pending).rejects.toThrow('ACP_PROCESS_ABORTED')
     await expect(rpc.request('rpc-error', {})).rejects.toThrow('ACP_PROCESS_RPC_ERROR:-32601')
-    expect(await rpc.request('echo', 'still-connected')).toBe('still-connected')
+    await expect(rpc.request('echo', 'invalid-scalar')).rejects.toThrow()
+    expect(await rpc.request('echo', { status: 'still-connected' })).toEqual({
+      status: 'still-connected',
+    })
   } finally {
     await rpc.close()
   }
