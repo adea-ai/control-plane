@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/config-v1.4.0...config-v1.5.0) (2026-09-08)
+
+
+### Features
+
+* **acp:** integrate native v1 process transport ([bf41225](https://github.com/adea-ai/control-plane/commit/bf412255869b4312947309995b8ae18ff11a0b86))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/config-v1.3.2...config-v1.4.0) (2026-09-08)
 
 
