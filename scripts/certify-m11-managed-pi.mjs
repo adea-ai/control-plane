@@ -121,7 +121,7 @@ try {
     }),
     { mode: 0o600 }
   )
-  const client = new ManagedPiProcessClient({
+  const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
     environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', PI_CODING_AGENT_DIR: agentDirectory },
@@ -133,7 +133,8 @@ try {
         model: 'fixture',
       }),
     },
-  })
+  }
+  const client = new ManagedPiProcessClient(clientOptions)
   adapter = new ManagedPiAdapter({
     transport: new DirectLocalRuntimeTransport(
       new ManagedPiDriver({
@@ -234,6 +235,14 @@ try {
     assert.equal(request.body.stream, true)
     assert.equal(request.body.tools?.length ?? 0, 0)
   }
+  await adapter.cleanup(handle)
+  handles.splice(handles.indexOf(handle), 1)
+  await assert.rejects(new ManagedPiProcessClient(clientOptions).start(nativeCommand), {
+    code: 'PI_START_RECONCILIATION_REQUIRED',
+    classification: 'unknown',
+    retryable: false,
+  })
+  assert.equal(requests.length, 3, 'A recreated client must not repeat the cleaned native attempt')
   report = {
     schemaVersion: 1,
     suite: 'm11-real-pi-process',
@@ -248,6 +257,7 @@ try {
     duplicateStart: 'same-handle-one-request',
     concurrentNativeStarts: 8,
     changedNativeCommand: 'rejected',
+    clientRecreationAfterCleanup: 'reconciliation-required-no-new-request',
     localComposition: {
       persistence: 'sqlite',
       workflow: 'real-local-restate',

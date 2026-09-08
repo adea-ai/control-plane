@@ -62,3 +62,13 @@ private, trustworthy, persistent, and part of recovery policy. Never delete thes
 records merely to retry: explicit reconciliation and retention/backup treatment
 remain required. The previously documented in-memory-only limitation applies to
 returning original outcomes, not this new persistent refusal of duplicate work.
+
+The published Pi 0.84.2 runner was repeated after this persistent-record change
+with Node 24.18.0 and Bun 1.4.0. It cleaned the completed native process, recreated
+the client against the same data directory, and verified the unknown,
+non-retryable reconciliation-required error. The model endpoint still observed
+exactly three requests across concurrent completion, cancellation, and Local
+composition. The report emitted
+`clientRecreationAfterCleanup: reconciliation-required-no-new-request` and
+`cleanup: completed`. This proves retained refusal after ordinary process cleanup
+and client recreation, not abrupt host loss or restoration of the old result.
