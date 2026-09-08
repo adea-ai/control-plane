@@ -50,6 +50,10 @@ export class AcpProcessTransport implements AcpTransport {
   readonly #options: AcpProcessTransportOptions
   readonly #sessions = new Map<string, Session>()
   readonly #creates = new Map<string, Promise<{ sessionId: string }>>()
+  readonly #earlyUpdates = new Map<string, Json[]>()
+  #creating = 0
+  #earlyBytes = 0
+  #earlyCount = 0
   readonly #permissions = new Map<number, { nativeId: string | number; sessionId: string }>()
   #permissionSequence = 0
 
@@ -83,6 +87,9 @@ export class AcpProcessTransport implements AcpTransport {
   }
 
   createSession(createToken: string, signal?: AbortSignal): Promise<{ sessionId: string }> {
+    if (!z.string().min(1).max(256).safeParse(createToken).success)
+      return Promise.reject(new Error('ACP_NATIVE_CREATE_TOKEN_INVALID'))
+    if (signal?.aborted) return Promise.reject(new Error('ACP_NATIVE_ABORTED'))
     const existing = this.#creates.get(createToken)
     if (existing) return existing
     if (this.#creates.size >= 128) return Promise.reject(new Error('ACP_NATIVE_SESSION_LIMIT'))
@@ -93,27 +100,40 @@ export class AcpProcessTransport implements AcpTransport {
   }
 
   async #newSession(signal?: AbortSignal): Promise<{ sessionId: string }> {
-    const response = await this.#rpc.request(
-      'session/new',
-      {
-        cwd: this.#options.cwd,
-        mcpServers: [...(this.#options.mcpServers ?? [])],
-      },
-      this.#requestOptions(signal)
-    )
-    const { sessionId } = z.object({ sessionId: SessionId }).passthrough().parse(response)
-    if (this.#sessions.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_ID_REUSED')
-    this.#sessions.set(sessionId, {
-      snapshot: { state: 'starting', observedAt: new Date().toISOString() },
-      updates: [],
-      nativeUpdates: [],
-      bytes: 0,
-      text: '',
-      wake: new Set(),
-      startedAt: 0,
-      cancelRequested: false,
-    })
-    return { sessionId }
+    this.#creating += 1
+    try {
+      const response = await this.#rpc.request(
+        'session/new',
+        {
+          cwd: this.#options.cwd,
+          mcpServers: [...(this.#options.mcpServers ?? [])],
+        },
+        this.#requestOptions(signal)
+      )
+      const { sessionId } = z.object({ sessionId: SessionId }).passthrough().parse(response)
+      if (this.#sessions.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_ID_REUSED')
+      this.#sessions.set(sessionId, {
+        snapshot: { state: 'starting', observedAt: new Date().toISOString() },
+        updates: [],
+        nativeUpdates: [],
+        bytes: 0,
+        text: '',
+        wake: new Set(),
+        startedAt: 0,
+        cancelRequested: false,
+      })
+      const early = this.#earlyUpdates.get(sessionId) ?? []
+      this.#earlyUpdates.delete(sessionId)
+      for (const params of early) this.#notification('session/update', params)
+      return { sessionId }
+    } finally {
+      this.#creating -= 1
+      if (this.#creating === 0) {
+        this.#earlyUpdates.clear()
+        this.#earlyBytes = 0
+        this.#earlyCount = 0
+      }
+    }
   }
 
   async request(
@@ -186,10 +206,11 @@ export class AcpProcessTransport implements AcpTransport {
   }
 
   async cleanup(nativeSessionId: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
     const session = this.#session(nativeSessionId)
     if (session.snapshot.state === 'running') {
       await this.request('session/cancel', { sessionId: nativeSessionId }, signal)
-      if (session.turn) await session.turn
+      if (session.turn) await this.#waitForCleanup(session.turn, signal)
       const settled = await this.snapshot(nativeSessionId, signal)
       if (settled.state !== 'cancelled' && settled.state !== 'completed')
         throw new Error('ACP_NATIVE_CLEANUP_UNCONFIRMED')
@@ -199,6 +220,29 @@ export class AcpProcessTransport implements AcpTransport {
 
   #requestOptions(signal?: AbortSignal) {
     return { timeoutMs: this.#options.requestTimeoutMs ?? 30_000, ...(signal ? { signal } : {}) }
+  }
+
+  async #waitForCleanup(turn: Promise<void>, signal?: AbortSignal): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let aborted: (() => void) | undefined
+    try {
+      await Promise.race([
+        turn,
+        new Promise<never>((_, reject) => {
+          aborted = () => reject(new Error('ACP_NATIVE_ABORTED'))
+          signal?.addEventListener('abort', aborted, { once: true })
+          if (signal?.aborted) aborted()
+          timer = setTimeout(
+            () => reject(new Error('ACP_NATIVE_CLEANUP_TIMEOUT')),
+            this.#options.requestTimeoutMs ?? 30_000
+          )
+          timer.unref()
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+      if (aborted) signal?.removeEventListener('abort', aborted)
+    }
   }
 
   #session(id: string): Session {
@@ -213,6 +257,17 @@ export class AcpProcessTransport implements AcpTransport {
       .object({ sessionId: SessionId, update: z.record(z.string(), z.json()) })
       .passthrough()
       .parse(params)
+    if (!this.#sessions.has(envelope.sessionId) && this.#creating > 0) {
+      const bytes = Buffer.byteLength(JSON.stringify(params))
+      if (this.#earlyBytes + bytes > 4_194_304 || this.#earlyCount >= 4096)
+        throw new Error('ACP_NATIVE_EARLY_UPDATE_LIMIT')
+      this.#earlyBytes += bytes
+      this.#earlyCount += 1
+      const updates = this.#earlyUpdates.get(envelope.sessionId) ?? []
+      updates.push(params)
+      this.#earlyUpdates.set(envelope.sessionId, updates)
+      return
+    }
     const session = this.#session(envelope.sessionId)
     const update = envelope.update
     const size = Buffer.byteLength(JSON.stringify(update))

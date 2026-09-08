@@ -37,7 +37,7 @@ coverage. No certification registry entry was promoted by this investigation.
 ## In-progress transport implementation
 
 The unpublished `process-transport.ts` now connects `AcpStdioClient` to
-`AcpDriver` for native v1-shaped messages. Package build and four process-backed
+`AcpDriver` for native v1-shaped messages. Package build and the initial four process-backed
 driver tests passed (11 assertions): approval/output/final usage/duplicate start,
 cancellation, absent usage, and process loss. These use a disposable wire fixture,
 not the proposed Codex ACP binary. Process loss remains `unknown` at the driver
@@ -46,9 +46,19 @@ The root lint, type-check, formatting, build, and test sequence passed on this
 draft; E2E remained 101 tests / 571 assertions. This broad check does not cover
 the native lifecycle gaps listed below.
 
+The creation/cleanup follow-up passes nine focused tests / 28 assertions. Early
+notifications are buffered during pending creation, bounded to 4096 updates and
+4 MiB, and attached only to the returned session ID. A lost create response
+retains its rejected token outcome instead of creating twice. A pre-aborted
+create sends nothing and leaves the token unused. Cleanup has an independent
+request deadline and abortable wait; neither timeout nor abort reports native
+cancellation. Early-notification and cleanup-deadline regressions failed before
+these fixes. The focused fixture uses a one-second request/cleanup budget and
+four-second turn budget, avoiding a narrow subprocess-start timing assumption.
+
 This implementation is not exported from the package entrypoint or ready for
-promotion. Required follow-up includes early notifications during session
-creation, aborted/ambiguous creates, bounded cleanup waits, late permission
+promotion. Required follow-up includes concurrent creation and early-buffer limit
+cases, late/ambiguous create reconciliation, late permission
 requests after cancellation, retained-result limits, native session lifecycle
 operations, and full real-agent validation. Cache/thought usage is retained in
 the raw result; final accounting semantics still need explicit verification.
