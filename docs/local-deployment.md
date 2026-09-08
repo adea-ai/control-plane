@@ -81,6 +81,13 @@ owner-only. Do not back up one of those paths independently while work is admitt
 
 ## Checkpoint and restore
 
+Local retains observed unsuccessful-terminal usage in SQLite's
+`runtime-terminal-usage` namespace before completing cancellation cleanup. These
+immutable execution/attempt receipts are included in the normal whole-directory
+checkpoint. Preserve them until settlement and recovery references are resolved;
+they are not themselves billing entries. Missing usage is unresolved, not zero.
+See the [receipt evidence and limits](evidence/m11-terminal-usage-receipts-2026-09-08.md).
+
 Stop the Local Control Plane and confirm the process plus bundled Restate child have exited. Create
 and verify an integrity manifest without printing file contents:
 
