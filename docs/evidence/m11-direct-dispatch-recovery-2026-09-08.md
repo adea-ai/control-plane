@@ -16,9 +16,9 @@ owner's eventual completed effect record.
 Four focused tests passed with 20 assertions: lost start ACK after SQLite reopen,
 lost result after reopen, an older saved handle without an intent, and concurrent
 dispatch with completed-outcome replay. The original lost-ACK regression failed
-before the guard was added. Local lint, type checks, formatting, and the full root
-test command also passed before the final legacy-handle test was added; that
-additional focused test passed separately.
+before the guard was added. After merging current main, local lint, type checks,
+formatting, and the full root test command passed with all four regressions,
+including 101 E2E tests and 571 assertions.
 
 This is ambiguity containment, not native runtime reattachment or full M11
 recovery acceptance. A runtime may still be executing, and cleanup may require
