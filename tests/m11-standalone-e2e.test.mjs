@@ -370,21 +370,28 @@ describe('M11 standalone execution composition', () => {
   }, 60_000)
 
   test('runs the packaged managed Pi RPC client through Local Restate', async () => {
+    const realExecutable = process.env.M11_REAL_PI_EXECUTABLE
+    const realAgentDirectory = process.env.M11_REAL_PI_AGENT_DIRECTORY
+    if (Boolean(realExecutable) !== Boolean(realAgentDirectory))
+      throw new Error('M11_REAL_PI_CONFIGURATION_INCOMPLETE')
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-pi-rpc-'))
-    const executablePath = join(directory, 'pi-fixture.mjs')
-    await writeManagedPiRpcFixture(executablePath)
+    const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
+    if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
     const local = new LocalControlPlaneComposition({
       dataDirectory: directory,
       runtimeFactory: (repositories) =>
         createLocalManagedPiRuntime(repositories, {
           executablePath,
-          provider: 'fixture-provider',
-          model: 'fixture-model',
+          provider: realExecutable ? 'fixture' : 'fixture-provider',
+          model: realExecutable ? 'fixture' : 'fixture-model',
           modelAlias: 'reasoning.standard',
           modelCapabilities: ['tool_calling', 'structured_output'],
           providerClass: 'managed',
           dataResidency: 'us',
-          environment: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          environment: {
+            PATH: process.env.PATH ?? '/usr/bin:/bin',
+            ...(realAgentDirectory ? { PI_CODING_AGENT_DIR: realAgentDirectory } : {}),
+          },
         }),
       workflowEndpointPort: 19083,
     })
@@ -424,6 +431,15 @@ describe('M11 standalone execution composition', () => {
       expect(execution).toMatchObject({
         state: 'completed',
         terminalResultRef: `art_${response.data.executionId.slice(4)}`,
+      })
+      expect(await local.executions.listAttempts(execution.executionId)).toHaveLength(1)
+      const result = await local.objectStore.get(
+        `executions/${execution.executionId}/attempts/${execution.latestAttemptId}/result.json`
+      )
+      expect(JSON.parse(new TextDecoder().decode(result.body))).toMatchObject({
+        outcome: 'completed',
+        output: { text: realExecutable ? 'verified real Pi' : 'fixture result' },
+        usage: { inputTokens: 11, outputTokens: 3 },
       })
     } finally {
       await local.close()
