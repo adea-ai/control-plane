@@ -187,3 +187,14 @@ passes 22 assertions covering eight concurrent reservations, unconfirmed and
 confirmed database reopen, immutable ACK time, and principal/workspace/project/key
 separation. No SQLite schema migration is needed. This adds durable storage but
 does not yet wire cancellation into the Local composition or public HTTP API.
+
+## Restate cancellation signal dispatch
+
+The production Restate dispatcher now implements execution cancellation delivery
+to `execution-lifecycle/{executionId}/cancelExecution/send`, with an empty payload
+and a stable execution/first-command idempotency key. It reuses the strict 202
+acceptance validation and rejects redirects, HTTP conflicts/errors, malformed or
+oversized acknowledgement bodies, and invalid invocation IDs. Focused cancellation
+and retained interaction dispatcher tests pass (14 tests, 28 assertions). Network
+responses are controlled in these tests; composition wiring and a real Restate
+lost-ACK test for this new method remain outstanding.

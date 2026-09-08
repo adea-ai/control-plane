@@ -10,6 +10,8 @@ import { managedCloudOperationalPolicy } from '@control-plane/config'
 import {
   ExecutionAcceptanceRequestSchema,
   ExecutionAcceptanceResponseSchema,
+  ExecutionCancellationCommandSchema,
+  type ExecutionCancellationCommand,
   IdentifierSchemas,
   type ExecutionAcceptanceResponse,
 } from '@control-plane/contracts'
@@ -17,6 +19,7 @@ import {
   CommandInboxError,
   InteractionRequestSchema,
   type InteractionSignalDispatcher,
+  type ExecutionCancellationDispatcher,
   type InteractionRequest,
   type CommandInboxRecord,
   type CommandInboxService,
@@ -193,7 +196,10 @@ export class RestateWorkflowSubmissionError extends Error {
 }
 
 export class RestateExecutionWorkflowDispatcher
-  implements ExecutionWorkflowDispatcher, InteractionSignalDispatcher
+  implements
+    ExecutionWorkflowDispatcher,
+    InteractionSignalDispatcher,
+    ExecutionCancellationDispatcher
 {
   readonly #fetch: typeof fetch
   readonly #ingressUrl: string
@@ -206,6 +212,16 @@ export class RestateExecutionWorkflowDispatcher
   async submit(inputValue: ExecutionWorkflowInput): Promise<void> {
     const input = ExecutionWorkflowInputSchema.parse(inputValue)
     await this.#send(input.executionId, 'run', input)
+  }
+
+  async cancel(input: ExecutionCancellationCommand): Promise<void> {
+    const request = ExecutionCancellationCommandSchema.parse(input)
+    await this.#send(
+      request.payload.executionId,
+      'cancelExecution',
+      {},
+      `${request.payload.executionId}:${request.commandId}`
+    )
   }
 
   async deliver(
@@ -229,7 +245,7 @@ export class RestateExecutionWorkflowDispatcher
 
   async #send(
     executionId: string,
-    handler: 'run' | 'respondToInteraction',
+    handler: 'run' | 'respondToInteraction' | 'cancelExecution',
     payload: unknown,
     idempotencyKey?: string
   ): Promise<void> {
@@ -268,7 +284,10 @@ export class RestateExecutionWorkflowDispatcher
     }
   }
 
-  #submissionUrl(executionId: string, handler: 'run' | 'respondToInteraction'): URL {
+  #submissionUrl(
+    executionId: string,
+    handler: 'run' | 'respondToInteraction' | 'cancelExecution'
+  ): URL {
     const base = new URL(this.#ingressUrl)
     base.pathname = `${base.pathname.replace(/\/$/, '')}/`
     return new URL(
