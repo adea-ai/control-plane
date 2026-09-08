@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.5.0...acp-adapter-v1.5.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **local:** close native Codex provider streams on cancellation ([#436](https://github.com/adea-ai/control-plane/issues/436)) ([66b9729](https://github.com/adea-ai/control-plane/commit/66b972947d3d174c35943228285677a6138d0733))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.4.0...acp-adapter-v1.5.0) (2026-09-08)
 
 
