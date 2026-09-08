@@ -353,6 +353,9 @@ describe('SQLite domain repositories', () => {
       )
       expect(updates.filter(Boolean)).toHaveLength(1)
       expect(await reopened.compareAndSetRuntimeConnection(scope, expected, next)).toBe(false)
+      await expect(reopened.putRuntimeConnection(scope.workspaceId, expected)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+      )
       await expect(reopened.compareAndSetRuntimeConnection(scope, next, expected)).rejects.toThrow(
         'RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH'
       )
@@ -362,6 +365,26 @@ describe('SQLite domain repositories', () => {
           runtimeConnectionId: 'rtc_01BRZ3NDEKTSV4RRFFQ69G5FAV',
         })
       ).rejects.toThrow('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+      await reopened.putRuntimeConnection(scope.workspaceId, next)
+      await expect(
+        reopened.putRuntimeConnection('wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV', next)
+      ).rejects.toThrow('RUNTIME_DISCOVERY_WRITE_CONFLICT')
+      for (const model of [
+        { ...next, node: { ...next.node, health: 'unknown' } },
+        { ...next, node: { ...next.node, runtimeNodeRefId: 'rnr_01BRZ3NDEKTSV4RRFFQ69G5FAV' } },
+        { ...next, runtimeDefinitionId: 'rtd_01BRZ3NDEKTSV4RRFFQ69G5FAV' },
+      ])
+        await expect(reopened.putRuntimeConnection(scope.workspaceId, model)).rejects.toThrow(
+          'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+        )
+      const future = {
+        ...next,
+        observedAt: new Date(Date.parse(next.observedAt) + 1_000).toISOString(),
+      }
+      await reopened.putRuntimeConnection(scope.workspaceId, future)
+      await expect(reopened.putRuntimeConnection(scope.workspaceId, next)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+      )
       provider.close()
       provider = new SqlitePersistenceProvider({ path })
       await provider.migrate()
@@ -370,7 +393,7 @@ describe('SQLite domain repositories', () => {
           scope,
           ids.runtimeConnectionId
         )
-      ).toEqual(next)
+      ).toEqual(future)
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

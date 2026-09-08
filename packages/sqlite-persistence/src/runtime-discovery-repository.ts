@@ -68,10 +68,32 @@ export class SqliteRuntimeDiscoveryRepository {
     input: RuntimeConnectionDiscoveryReadModel
   ): Promise<void> {
     const model = RuntimeConnectionDiscoveryReadModelSchema.parse(input)
-    return this.#put(runtimeNamespace, model.runtimeConnectionId, {
-      workspaceId,
-      ...(model.node === undefined ? {} : { runtimeNodeRefId: model.node.runtimeNodeRefId }),
-      model,
+    const parsedWorkspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
+    return this.provider.transaction(async (transaction) => {
+      const stored = await transaction.get(runtimeNamespace, model.runtimeConnectionId)
+      if (stored) {
+        const current = parseRuntimeRecord(stored.value)
+        if (
+          current.workspaceId !== parsedWorkspaceId ||
+          current.runtimeNodeRefId !== model.node?.runtimeNodeRefId ||
+          current.model.runtimeDefinitionId !== model.runtimeDefinitionId ||
+          Date.parse(model.observedAt) < Date.parse(current.model.observedAt) ||
+          (Date.parse(model.observedAt) === Date.parse(current.model.observedAt) &&
+            !isDeepStrictEqual(current.model, model))
+        )
+          throw new Error('RUNTIME_DISCOVERY_WRITE_CONFLICT')
+        if (isDeepStrictEqual(current.model, model)) return
+      }
+      await transaction.put({
+        namespace: runtimeNamespace,
+        id: model.runtimeConnectionId,
+        ...(stored ? { expectedRevision: stored.revision } : {}),
+        value: {
+          workspaceId: parsedWorkspaceId,
+          ...(model.node === undefined ? {} : { runtimeNodeRefId: model.node.runtimeNodeRefId }),
+          model,
+        } as JsonValue,
+      })
     })
   }
 

@@ -1,5 +1,25 @@
 # M11 production Runtime Gateway composition gap
 
+## Guarded ordinary runtime projection writes
+
+A failing SQLite regression demonstrated that an ordinary put could replace a
+newer projection with an older observation after maintenance had updated it.
+PostgreSQL and SQLite runtime puts now reject backwards observation time,
+different content at the same observation instant, or changes to workspace,
+node or runtime-definition identity. Identical replay remains accepted; later
+observations can update the same identity. PostgreSQL enforces the guard in its
+atomic conflict-update predicate without overwriting ownership columns; SQLite
+checks and writes inside its existing transaction. Rejection is explicit as
+RUNTIME_DISCOVERY_WRITE_CONFLICT, not a reported successful update.
+
+The persistence cases cover old writes, identical replay, same-time conflict,
+cross-workspace/node/definition attempts, later valid writes and persistence
+after repository recreation or file reopen. External-session writes are unchanged.
+This guard prevents the specific stale projection overwrite; it does not make
+the registry, projection and inventory checkpoint one transaction or prove every
+concurrent inventory scenario. Equal-time conflicting observations require
+reconciliation rather than silently choosing whichever writer arrives last.
+
 ## Atomic disappearance notification
 
 The direct-publisher characterization reproduces the disappearance gap: the

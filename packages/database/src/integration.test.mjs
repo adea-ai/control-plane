@@ -665,6 +665,36 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     ).toBe(false)
     expect(await restarted.getRuntimeConnection(scope, runtime.runtimeConnectionId)).toEqual(next)
+    await restarted.putRuntimeConnection(scope.workspaceId, next)
+    await expect(restarted.putRuntimeConnection(scope.workspaceId, runtime)).rejects.toThrow(
+      'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+    )
+    await expect(
+      restarted.putRuntimeConnection('wsp_01JBBCDEF0123456789ABCDEFG', next)
+    ).rejects.toThrow('RUNTIME_DISCOVERY_WRITE_CONFLICT')
+    for (const model of [
+      { ...next, node: { ...next.node, health: 'unknown' } },
+      { ...next, node: { ...next.node, runtimeNodeRefId: 'rnr_01JBBCDEF0123456789ABCDEFG' } },
+      { ...next, runtimeDefinitionId: 'rtd_01JBBCDEF0123456789ABCDEFG' },
+    ])
+      await expect(restarted.putRuntimeConnection(scope.workspaceId, model)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+      )
+    expect(await restarted.getRuntimeConnection(scope, runtime.runtimeConnectionId)).toEqual(next)
+    const future = {
+      ...next,
+      observedAt: new Date(Date.parse(next.observedAt) + 1_000).toISOString(),
+    }
+    await restarted.putRuntimeConnection(scope.workspaceId, future)
+    await expect(restarted.putRuntimeConnection(scope.workspaceId, next)).rejects.toThrow(
+      'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+    )
+    expect(
+      await new PostgresRuntimeDiscoveryRepository(isolated.application).getRuntimeConnection(
+        scope,
+        runtime.runtimeConnectionId
+      )
+    ).toEqual(future)
     await expect(restarted.compareAndSetRuntimeConnection(scope, next, runtime)).rejects.toThrow(
       'RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH'
     )
