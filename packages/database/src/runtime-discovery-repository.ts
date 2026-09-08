@@ -16,7 +16,7 @@ export interface PostgresRuntimeDiscoveryScope {
 }
 
 export class PostgresRuntimeDiscoveryRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>) {}
 
   async compareAndSetRuntimeConnection(
     scopeValue: PostgresRuntimeDiscoveryScope,

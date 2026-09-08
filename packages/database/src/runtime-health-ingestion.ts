@@ -32,25 +32,29 @@ export class PostgresRuntimeHealthIngestionService {
   #run<Result>(
     operation: (service: RuntimeHealthIngestionService) => Promise<Result>
   ): Promise<Result> {
-    return this.database.transaction(async (transaction) => {
-      const service = new RuntimeHealthIngestionService({
-        registry: new RuntimeConnectionRegistry(
-          new PostgresRuntimeConnectionRepository(transaction)
-        ),
-        policy: this.policy,
-        changes: {
-          publish: async (input) => {
-            const change = RuntimeAvailabilityChangeSchema.parse(input)
-            await transaction.insert(outboxEvents).values({
-              aggregateType: 'runtime_connection',
-              aggregateId: change.runtimeConnectionId,
-              eventType: change.type,
-              payload: change,
-            })
-          },
-        },
-      })
-      return operation(service)
-    })
+    return this.database.transaction((transaction) =>
+      operation(createPostgresRuntimeHealthInTransaction(transaction, this.policy))
+    )
   }
+}
+
+export function createPostgresRuntimeHealthInTransaction(
+  transaction: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>,
+  policy: RuntimeHealthIngestionPolicy
+): RuntimeHealthIngestionService {
+  return new RuntimeHealthIngestionService({
+    registry: new RuntimeConnectionRegistry(new PostgresRuntimeConnectionRepository(transaction)),
+    policy,
+    changes: {
+      publish: async (input) => {
+        const change = RuntimeAvailabilityChangeSchema.parse(input)
+        await transaction.insert(outboxEvents).values({
+          aggregateType: 'runtime_connection',
+          aggregateId: change.runtimeConnectionId,
+          eventType: change.type,
+          payload: change,
+        })
+      },
+    },
+  })
 }

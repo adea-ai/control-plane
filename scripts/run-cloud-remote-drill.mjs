@@ -20,6 +20,7 @@ import {
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
   PostgresRuntimeHealthIngestionService,
+  PostgresRuntimeInventoryUnitOfWork,
   PostgresRuntimeHealthEventDispatcher,
   PostgresRuntimeChannelOwnershipRepository,
   PostgresRuntimeInventoryCheckpointRepository,
@@ -203,6 +204,7 @@ try {
     maximumCapabilityTtlMs: 60_000,
   })
   const inventoryIngestion = new RuntimeInventoryIngestionService({
+    unitOfWork: new PostgresRuntimeInventoryUnitOfWork(database.application, health.policy),
     registry: runtimeRegistry,
     health,
     checkpoints,

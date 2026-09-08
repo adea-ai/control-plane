@@ -136,6 +136,7 @@ export interface RuntimeDiscoveryProjectionWriter {
 }
 
 export interface RuntimeInventoryIngestionOptions {
+  readonly unitOfWork?: RuntimeInventoryUnitOfWork
   readonly registry: RuntimeConnectionRegistry
   readonly health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly checkpoints: RuntimeInventoryCheckpointRepository
@@ -143,6 +144,18 @@ export interface RuntimeInventoryIngestionOptions {
   readonly metrics: GatewayMetrics
   readonly projections: RuntimeDiscoveryProjectionWriter
   readonly disappearanceTtlMs?: number
+}
+
+export interface RuntimeInventoryUnitOfWork {
+  run<Result>(
+    scope: { workspaceId: string; runtimeNodeRefId: string },
+    operation: (
+      ports: Pick<
+        RuntimeInventoryIngestionOptions,
+        'registry' | 'health' | 'checkpoints' | 'projections'
+      >
+    ) => Promise<Result>
+  ): Promise<Result>
 }
 
 export interface RuntimeInventoryIngestionResult {
@@ -169,6 +182,7 @@ export class RuntimeInventoryIngestionError extends Error {
 }
 
 export class RuntimeInventoryIngestionService {
+  readonly #unitOfWork: RuntimeInventoryUnitOfWork | undefined
   readonly #checkpoints: RuntimeInventoryCheckpointRepository
   readonly #health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly #disappearanceTtlMs: number
@@ -178,6 +192,7 @@ export class RuntimeInventoryIngestionService {
   readonly #registry: RuntimeConnectionRegistry
 
   constructor(options: RuntimeInventoryIngestionOptions) {
+    this.#unitOfWork = options.unitOfWork
     this.#registry = options.registry
     this.#health = options.health
     this.#checkpoints = options.checkpoints
@@ -228,6 +243,18 @@ export class RuntimeInventoryIngestionService {
   ): Promise<RuntimeInventoryIngestionResult> {
     const inventory = GatewayInventoryEnvelopeSchema.parse(inventoryValue)
     this.#assertSource(inventory, source)
+    if (this.#unitOfWork) {
+      return this.#unitOfWork.run(
+        { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId },
+        (ports) =>
+          new RuntimeInventoryIngestionService({
+            ...ports,
+            normalizer: this.#normalizer,
+            metrics: this.#metrics,
+            disappearanceTtlMs: this.#disappearanceTtlMs,
+          }).ingest(inventory, source, nodeStatus)
+      )
+    }
     const digest = hashInventory(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {

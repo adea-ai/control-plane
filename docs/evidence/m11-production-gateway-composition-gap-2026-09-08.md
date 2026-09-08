@@ -1,5 +1,30 @@
 # M11 production Runtime Gateway composition gap
 
+## Transaction-bound inventory ingestion
+
+RuntimeInventoryIngestionService accepts an optional unit-of-work port. It
+validates envelope/source correlation before entering it, then uses the supplied
+registry, health, projection and checkpoint ports for the entire ingestion pass.
+PostgresRuntimeInventoryUnitOfWork binds those ports to one transaction, including
+health/disappearance outbox inserts, and takes a node-keyed advisory transaction
+lock before reading the checkpoint. Lock acquisition has a five-second timeout.
+An existing checkpoint's workspace must match before the callback is entered.
+The real PostgreSQL/WebSocket drill now injects this unit of work.
+
+The database case throws after registry/health, outbox, projection and checkpoint
+writes and verifies they all roll back, then verifies successful commit. Eight
+independent unit-of-work instances serialize checkpoint increments; another
+workspace cannot enter the callback. A gateway test verifies that scoped ports,
+not the outer repositories, receive ingestion and that source rejection occurs
+before transaction entry. These are bounded standalone cases, not the complete
+concurrent full/delta snapshot acceptance matrix.
+
+The optional nontransactional fixture path still exists. Production factories
+must inject the durable composition. Normalization currently runs inside the
+transaction and must not perform external effects; transaction duration, bounded
+history scanning, metrics emitted before commit, source-generation changes during
+work, and full-profile/concurrent snapshot verification remain open gates.
+
 ## Guarded ordinary runtime projection writes
 
 A failing SQLite regression demonstrated that an ordinary put could replace a

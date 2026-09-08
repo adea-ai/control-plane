@@ -29,6 +29,7 @@ export { PostgresReconciliationCheckpointRepository } from './reconciliation-che
 export { PostgresReleaseAuditRepository } from './release-audit-repository.js'
 export { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.js'
 export { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.js'
+export { PostgresRuntimeInventoryUnitOfWork } from './runtime-inventory-unit-of-work.js'
 export {
   PostgresRuntimeHealthEventDispatcher,
   type RuntimeHealthEventDelivery,

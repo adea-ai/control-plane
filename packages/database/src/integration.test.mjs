@@ -54,6 +54,7 @@ import { PostgresReconciliationCheckpointRepository } from './reconciliation-che
 import { PostgresReleaseAuditRepository } from './release-audit-repository.ts'
 import { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.ts'
 import { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.ts'
+import { PostgresRuntimeInventoryUnitOfWork } from './runtime-inventory-unit-of-work.ts'
 import { PostgresRuntimeHealthEventDispatcher } from './runtime-health-dispatcher.ts'
 import { acceptRuntimeHealthFixture } from './runtime-health-consumer-fixture.mjs'
 import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-repository.ts'
@@ -1792,6 +1793,92 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
       )
     ).toHaveLength(1)
+    const inventoryScope = {
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+      runtimeNodeRefId: removal.runtimeNodeRefId,
+    }
+    const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
+    const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
+      isolated.application
+    )
+    const discovery = new PostgresRuntimeDiscoveryRepository(isolated.application)
+    const beforeAtomic = await registry.get(runtimeConnectionId)
+    const eventCount = (await readPending()).length
+    const projection = {
+      ...runtimeDiscoveryProjection(),
+      runtimeConnectionId,
+      runtimeDefinitionId: beforeAtomic.runtimeDefinitionId,
+      node: { ...runtimeDiscoveryProjection().node, runtimeNodeRefId: removal.runtimeNodeRefId },
+      observedAt: '2026-08-24T21:06:00.000Z',
+    }
+    const applyInventory = async (ports) => {
+      await ports.health.ingest(
+        {
+          ...report,
+          reportSequence: 3,
+          observedAt: '2026-08-24T21:06:00.000Z',
+          capabilitySnapshot: {
+            ...report.capabilitySnapshot,
+            version: 3,
+            observedAt: '2026-08-24T21:06:00.000Z',
+          },
+        },
+        '2026-08-24T21:06:00.000Z'
+      )
+      await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
+      expect(
+        await ports.checkpoints.compareAndSet(undefined, {
+          ...inventoryScope,
+          snapshotVersion: 1,
+          snapshotDigest: `sha256:${'a'.repeat(64)}`,
+          observedAt: projection.observedAt,
+          activeRuntimeRefs: [beforeAtomic.opaqueNativeRef],
+          revision: 1,
+        })
+      ).toBe(true)
+    }
+    await expect(
+      unit.run(inventoryScope, async (ports) => {
+        await applyInventory(ports)
+        throw new Error('INVENTORY_COMMIT_FAILURE')
+      })
+    ).rejects.toThrow('INVENTORY_COMMIT_FAILURE')
+    expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+    expect(await readPending()).toHaveLength(eventCount)
+    expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+    expect(
+      await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+    ).toBeUndefined()
+    await unit.run(inventoryScope, applyInventory)
+    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+    expect(await readPending()).toHaveLength(eventCount + 1)
+    expect(await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)).toEqual(
+      projection
+    )
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy).run(
+          inventoryScope,
+          async (ports) => {
+            const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+            if (
+              !(await ports.checkpoints.compareAndSet(checkpoint.revision, {
+                ...checkpoint,
+                revision: checkpoint.revision + 1,
+                snapshotVersion: checkpoint.snapshotVersion + 1,
+              }))
+            )
+              throw new Error('INVENTORY_SERIALIZATION_FAILED')
+          }
+        )
+      )
+    )
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
+    await expect(
+      unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
+        throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
+      })
+    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
   })
 
   test('persists scoped external session references without native ownership transfer', async () => {

@@ -21,6 +21,32 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('uses transaction-bound ports and validates the source before entering the transaction', async () => {
+    const scoped = createFixture()
+    const scopes = []
+    const fixture = createFixture({
+      unitOfWork: {
+        async run(scope, operation) {
+          scopes.push(scope)
+          return operation({
+            registry: scoped.registry,
+            health: scoped.health,
+            checkpoints: scoped.checkpoints,
+            projections: scoped.projections,
+          })
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA)])
+    await expect(
+      fixture.service.ingest(frame, { ...source(), workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' })
+    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
+    expect(scopes).toEqual([])
+    expect(await fixture.service.ingest(frame, source())).toMatchObject({ outcome: 'applied' })
+    expect(scopes).toEqual([{ workspaceId, runtimeNodeRefId: nodeId }])
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+  })
   test('direct disappearance publication failure is not recovered by inventory replay', async () => {
     const fixture = createFixture()
     const initial = await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
@@ -503,6 +529,7 @@ function createFixture(options = {}) {
     projections,
     health,
     service: new RuntimeInventoryIngestionService({
+      ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
       registry,
       health,
       checkpoints,

@@ -13,7 +13,7 @@ import { runtimeInventoryCheckpoints } from './schema/runtime-inventory-checkpoi
 export class PostgresRuntimeInventoryCheckpointRepository
   implements RuntimeInventoryCheckpointRepository, RuntimeInventoryCheckpointScanner
 {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>) {}
 
   async scan(input: RuntimeInventoryScan): Promise<readonly RuntimeInventoryCheckpoint[]> {
     const { afterNodeId, limit } = RuntimeInventoryScanSchema.parse(input)
