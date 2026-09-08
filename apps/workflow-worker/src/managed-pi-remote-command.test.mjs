@@ -60,7 +60,7 @@ describe('managed Pi remote command factory', () => {
         effectKey: `workflow:interaction:${action}`,
       }
       await createRuntime().applyInteraction(input)
-      clock = '2026-08-25T12:12:00.000Z'
+      clock = '2026-08-25T12:31:00.000Z'
       await Promise.all(Array.from({ length: 8 }, () => createRuntime().applyInteraction(input)))
       expect(observed).toHaveLength(9)
       for (const record of observed) expect(record).toEqual(observed[0])
@@ -78,6 +78,9 @@ describe('managed Pi remote command factory', () => {
       ).rejects.toThrow('REMOTE_RUNTIME_INTERACTION_STALE')
       expect(observed).toHaveLength(9)
       expect(await commands.get(observed[0].commandId)).toEqual(observed[0])
+      await expect(
+        createRuntime().applyInteraction({ ...input, effectKey: `${input.effectKey}:new` })
+      ).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
     }
   )
 
@@ -154,6 +157,7 @@ describe('managed Pi remote command factory', () => {
       },
     }
     const scopes = []
+    let clock = '2026-08-25T12:00:00.000Z'
     const factory = new ManagedPiRemoteCommandFactory({
       contextPackages: { get: async () => contextPackage },
       runtimeDiscovery: {
@@ -170,7 +174,7 @@ describe('managed Pi remote command factory', () => {
       },
       executions: { getExecution: async () => undefined },
       interactions: { get: async () => undefined },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      now: () => new Date(clock),
     })
     const input = {
       executionId: ids.executionId,
@@ -218,6 +222,34 @@ describe('managed Pi remote command factory', () => {
         runtimeConnectionId: ids.runtimeConnectionId,
       },
     ])
+    const commands = new InMemoryRuntimeCommandRepository()
+    const observed = []
+    const runtime = new DurableRemoteWorkflowRuntime({
+      attempts: { getAttempt: async () => attempt() },
+      commands,
+      factory,
+      waiter: {
+        wait: async ({ command }) => {
+          observed.push(command)
+          return { outcome: 'completed' }
+        },
+      },
+    })
+    const dispatch = {
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      executionPlan: plan,
+      effectKey: input.effectKey,
+    }
+    await runtime.dispatch(dispatch)
+    clock = '2026-08-25T12:31:00.000Z'
+    await runtime.dispatch(dispatch)
+    expect(observed).toHaveLength(2)
+    expect(observed[1]).toEqual(observed[0])
+    expect(observed[1].expiresAt).toBe('2026-08-25T12:30:00.000Z')
+    await expect(
+      runtime.dispatch({ ...dispatch, effectKey: `${dispatch.effectKey}:new` })
+    ).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
   })
 
   test('fails closed without exactly one immutable local project grant', async () => {
