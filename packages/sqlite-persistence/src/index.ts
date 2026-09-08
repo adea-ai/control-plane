@@ -27,6 +27,7 @@ import {
 
 export * from './repositories.js'
 export * from './repositories-extra.js'
+export * from './interaction-repository.js'
 export * from './durability-repositories.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'

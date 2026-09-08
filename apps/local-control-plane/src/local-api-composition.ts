@@ -21,6 +21,7 @@ import {
   SqliteExecutionPlanRepository,
   SqliteExecutionValidationCommandRepository,
   SqliteExecutionRepository,
+  SqliteInteractionRepository,
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
   SqliteRuntimeCommandRepository,
@@ -39,6 +40,7 @@ export class LocalControlApiComposition {
   readonly contextPackages: SqliteContextPackageRepository
   readonly executionPlans: SqliteExecutionPlanRepository
   readonly executions: SqliteExecutionRepository
+  readonly interactions: SqliteInteractionRepository
   readonly executionEvents: SqliteExecutionEventRepository
   readonly projectStates: SqliteProjectStateRepository
   readonly statePromotionProposals: SqliteStatePromotionProposalRepository
@@ -63,6 +65,7 @@ export class LocalControlApiComposition {
     this.contextPackages = new SqliteContextPackageRepository(persistence)
     this.executionPlans = new SqliteExecutionPlanRepository(persistence)
     this.executions = new SqliteExecutionRepository(persistence)
+    this.interactions = new SqliteInteractionRepository(persistence)
     this.executionEvents = new SqliteExecutionEventRepository(persistence)
     this.projectStates = new SqliteProjectStateRepository(persistence)
     this.statePromotionProposals = new SqliteStatePromotionProposalRepository(persistence)

@@ -126,6 +126,7 @@ export class LocalControlPlaneComposition {
   readonly contextPackages: LocalControlApiComposition['contextPackages']
   readonly executionPlans: LocalControlApiComposition['executionPlans']
   readonly executions: LocalControlApiComposition['executions']
+  readonly interactions: LocalControlApiComposition['interactions']
   readonly commands: LocalControlApiComposition['commands']
   readonly commandRepository: LocalControlApiComposition['commandRepository']
   readonly executionLifecycleActivities: ExecutionLifecycleActivities
@@ -210,6 +211,7 @@ export class LocalControlPlaneComposition {
     this.contextPackages = controlApi.contextPackages
     this.executionPlans = controlApi.executionPlans
     this.executions = controlApi.executions
+    this.interactions = controlApi.interactions
     this.commands = controlApi.commands
     this.commandRepository = controlApi.commandRepository
     if (options.remoteControl !== undefined && options.remoteControlFactory !== undefined) {
