@@ -1,5 +1,21 @@
 # M11 production Runtime Gateway composition gap
 
+## Per-node connection scan prerequisite
+
+RuntimeConnectionScanner adds a node-scoped, exclusive connection-ID cursor with
+a validated 1–128 result limit. PostgreSQL applies the node predicate, cursor,
+ordering and limit in SQL, instead of loading all historical rows into the
+worker. The scan intentionally includes revoked/disappeared history; callers
+must preserve those states rather than implicitly revive them. The original
+unbounded list method remains available for existing consumers.
+
+In-memory and PostgreSQL tests check out-of-order insertion, stable pages,
+cross-node exclusion, invalid bounds/cursors and an empty final page. The
+PostgreSQL test also includes a revoked record and continues a page through a
+recreated repository. This bounds returned rows, not query execution time or
+whole-fleet cycle latency. SQLite scan support, the actual refresh loop and
+performance/deployed acceptance remain separate unfinished work.
+
 ## Discovery refresh concurrency prerequisite
 
 PostgresRuntimeDiscoveryRepository now exposes a scoped compare-and-set for

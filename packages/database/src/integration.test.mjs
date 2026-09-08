@@ -902,6 +902,42 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       runtime: { runtimeConnectionId: revoked.runtimeConnectionId },
     })
     expect(await isolated.application.select().from(runtimeConnections)).toHaveLength(1)
+    const query = { runtimeNodeRefId: registration.runtimeNodeRefId, limit: 2 }
+    expect(await repository.scanByRuntimeNode(query)).toEqual([revoked])
+    const added = []
+    for (const index of [3, 1, 2, 4])
+      added.push(
+        await registry.register({
+          ...registration,
+          runtimeConnectionId: `rtc_01ZRZ3NDEKTSV4RRFFQ69G5FA${index}`,
+          identityDigest: `sha256:${'f'.repeat(61)}00${index}`,
+          runtimeNodeRefId:
+            index === 4 ? 'rnr_01ZRZ3NDEKTSV4RRFFQ69G5FAV' : registration.runtimeNodeRefId,
+        })
+      )
+    const page = await repository.scanByRuntimeNode({
+      ...query,
+      afterConnectionId: revoked.runtimeConnectionId,
+    })
+    expect(page).toEqual([added[1], added[2]])
+    const restarted = new PostgresRuntimeConnectionRepository(isolated.application)
+    const last = await restarted.scanByRuntimeNode({
+      ...query,
+      afterConnectionId: page[1].runtimeConnectionId,
+    })
+    expect(last).toEqual([added[0]])
+    expect(
+      await restarted.scanByRuntimeNode({
+        ...query,
+        afterConnectionId: last[0].runtimeConnectionId,
+      })
+    ).toEqual([])
+    for (const invalid of [
+      { ...query, limit: 0 },
+      { ...query, limit: 129 },
+      { ...query, afterConnectionId: 'bad' },
+    ])
+      await expect(restarted.scanByRuntimeNode(invalid)).rejects.toThrow()
   })
 
   test('fences channel generations across concurrent claims, release and repository restart', async () => {
