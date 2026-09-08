@@ -1,5 +1,22 @@
 # M11 production Runtime Gateway composition gap
 
+## Consumer process-exit conformance
+
+The health-dispatch PostgreSQL case now uses a repository-local consumer fixture
+instead of a Map. The fixture commits a uniquely keyed inbox receipt and a
+synthetic effect in one transaction. A child process with isolated database
+application credentials commits the first delivery and exits with code 73 before
+acknowledgement. The parent verifies the exit and persisted effect, recreates the
+dispatcher, retries the stable key and observes no duplicate effect. Eight
+concurrent duplicate deliveries return the retained acknowledgement; reusing the
+key with changed payload rejects. Hung-transport and wrong-ack checks remain.
+
+This establishes committed receipt/effect recovery across consumer process exit
+in the standalone fixture. It does not establish Agent HQ product projection,
+WorkspaceEvents, authenticated routing, ordering policy, or host power-loss
+durability. The fixture is not exported as a production consumer. Live integration
+remains M12; complete standalone routing/conformance remains part of M11.
+
 ## Standalone health-event dispatch
 
 Live #188 and #197 explicitly put live Agent HQ dependencies in M12. The missing

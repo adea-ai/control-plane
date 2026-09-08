@@ -55,6 +55,7 @@ import { PostgresReleaseAuditRepository } from './release-audit-repository.ts'
 import { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.ts'
 import { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.ts'
 import { PostgresRuntimeHealthEventDispatcher } from './runtime-health-dispatcher.ts'
+import { acceptRuntimeHealthFixture } from './runtime-health-consumer-fixture.mjs'
 import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-repository.ts'
 import { PostgresRuntimeCommandRepository } from './runtime-command-repository.ts'
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
@@ -1482,26 +1483,60 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     ).toMatchObject({ reason: 'already_current' })
     expect(await readPending()).toHaveLength(2)
-    const applied = new Map()
+    const readApplied = () =>
+      isolated.application
+        .select()
+        .from(outboxEvents)
+        .where(eq(outboxEvents.aggregateType, 'm11-health-consumer-effect'))
     const deliveries = []
+    const envelopes = []
+    let exitedConsumer
     let loseAcknowledgement = true
     const transport = {
       async deliver(event) {
         deliveries.push(event.deliveryKey)
-        const existing = applied.get(event.deliveryKey)
-        if (existing) expect(existing).toEqual(event)
-        else applied.set(event.deliveryKey, structuredClone(event))
+        envelopes.push(structuredClone(event))
         if (loseAcknowledgement) {
           loseAcknowledgement = false
+          const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+          applicationUrl.pathname = `/${isolated.name}`
+          exitedConsumer = spawnSync(
+            process.execPath,
+            [
+              '-e',
+              `
+            import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
+            import { acceptRuntimeHealthFixture } from ${JSON.stringify(new URL('./runtime-health-consumer-fixture.mjs', import.meta.url).href)};
+            const connection = createPostgresConnection({ role: 'application', url: process.env.TEST_APPLICATION_URL });
+            await acceptRuntimeHealthFixture(connection.database, JSON.parse(process.env.TEST_HEALTH_EVENT));
+            process.exit(73);
+          `,
+            ],
+            {
+              cwd: fileURLToPath(new URL('..', import.meta.url)),
+              env: {
+                PATH: process.env.PATH,
+                TEST_APPLICATION_URL: applicationUrl.toString(),
+                TEST_HEALTH_EVENT: JSON.stringify(event),
+              },
+              encoding: 'utf8',
+              timeout: 10_000,
+            }
+          )
           throw new Error('ACK_LOST')
         }
-        return { acceptedDeliveryKey: event.deliveryKey }
+        return acceptRuntimeHealthFixture(isolated.application, event)
       },
     }
     const dispatcher = new PostgresRuntimeHealthEventDispatcher(isolated.application, transport)
     const firstDispatch = dispatcher.dispatchBatch(1)
     expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
     expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    expect(exitedConsumer.error).toBeUndefined()
+    expect(exitedConsumer.signal).toBeNull()
+    expect(exitedConsumer.status).toBe(73)
+    expect(exitedConsumer.stdout).toBe('')
+    expect(await readApplied()).toHaveLength(1)
     expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
     const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
       isolated.application,
@@ -1512,7 +1547,22 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       failed: 0,
       conflicts: 0,
     })
-    expect(applied.size).toBe(2)
+    expect(await readApplied()).toHaveLength(2)
+    const duplicateReceipts = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        acceptRuntimeHealthFixture(isolated.application, envelopes[0])
+      )
+    )
+    expect(
+      duplicateReceipts.every((receipt) => receipt.acceptedDeliveryKey === envelopes[0].deliveryKey)
+    ).toBe(true)
+    await expect(
+      acceptRuntimeHealthFixture(isolated.application, {
+        ...envelopes[0],
+        change: { ...envelopes[0].change, diagnostics: ['NODE_OFFLINE'] },
+      })
+    ).rejects.toThrow('HEALTH_DELIVERY_KEY_CONFLICT')
+    expect(await readApplied()).toHaveLength(2)
     expect(deliveries).toHaveLength(3)
     expect(new Set(deliveries).size).toBe(2)
     expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
@@ -1563,7 +1613,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       failed: 0,
       conflicts: 0,
     })
-    expect(applied.size).toBe(3)
+    expect(await readApplied()).toHaveLength(3)
     expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
     for (const timeout of [0, -1, 1.5, 60_001])
       expect(
