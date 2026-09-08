@@ -45,6 +45,7 @@ assert.equal(
   pinnedAcpBuild.bundleSha256
 )
 const directory = await mkdtemp(join(tmpdir(), 'm11-installed-acp-certification-'))
+const approvalMarker = join(directory, 'approval-marker')
 let rpc
 let server
 let local
@@ -81,13 +82,29 @@ try {
         assert(JSON.stringify(body).includes('Complete the assigned task safely.'))
         assert(JSON.stringify(body).includes('Inspect and update project files.'))
       }
-      const item = {
-        id: `msg_${requests}`,
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'Installed ACP verified.', annotations: [] }],
-      }
+      const permission = requests === 5 || requests === 6
+      const item = permission
+        ? {
+            id: `fc_${requests}`,
+            type: 'function_call',
+            call_id: `call_${requests}`,
+            name: 'exec_command',
+            arguments: JSON.stringify({
+              cmd: `printf 'approved\\n' >> '${approvalMarker}'`,
+              shell: '/bin/sh',
+              login: false,
+              sandbox_permissions: 'require_escalated',
+              justification: 'Write the isolated certification marker after approval.',
+            }),
+            status: 'completed',
+          }
+        : {
+            id: `msg_${requests}`,
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'Installed ACP verified.', annotations: [] }],
+          }
       const result = {
         id: `resp_${requests}`,
         object: 'response',
@@ -133,6 +150,29 @@ try {
           { headers: { 'content-type': 'text/event-stream' } }
         )
       }
+      if (permission)
+        return new Response(
+          event('response.created', {
+            response: { ...result, status: 'in_progress', output: [] },
+          }) +
+            event('response.output_item.added', {
+              output_index: 0,
+              item: { ...item, status: 'in_progress', arguments: '' },
+            }) +
+            event('response.function_call_arguments.delta', {
+              item_id: item.id,
+              output_index: 0,
+              delta: item.arguments,
+            }) +
+            event('response.function_call_arguments.done', {
+              item_id: item.id,
+              output_index: 0,
+              arguments: item.arguments,
+            }) +
+            event('response.output_item.done', { output_index: 0, item }) +
+            event('response.completed', { response: result }),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
       return new Response(
         event('response.created', { response: { ...result, status: 'in_progress', output: [] } }) +
           event('response.output_item.added', {
@@ -281,14 +321,21 @@ try {
     serviceAuthenticator: authentication.authenticator,
     executionAcceptanceService: local.executionAcceptanceService,
     executionCancellationService: local.executionCancellationService,
+    interactionCommandService: local.interactionCommandService,
   })
   await application.listen(0, '127.0.0.1')
   let loseCancellationAck = true
+  let loseApprovalAck = true
   const sdk = new ControlPlaneClient({
     baseUrl: `http://127.0.0.1:${application.getHttpServer().address().port}`,
     credential: (await readFile(authentication.credentialFile, 'utf8')).trim(),
     fetch: async (url, init) => {
       const response = await fetch(url, init)
+      if (new URL(url).pathname === '/v1/interactions/respond' && response.ok && loseApprovalAck) {
+        loseApprovalAck = false
+        await response.arrayBuffer()
+        throw new Error('ACP_CERTIFICATION_LOST_APPROVAL_ACK')
+      }
       if (new URL(url).pathname === '/v1/executions/cancel' && response.ok && loseCancellationAck) {
         loseCancellationAck = false
         await response.arrayBuffer()
@@ -374,6 +421,87 @@ try {
   assert.equal(cancellationStreamClosed, true)
   assert.equal(cancellationCleanupVerified, true)
   assert.equal(requests, 4)
+  const approvalIssuedAt = Date.now()
+  const approval = await sdk.acceptExecution({
+    ...acceptance,
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFA',
+    idempotencyKey: 'installed-acp-approval-execution',
+    issuedAt: new Date(approvalIssuedAt).toISOString(),
+    payload: {
+      ...acceptance.payload,
+      deadlineAt: new Date(approvalIssuedAt + 60000).toISOString(),
+      retentionExpiresAt: new Date(approvalIssuedAt + 30 * 86400000).toISOString(),
+    },
+  })
+  const approvedInteractions = new Set()
+  for (let index = 0; index < 2; index++) {
+    let pending
+    await until(
+      async () => {
+        const current = await local.executions.getExecution(approval.data.executionId)
+        if (!current.latestAttemptId) return false
+        pending = (
+          await local.interactions.listForAttempt(current.executionId, current.latestAttemptId)
+        ).find(
+          (entry) => entry.state === 'pending' && !approvedInteractions.has(entry.interactionId)
+        )
+        return pending !== undefined
+      },
+      `native-approval-${index + 1}`
+    )
+    assert.equal(pending.kind, 'permission')
+    const marker = await readFile(approvalMarker, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return ''
+      throw error
+    })
+    assert.equal(marker, 'approved\n'.repeat(index), 'NATIVE_ACTION_PRECEDED_APPROVAL')
+    const responseCommand = {
+      ...ControlApiFixtures.interactionResponse.request,
+      commandId: `cmd_01JABCDEF0123456789ABCDE${index === 0 ? 'FB' : 'FC'}`,
+      idempotencyKey: `installed-acp-approval-${index}`,
+      workspaceId: acceptance.workspaceId,
+      projectId: acceptance.projectId,
+      issuedAt: new Date().toISOString(),
+      payload: {
+        executionId: approval.data.executionId,
+        attemptId: pending.attemptId,
+        interactionId: pending.interactionId,
+        expectedVersion: pending.version,
+        action: 'grant',
+      },
+    }
+    if (index === 0) {
+      await assert.rejects(
+        sdk.respondToInteraction(responseCommand),
+        /ACP_CERTIFICATION_LOST_APPROVAL_ACK/
+      )
+    }
+    const response = await sdk.respondToInteraction(responseCommand)
+    assert.equal(response.data.status, 'accepted')
+    if (index === 0) assert.equal(response.data.replayed, true)
+    approvedInteractions.add(pending.interactionId)
+  }
+  let approvedExecution
+  await until(async () => {
+    approvedExecution = await local.executions.getExecution(approval.data.executionId)
+    return ['completed', 'failed', 'cancelled', 'timed_out'].includes(approvedExecution.state)
+  }, 'approved-execution-completion')
+  assert.equal(approvedExecution.state, 'completed')
+  const approvedAttachment = await fetch(
+    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${approval.data.executionId}/attach`,
+    { signal: AbortSignal.timeout(10000) }
+  )
+  assert.equal(approvedAttachment.ok, true)
+  assert.equal((await approvedAttachment.json()).status, 'completed')
+  assert.equal(await readFile(approvalMarker, 'utf8'), 'approved\napproved\n')
+  assert.equal((await local.executions.listAttempts(approval.data.executionId)).length, 1)
+  const approvedResult = await local.objectStore.get(
+    `executions/${approval.data.executionId}/attempts/${approvedExecution.latestAttemptId}/result.json`
+  )
+  const approvalUsage = JSON.parse(new TextDecoder().decode(approvedResult.body)).usage
+  assert.equal(approvalUsage.inputTokens, 33)
+  assert.equal(approvalUsage.outputTokens, 9)
+  assert.equal(requests, 7)
   console.log(
     JSON.stringify(
       {
@@ -382,13 +510,15 @@ try {
         nativeSha256: manifest.nativeBuild.executableSha256,
         nodeVersion,
         requests,
+        approvalUsage,
         freshPromptUsage: { inputTokens: 11, outputTokens: 3 },
         restartedPromptUsage: { inputTokens: 11, outputTokens: 3 },
         localLauncher:
-          'codex-acp; authenticated HTTP API; SQLite; real Restate; completion and cancellation; one attempt each',
+          'codex-acp; authenticated HTTP API; SQLite; real Restate; completion, cancellation and two approvals; one attempt each',
+        approval: 'two gated marker writes; lost ACK replayed; aggregate usage verified',
         cancellation: 'lost ACK replayed; native model stream closed before runtime cleanup',
         scope:
-          'native loaded-session accounting and Local HTTP completion/cancellation; not in-flight recovery or full milestone certification',
+          'native loaded-session accounting and Local HTTP completion/cancellation/approval; not in-flight recovery or full milestone certification',
       },
       null,
       2

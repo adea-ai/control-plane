@@ -64,6 +64,30 @@ function fixture(options = {}) {
 }
 
 describe('ACP RuntimeAdapter', () => {
+  test('replayed native permission updates retain one generated interaction identity', async () => {
+    const transport = new ReferenceAcpTransport({ now: () => now, scenario: 'running' })
+    let generated = 0
+    const driver = new AcpDriver({
+      transport,
+      adapterVersion: '1.0.0',
+      externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
+      interactionId: () => `int_01JABCDEF0123456789ABCDE${generated++ === 0 ? 'FG' : 'FH'}`,
+    })
+    const handle = await driver.start({
+      attemptId,
+      idempotencyKey: 'stable-permission',
+      executionPlan: plan(),
+    })
+    const observe = async () => {
+      for await (const event of driver.progress(handle)) {
+        if (event.type === 'interaction') return event.data.interactionId
+      }
+      throw new Error('permission missing')
+    }
+    const first = await observe()
+    expect(await observe()).toBe(first)
+    expect(generated).toBe(1)
+  })
   test.each(['resolved', 'failure', 'oversized', 'timeout'])(
     'resolves task content before native session creation: %s',
     async (mode) => {

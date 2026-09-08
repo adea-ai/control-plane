@@ -358,6 +358,7 @@ export class AcpDriver implements RuntimeAdapter {
   readonly #adapterVersion: string
   readonly #externalSessionId: (nativeSessionId: string) => string
   readonly #interactionId: (nativeRequestId: number) => string
+  readonly #interactionIds = new Map<string, string>()
   readonly #resolvePrompt: AcpDriverOptions['resolvePrompt']
   readonly #now: () => Date
   readonly #protocolVersion: number
@@ -1246,6 +1247,16 @@ export class AcpDriver implements RuntimeAdapter {
     return execution
   }
 
+  #stableInteractionId(execution: AcpExecution, requestId: number): string {
+    const key = `${execution.handle.handleId}:${requestId}`
+    let id = this.#interactionIds.get(key)
+    if (id === undefined) {
+      id = this.#interactionId(requestId)
+      this.#interactionIds.set(key, id)
+    }
+    return id
+  }
+
   #normalizeUpdate(
     execution: AcpExecution,
     update: AcpUpdate,
@@ -1276,7 +1287,7 @@ export class AcpDriver implements RuntimeAdapter {
       })
     }
     if (update.sessionUpdate === 'request_permission') {
-      const interactionId = this.#interactionId(update.requestId)
+      const interactionId = this.#stableInteractionId(execution, update.requestId)
       this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
         requestId: update.requestId,
         kind: 'permission',
@@ -1294,7 +1305,7 @@ export class AcpDriver implements RuntimeAdapter {
       })
     }
     if (update.sessionUpdate === 'elicitation') {
-      const interactionId = this.#interactionId(update.requestId)
+      const interactionId = this.#stableInteractionId(execution, update.requestId)
       this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
         requestId: update.requestId,
         kind: 'input',
