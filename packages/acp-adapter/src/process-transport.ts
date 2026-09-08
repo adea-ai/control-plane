@@ -56,6 +56,7 @@ export class AcpProcessTransport implements AcpTransport {
   readonly #options: AcpProcessTransportOptions
   readonly #sessions = new Map<string, Session>()
   readonly #creates = new Map<string, Promise<{ sessionId: string }>>()
+  readonly #pendingCreates = new Set<string>()
   readonly #earlyUpdates = new Map<string, Json[]>()
   #creating = 0
   #earlyBytes = 0
@@ -102,14 +103,16 @@ export class AcpProcessTransport implements AcpTransport {
     const existing = this.#creates.get(createToken)
     if (existing) return existing
     if (this.#creates.size >= 128) return Promise.reject(new Error('ACP_NATIVE_SESSION_LIMIT'))
-    const created = this.#newSession(signal)
+    const created = this.#newSession(createToken, signal)
     // Retain rejected outcomes too: a lost response must not trigger a second create.
     this.#creates.set(createToken, created)
     return created
   }
 
-  async #newSession(signal?: AbortSignal): Promise<{ sessionId: string }> {
-    if (this.#sessions.size + this.#creating >= 128) throw new Error('ACP_NATIVE_SESSION_LIMIT')
+  async #newSession(createToken: string, signal?: AbortSignal): Promise<{ sessionId: string }> {
+    if (this.#sessions.size + this.#pendingCreates.size >= 128)
+      throw new Error('ACP_NATIVE_SESSION_LIMIT')
+    this.#pendingCreates.add(createToken)
     this.#creating += 1
     try {
       const response = await this.#rpc.request(
@@ -118,23 +121,39 @@ export class AcpProcessTransport implements AcpTransport {
           cwd: this.#options.cwd,
           mcpServers: [...(this.#options.mcpServers ?? [])],
         },
-        this.#requestOptions(signal)
+        {
+          ...this.#requestOptions(signal),
+          onLateResult: (value) => {
+            const recovered = this.#acceptCreatedSession(value, createToken)
+            this.#creates.set(createToken, Promise.resolve(recovered))
+          },
+        }
       )
-      const { sessionId } = z.object({ sessionId: SessionId }).passthrough().parse(response)
-      if (this.#sessions.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_ID_REUSED')
-      this.#registerSession(sessionId)
-      const early = this.#earlyUpdates.get(sessionId) ?? []
-      this.#earlyUpdates.delete(sessionId)
-      for (const params of early) this.#notification('session/update', params)
-      return { sessionId }
+      return this.#acceptCreatedSession(response, createToken)
     } finally {
       this.#creating -= 1
-      if (this.#creating === 0) {
+      if (this.#creating === 0 && this.#pendingCreates.size === 0) {
         this.#earlyUpdates.clear()
         this.#earlyBytes = 0
         this.#earlyCount = 0
       }
     }
+  }
+
+  #acceptCreatedSession(response: Json, createToken: string): { sessionId: string } {
+    const { sessionId } = z.object({ sessionId: SessionId }).passthrough().parse(response)
+    if (this.#sessions.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_ID_REUSED')
+    this.#registerSession(sessionId)
+    this.#pendingCreates.delete(createToken)
+    const early = this.#earlyUpdates.get(sessionId) ?? []
+    this.#earlyUpdates.delete(sessionId)
+    for (const params of early) this.#notification('session/update', params)
+    if (this.#creating === 0 && this.#pendingCreates.size === 0) {
+      this.#earlyUpdates.clear()
+      this.#earlyBytes = 0
+      this.#earlyCount = 0
+    }
+    return { sessionId }
   }
 
   #registerSession(sessionId: string): Session {
@@ -168,7 +187,7 @@ export class AcpProcessTransport implements AcpTransport {
     if (method === 'session/resume') {
       const { sessionId } = SessionParams.parse(params)
       if (this.#replays.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_LOADING')
-      if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#creating >= 128)
+      if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#pendingCreates.size >= 128)
         throw new Error('ACP_NATIVE_SESSION_LIMIT')
       const session = this.#sessions.get(sessionId) ?? this.#registerSession(sessionId)
       if (session.closeRequested && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
@@ -271,7 +290,7 @@ export class AcpProcessTransport implements AcpTransport {
       .parse(options.afterSequence ?? 0)
     if (options.signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
     if (!this.#supportsLoad) throw new Error('ACP_NATIVE_LOAD_UNSUPPORTED')
-    if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#creating >= 128)
+    if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#pendingCreates.size >= 128)
       throw new Error('ACP_NATIVE_SESSION_LIMIT')
     const session = this.#sessions.get(sessionId) ?? this.#registerSession(sessionId)
     if (session.closeRequested && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
@@ -472,7 +491,7 @@ export class AcpProcessTransport implements AcpTransport {
       replay.updates.push(envelope.update)
       return
     }
-    if (!this.#sessions.has(envelope.sessionId) && this.#creating > 0) {
+    if (!this.#sessions.has(envelope.sessionId) && this.#pendingCreates.size > 0) {
       const bytes = Buffer.byteLength(JSON.stringify(params))
       if (this.#earlyBytes + bytes > 4_194_304 || this.#earlyCount >= 4096)
         throw new Error('ACP_NATIVE_EARLY_UPDATE_LIMIT')

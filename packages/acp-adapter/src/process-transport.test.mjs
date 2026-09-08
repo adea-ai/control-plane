@@ -31,6 +31,7 @@ process.stdin.on('data',chunk=>{
   if(m.method==='session/close'){closes++;if(process.env.SCENARIO!=='lost-close')reply(m.id,{});}
   if(m.method==='close-probe')reply(m.id,{closes});
   if(m.method==='resume-probe')reply(m.id,{resumes});
+  if(m.method==='late-ready')setTimeout(()=>reply(m.id,{}),500);
   if(m.method==='session/resume'){
    resumes++;
    if(m.params.cwd!==process.cwd()||!Array.isArray(m.params.mcpServers))throw Error('missing resume configuration');
@@ -47,6 +48,11 @@ process.stdin.on('data',chunk=>{
   }
   if(m.method==='session/new'){
    creates++;
+   if(process.env.SCENARIO==='late-create'&&creates===1){
+    const sessionId='native-'+creates;
+    setTimeout(()=>{send({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'available_commands_update'}}});reply(m.id,{sessionId});},1200);
+    continue;
+   }
    if(process.env.SCENARIO==='concurrent'){
     creating.push({id:m.id,sessionId:'native-'+creates});
     if(creating.length===2){
@@ -90,6 +96,41 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('a late native create response recovers the same token and permits explicit cleanup', async () => {
+  const { transport, driver } = fixture('late-create')
+  try {
+    await transport.open()
+    await driver.inspect()
+    const original = transport.createSession('late-token')
+    await expect(original).rejects.toThrow('ACP_PROCESS_REQUEST_TIMEOUT')
+    await transport.request('late-ready', {})
+    expect(await transport.createSession('late-token')).toEqual({ sessionId: 'native-1' })
+    expect(await transport.request('probe', {})).toEqual({ creates: 1, prompts: 0 })
+    expect(transport.connectionState()).toBe('connected')
+    await transport.cleanup('native-1')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await expect(original).rejects.toThrow('ACP_PROCESS_REQUEST_TIMEOUT')
+  } finally {
+    await transport.close()
+  }
+})
+
+test('driver retry reclaims a late-created session before issuing a new create', async () => {
+  const { transport, driver } = fixture('late-create')
+  try {
+    await transport.open()
+    await expect(driver.start(startRequest)).rejects.toThrow()
+    await transport.request('late-ready', {})
+    const handle = await driver.start(startRequest)
+    expect(await transport.request('probe', {})).toEqual({ creates: 2, prompts: 1 })
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await driver.cleanup(handle)
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 2 })
+  } finally {
+    await transport.close()
+  }
+})
 
 test('native history preserves event types without contaminating live output or usage', async () => {
   const { transport, driver } = fixture()

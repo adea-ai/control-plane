@@ -11,6 +11,7 @@ process.stdin.on('data', chunk => {
   while ((boundary = buffer.indexOf('\\n')) !== -1) {
     const message = JSON.parse(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 1);
     if (message.method === 'echo') send({jsonrpc:'2.0', id:message.id, result:message.params});
+    if (message.method === 'late') setTimeout(()=>{send({jsonrpc:'2.0',id:message.id,result:message.params});send({jsonrpc:'2.0',id:message.id,result:message.params});},50);
     if (message.method === 'env') send({jsonrpc:'2.0', id:message.id, result:{provided:process.env.PROVIDED, hasParentPath:Object.hasOwn(process.env,'PATH')}});
     if (message.method === 'malformed') process.stdout.write('not-json\\n');
     if (message.method === 'huge') process.stdout.write('x'.repeat(1048577));
@@ -43,6 +44,68 @@ function client(overrides = {}) {
     ...overrides,
   })
 }
+
+test.each(['timeout', 'abort'])(
+  'stdio delivers one late result after %s without resettling the request',
+  async (mode) => {
+    const rpc = client()
+    try {
+      await rpc.start()
+      await rpc.request('echo', {})
+      const controller = new AbortController()
+      const seen = []
+      let received
+      const late = new Promise((resolve) => {
+        received = resolve
+      })
+      const request = rpc.request(
+        'late',
+        { sessionId: 'late-native' },
+        {
+          timeoutMs: mode === 'timeout' ? 10 : 1000,
+          signal: controller.signal,
+          onLateResult: (value) => {
+            seen.push(value)
+            received()
+          },
+        }
+      )
+      if (mode === 'abort') controller.abort()
+      await expect(request).rejects.toThrow(
+        mode === 'timeout' ? 'ACP_PROCESS_REQUEST_TIMEOUT' : 'ACP_PROCESS_ABORTED'
+      )
+      await late
+      await rpc.request('echo', {})
+      expect(seen).toEqual([{ sessionId: 'late-native' }])
+      await expect(request).rejects.toThrow()
+    } finally {
+      await rpc.close()
+    }
+  }
+)
+
+test('stdio bounds unresolved late-result registrations', async () => {
+  const rpc = client()
+  try {
+    await rpc.start()
+    for (let i = 0; i < 128; i++) {
+      const controller = new AbortController()
+      const pending = rpc.request(
+        'never',
+        {},
+        { signal: controller.signal, onLateResult: () => {} }
+      )
+      controller.abort()
+      await expect(pending).rejects.toThrow('ACP_PROCESS_ABORTED')
+    }
+    await expect(rpc.request('never', {}, { onLateResult: () => {} })).rejects.toThrow(
+      'ACP_PROCESS_LATE_RESULT_LIMIT'
+    )
+    expect(await rpc.request('echo', {})).toEqual({})
+  } finally {
+    await rpc.close()
+  }
+})
 
 test('stdio can reject unsupported native requests with their original ID', async () => {
   const rpc = client({ onRequest: (id) => rpc.respondError(id, -32601, 'Method not supported') })

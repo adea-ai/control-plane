@@ -351,6 +351,7 @@ export class AcpDriver implements RuntimeAdapter {
   readonly #pendingAttempts = new Map<string, CachedValue<Promise<RuntimeExecutionHandle>>>()
   readonly #createReclamations = new Map<string, Promise<void>>()
   readonly #uncertainAttempts = new Set<string>()
+  readonly #uncertainCreateTokens = new Map<string, string>()
   readonly #actions = new Map<string, CachedValue<RuntimeExecutionStatus>>()
   readonly #sessionActions = new Map<string, CachedValue<RuntimeSessionResult>>()
   readonly #pendingSessionActions = new Map<string, CachedValue<Promise<RuntimeSessionResult>>>()
@@ -1001,6 +1002,8 @@ export class AcpDriver implements RuntimeAdapter {
   }
 
   async #createNativeSession(attemptId: string): Promise<string> {
+    if (this.#uncertainCreateTokens.size >= 128)
+      fail('ACP_CREATE_BACKPRESSURE', 'unavailable', true)
     const createToken = `acp-create:${createHash('sha256')
       .update(`${attemptId}:${++this.#createSequence}`)
       .digest('hex')}`
@@ -1014,6 +1017,7 @@ export class AcpDriver implements RuntimeAdapter {
     } catch (error) {
       if (request) {
         this.#uncertainAttempts.add(attemptId)
+        this.#uncertainCreateTokens.set(attemptId, createToken)
         this.#uncertainCreateOperationCount += 1
         const reclamation = this.#reclaimCreatedSession(attemptId, createToken).finally(() => {
           if (this.#createReclamations.get(attemptId) === reclamation) {
@@ -1033,6 +1037,7 @@ export class AcpDriver implements RuntimeAdapter {
               (await this.#cleanupFailedStart(identifiable.data.sessionId))
             ) {
               this.#uncertainAttempts.delete(attemptId)
+              this.#uncertainCreateTokens.delete(attemptId)
             }
           })
           .catch(() => undefined)
@@ -1079,12 +1084,16 @@ export class AcpDriver implements RuntimeAdapter {
     if (!identifiable.success) return
     if (await this.#cleanupFailedStart(identifiable.data.sessionId)) {
       this.#uncertainAttempts.delete(attemptId)
+      this.#uncertainCreateTokens.delete(attemptId)
     }
   }
 
   async #awaitCreateReclamation(attemptId: string): Promise<void> {
     const reclamation = this.#createReclamations.get(attemptId)
     if (reclamation) await reclamation
+    const createToken = this.#uncertainCreateTokens.get(attemptId)
+    if (this.#uncertainAttempts.has(attemptId) && createToken)
+      await this.#reclaimCreatedSession(attemptId, createToken)
     if (this.#uncertainAttempts.has(attemptId)) {
       fail('ACP_START_OUTCOME_UNKNOWN', 'conflict', false)
     }

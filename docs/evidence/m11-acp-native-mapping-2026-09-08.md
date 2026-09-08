@@ -222,8 +222,33 @@ type-check, formatting, build, and test passed, including 101 E2E tests / 571
 assertions. An initial redundant-object-spread lint error was corrected before
 the successful full validation run.
 
+## Late create identity recovery
+
+The stdio client can retain an opt-in late-result callback after timeout or abort.
+It delivers a later successful response once, without changing the original
+request's rejected outcome. Callback registrations (pending and timed out) are
+bounded to 128 and cleared on response or connection failure. No callback means
+the previous discard behavior is unchanged.
+
+The native transport uses this for session creation. A late response restores the
+same token's native session identity; early updates remain bounded while that
+identity is unresolved. An explicit driver retry rechecks the retained original
+token and confirms cleanup before permitting a replacement create. It does not
+blindly repeat the old create or dispatch a prompt into the abandoned session.
+The driver's uncertain-token tracking is also bounded to 128.
+
+The stdio/driver/process suites passed 70 tests / 348 assertions. Tests cover late
+responses after timeout and abort, duplicate late responses, registration bounds,
+late native identity recovery, and explicit driver retry with two creates but
+only one prompt, with the first session closed before the replacement starts.
+The native delay is a subprocess fixture, not a delayed real-agent response.
+These mappings are in-memory only: cross-process durable recovery and lost
+responses that never arrive remain unresolved and must not be claimed certified.
+Root lint, type-check, formatting, build, and test passed. Unit validation passed
+872 tests / 3664 assertions, with 87.72% line and 84.70% function coverage.
+
 This implementation is not exported from the package entrypoint or ready for
-promotion. Required follow-up includes late/ambiguous create reconciliation,
+promotion. Required follow-up includes durable ambiguous-create reconciliation,
 retained-result limits, remaining native session lifecycle
 operations, and full real-agent validation. Cache/thought usage is retained in
 the raw result; final accounting semantics still need explicit verification.
