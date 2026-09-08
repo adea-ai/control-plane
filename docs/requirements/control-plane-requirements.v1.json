@@ -1764,6 +1764,351 @@
       }
     },
     {
+      "id": "CP-RNODE-009",
+      "sourceId": "runtime-node-spec",
+      "heading": "Remote session supersession (section 6)",
+      "requirement": "Allow at most one active logical session per remote transport role/endpoint; reconnect uses session identity and last acknowledged sequence, and a newer authenticated session supersedes an older stale connection.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-010",
+      "sourceId": "runtime-node-spec",
+      "heading": "Remote heartbeat thresholds (sections 6 and 13)",
+      "requirement": "Remote heartbeat defaults to 15 seconds, degrades after two misses and marks the node offline after three misses or 45 seconds; Local direct-path offline status derives from process/IPC health instead.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-011",
+      "sourceId": "runtime-node-spec",
+      "heading": "Inventory freshness (section 14)",
+      "requirement": "Runtime and provider inventory becomes stale after 60 seconds unless the concrete adapter/provider advertises a shorter safe TTL.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-012",
+      "sourceId": "runtime-node-spec",
+      "heading": "Clock-skew admission (section 14)",
+      "requirement": "Node clock skew beyond configured tolerance blocks new effect-producing commands until corrected or explicitly handled.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-013",
+      "sourceId": "runtime-node-spec",
+      "heading": "Unknown command recovery (section 14)",
+      "requirement": "When a requested command is no longer in the ledger, return explicit unknown or expired status and reconcile authoritative status before retrying.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-014",
+      "sourceId": "runtime-node-spec",
+      "heading": "Acknowledgement before running (sections 9 and 14)",
+      "requirement": "Remote acceptance requires node acknowledgement and queued work is not marked running before start acknowledgement; direct execution preserves equivalent logical acknowledgement/idempotency semantics.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-015",
+      "sourceId": "runtime-node-spec",
+      "heading": "Terminal cancellation precedence (section 9)",
+      "requirement": "Cancellation is idempotent and a terminal result wins over a later cancellation request.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-016",
+      "sourceId": "runtime-node-spec",
+      "heading": "Version negotiation (section 16)",
+      "requirement": "Negotiate overlapping remote protocol versions during hello; direct transport rejects incompatible component versions during local startup/handshake using the same versioned command and payload contracts.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-017",
+      "sourceId": "runtime-node-spec",
+      "heading": "Independent adapter and driver compatibility (section 10)",
+      "requirement": "Negotiate adapter and driver versions independently; required runtime incompatibility makes its connection ineligible, while required provider incompatibility makes that provider unavailable without silently substituting against pinned policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-018",
+      "sourceId": "runtime-node-spec",
+      "heading": "Node and connection health separation (section 13)",
+      "requirement": "Track RuntimeConnection and ContextProviderConnection health separately from RuntimeNode state; an online node does not imply a healthy, present, compatible or authorized harness/provider.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-019",
+      "sourceId": "runtime-node-spec",
+      "heading": "Driver authority limits (section 10)",
+      "requirement": "Node drivers consume already authorized commands and scoped grants/mappings; they do not select runtimes/providers, broaden scope, compile context, decide memory policy or mutate Agent HQ product state or Control Plane ProjectState.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-020",
+      "sourceId": "runtime-node-spec",
+      "heading": "Reassignment identity (section 9)",
+      "requirement": "Local-only work or required local-provider requests are never silently reassigned; explicit runtime reassignment creates a new attempt, while authorized provider substitution creates a new contribution and ContextPackage version.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-021",
+      "sourceId": "runtime-node-spec",
+      "heading": "Command rejection (section 9)",
+      "requirement": "Reject commands that are expired, addressed to another node/workspace, incompatible with negotiated protocol/schema or current permissions, or oversized.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-022",
+      "sourceId": "runtime-node-spec",
+      "heading": "Provider descriptor privacy (section 12.1)",
+      "requirement": "Optional provider capability descriptors expose opaque connection/mapping references, versions, health, operations, location and limitations, but exclude loopback URLs, database/source paths, credentials, corpus contents and native memory.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-023",
+      "sourceId": "runtime-node-spec",
+      "heading": "Runtime telemetry redaction (section 15)",
+      "requirement": "Redact reusable tokens, runtime/provider credentials, private keys, local-content keys/plaintext, loopback endpoints, database/source paths, provider evidence/native memory, environment secrets, raw file content and sensitive command fields from logs/traces; relay diagnostics expose bounded ciphertext metadata only.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
       "id": "PI-CP-001",
       "sourceId": "project-index",
       "heading": "Documentation Rules",
@@ -5734,6 +6079,66 @@
     },
     {
       "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-009",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-010",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-011",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-012",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-013",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-014",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-015",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-016",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-017",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-018",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-019",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-020",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-021",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-022",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-023",
       "sourceId": "runtime-node-spec"
     },
     {
