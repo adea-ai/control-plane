@@ -2,6 +2,7 @@ import { BadRequestException, Catch, HttpException, HttpStatus } from '@nestjs/c
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
 import type { ValidationError } from 'class-validator'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { ErrorResponseEnvelopeSchema } from '@control-plane/contracts'
 import { responseMetadata } from './request-context.js'
 
 export interface ValidationDetail {
@@ -29,9 +30,61 @@ export class NormalizedExceptionFilter implements ExceptionFilter {
         : isSchemaValidationError(exception)
           ? HttpStatus.BAD_REQUEST
           : HttpStatus.INTERNAL_SERVER_ERROR
+    const error = normalizedError(exception, status)
+    const meta = responseMetadata(request)
+    const identity = ErrorResponseEnvelopeSchema.omit({ error: true }).safeParse(request.body)
+    if (!identity.success) {
+      reply.status(status).send({ error, meta })
+      return
+    }
+    const classification =
+      status === 401
+        ? 'authentication'
+        : status === 403
+          ? 'authorization'
+          : status === 409
+            ? 'conflict'
+            : status === 503 || status === 429
+              ? 'runtime_unavailable'
+              : status >= 500
+                ? 'internal'
+                : 'validation'
+    const source =
+      classification === 'authentication'
+        ? 'auth'
+        : classification === 'authorization'
+          ? 'policy'
+          : classification === 'validation'
+            ? 'client'
+            : classification === 'conflict' || classification === 'runtime_unavailable'
+              ? 'workflow'
+              : 'system'
+    const details =
+      'details' in error && error.details !== undefined ? { diagnostics: error.details } : undefined
+    const envelope = ErrorResponseEnvelopeSchema.safeParse({
+      ...identity.data,
+      error: {
+        ...error,
+        details,
+        class: classification,
+        source,
+        retryable: status === 503 || status === 429,
+      },
+    })
     reply.status(status).send({
-      error: normalizedError(exception, status),
-      meta: responseMetadata(request),
+      ...(envelope.success
+        ? envelope.data
+        : {
+            ...identity.data,
+            error: {
+              code: 'INTERNAL_ERROR',
+              message: 'Internal server error',
+              class: 'internal',
+              source: 'system',
+              retryable: false,
+            },
+          }),
+      meta,
     })
   }
 }

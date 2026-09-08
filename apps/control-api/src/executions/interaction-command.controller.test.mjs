@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { ControlApiFixtures } from '@control-plane/contracts'
+import { ControlApiFixtures, ErrorResponseEnvelopeSchema } from '@control-plane/contracts'
 import { createControlApiApplication, createOpenApiDocument } from '../application.ts'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 
@@ -128,6 +128,12 @@ test.each([
   withApp({ error }, async (application) => {
     const response = await inject(application)
     expect(response.statusCode).toBe(status)
+    const envelope = ErrorResponseEnvelopeSchema.parse(response.json())
+    expect(envelope.requestId).toBe(request.requestId)
+    expect(envelope.error.class).toBe(
+      status === 403 ? 'authorization' : status === 409 ? 'conflict' : 'runtime_unavailable'
+    )
+    expect(envelope.error.retryable).toBe(status === 503)
     expect(response.body).not.toContain('private infrastructure detail')
   })
 )

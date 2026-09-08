@@ -66,7 +66,20 @@ normalization. An SDK-to-real-router test uses a temporary private credential fi
 and a recorded command service (not a native runtime). The current v3 OpenAPI includes
 the operation with HTTP 202; compatibility checks protect successful response schemas
 including 202, and the architecture audit reads the current manifest version rather
-than the old v2 artifact. A full native-interaction run through this HTTP route, relay
+than the old v2 artifact.
+
+A real loopback TCP test now runs SDK acceptance and response commands through the
+private authenticated API, Local SQLite repositories and real Restate, with a
+controlled managed-Pi client supplying one input interaction. It deliberately drops
+the successful HTTP acknowledgement, waits for workflow completion, and retries
+with another command ID: one attempt and one runtime input remain, and the original
+response identity is replayed. A changed payload returns the expected 409 conflict.
+This run exposed that API errors used a legacy envelope the SDK could not parse.
+Valid contract requests now receive the declared versioned error identity, class,
+source and retryability; legacy non-contract responses and `meta` remain supported.
+Versioned validation diagnostics use the contract's bounded-key details object.
+
+A full native-interaction run through this HTTP route, relay
 wiring, and the remaining profile compositions are still outstanding.
 
 - Local direct runtime dispatch now persists pending input/approval/permission requests
