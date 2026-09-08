@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -66,6 +68,79 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('recovers acceptance after process exit immediately following the commit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-accept-crash-'))
+    const path = join(directory, 'state.sqlite')
+    let provider
+    try {
+      const child = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `
+        import { CommandInboxService } from '@control-plane/domain';
+        import { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } from ${JSON.stringify(new URL('./index.ts', import.meta.url).href)};
+        const provider = new SqlitePersistenceProvider({ path: ${JSON.stringify(path)} });
+        await provider.migrate();
+        const service = new CommandInboxService({
+          repository: new SqliteCommandAcceptanceRepository(provider),
+          executionIdFactory: () => ${JSON.stringify(ids.executionId)},
+          executionPlanValidator: { validate: async () => true },
+          now: () => ${JSON.stringify(receivedAt)},
+          failureInjector: { checkpoint(name) {
+            if (name === 'control_api.after_accept') process.exit(73);
+          } },
+        });
+        await service.acceptExecution(${JSON.stringify(commandInput())});
+        console.log('UNEXPECTED_ACCEPTANCE_REPLY');
+      `,
+        ],
+        {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: { PATH: process.env.PATH },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      )
+      expect(child.error).toBeUndefined()
+      expect(child.signal).toBeNull()
+      expect(child.status).toBe(73)
+      expect(child.stdout).toBe('')
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const recovered = new CommandInboxService({
+        repository: new SqliteCommandAcceptanceRepository(provider),
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: {
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+          },
+        },
+        now: () => receivedAt,
+      })
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => recovered.acceptExecution(commandInput()))
+      )
+      expect(results.every((result) => result.replayed)).toBe(true)
+      expect(results.every((result) => result.execution.executionId === ids.executionId)).toBe(true)
+      expect(results.every((result) => result.command.commandId === ids.commandId)).toBe(true)
+      expect(
+        await provider.transaction((transaction) => transaction.list('executions'))
+      ).toHaveLength(1)
+      expect(
+        await provider.transaction((transaction) => transaction.list('command-inbox'))
+      ).toHaveLength(1)
+      await expect(
+        recovered.acceptExecution(commandInput({ payloadHash: 'c'.repeat(64) }))
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
+    } finally {
+      await provider?.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   test('retired command keys reject resurrection after payload removal and reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retired-'))
     const path = join(directory, 'control-plane.sqlite')

@@ -30,3 +30,21 @@ Code inspection candidate: `1a31d9b5aa0251554689fc94816842c141504b16`. This is a
 - `packages/domain/src/project-state.test.mjs` exposes competing-writer and revision tests. Reconcile those assertions with both concrete persistence providers before claiming row 09.
 
 Track remaining Control Plane evidence under #188/#194, source/ledger completeness under #186, and ownership/documentation reconciliation under #195. This map does not complete atomic extraction of the entire specification or replace implementation/test/environment references for each ledger requirement.
+
+## SQLite commit/reply subprocess regression
+
+The candidate containing this addition includes a focused regression in
+`packages/sqlite-persistence/src/repositories.test.mjs`: a separate Bun process
+uses the real CommandInboxService and file-backed SQLite repository, then exits
+with code 73 at `control_api.after_accept`, immediately after the repository
+transaction commits and before the service returns. No acceptance reply is
+printed and no application cleanup runs in that child. The parent reopens the
+database and submits eight identical retries. All return the original command
+and execution; neither the execution ID factory nor plan validator may run
+again, and the database contains one command and one execution. Conflicting
+payload reuse still rejects.
+
+This is concrete process-exit recovery at the SQLite inbox-service boundary for
+CONS-A18-03. The plan validator is a fixture. It is not an authenticated HTTP/IPC
+test, PostgreSQL parity, native runtime/billing proof, a power-loss/fsync test or
+whole-profile certification; the scenario's full acceptance remains open.
