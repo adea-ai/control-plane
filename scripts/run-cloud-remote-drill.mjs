@@ -19,6 +19,7 @@ import {
   PostgresRuntimeEventEffectSink,
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
+  PostgresRuntimeChannelOwnershipRepository,
   PostgresInteractionRepository,
 } from '../packages/database/src/index.ts'
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
@@ -34,7 +35,7 @@ import {
   SyntheticRuntimeNodeIdentityAuthority,
   RuntimeGatewayWebSocketLifecycle,
   RuntimeGatewayWebSocketServer,
-  InMemoryRuntimeNodeCoordination,
+  RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
 } from '../apps/runtime-gateway/src/index.ts'
@@ -176,7 +177,8 @@ try {
     identityValidator: authority.validationPort(),
     logger: { write() {} },
   })
-  const coordination = new InMemoryRuntimeNodeCoordination()
+  const ownership = new PostgresRuntimeChannelOwnershipRepository(database.application)
+  const coordination = new RepositoryRuntimeNodeCoordination(ownership)
   const metrics = new RecordingGatewayMetrics()
   const commands = new PostgresRuntimeCommandRepository(database.application)
   const received = []
@@ -522,6 +524,12 @@ try {
   strictEqual(received.length, 4)
   deepStrictEqual(quarantine, [])
   if (gatewayError) throw gatewayError
+  const admittedChannel = await ownership.lookup(nodeId)
+  ok(admittedChannel, 'Live WebSocket ownership must be persisted')
+  await server.close()
+  const recoveredOwnership = new PostgresRuntimeChannelOwnershipRepository(database.application)
+  strictEqual(await recoveredOwnership.lookup(nodeId), undefined)
+  deepStrictEqual(await recoveredOwnership.claim(admittedChannel), { accepted: false })
   console.log(
     'Cloud remote drill passed: PostgreSQL dispatch, approval and cancellation, authenticated WebSocket delivery/ACK and result, Artifact-backed terminal state, and immutable command replay. Approval response is seeded; node and cancellation waiter are scripted. Cancellation is delivered after execution completion, not a native stop proof. Native permission origination, active cancellation confirmation, usage settlement and live provider execution remain unverified.'
   )

@@ -1,5 +1,34 @@
 # M11 production Runtime Gateway composition gap
 
+## Gateway repository coordination follow-up
+
+The cloud remote drill now composes this adapter with the PostgreSQL ownership
+repository instead of its former in-memory coordinator. It requires the live
+WebSocket owner to exist in PostgreSQL, drains the server, then checks through a
+recreated repository that active ownership is gone but replay of that generation
+is still rejected. The historical inventory below describes the earlier
+inspected candidate; this follow-up changes its coordination entry only.
+Identity and runtime responses remain synthetic/scripted, inventory frames
+remain unsupported by the drill, and this is not a deployed multi-host test.
+
+RepositoryRuntimeNodeCoordination now adapts the ownership repository to the
+gateway's coordination port. It intentionally does not require push replacement
+notifications: active inbound frames and lifecycle sweeps consult authoritative
+ownership, as outbound sends already did. An old channel closes without
+publishing an offline event for its replacement. This provides reconciliation
+when notifications are absent; an actual bounded sweep schedule is still a
+production composition requirement.
+
+Two lifecycle regressions use separate coordinator instances sharing an
+in-memory repository fixture. With no replacement callback, either a stale
+inbound ACK or an explicit sweep closes the old socket, does not dispatch its
+message, preserves the newer owner and avoids a false offline event. These
+tests prove the lifecycle integration, not PostgreSQL-backed live sockets or
+cross-host timing. Ownership changes during an already-running handler still
+require operation-level fencing; a pre-dispatch lookup alone is not an atomic
+transaction with downstream effects. Production identity/startup, scheduling
+and deployed concurrent replacement/recovery acceptance remain open.
+
 ## Durable ownership prerequisite implementation
 
 The follow-up adds RuntimeChannelOwnershipRepository in runtime-sdk and its

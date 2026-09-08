@@ -3,6 +3,7 @@ import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { RuntimeNodeChannel } from './authentication.js'
 import {
   InMemoryRuntimeNodeCoordination,
+  RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
   RuntimeGatewayWebSocketServer,
@@ -14,6 +15,45 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test.each(['frame', 'sweep'])(
+    'reconciles replaced ownership without notifications via %s',
+    async (trigger) => {
+      const repository = new InMemoryRuntimeNodeCoordination()
+      const delivered = []
+      const first = setup(
+        'gateway-a',
+        new RepositoryRuntimeNodeCoordination(repository),
+        undefined,
+        {},
+        {
+          handle: async (...args) => delivered.push(args),
+        }
+      )
+      const second = setup('gateway-b', new RepositoryRuntimeNodeCoordination(repository))
+      const oldSocket = new FakeSocket()
+      const newSocket = new FakeSocket()
+      first.gateway.open(connection('gwc-a', channel(1), oldSocket))
+      await first.gateway.receive('gwc-a', JSON.stringify(golden.hello))
+      second.gateway.open(connection('gwc-b', channel(2), newSocket))
+      await second.gateway.receive('gwc-b', JSON.stringify(hello(2)))
+      expect(oldSocket.closed).toBeUndefined()
+      if (trigger === 'frame') {
+        await first.gateway.receive('gwc-a', JSON.stringify(golden.ack))
+      } else {
+        await first.gateway.sweep()
+      }
+      expect(oldSocket.closed).toEqual({ code: 4001, reason: 'stale_channel_replaced' })
+      expect(delivered).toEqual([])
+      expect(await repository.lookup(nodeId)).toMatchObject({
+        gatewayInstanceId: 'gateway-b',
+        channelGeneration: 2,
+      })
+      expect(first.reachability.events.filter(({ state }) => state === 'offline')).toEqual([])
+      await first.gateway.close()
+      await second.gateway.close()
+    }
+  )
+
   test('negotiates hello and registers one authenticated active channel', async () => {
     const fixture = setup('gateway-a')
     const socket = new FakeSocket()
