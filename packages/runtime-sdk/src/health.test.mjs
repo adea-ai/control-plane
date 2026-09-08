@@ -241,6 +241,33 @@ describe('runtime health ingestion', () => {
     ).rejects.toThrow('Only negotiated capability claims can be verified')
   })
 
+  test.each([5_000, 120_000])(
+    'expires the first freshness deadline exactly (capability TTL %i)',
+    async (ttlMs) => {
+      const { service, changes } = await createHarness()
+      const input = report()
+      input.capabilitySnapshot.ttlMs = ttlMs
+      await service.ingest(input, input.observedAt)
+      const deadline = Date.parse(input.observedAt) + Math.min(ttlMs, 60_000)
+      const before = await service.refresh({
+        runtimeConnectionId: connectionId,
+        nodeStatus: 'online',
+        evaluatedAt: new Date(deadline - 1).toISOString(),
+      })
+      expect(before.assessment.availabilityState).toBe('healthy')
+      const expired = await service.refresh({
+        runtimeConnectionId: connectionId,
+        nodeStatus: 'online',
+        evaluatedAt: new Date(deadline).toISOString(),
+      })
+      expect(expired.assessment).toMatchObject({ availabilityState: 'stale', executable: false })
+      expect(expired.connection.diagnostics).toContain(
+        ttlMs < 60_000 ? 'CAPABILITY_SNAPSHOT_STALE' : 'HEALTH_REPORT_STALE'
+      )
+      expect(changes.events.map(({ currentState }) => currentState)).toEqual(['healthy', 'stale'])
+    }
+  )
+
   test('refreshes previously healthy inventory to stale after its TTL', async () => {
     const { changes, service } = await createHarness()
     await service.ingest(report(), '2026-08-24T20:01:10.000Z')

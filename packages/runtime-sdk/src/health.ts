@@ -480,11 +480,11 @@ function staleDiagnostics(
   const diagnostics = []
   if (
     connection.capabilitySnapshotExpiresAt !== undefined &&
-    Date.parse(evaluatedAt) > Date.parse(connection.capabilitySnapshotExpiresAt)
+    Date.parse(evaluatedAt) >= Date.parse(connection.capabilitySnapshotExpiresAt)
   ) {
     diagnostics.push('CAPABILITY_SNAPSHOT_STALE')
   }
-  if (Date.parse(evaluatedAt) > Date.parse(connection.lastHealthCheckAt) + policy.healthTtlMs) {
+  if (Date.parse(evaluatedAt) >= Date.parse(connection.lastHealthCheckAt) + policy.healthTtlMs) {
     diagnostics.push('HEALTH_REPORT_STALE')
   }
   return diagnostics

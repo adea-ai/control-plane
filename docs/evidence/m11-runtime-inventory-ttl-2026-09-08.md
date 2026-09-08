@@ -1,5 +1,27 @@
 # M11 runtime inventory TTL
 
+## Exact expiry and production composition follow-up
+
+Health refresh now considers capability and health-report TTLs stale at the
+exact expiry timestamp, matching discovery and execution eligibility's existing
+exclusive upper bound. Two regressions reproduced a healthy/executable result
+at the exact capability or health deadline. They now assert healthy one
+millisecond before the first deadline, stale/non-executable at it, the specific
+stale diagnostic and one availability transition.
+
+Production composition is still a separate high-severity #188/#194 gap:
+`apps/runtime-gateway/package.json` starts `src/start.ts`, which calls `start()`
+without a WebSocket server. `src/index.ts` rejects that absence in staging and
+production; its startup tests only prove refusal and injected-server lifecycle.
+The source search found inventory ingestion construction in tests, not the
+production executable, and no production caller of health refresh or
+`expireDisappeared`. The cloud remote drill constructs a real WebSocket server
+but is not the production startup composition. Required follow-up is explicit
+validated production wiring of authentication, durable registry/checkpoints,
+inventory/message handling and bounded refresh/disappearance scheduling, then
+an exact-candidate deployed expiry/reconnect/restart test. Do not remove the
+startup refusal or claim deployment readiness from these unit regressions.
+
 ## Normalizer boundary follow-up
 
 The ingestion correlation check now also rejects a normalized capability TTL
