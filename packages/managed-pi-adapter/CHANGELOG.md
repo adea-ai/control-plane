@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.3.0...managed-pi-adapter-v1.3.1) (2026-09-08)
+
+
+### Tests
+
+* **local:** certify native Pi cancellation through public API ([#432](https://github.com/adea-ai/control-plane/issues/432)) ([225056c](https://github.com/adea-ai/control-plane/commit/225056c3c3f6c450237453b90d61d4cb9ac73a44))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.2.2...managed-pi-adapter-v1.3.0) (2026-09-08)
 
 
