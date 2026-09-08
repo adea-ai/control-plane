@@ -33,3 +33,22 @@ particular, completed snapshots require usage, and normalized progress currently
 has only status/output/interaction/usage/artifact event kinds. Native tool and
 non-text content mapping must be accounted for before claiming full capability
 coverage. No certification registry entry was promoted by this investigation.
+
+## In-progress transport implementation
+
+The unpublished `process-transport.ts` now connects `AcpStdioClient` to
+`AcpDriver` for native v1-shaped messages. Package build and four process-backed
+driver tests passed (11 assertions): approval/output/final usage/duplicate start,
+cancellation, absent usage, and process loss. These use a disposable wire fixture,
+not the proposed Codex ACP binary. Process loss remains `unknown` at the driver
+boundary; the test does not relabel it as confirmed native failure.
+The root lint, type-check, formatting, build, and test sequence passed on this
+draft; E2E remained 101 tests / 571 assertions. This broad check does not cover
+the native lifecycle gaps listed below.
+
+This implementation is not exported from the package entrypoint or ready for
+promotion. Required follow-up includes early notifications during session
+creation, aborted/ambiguous creates, bounded cleanup waits, late permission
+requests after cancellation, retained-result limits, native session lifecycle
+operations, and full real-agent validation. Cache/thought usage is retained in
+the raw result; final accounting semantics still need explicit verification.
