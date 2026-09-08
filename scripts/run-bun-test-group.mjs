@@ -26,6 +26,7 @@ const repositoryGroups = {
     'tests/agent-skill-library.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
+    'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
     'tests/m11-graph-composition.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',

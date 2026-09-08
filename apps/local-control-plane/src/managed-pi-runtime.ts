@@ -2,14 +2,7 @@ import {
   ContextPackageReferenceSchema,
   type ContextPackageRepository,
 } from '@control-plane/context'
-import {
-  AgentProfileVersionSchema,
-  ModelCapabilitySchema,
-  ModelProviderClassSchema,
-  SkillVersionSchema,
-  type AgentProfileRepository,
-  type SkillRepository,
-} from '@control-plane/domain'
+import { type AgentProfileRepository, type SkillRepository } from '@control-plane/domain'
 import {
   ManagedPiAdapter,
   ManagedPiConfigurationSchema,
@@ -21,6 +14,8 @@ import {
   DirectLocalRuntimeTransport,
   type RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
+import { resolvePublishedRuntimeInputs } from './published-runtime-inputs.js'
+import { LocalRuntimeModelRoute, type LocalModelRouteOptions } from './runtime-model-route.js'
 
 export interface LocalManagedPiRuntimeOptions {
   readonly executablePath: string
@@ -74,95 +69,30 @@ export function createLocalManagedPiRuntime(
 export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcessInputResolver {
   readonly #catalog: LocalManagedPiRuntimeRepositories['catalog']
   readonly #contextPackages: LocalManagedPiRuntimeRepositories['contextPackages']
-  readonly #model: string
-  readonly #modelAlias: string
-  readonly #modelCapabilities: readonly ReturnType<typeof ModelCapabilitySchema.parse>[]
-  readonly #provider: string
-  readonly #providerClass: ReturnType<typeof ModelProviderClassSchema.parse>
-  readonly #dataResidency: 'us' | 'eu' | 'global' | 'local'
+  readonly #route: LocalRuntimeModelRoute
 
   constructor(
     repositories: Pick<LocalManagedPiRuntimeRepositories, 'catalog' | 'contextPackages'>,
-    model: {
-      readonly provider: string
-      readonly model: string
-      readonly modelAlias: string
-      readonly modelCapabilities: readonly string[]
-      readonly providerClass: string
-      readonly dataResidency: string
-    }
+    model: LocalModelRouteOptions
   ) {
     this.#catalog = repositories.catalog
     this.#contextPackages = repositories.contextPackages
-    this.#provider = boundedToken(model.provider, 'MANAGED_PI_PROVIDER_INVALID')
-    this.#model = boundedToken(model.model, 'MANAGED_PI_MODEL_INVALID')
-    this.#modelAlias = boundedToken(model.modelAlias, 'MANAGED_PI_MODEL_ALIAS_INVALID')
-    this.#modelCapabilities = model.modelCapabilities.map((capability) =>
-      ModelCapabilitySchema.parse(capability)
-    )
-    this.#providerClass = ModelProviderClassSchema.parse(model.providerClass)
-    this.#dataResidency = parseDataResidency(model.dataResidency)
+    this.#route = new LocalRuntimeModelRoute(model, 'MANAGED_PI')
   }
 
   async resolve(configurationInput: unknown) {
     const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
-    const [profileValue, contextPackage, ...skillValues] = await Promise.all([
-      this.#catalog.getAgentProfileVersion(configuration.profile.profileVersionId),
+    const [{ profile, skills }, contextPackage] = await Promise.all([
+      resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI'),
       this.#contextPackages.get(
         ContextPackageReferenceSchema.parse({
           contextPackageId: configuration.contextPackage.contextPackageId,
           contentDigest: configuration.contextPackage.contentDigest,
         })
       ),
-      ...configuration.skills.map((skill) => this.#catalog.getSkillVersion(skill.skillVersionId)),
     ])
-    const profile =
-      profileValue === undefined ? undefined : AgentProfileVersionSchema.parse(profileValue)
-    const skills = skillValues.map((skill) =>
-      skill === undefined ? undefined : SkillVersionSchema.parse(skill)
-    )
-    if (
-      profile === undefined ||
-      profile.profileId !== configuration.profile.profileId ||
-      profile.version !== configuration.profile.version ||
-      profile.revision !== configuration.profile.revision ||
-      profile.definition.schemaVersion !== configuration.profile.schemaVersion ||
-      profile.contentDigest !== configuration.profile.contentDigest ||
-      profile.lifecycle !== 'published'
-    ) {
-      throw new Error('MANAGED_PI_PROFILE_PIN_UNRESOLVED')
-    }
     if (contextPackage === undefined) throw new Error('MANAGED_PI_CONTEXT_PIN_UNRESOLVED')
-    for (let index = 0; index < configuration.skills.length; index += 1) {
-      const pin = configuration.skills[index]
-      const skill = skills[index]
-      if (
-        pin === undefined ||
-        skill === undefined ||
-        skill.skillId !== pin.skillId ||
-        skill.revision !== pin.revision ||
-        skill.manifest.schemaVersion !== pin.schemaVersion ||
-        skill.manifest.semanticVersion !== pin.semanticVersion ||
-        skill.manifest.contentDigest !== pin.contentDigest ||
-        skill.lifecycle !== 'published'
-      ) {
-        throw new Error('MANAGED_PI_SKILL_PIN_UNRESOLVED')
-      }
-    }
-    const modelPolicy = configuration.modelPolicy.find(
-      (candidate) => candidate.alias === this.#modelAlias
-    )
-    if (modelPolicy === undefined) throw new Error('MANAGED_PI_MODEL_ALIAS_UNRESOLVED')
-    if (
-      modelPolicy.providerPolicy.deniedProviders.includes(this.#provider) ||
-      !modelPolicy.providerPolicy.allowedClasses.includes(this.#providerClass) ||
-      !modelPolicy.providerPolicy.dataResidency.includes(this.#dataResidency) ||
-      modelPolicy.requiredCapabilities.some(
-        (capability) => !this.#modelCapabilities.includes(capability)
-      )
-    ) {
-      throw new Error('MANAGED_PI_MODEL_ROUTE_INELIGIBLE')
-    }
+    this.#route.assertEligible(configuration.modelPolicy)
 
     const systemSections = [
       '# Role',
@@ -203,18 +133,8 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
     return {
       systemPrompt: systemSections.join('\n\n'),
       prompt,
-      provider: this.#provider,
-      model: this.#model,
+      provider: this.#route.provider,
+      model: this.#route.model,
     }
   }
-}
-
-function boundedToken(value: string, error: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(value)) throw new Error(error)
-  return value
-}
-
-function parseDataResidency(value: string): 'us' | 'eu' | 'global' | 'local' {
-  if (value === 'us' || value === 'eu' || value === 'global' || value === 'local') return value
-  throw new Error('MANAGED_PI_DATA_RESIDENCY_INVALID')
 }

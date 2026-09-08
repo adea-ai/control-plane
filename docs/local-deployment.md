@@ -50,10 +50,42 @@ The packaged process client currently accepts Pi `>=0.84.0 <0.85.0`, exposes str
 cancellation, and degraded steering input, and does not claim approval interactions, native tools,
 or in-flight process recovery. Plans requiring those unsupported capabilities remain ineligible.
 The historical injected client certification remains `>=0.52.0 <0.53.0`; the two ranges are not
-silently conflated. ACP uses the equivalent injected `AcpAdapter` and `AcpDriver` seam until a
-concrete supported ACP launcher is selected. A remote-gateway adapter is rejected, and omitting a
+silently conflated. ACP can use the pinned Codex ACP launcher below. A remote-gateway adapter is rejected, and omitting a
 runtime deliberately leaves execution acceptance unavailable rather than selecting a fixture or
 silently routing to Cloud.
+
+### Pinned Codex ACP launcher
+
+Build the pinned artifact using the [installation procedure](evidence/m11-pinned-acp-installation-2026-09-08.md),
+then configure explicit paths and a native model route:
+
+```sh
+CONTROL_PLANE_LOCAL_RUNTIME=codex-acp \
+CONTROL_PLANE_CODEX_ACP_INSTALLATION=/absolute/acp-installation \
+CONTROL_PLANE_CODEX_ACP_NODE=/absolute/node24 \
+CONTROL_PLANE_CODEX_ACP_CWD=/absolute/task-workspace \
+CONTROL_PLANE_CODEX_ACP_HOME=/absolute/native-codex-home \
+CONTROL_PLANE_CODEX_ACP_PROVIDER=openai \
+CONTROL_PLANE_CODEX_ACP_MODEL=gpt-5.4 \
+CONTROL_PLANE_CODEX_ACP_MODEL_ALIAS=reasoning.standard \
+CONTROL_PLANE_CODEX_ACP_MODEL_CAPABILITIES=tool_calling,structured_output \
+CONTROL_PLANE_CODEX_ACP_PROVIDER_CLASS=managed \
+CONTROL_PLANE_CODEX_ACP_DATA_RESIDENCY=us \
+bun run --cwd apps/local-control-plane start
+```
+
+Startup verifies the manifest, executable digest, installed Codex package version and Node 24
+before spawning. It neither installs nor authenticates automatically. Configure authentication and
+provider endpoints in the explicitly selected native Codex home. Only the selected paths,
+`CODEX_CONFIG` model/provider selectors and `MODEL_PROVIDER` enter the child environment; its HOME
+is under the Local data directory. Arbitrary parent environment variables are not forwarded.
+Published profile/Skill pins and model-route eligibility are checked before the prompt is sent.
+Native harness instructions and tool permissions retain their native ownership.
+
+The native certification covers completion through this runtime selector with SQLite and real
+Restate, including configured model/provider override of conflicting native defaults. It is not
+proof of in-flight process recovery, all native tools/approvals, live provider quality, or full M11
+acceptance. Unsupported requirements must still be rejected by capability negotiation.
 
 `createLocalAcpRuntime` requires an explicit `resolvePrompt` function. The repository helper
 `createRepositoryAcpTaskPromptResolver(contextPackages)` resolves and verifies the exact
@@ -64,11 +96,24 @@ driver resolves this input before creating a native session, applies its request
 rejects empty or greater-than-256-KiB UTF-8 prompts. Failed or timed-out resolution cannot later
 launch a session. Resolvers must be read-only and honor the supplied AbortSignal.
 
-This task-data resolver does not materialize profile/Skill instructions, configure or certify the
+The context-only resolver does not materialize profile/Skill instructions, configure or certify the
 native model route, install/authenticate a harness, grant filesystem/tool authority, or solve
 native aggregate usage and restart recovery. Those remain separate acceptance gates. The generic
 driver retains its reference-only metadata prompt for compatibility; the concrete Local factory
 does not silently select that fallback.
+
+When the repository-backed ACP prompt resolver is also supplied the published catalog, it checks
+the exact profile and Skill version identities, revisions, digests, schema versions and publication
+states using the same validation as managed Pi. Validated profile/Skill instructions are included
+as structured task inputs, without adding Pi-only restrictions or replacing native harness-owned
+instructions. The context-only injection seam remains available for existing callers. This shared
+materialization is used by the pinned launcher above.
+
+The resolver also accepts a `LocalRuntimeModelRoute`. When supplied, the route's declared logical
+alias, provider, provider class, residency and capabilities must satisfy the ExecutionPlan before
+task data is read. Managed Pi uses the same policy checks. This validates declarations; the pinned
+launcher separately enforces the selected native model/provider. The legacy context-only
+injection seam does not infer a route or certify native configuration.
 
 Runtime interactions use the same durable workflow signal as other profiles. Input responses carry
 the bounded structured value validated by the interaction domain and are translated to the direct
