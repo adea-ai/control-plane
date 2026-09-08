@@ -7,3 +7,5 @@
 *.webp binary
 *.ico binary
 *.pdf binary
+# Empty unified-diff context lines carry a required space; preserve the pinned patch bytes.
+docs/evidence/fixtures/codex-0.148.0-sse-cancellation.patch whitespace=-blank-at-eol

@@ -74,7 +74,8 @@ CONTROL_PLANE_CODEX_ACP_DATA_RESIDENCY=us \
 bun run --cwd apps/local-control-plane start
 ```
 
-Startup verifies the manifest, executable digest, installed Codex package version and Node 24
+Startup verifies the manifest, ACP executable digest, installed Codex package version, patched
+native release receipt and binary digest, and Node 24
 before spawning. It neither installs nor authenticates automatically. Configure authentication and
 provider endpoints in the explicitly selected native Codex home. Only the selected paths,
 `CODEX_CONFIG` model/provider selectors and `MODEL_PROVIDER` enter the child environment; its HOME

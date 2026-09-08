@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { pinnedAcpBuild } from '../packages/acp-adapter/src/pinned-codex-build.ts'
+import { verifyPinnedCodexNativeBinary } from '../packages/acp-adapter/src/native-installation.ts'
 export { pinnedAcpBuild }
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -44,11 +45,19 @@ export async function createAcpBuildEnvironment(buildHome) {
 }
 
 /** Explicit opt-in build; never overwrites an installation or reads user npm/git credentials. */
-export async function installPinnedAcp(destinationInput) {
+export async function installPinnedAcp(destinationInput, nativeInstallation) {
   const destination = validateInstallDestination(destinationInput)
   if (process.versions.node.split('.')[0] !== '24') throw new Error('ACP_INSTALL_NODE_24_REQUIRED')
   if (!['darwin', 'linux'].includes(process.platform))
     throw new Error('ACP_INSTALL_PLATFORM_UNSUPPORTED')
+  if (typeof nativeInstallation !== 'string' || !isAbsolute(nativeInstallation))
+    throw new Error('ACP_PATCHED_NATIVE_INSTALLATION_REQUIRED')
+  const nativeManifest = JSON.parse(
+    await readFile(join(nativeInstallation, 'installation.json'), 'utf8')
+  )
+  if (nativeManifest.executable !== 'bin/codex') throw new Error('ACP_NATIVE_PATH_MISMATCH')
+  const nativeExecutable = join(nativeInstallation, 'bin/codex')
+  await verifyPinnedCodexNativeBinary(nativeExecutable, nativeManifest)
   const patch = fileURLToPath(
     new URL('../docs/evidence/fixtures/codex-acp-1.7.0-prompt-usage.patch', import.meta.url)
   )
@@ -141,6 +150,12 @@ export async function installPinnedAcp(destinationInput) {
   if (executableSha256 !== pinnedAcpBuild.bundleSha256)
     throw new Error('ACP_INSTALL_BUNDLE_MISMATCH')
   await chmod(executablePath, 0o700)
+  await mkdir(join(destination, 'native'), { mode: 0o700 })
+  const installedNative = join(destination, 'native/codex')
+  await copyFile(nativeExecutable, installedNative)
+  await chmod(installedNative, 0o700)
+  // Verify copied bytes, not just the source that was checked before the ACP build.
+  await verifyPinnedCodexNativeBinary(installedNative, nativeManifest)
   const manifest = {
     schemaVersion: 1,
     status: 'built',
@@ -148,6 +163,7 @@ export async function installPinnedAcp(destinationInput) {
     nodeVersion: process.versions.node,
     executable: 'source/dist/index.js',
     executableSha256,
+    nativeBuild: { ...nativeManifest, executable: 'native/codex' },
     nativeCertification: 'required-before-supported-launcher-promotion',
   }
   await writeFile(
@@ -159,7 +175,9 @@ export async function installPinnedAcp(destinationInput) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  if (process.argv.length !== 3)
-    throw new Error('Usage: node scripts/install-m11-codex-acp.mjs /absolute/new/directory')
-  console.log(JSON.stringify(await installPinnedAcp(process.argv[2]), null, 2))
+  if (process.argv.length !== 4)
+    throw new Error(
+      'Usage: node scripts/install-m11-codex-acp.mjs /absolute/new/directory /absolute/patched-native-installation'
+    )
+  console.log(JSON.stringify(await installPinnedAcp(process.argv[2], process.argv[3]), null, 2))
 }

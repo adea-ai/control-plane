@@ -9,6 +9,29 @@ import {
   pinnedAcpBuild,
   validateInstallDestination,
 } from '../scripts/install-m11-codex-acp.mjs'
+import { pinnedCodexNativeBuild } from '../packages/acp-adapter/src/pinned-codex-build.ts'
+import { normalizeCodexReleaseLock } from '../scripts/install-m11-codex-native.mjs'
+import { createPinnedBuildCommand } from '../scripts/pinned-build-command.mjs'
+
+test('native installer verifies its cancellation patch and rejects unpinned source locks', async () => {
+  const patch = await readFile(
+    new URL('../docs/evidence/fixtures/codex-0.148.0-sse-cancellation.patch', import.meta.url)
+  )
+  expect(createHash('sha256').update(patch).digest('hex')).toBe(pinnedCodexNativeBuild.patchSha256)
+  expect(() => normalizeCodexReleaseLock(Buffer.from('version = "0.0.0"'))).toThrow(
+    'CODEX_NATIVE_LOCK_MISMATCH'
+  )
+})
+
+test('pinned build commands propagate failure and stop their timed-out process group', async () => {
+  const run = createPinnedBuildCommand({}, 100)
+  await expect(run(process.execPath, ['-e', 'process.exit(7)'], process.cwd())).rejects.toThrow(
+    'PINNED_BUILD_COMMAND_FAILED'
+  )
+  await expect(
+    run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], process.cwd())
+  ).rejects.toThrow('PINNED_BUILD_COMMAND_FAILED')
+})
 
 test('ACP installer pins the reviewed accounting patch and refuses ambiguous destinations', async () => {
   const patch = await readFile(
