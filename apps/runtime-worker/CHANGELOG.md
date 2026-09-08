@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.5.0...runtime-worker-v1.6.0) (2026-09-08)
+
+
+### Features
+
+* **acp:** integrate native v1 process transport ([bf41225](https://github.com/adea-ai/control-plane/commit/bf412255869b4312947309995b8ae18ff11a0b86))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.4.2...runtime-worker-v1.5.0) (2026-09-08)
 
 
