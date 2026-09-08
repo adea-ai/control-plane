@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.4.0...acp-adapter-v1.5.0) (2026-09-08)
+
+
+### Features
+
+* **local:** install and launch pinned Codex ACP runtime ([#434](https://github.com/adea-ai/control-plane/issues/434)) ([5d07c04](https://github.com/adea-ai/control-plane/commit/5d07c044e174e0ea98073b7fd7d154121a4e4d84))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.3.0...acp-adapter-v1.4.0) (2026-09-08)
 
 
