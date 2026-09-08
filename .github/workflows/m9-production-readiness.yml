@@ -2,8 +2,8 @@ name: M9 Production Readiness
 
 on:
   pull_request:
-    branches: [main, staging]
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    branches: [main]
+    types: [ready_for_review]
   schedule:
     - cron: '17 7 * * 3'
   workflow_dispatch:

@@ -1,14 +1,14 @@
 # Continuous integration
 
-Code Foundry v1.4.1 is the CI runtime pinned by the generated callers under
+Code Foundry v1.9.6 is the CI runtime pinned by the generated callers under
 `.github/workflows/`. Feature branches target `main`; Railway staging is an
 on-demand reference environment, not a Git promotion branch.
 
 ## Required pull-request gate
 
-`Validation / Gate` is the single stable Code Foundry check. This repository sets
-`staging_validation_mode: audit` in its shared configuration, but the generated
-pull-request caller targets `main`. Ordinary pull requests run CI, all four test
+`Validation / Gate` is the single stable Code Foundry check. The repository uses
+the direct Git workflow, so the generated pull-request caller targets `main`.
+Ordinary ready-for-review pull requests run CI, all four test
 jobs, Security, and CodeQL. Release Please pull requests use
 the separate release-policy tier. Each tier fans out independent jobs
 and aggregates their results. Each workflow cancels superseded work for the same
@@ -27,18 +27,19 @@ The gate covers:
 - dependency auditing that does not require production or vendor credentials.
 - repository credential-pattern scanning through `bun run security:scan` without echoing matches.
 
-Repository settings allow squash and rebase merges but disable merge commits.
-Feature branches must squash into `main`. Release Please version pull requests
-must rebase; Code Foundry fails closed for any other configured merge strategy.
+Repository settings allow squash merges and disable rebase and merge commits.
+Feature branches and Release Please version pull requests must squash into
+`main`; Code Foundry fails closed for any other configured merge strategy.
 
 ## Public-repository security gates
 
 CodeQL and GitHub Dependency Review use Code Foundry's `auto` policy and are
 enabled for this public repository. TypeScript and GitHub Actions analysis run
 in parallel with Code Foundry's native dependency audit as part of the audit
-gate. OpenCode Security is opted in, but its Detect and Scan jobs skip when the
-repository does not expose `OPENCODE_API_KEY`; those optional jobs are not part
-of the credential-free `Validation / Gate`.
+gate. OpenCode Security is controlled exclusively by the `OPENCODE_SECURITY`
+repository variable. Its Detect and Scan jobs run only when that variable is
+`true` and the repository exposes `OPENCODE_API_KEY`; those optional jobs are
+not part of the credential-free `Validation / Gate`.
 
 Maintainers must treat successful `Validation / Gate`, `Foundation Acceptance /
 Gate`, and `M9 Production Readiness / Gate` checks as required and merge only
@@ -47,8 +48,8 @@ enumerating their internal parallel jobs.
 
 ## Neon preview lifecycle
 
-The Neon workflow creates or migrates a PR-scoped preview on open, reopen and
-synchronize, and attempts cleanup on close. Cleanup first performs a read-only,
+The Neon workflow creates or migrates a PR-scoped preview when a pull request is
+marked ready for review, and attempts cleanup on close. Cleanup first performs a read-only,
 paginated exact-name lookup using the [Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
 A successfully verified absent preview is a no-op, covering previews that were
 never created or have already expired. Only a unique, unprotected, non-default
