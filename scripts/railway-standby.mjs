@@ -197,10 +197,30 @@ export function railwayDisconnectArguments(serviceId) {
   ]
 }
 
-function disconnectSource(action) {
+export function railwayClearSourceArguments(serviceId, environmentId) {
+  if (!serviceId || !environmentId)
+    throw new Error('Source clearing requires service and environment IDs.')
+  return [
+    'api',
+    '--raw-var',
+    `serviceId=${serviceId}`,
+    '--raw-var',
+    `environmentId=${environmentId}`,
+    '--compact',
+    'mutation ClearSource($serviceId: String!, $environmentId: String!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: { source: { repo: null } }) }',
+  ]
+}
+
+function disconnectSource(action, environmentId) {
   const response = JSON.parse(runRailway(railwayDisconnectArguments(action.serviceId)))
   if (response.errors || response.data?.serviceDisconnect?.id !== action.serviceId) {
     throw new Error(`Railway did not disconnect the source for ${action.serviceName}.`)
+  }
+  const cleared = JSON.parse(
+    runRailway(railwayClearSourceArguments(action.serviceId, environmentId))
+  )
+  if (cleared.errors || cleared.data?.serviceInstanceUpdate !== true) {
+    throw new Error(`Railway did not clear the environment source for ${action.serviceName}.`)
   }
 }
 
@@ -282,6 +302,7 @@ function verifyDisconnectScope(project, environment, actions) {
       )
     }
   }
+  return targetId
 }
 
 export function main(arguments_ = process.argv.slice(2)) {
@@ -298,13 +319,13 @@ export function main(arguments_ = process.argv.slice(2)) {
 
   const inventory = loadInventory(options.environment, options.project)
   const actions = planStandbyActions({ environment: options.environment, services: inventory })
-  verifyDisconnectScope(options.project, options.environment, actions)
+  const environmentId = verifyDisconnectScope(options.project, options.environment, actions)
 
   if (options.apply) {
     for (const action of actions) {
       if (action.type === 'disconnect-source') {
         verifyDisconnectScope(options.project, options.environment, [action])
-        disconnectSource(action)
+        disconnectSource(action, environmentId)
         continue
       }
 

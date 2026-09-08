@@ -76,6 +76,10 @@ disconnection is service-wide: the command refuses to proceed if the same servic
 or trigger in another environment, or if it cannot verify the full environment/trigger inventory.
 It repeats this check immediately before disconnection. Coordinate configuration changes while
 running standby; the provider does not offer a conditional atomic disconnect across environments.
+Trigger disconnection alone does not clear the retained environment source. The command also uses
+`serviceInstanceUpdate` with the resolved environment ID and `source.repo: null`, then verifies
+source absence and zero compute. An accepted configuration patch is not evidence of disconnection:
+the null-source configuration-patch route was observed to leave the source unchanged.
 
 The baseline is:
 
