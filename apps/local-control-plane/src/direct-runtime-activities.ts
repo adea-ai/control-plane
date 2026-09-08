@@ -17,6 +17,7 @@ const namespaces = {
   effects: 'workflow-effects',
   handles: 'runtime-handles',
   cancellations: 'runtime-cancellations',
+  terminalUsage: 'runtime-terminal-usage',
 } as const
 
 interface DirectRuntimeCancellationIntent {
@@ -128,7 +129,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       const cancellation = await this.#cancellation(input.executionId)
       if (cancellation !== undefined) {
         this.#assertAttempt(handle, cancellation.attemptId)
-        await this.#cancelHandle(handle, cancellation)
+        await this.#cancelHandle(input.executionId, handle, cancellation)
         return { outcome: 'cancelled' }
       }
       return this.#observe(input.executionId, input.attemptId, handle)
@@ -215,7 +216,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     const existingHandle = await this.#handle(input.executionId, input.attemptId, false)
     const intent = await this.#recordCancellation(input)
     const handle = existingHandle ?? (await this.#handle(input.executionId, input.attemptId, false))
-    if (handle !== undefined) await this.#cancelHandle(handle, intent)
+    if (handle !== undefined) await this.#cancelHandle(input.executionId, handle, intent)
   }
 
   async cleanup(input: {
@@ -239,6 +240,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     status: RuntimeExecutionStatus,
     interactionId?: string
   ): Promise<WorkflowRuntimeOutcome> {
+    await this.#recordTerminalUsage(executionId, attemptId, status)
     if (status.state === 'completed') {
       const key = `executions/${executionId}/attempts/${attemptId}/result.json`
       const artifactId = `art_${executionId.slice(4)}`
@@ -319,6 +321,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   }
 
   async #cancelHandle(
+    executionId: string,
     handle: RuntimeExecutionHandle,
     intent: DirectRuntimeCancellationIntent
   ): Promise<void> {
@@ -345,7 +348,36 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       // current state on each retry instead of committing that ACK as a stop.
       if (!terminal(status)) status = validate(await this.runtime.reconcile(handle))
       if (!terminal(status)) throw new Error('RUNTIME_CANCEL_UNCONFIRMED')
+      await this.#recordTerminalUsage(executionId, handle.attemptId, status)
       return { cancelled: true, reason: intent.reason }
+    })
+  }
+
+  async #recordTerminalUsage(
+    executionId: string,
+    attemptId: string,
+    statusInput: RuntimeExecutionStatus
+  ): Promise<void> {
+    const status = RuntimeExecutionStatusSchema.parse(statusInput)
+    if (status.terminalUsage === undefined) return
+    this.#assertAttempt(status.handle, attemptId)
+    const value = json({
+      schemaVersion: 1,
+      executionId,
+      attemptId,
+      handle: status.handle,
+      state: status.state,
+      usage: status.terminalUsage,
+    })
+    await this.persistence.transaction(async (transaction) => {
+      const id = recordId(`${executionId}:${attemptId}`)
+      const existing = await transaction.get(namespaces.terminalUsage, id)
+      if (existing !== undefined) {
+        if (JSON.stringify(existing.value) !== JSON.stringify(value))
+          throw new Error('RUNTIME_TERMINAL_USAGE_CONFLICT')
+        return
+      }
+      await transaction.put({ namespace: namespaces.terminalUsage, id, value })
     })
   }
 
