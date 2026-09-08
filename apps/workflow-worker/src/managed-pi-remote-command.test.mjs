@@ -19,6 +19,68 @@ const ids = {
 }
 
 describe('managed Pi remote command factory', () => {
+  test.each(['grant', 'deny', 'input'])(
+    'durable %s response replay retains the first remote command and rejects a stale response',
+    async (action) => {
+      const plan = createExecutionPlanTestFixture()
+      const commands = new InMemoryRuntimeCommandRepository()
+      const interaction = respondedInteraction(action, action === 'input' ? 'continue' : undefined)
+      let clock = '2026-08-25T12:06:00.000Z'
+      const factory = new ManagedPiRemoteCommandFactory({
+        contextPackages: { get: async () => undefined },
+        runtimeDiscovery: { getRuntimeConnection: async () => runtimeConnection() },
+        executions: {
+          getExecution: async () => ({
+            executionId: ids.executionId,
+            correlation: plan.correlation,
+          }),
+        },
+        interactions: { get: async () => interaction },
+        now: () => new Date(clock),
+      })
+      const observed = []
+      const createRuntime = () =>
+        new DurableRemoteWorkflowRuntime({
+          attempts: { getAttempt: async () => attempt() },
+          commands,
+          factory,
+          waiter: {
+            wait: async ({ command }) => {
+              observed.push(command)
+              return { outcome: 'completed' }
+            },
+          },
+        })
+      const input = {
+        executionId: ids.executionId,
+        attemptId: ids.attemptId,
+        interactionId: ids.interactionId,
+        responseId: ids.responseId,
+        action,
+        effectKey: `workflow:interaction:${action}`,
+      }
+      await createRuntime().applyInteraction(input)
+      clock = '2026-08-25T12:12:00.000Z'
+      await Promise.all(Array.from({ length: 8 }, () => createRuntime().applyInteraction(input)))
+      expect(observed).toHaveLength(9)
+      for (const record of observed) expect(record).toEqual(observed[0])
+      expect(observed[0].issuedAt).toBe('2026-08-25T12:06:00.000Z')
+      expect(observed[0].commandEnvelope.operation).toBe(
+        action === 'input' ? 'runtime.input' : 'runtime.approval'
+      )
+      expect(observed[0].commandEnvelope.payload.parameters).toMatchObject(
+        action === 'input'
+          ? { text: 'continue' }
+          : { decision: action === 'grant' ? 'approve' : 'deny' }
+      )
+      await expect(
+        createRuntime().applyInteraction({ ...input, responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+      ).rejects.toThrow('REMOTE_RUNTIME_INTERACTION_STALE')
+      expect(observed).toHaveLength(9)
+      expect(await commands.get(observed[0].commandId)).toEqual(observed[0])
+    }
+  )
+
   test('durable cancellation replay preserves the first payload and lease across clock changes', async () => {
     const plan = createExecutionPlanTestFixture()
     const commands = new InMemoryRuntimeCommandRepository()

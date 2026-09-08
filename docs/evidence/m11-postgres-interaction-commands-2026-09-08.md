@@ -47,3 +47,15 @@ sends no signal. Altered payloads return 409; invalid authentication returns 401
 and a project outside the credential's scope returns 403. The regression uses
 real HTTP and storage, but its Restate responder is simulated. It does not prove
 remote RuntimeNode approval execution or live deployment parity.
+
+## Remote command construction replay
+
+The real `ManagedPiRemoteCommandFactory` and `DurableRemoteWorkflowRuntime` now
+have a combined regression for grant, deny, and input. Eight concurrent retries
+after advancing the factory clock retain the first queued command and issuance
+time, without renewing its lease. Grant/deny map to the expected approval
+decision, input retains the stored text, and a different response ID is rejected
+before the outcome waiter is invoked again. This uses an in-memory command
+repository and a scripted outcome waiter; it proves command construction/replay,
+not WebSocket delivery or runtime completion. The retries are before the attempt
+deadline. Post-deadline reconciliation remains a separate acceptance case.
