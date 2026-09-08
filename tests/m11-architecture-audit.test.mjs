@@ -30,6 +30,7 @@ const publicOperations = [
   'authentication.verify',
   'context-package.resolve',
   'execution.accept',
+  'execution.cancel',
   'execution.validate',
   'external-session.get',
   'external-session.list',

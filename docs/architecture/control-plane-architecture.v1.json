@@ -890,6 +890,49 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-EXECUTION-CANCEL",
+      "name": "cancelExecution",
+      "operation": "execution.cancel",
+      "method": "POST",
+      "path": "/v1/executions/cancel",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "execution:cancel scope plus accepting principal and workspace/project ownership",
+        "service": "ExecutionCancellationController -> DurableExecutionCancellationService",
+        "persistence": "SQLite immutable cancellation receipts",
+        "execution": "Restate cancelExecution shared handler",
+        "delivery": "first-command idempotency key and strict signal acceptance",
+        "cleanup": "existing execution lifecycle cleanup after cancellation confirmation"
+      },
+      "assessment": "Local wiring, scoped HTTP controller and SDK are tested separately; all-profile native end-to-end cancellation is not certified.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/executions/execution-cancellation.controller.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/cancellation-replay.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/cancellation.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Verify public native cancellation end to end; add PostgreSQL/Cloud wiring, relay support, retention and terminal-race reconciliation."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "execution.cancel",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-EXECUTION-VALIDATE",
       "name": "validateExecutionRequest",
       "operation": "execution.validate",

@@ -1,4 +1,6 @@
 import {
+  ExecutionCancellationCommandSchema,
+  ExecutionCancellationCommandResultSchema,
   InteractionResponseCommandSchema,
   InteractionResponseCommandResultSchema,
   ContextPackageResolutionRequestSchema,
@@ -30,6 +32,14 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  cancelExecution: {
+    responseStatus: 202,
+    operation: 'execution.cancel',
+    method: 'POST',
+    path: '/v1/executions/cancel',
+    requestSchema: ExecutionCancellationCommandSchema,
+    responseSchema: ExecutionCancellationCommandResultSchema,
+  },
   respondToInteraction: {
     responseStatus: 202,
     operation: 'interaction.respond',

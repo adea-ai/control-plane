@@ -210,3 +210,19 @@ stored command identity. Confirmed replay sends no further signal (8 assertions)
 The TCP fixture returns 503 for the first cancellation acknowledgement; it is not
 a real Restate server. Public HTTP/SDK access and PostgreSQL composition remain
 unfinished, and profile acceptance dispositions remain partial.
+
+## Authenticated cancellation HTTP and SDK surface
+
+`POST /v1/executions/cancel` requires `execution:cancel` credentials and delegates
+to the cancellation service. The controller rejects malformed commands, maps
+ownership failures to 403 and state/payload conflicts to 409, and returns a safe
+503 for unconfirmed delivery or missing configuration. Local server startup now
+supplies its durable service. The SDK `cancelExecution` method validates requests
+and acknowledgement results, and the generated v3 OpenAPI artifact includes this
+additive operation without changing the immutable compatibility baseline.
+
+Controller tests pass 11 cases (39 assertions); focused SDK and compatibility
+tests pass six cases (25 assertions). These use controlled service/network
+responses. The new architecture operation is explicitly partially verified:
+native execution through this public route, PostgreSQL/Cloud wiring, relay,
+retention, and terminal-race reconciliation remain open.

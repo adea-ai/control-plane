@@ -19,6 +19,7 @@ describe('Control API generated contract', () => {
       '/v1/authentication/verify',
       '/v1/context-packages/resolve',
       '/v1/executions/accept',
+      '/v1/executions/cancel',
       '/v1/executions/validate',
       '/v1/external-sessions/get',
       '/v1/external-sessions/list',
