@@ -168,6 +168,8 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
         effectKey: input.effectKey,
         operation: 'runtime.cancel',
         requiredCapabilities: ['execution.cancel'],
+        respectAttemptDeadline: false,
+        maximumDurationMs: 5 * 60 * 1_000,
         parameters: { handleId, requestedAt: interaction.response.respondedAt },
       })
     }

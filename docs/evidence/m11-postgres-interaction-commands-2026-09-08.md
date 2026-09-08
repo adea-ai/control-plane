@@ -103,3 +103,14 @@ tests and the complete integration command passed, including the remote drill
 and database outage, restart, and restore checks. All six focused waiter tests
 also passed. This is correctness evidence, not a measured performance claim or
 full native-runtime acceptance.
+
+## Cancellation interaction after the attempt deadline
+
+A regression reproduced `REMOTE_RUNTIME_COMMAND_EXPIRED` when constructing a
+durable cancellation interaction after the attempt deadline. Unlike explicit
+cancellation, this path inherited the execution lease. It now uses the same
+five-minute cancellation delivery window, retaining the durable response's
+original `requestedAt`. Input, grant, and deny still reject an expired attempt.
+All 12 command-factory tests passed after the fix (one failed before it).
+This proves construction only; remote cancellation delivery and native stop
+confirmation remain separate acceptance gates.

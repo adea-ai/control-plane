@@ -313,6 +313,26 @@ describe('managed Pi remote command factory', () => {
       requiredCapabilities: [expected.capability],
       payload: { version: 1, parameters: expected.parameters },
     })
+    const afterDeadline = factory.createInteraction({
+      executionId: ids.executionId,
+      attempt: { ...attempt(), deadlineAt: '2026-08-25T12:05:00.000Z' },
+      response: {
+        interactionId: ids.interactionId,
+        responseId: ids.responseId,
+        action: expected.action,
+      },
+      effectKey: `workflow:execution-lifecycle-v1:${expected.action}:expired`,
+    })
+    if (expected.action === 'cancel') {
+      expect(await afterDeadline).toMatchObject({
+        operation: 'runtime.cancel',
+        issuedAt: '2026-08-25T12:05:01.000Z',
+        expiresAt: '2026-08-25T12:10:01.000Z',
+        payload: { version: 1, parameters: expected.parameters },
+      })
+    } else {
+      await expect(afterDeadline).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
+    }
   })
 
   test('fails closed when an interaction response is stale or unsupported', async () => {
