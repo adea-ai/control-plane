@@ -30,6 +30,17 @@ and index retention/export policy have not been certified.
 
 ## Remaining production path
 
+The public `interaction.respond` command/result schemas now define complete command
+and attempt scope, strict authority fields, the domain-equivalent 8 KiB UTF-8 JSON
+input limit, and a signal-acceptance acknowledgement that cannot claim execution
+completion or include private response content. They are not yet registered as an
+API/SDK operation. A caller/workspace/project/operation/idempotency-key-scoped SQLite
+receipt repository retains the first command identity under concurrent reservation
+and restart, and separately records confirmed signal acceptance. The command service
+must still authorize before reservation, compare actual payloads (not trust the
+caller-supplied hash), reject conflicting key reuse, and reconcile unconfirmed sends.
+PostgreSQL receipts and receipt retention/export are also not implemented yet.
+
 `DurableInteractionDeliveryService` now supplies a shared, not-yet-routed response
 boundary. It checks accepted-command and execution workspace/project scope, exact
 interaction execution/attempt ownership, allowed principal, and active/latest attempt

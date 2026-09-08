@@ -357,6 +357,48 @@ export const ExecutionAcceptanceResponseSchema = successResponse(
   })
 )
 
+export const InteractionResponseCommandSchema = CommandContextSchema.extend({
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('interaction.respond'),
+  issuedAt: TimestampSchema,
+  payload: z
+    .strictObject({
+      executionId: IdentifierSchemas.executionId,
+      attemptId: IdentifierSchemas.attemptId,
+      interactionId: IdentifierSchemas.interactionId,
+      expectedVersion: z.number().int().positive(),
+      action: z.enum(['approve', 'deny', 'input', 'grant', 'resume', 'cancel']),
+      value: z.json().optional(),
+    })
+    .superRefine((payload, context) => {
+      if ((payload.action === 'input') !== (payload.value !== undefined))
+        context.addIssue({ code: 'custom', message: 'Only input actions require a value' })
+      if (
+        payload.value !== undefined &&
+        new TextEncoder().encode(JSON.stringify(payload.value)).byteLength > 8_192
+      )
+        context.addIssue({ code: 'custom', message: 'Interaction input exceeds 8 KiB' })
+    }),
+}).strict()
+
+/** Acknowledges durable signal acceptance, not execution completion. */
+export const InteractionResponseCommandResultSchema = successResponse(
+  z.strictObject({
+    commandId: IdentifierSchemas.commandId,
+    responseId: IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    interactionId: IdentifierSchemas.interactionId,
+    status: z.literal('accepted'),
+    replayed: z.boolean(),
+  })
+)
+
+export type InteractionResponseCommand = z.input<typeof InteractionResponseCommandSchema>
+export type InteractionResponseCommandResult = z.output<
+  typeof InteractionResponseCommandResultSchema
+>
+
 export type ServiceAuthenticationRequest = z.input<typeof ServiceAuthenticationRequestSchema>
 export type ServiceAuthenticationResponse = z.output<typeof ServiceAuthenticationResponseSchema>
 export type ProfileResolutionRequest = z.input<typeof ProfileResolutionRequestSchema>
