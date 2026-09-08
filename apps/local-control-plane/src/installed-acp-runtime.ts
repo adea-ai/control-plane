@@ -76,6 +76,8 @@ export function createInstalledLocalAcpRuntime(
     CODEX_PATH: join(options.installationDirectory, 'native/codex'),
     CODEX_CONFIG: JSON.stringify({ model: route.model, model_provider: route.provider }),
     MODEL_PROVIDER: route.provider,
+    // Keep native permission decisions on the authenticated Control Plane interaction path.
+    INITIAL_AGENT_MODE: 'read-only',
   }
   const runtime = createLocalAcpRuntime({
     executablePath: options.nodeExecutable,
