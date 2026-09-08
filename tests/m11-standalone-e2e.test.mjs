@@ -324,50 +324,89 @@ describe('M11 standalone execution composition', () => {
     30_000
   )
 
-  test('accepts and completes one Local execution through the pinned Restate runtime', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-restate-'))
-    const local = new LocalControlPlaneComposition({
-      dataDirectory: directory,
-      runtimeTransport: createDirectManagedPiAdapter(),
-      workflowEndpointPort: 19080,
-    })
-    try {
-      await local.start()
-      const plan = createExecutionPlanTestFixture()
-      await local.executionPlans.put(plan)
-      const issuedAt = new Date().toISOString()
-      const response = await local.executionAcceptanceService.accept(
-        {
-          ...ControlApiFixtures.executionAcceptance.request,
-          requestId: plan.correlation.requestId,
-          workspaceId: plan.correlation.workspaceId,
-          projectId: plan.correlation.projectId,
-          issuedAt,
-          payload: {
-            taskId: plan.correlation.taskId,
-            agentId: plan.correlation.agentId,
-            executionPlan: {
-              executionPlanId: plan.executionPlanId,
-              contentDigest: plan.contentDigest,
-              schemaVersion: plan.schemaVersion,
-            },
-            deadlineAt: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
-            retentionExpiresAt: new Date(Date.parse(issuedAt) + 30 * 86_400_000).toISOString(),
-          },
-        },
-        'svc_m11-standalone'
-      )
-      expect(response.data.status).toBe('processing')
-      const execution = await waitForTerminalExecution(local, response.data.executionId)
-      expect(execution).toMatchObject({
-        state: 'completed',
-        terminalResultRef: `art_${response.data.executionId.slice(4)}`,
+  test.each(['complete', 'cancel'])(
+    'accepts and settles Local execution through real Restate: %s',
+    async (mode) => {
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-restate-'))
+      const client =
+        mode === 'cancel' ? new PendingManagedPiClient() : new CompletedManagedPiClient()
+      const local = new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        runtimeTransport: createManagedPiAdapterWithClient(client),
+        workflowEndpointPort: 19080,
       })
-    } finally {
-      await local.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  }, 60_000)
+      try {
+        await local.start()
+        const plan = createExecutionPlanTestFixture()
+        await local.executionPlans.put(plan)
+        const issuedAt = new Date().toISOString()
+        const response = await local.executionAcceptanceService.accept(
+          {
+            ...ControlApiFixtures.executionAcceptance.request,
+            requestId: plan.correlation.requestId,
+            workspaceId: plan.correlation.workspaceId,
+            projectId: plan.correlation.projectId,
+            issuedAt,
+            payload: {
+              taskId: plan.correlation.taskId,
+              agentId: plan.correlation.agentId,
+              executionPlan: {
+                executionPlanId: plan.executionPlanId,
+                contentDigest: plan.contentDigest,
+                schemaVersion: plan.schemaVersion,
+              },
+              deadlineAt: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
+              retentionExpiresAt: new Date(Date.parse(issuedAt) + 30 * 86_400_000).toISOString(),
+            },
+          },
+          'svc_m11-standalone'
+        )
+        expect(response.data.status).toBe('processing')
+        if (mode === 'cancel') {
+          const deadline = Date.now() + 5000
+          while (!client.progressEntered && Date.now() < deadline) await delay(20)
+          expect(client.progressEntered).toBe(true)
+          const cancellation = await fetch(
+            `http://127.0.0.1:8080/execution-lifecycle/${response.data.executionId}/cancelExecution`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: '{}',
+              signal: AbortSignal.timeout(5000),
+            }
+          )
+          expect(cancellation.ok).toBe(true)
+          const attached = await fetch(
+            `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+            { signal: AbortSignal.timeout(5000) }
+          )
+          expect(attached.ok).toBe(true)
+          expect((await attached.json()).status).toBe('cancelled')
+          expect(client.cancelCalls).toBe(1)
+        }
+        const execution = await waitForTerminalExecution(local, response.data.executionId)
+        const attached = await fetch(
+          `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+          { signal: AbortSignal.timeout(5000) }
+        )
+        expect(attached.ok).toBe(true)
+        expect((await attached.json()).status).toBe(mode === 'cancel' ? 'cancelled' : 'completed')
+        expect(execution).toMatchObject(
+          mode === 'cancel'
+            ? { state: 'cancelled' }
+            : {
+                state: 'completed',
+                terminalResultRef: `art_${response.data.executionId.slice(4)}`,
+              }
+        )
+      } finally {
+        if (client instanceof PendingManagedPiClient) client.release.resolve()
+        await local.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
 
   test('runs the packaged managed Pi RPC client through Local Restate', async () => {
     const realExecutable = process.env.M11_REAL_PI_EXECUTABLE
@@ -428,6 +467,14 @@ describe('M11 standalone execution composition', () => {
         'svc_m11-managed-pi-rpc'
       )
       const execution = await waitForTerminalExecution(local, response.data.executionId)
+      {
+        const attached = await fetch(
+          `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+          { signal: AbortSignal.timeout(5000) }
+        )
+        expect(attached.ok).toBe(true)
+        expect((await attached.json()).status).toBe('completed')
+      }
       expect(execution).toMatchObject({
         state: 'completed',
         terminalResultRef: `art_${response.data.executionId.slice(4)}`,
@@ -634,9 +681,13 @@ function status(executionId, state, attemptId) {
 }
 
 function createDirectManagedPiAdapter() {
+  return createManagedPiAdapterWithClient(new CompletedManagedPiClient())
+}
+
+function createManagedPiAdapterWithClient(client) {
   return new ManagedPiAdapter({
     transport: new DirectLocalRuntimeTransport(
-      new ManagedPiDriver({ client: new CompletedManagedPiClient(), adapterVersion: '1.0.0' })
+      new ManagedPiDriver({ client, adapterVersion: '1.0.0' })
     ),
   })
 }
@@ -861,6 +912,28 @@ function managedPiSkillVersion() {
     content: { instructions: 'Return the bounded result.', artifactRefs: [] },
     createdAt: '2026-08-22T12:00:00.000Z',
     lifecycleMetadata: { publishedAt: '2026-08-22T12:00:00.000Z' },
+  }
+}
+
+class PendingManagedPiClient extends CompletedManagedPiClient {
+  release = Promise.withResolvers()
+  progressEntered = false
+  cancelCalls = 0
+
+  async *progress() {
+    this.progressEntered = true
+    await this.release.promise
+    yield { sequence: 1, occurredAt: observedAt, kind: 'status', state: 'cancelled' }
+  }
+
+  async cancel(handle, request) {
+    this.cancelCalls++
+    this.release.resolve()
+    return super.cancel(handle, request)
+  }
+
+  async status() {
+    return { state: this.cancelCalls ? 'cancelled' : 'running', observedAt }
   }
 }
 

@@ -240,6 +240,8 @@ export class LocalControlPlaneComposition {
       options.endpointFactory ??
       createRestateEndpointFactory({
         host: '127.0.0.1',
+        // Local Restate connects directly: allow control signals during long-running activities.
+        bidirectional: true,
         port: workflowEndpointPort,
         activities: this.executionLifecycleActivities,
       })

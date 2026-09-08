@@ -327,3 +327,30 @@ Control API cancellation route. M11.3/M11 recovery acceptance remains open.
 
 Both runs closed Local resources; the disposable cancellation container and its
 model fixture were stopped and removed. No host authentication was used.
+
+# Cancellation transport-mode correction
+
+The installed Restate SDK 1.17.0 defaults HTTP/1.1 to request/response mode and
+permits explicit bidirectional streaming. The shared endpoint had forced
+request/response for every profile. Local now explicitly enables streaming on its
+direct loopback Restate connection; the shared default remains request/response
+for Hosted/Cloud callers. Workflow identity and durable activity keys are unchanged.
+
+With this change, the same real Codex ACP cancellation probe passed in **87 ms**
+instead of 29,948 ms, with one attempt and no additional model request. The native
+process exited on Local shutdown and the disposable container was removed.
+An automated real-Restate test holds runtime progress pending until cancellation
+and requires workflow completion within 5 seconds. Its ordinary completion lane
+also waits for workflow attach before tearing down the server.
+
+This establishes a Local direct-transport correction, not streaming compatibility
+through arbitrary proxies or a Hosted/Cloud cancellation certification. The
+earlier failing reproduction remains the historical baseline. No public Control
+API cancellation operation or native tool/approval certification is added here.
+
+The standalone suite passed 8 tests / 61 assertions after the change, including
+graph restart and checkpoint restore. Those deliberate mid-workflow shutdowns
+emit the SDK's `Stream is destroyed` error while closing the active streaming
+connection; the restarted workflows still complete and satisfy their assertions.
+This shutdown diagnostic is retained as a known operational rough edge, not
+reported as an error-free restart trace.

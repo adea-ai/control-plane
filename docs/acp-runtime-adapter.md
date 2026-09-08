@@ -98,3 +98,8 @@ the default fixture's `filesystem.read` requirement is separately asserted
 ineligible. Native ACP tool support must not be treated as evidence of a specific
 filesystem capability. This regression uses a wire fixture, not a real model or
 filesystem-tool certification.
+
+Local's direct loopback Restate endpoint uses bidirectional streaming so terminal
+control signals can arrive while a native dispatch activity is pending. Shared
+endpoint callers retain request/response mode unless they explicitly opt in;
+streaming support through external proxies is not inferred from the Local probe.
