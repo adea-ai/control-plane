@@ -1,5 +1,23 @@
 # M11 native ACP permission continuation
 
+## Native resume baseline recovery — 2026-09-08
+
+The source patch below now includes isolated upstream commit `856b87c`. A native
+process-restart probe observed Codex emit historical cumulative usage during
+session load, before the next prompt. Capturing that notification during the
+scoped resume/load operation produced 11 input / 3 output tokens for the first
+resumed prompt, excluding the previous prompt's 11 / 3. No session files were
+read to infer the baseline. Missing observations still produce unavailable usage.
+
+After the native probe, review added rejection of decreasing baseline counters.
+The final source passed type checking, build, and 492 upstream tests (26 skipped).
+The native probe preceded that final guard; it was not rerun on the final bundle.
+Final bundle SHA-256: `6c6da8939e3c5e835f939850451074b84359e0fddb87ab48872e2a68b9a94529`.
+The native probe source is included in the patch as `src/resume-usage-probe.ts`;
+it must run only inside the credential-free, network-isolated probe container.
+This remains an unpublished upstream patch, not supported Control Plane packaging,
+in-flight execution reattachment, cancellation usage settlement, or M11 completion.
+
 ## Experimental aggregate accounting — 2026-09-08
 
 A local, unpublished patch to upstream `v1.7.0` passed the two-call permission

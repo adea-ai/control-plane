@@ -1,5 +1,25 @@
+diff --git a/src/CodexAcpClient.ts b/src/CodexAcpClient.ts
+index 893dc85..e324479 100644
+--- a/src/CodexAcpClient.ts
++++ b/src/CodexAcpClient.ts
+@@ -50,0 +51 @@ import packageJson from "../package.json";
++import type { TokenCount } from './TokenCount';
+@@ -466,0 +468 @@ export class CodexAcpClient {
++        return this.codexClient.captureResumeUsage(request.sessionId, async readUsage => {
+@@ -486,0 +489 @@ export class CodexAcpClient {
++            totalTokenUsage: readUsage(),
+@@ -487,0 +491 @@ export class CodexAcpClient {
++        });
+@@ -490,0 +495 @@ export class CodexAcpClient {
++        return this.codexClient.captureResumeUsage(request.sessionId, async readUsage => {
+@@ -515,0 +521 @@ export class CodexAcpClient {
++            totalTokenUsage: readUsage(),
+@@ -516,0 +523 @@ export class CodexAcpClient {
++        });
+@@ -1226,0 +1234 @@ export type SessionMetadata = {
++    totalTokenUsage?: TokenCount | null,
 diff --git a/src/CodexAcpServer.ts b/src/CodexAcpServer.ts
-index f94978e..b7045e4 100644
+index f94978e..5df77ea 100644
 --- a/src/CodexAcpServer.ts
 +++ b/src/CodexAcpServer.ts
 @@ -46 +46 @@ import type {TokenCount} from "./TokenCount";
@@ -9,7 +29,10 @@ index f94978e..b7045e4 100644
 +    promptTokenUsage?: PromptTokenUsage;
 @@ -616 +617 @@ export class CodexAcpServer {
 -            totalTokenUsage: null,
-+            totalTokenUsage: "sessionId" in request ? null : zeroTokenCount(),
++            totalTokenUsage: "sessionId" in request ? sessionMetadata.totalTokenUsage ?? null : zeroTokenCount(),
+@@ -1638 +1639 @@ export class CodexAcpServer {
+-            totalTokenUsage: null,
++            totalTokenUsage: sessionMetadata.totalTokenUsage ?? null,
 @@ -2393,0 +2395 @@ export class CodexAcpServer {
 +        sessionState.promptTokenUsage = new PromptTokenUsage(sessionState.totalTokenUsage);
 @@ -2552 +2554 @@ export class CodexAcpServer {
@@ -32,6 +55,37 @@ index f94978e..b7045e4 100644
 -        return toPromptUsage(lastTokenUsage);
 +    private buildPromptUsage(sessionState: SessionState): acp.Usage | null {
 +        return sessionState.promptTokenUsage?.usage() ?? null;
+diff --git a/src/CodexAppServerClient.ts b/src/CodexAppServerClient.ts
+index 0f802d6..7e9514e 100644
+--- a/src/CodexAppServerClient.ts
++++ b/src/CodexAppServerClient.ts
+@@ -1,0 +2 @@ import {type MessageConnection, RequestType} from "vscode-jsonrpc/node";
++import { PromptTokenUsage, zeroTokenCount, toTokenCount, type TokenCount } from './TokenCount';
+@@ -137,0 +139,18 @@ export class CodexAppServerClient {
++    private readonly usageCaptures = new Map<string, Set<(usage: TokenCount) => void>>();
++
++    async captureResumeUsage<T>(threadId: string, operation: (read: () => TokenCount | null) => Promise<T>): Promise<T> {
++        if (this.usageCaptures.has(threadId)) throw new Error('RESUME_USAGE_CAPTURE_CONFLICT');
++        if (this.usageCaptures.size >= 128) throw new Error('RESUME_USAGE_CAPTURE_LIMIT');
++        let latest: TokenCount | null = null;
++        const validity = new PromptTokenUsage(zeroTokenCount());
++        const captures = new Set([(usage: TokenCount) => {
++            validity.observe(usage);
++            latest = { ...usage };
++        }]);
++        this.usageCaptures.set(threadId, captures);
++        try {
++            return await operation(() => latest === null || validity.usage() === null ? null : { ...latest });
++        } finally {
++            if (this.usageCaptures.get(threadId) === captures) this.usageCaptures.delete(threadId);
++        }
++    }
+@@ -157,0 +177,5 @@ export class CodexAppServerClient {
++            if (serverNotification.method === 'thread/tokenUsage/updated') {
++                for (const capture of this.usageCaptures.get(serverNotification.params.threadId) ?? []) {
++                    capture(toTokenCount(serverNotification.params.tokenUsage.total));
++                }
++            }
 diff --git a/src/CodexEventHandler.ts b/src/CodexEventHandler.ts
 index c29f956..4e4a137 100644
 --- a/src/CodexEventHandler.ts
@@ -120,7 +174,7 @@ index aebc178..a784fda 100644
 -    "outputTokens": 200,
 +    "outputTokens": 600,
 diff --git a/src/__tests__/CodexACPAgent/token-usage-events.test.ts b/src/__tests__/CodexACPAgent/token-usage-events.test.ts
-index dc49c1f..47aeb85 100644
+index dc49c1f..0b805b6 100644
 --- a/src/__tests__/CodexACPAgent/token-usage-events.test.ts
 +++ b/src/__tests__/CodexACPAgent/token-usage-events.test.ts
 @@ -4,0 +5 @@ import type { TokenUsageBreakdown } from '../../app-server/v2';
@@ -128,7 +182,7 @@ index dc49c1f..47aeb85 100644
 @@ -52 +53 @@ describe('Token Usage Events', () => {
 -            vi.spyOn(codexAcpAgent, 'getSessionState').mockReturnValue(createTestSessionState({ sessionId }));
 +            vi.spyOn(codexAcpAgent, 'getSessionState').mockReturnValue(createTestSessionState({ sessionId, totalTokenUsage: zeroTokenCount() }));
-@@ -56,0 +58,41 @@ describe('Token Usage Events', () => {
+@@ -56,0 +58,58 @@ describe('Token Usage Events', () => {
 +        it('reports both model calls in a fresh prompt without counting a duplicate notification', async () => {
 +            const call = { totalTokens: 14, inputTokens: 11, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 };
 +            const first = createTokenUsageNotification(sessionId, {
@@ -170,7 +224,24 @@ index dc49c1f..47aeb85 100644
 +            expect(response.usage).toMatchObject({ inputTokens: 11, outputTokens: 3 });
 +        });
 +
-@@ -136 +178 @@ describe('Token Usage Events', () => {
++        it('does not charge loaded history and establishes a baseline for the following prompt', async () => {
++            const call = { totalTokens: 14, inputTokens: 11, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 };
++            const notifications = [createTokenUsageNotification(sessionId, {
++                total: { ...call, totalTokens: 140, inputTokens: 110, outputTokens: 30 },
++                last: call, modelContextWindow: 128000,
++            })];
++            const agent = setupPromptWithTokenUsage(notifications);
++            vi.mocked(agent.getSessionState).mockReturnValue(createTestSessionState({ sessionId, totalTokenUsage: null }));
++            const request = { sessionId, prompt: [{ type: 'text' as const, text: 'resumed task' }] };
++            expect((await agent.prompt(request)).usage).toBeNull();
++            notifications[0] = createTokenUsageNotification(sessionId, {
++                total: { ...call, totalTokens: 154, inputTokens: 121, outputTokens: 33 },
++                last: call, modelContextWindow: 128000,
++            });
++            expect((await agent.prompt(request)).usage).toMatchObject({ inputTokens: 11, outputTokens: 3 });
++        });
++
+@@ -136 +195 @@ describe('Token Usage Events', () => {
 -        it('should use last token usage from multiple updates', async () => {
 +        it('should report cumulative prompt usage from multiple updates', async () => {
 diff --git a/src/__tests__/prompt-token-usage.test.ts b/src/__tests__/prompt-token-usage.test.ts
@@ -223,3 +294,103 @@ index 0000000..8fdb94a
 +        expect(usage.usage()).toMatchObject({ inputTokens: 11, outputTokens: 3 });
 +    });
 +});
+diff --git a/src/__tests__/resume-usage-capture.test.ts b/src/__tests__/resume-usage-capture.test.ts
+new file mode 100644
+index 0000000..dd7afe8
+--- /dev/null
++++ b/src/__tests__/resume-usage-capture.test.ts
+@@ -0,0 +1,43 @@
++import { it, expect } from 'vitest';
++import { createCodexMockTestFixture } from './acp-test-utils';
++
++it('captures only the resumed thread and discards observations outside the operation', async () => {
++    const fixture = createCodexMockTestFixture();
++    const client = fixture.getCodexAppServerClient();
++    const emit = (threadId: string) => fixture.sendServerNotification({
++        method: 'thread/tokenUsage/updated',
++        params: { threadId, turnId: 'previous-turn', tokenUsage: {
++            total: { totalTokens: 14, inputTokens: 11, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 },
++            last: { totalTokens: 14, inputTokens: 11, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 },
++            modelContextWindow: 10000,
++        } },
++    });
++    emit('resumed');
++    await client.captureResumeUsage('resumed', async read => {
++        expect(read()).toBeNull();
++        emit('unrelated');
++        expect(read()).toBeNull();
++        emit('resumed');
++        expect(read()).toMatchObject({ inputTokens: 11, outputTokens: 3 });
++        const copy = read()!;
++        copy.inputTokens = 0;
++        expect(read()?.inputTokens).toBe(11);
++        await expect(client.captureResumeUsage('resumed', async () => null)).rejects.toThrow('RESUME_USAGE_CAPTURE_CONFLICT');
++    });
++    await expect(client.captureResumeUsage('resumed', async () => { throw new Error('probe'); })).rejects.toThrow('probe');
++    expect(await client.captureResumeUsage('resumed', async read => read())).toBeNull();
++});
++
++it('rejects a regressed resume baseline even if a later counter catches up', async () => {
++    const fixture = createCodexMockTestFixture();
++    await fixture.getCodexAppServerClient().captureResumeUsage('resumed', async read => {
++        for (const inputTokens of [11, 1, 22]) {
++            const count = { totalTokens: inputTokens + 3, inputTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 };
++            fixture.sendServerNotification({ method: 'thread/tokenUsage/updated', params: {
++                threadId: 'resumed', turnId: 'previous-turn',
++                tokenUsage: { total: count, last: count, modelContextWindow: 10000 },
++            } });
++        }
++        expect(read()).toBeNull();
++    });
++});
+diff --git a/src/resume-usage-probe.ts b/src/resume-usage-probe.ts
+new file mode 100644
+index 0000000..dffcb89
+--- /dev/null
++++ b/src/resume-usage-probe.ts
+@@ -0,0 +1,45 @@
++import assert from 'node:assert/strict';
++import { once } from 'node:events';
++import { startCodexConnection } from './CodexJsonRpcConnection';
++import { CodexAppServerClient } from './CodexAppServerClient';
++import { CodexAcpClient } from './CodexAcpClient';
++import { CodexAcpServer } from './CodexAcpServer';
++
++async function open() {
++    const transport = startCodexConnection('/tmp/acp/node_modules/.bin/codex');
++    const client = new CodexAppServerClient(transport.connection);
++    const events: unknown[] = [];
++    client.onClientTransportEvent(event => {
++        if (event.eventType === 'notification' && event.method === 'thread/tokenUsage/updated') events.push(event.params);
++    });
++    const connection = new Proxy({} as any, { get: () => async () => ({}) });
++    const agent = new CodexAcpServer(connection, new CodexAcpClient(client), undefined, () => transport.process.exitCode);
++    await agent.initialize({ protocolVersion: 1 });
++    await agent.authenticate({ methodId: 'gateway', _meta: { gateway: { baseUrl: 'http://127.0.0.1:8787/v1', headers: {}, providerName: 'isolated-fixture' } } } as any);
++    return { agent, events, async close() {
++        const closed = once(transport.process, 'close');
++        transport.connection.end();
++        transport.process.kill();
++        await closed;
++    } };
++}
++
++const first = await open();
++let sessionId: string;
++try {
++    ({ sessionId } = await first.agent.newSession({ cwd: '/tmp', mcpServers: [] }));
++    const result = await first.agent.prompt({ sessionId, prompt: [{ type: 'text', text: 'Say hello.' }] });
++    assert.equal(result.stopReason, 'end_turn');
++    assert.equal(result.usage?.inputTokens, 11);
++} finally { await first.close(); }
++
++const resumed = await open();
++try {
++    await resumed.agent.loadSession({ sessionId: sessionId!, cwd: '/tmp', mcpServers: [] });
++    const before = resumed.events.length;
++    const result = await resumed.agent.prompt({ sessionId: sessionId!, prompt: [{ type: 'text', text: 'Say hello again.' }] });
++    assert.equal(result.stopReason, 'end_turn');
++    assert.equal(result.usage?.inputTokens, 11, 'resumed prompt must exclude historical usage');
++    assert.equal(result.usage?.outputTokens, 3, 'resumed prompt must exclude historical usage');
++    console.log(JSON.stringify({ beforePromptUsageEvents: before, usageEvents: resumed.events, resumedPromptUsage: result.usage }));
++} finally { await resumed.close(); }
