@@ -52,3 +52,27 @@ or the complete Local acceptance matrix. The explicit limitations remain
 `PI_INFLIGHT_RESTART_RECONCILIATION_UNSUPPORTED`. The command is an explicit
 release lane, not a substitute for the credential-free Local matrix or an
 automatically executed CI certification.
+
+## Local public-API cancellation extension
+
+The extended runner now requires four model requests: adapter completion and
+cancellation, then Local completion and cancellation. Both Local scenarios use
+the authenticated HTTP API through `ControlPlaneClient`, SQLite and real Restate.
+The cancellation scenario waits for the native model request to start, deliberately
+loses the successful cancellation HTTP acknowledgement, and retries with a new
+command ID. Durable acceptance returns the original command identity without a
+second execution attempt. The workflow finishes cancelled without a completed
+result reference.
+
+The native model fixture holds the fourth stream open. An observation wrapper
+checks that the fixture has already received stream cancellation **before** calling
+the real runtime cleanup method. Cleanup therefore cannot supply the stream-close
+evidence that cancellation is meant to prove. The wrapper always calls real cleanup,
+including after an assertion failure. The final report records
+`cancellationModelStream: closed-before-runtime-cleanup`.
+
+The extended runner passed with the same pinned Pi 0.84.2, Node 24.18.0 and Bun
+1.4.0. The regular E2E suite uses a held RPC process fixture for the same HTTP,
+lost-ACK and single-attempt assertions; only the explicit native runner proves
+real model-stream closure. This does not certify cancellation usage settlement,
+approval/tools, in-flight process reattachment, or Gateway/hosted runtime parity.

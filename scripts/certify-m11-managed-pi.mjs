@@ -23,6 +23,8 @@ assert.equal(resolve(executablePath), executablePath, 'Pi executable must be an 
 const directory = await mkdtemp(join(tmpdir(), 'control-plane-real-pi-'))
 const requests = []
 const cancellationRequest = Promise.withResolvers()
+const localCancellationClosed = Promise.withResolvers()
+let localStreamClosed = false
 const handles = []
 let server
 let adapter
@@ -56,11 +58,17 @@ try {
     hostname: '127.0.0.1',
     port: 0,
     async fetch(request) {
+      if (
+        request.method === 'GET' &&
+        new URL(request.url).pathname === '/m11/local-cancellation-ready'
+      )
+        return Response.json({ ready: requests.length === 4, closed: localStreamClosed })
       if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/chat/completions')
         return new Response(null, { status: 404 })
       const body = await request.json()
       requests.push({ body, authorization: request.headers.get('authorization') })
-      if (requests.length === 2) {
+      if (requests.length === 2 || requests.length === 4) {
+        const localCancellation = requests.length === 4
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(
@@ -75,6 +83,12 @@ try {
               )
             )
             cancellationRequest.resolve()
+          },
+          cancel() {
+            if (localCancellation) {
+              localStreamClosed = true
+              localCancellationClosed.resolve()
+            }
           },
         })
         return new Response(stream, { headers: { 'content-type': 'text/event-stream' } })
@@ -216,6 +230,7 @@ try {
         PATH: process.env.PATH ?? '/usr/bin:/bin',
         M11_REAL_PI_EXECUTABLE: executablePath,
         M11_REAL_PI_AGENT_DIRECTORY: agentDirectory,
+        M11_REAL_PI_CANCELLATION_READY_URL: `http://127.0.0.1:${server.port}/m11/local-cancellation-ready`,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -227,7 +242,12 @@ try {
     new Response(local.stderr).text(),
   ])
   if (exitCode !== 0) throw new Error(`LOCAL_PI_CERTIFICATION_FAILED\n${stdout}\n${stderr}`)
-  assert.equal(requests.length, 3, 'Local composition must reach the real Pi model endpoint once')
+  assert.equal(
+    requests.length,
+    4,
+    'Local completion and cancellation must each reach the real Pi model endpoint once'
+  )
+  await bounded(localCancellationClosed.promise)
   assert(JSON.stringify(requests[2].body.messages).includes('Complete the assigned task safely.'))
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer fixture-only')
@@ -265,7 +285,7 @@ try {
   handles.splice(handles.indexOf(cancelled), 1)
   assert.equal((await recreated.reconcile(cancelled)).state, 'cancelled')
   assert.equal((await recreated.cancel(cancelled)).state, 'cancelled')
-  assert.equal(requests.length, 3, 'A recreated client must not repeat the cleaned native attempt')
+  assert.equal(requests.length, 4, 'A recreated client must not repeat the cleaned native attempt')
   report = {
     schemaVersion: 1,
     suite: 'm11-real-pi-process',
@@ -288,6 +308,8 @@ try {
       persistence: 'sqlite',
       workflow: 'real-local-restate',
       execution: 'completed',
+      cancellation: 'authenticated-sdk-lost-ack-replay-single-attempt',
+      cancellationModelStream: 'closed-before-runtime-cleanup',
     },
     usage: { inputTokens: 11, outputTokens: 3 },
     limitations: inspection.limitations,
