@@ -21,6 +21,10 @@ import { createHash } from 'node:crypto'
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
 
 type InventoryDriver = GatewayInventoryEnvelope['runtimeDrivers'][number]
+type PreparedInventory = readonly {
+  driver: InventoryDriver
+  entry: NormalizedRuntimeInventoryEntry
+}[]
 
 export interface NormalizedRuntimeInventoryEntry {
   readonly registration: RuntimeConnectionRegistration
@@ -244,6 +248,7 @@ export class RuntimeInventoryIngestionService {
     const inventory = GatewayInventoryEnvelopeSchema.parse(inventoryValue)
     this.#assertSource(inventory, source)
     if (this.#unitOfWork) {
+      const prepared = await this.#normalize(inventory, nodeStatus)
       return this.#unitOfWork.run(
         { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId },
         (ports) =>
@@ -252,9 +257,19 @@ export class RuntimeInventoryIngestionService {
             normalizer: this.#normalizer,
             metrics: this.#metrics,
             disappearanceTtlMs: this.#disappearanceTtlMs,
-          }).ingest(inventory, source, nodeStatus)
+          }).#ingestPrepared(inventory, source, nodeStatus, prepared)
       )
     }
+    return this.#ingestPrepared(inventory, source, nodeStatus)
+  }
+
+  async #ingestPrepared(
+    inventory: GatewayInventoryEnvelope,
+    source: ActiveRuntimeNodeChannelRecord,
+    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked',
+    prepared?: PreparedInventory
+  ): Promise<RuntimeInventoryIngestionResult> {
+    this.#assertSource(inventory, source)
     const digest = hashInventory(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {
@@ -272,28 +287,7 @@ export class RuntimeInventoryIngestionService {
       fail('INVENTORY_DELTA_BASE_MISMATCH')
     }
 
-    const normalized = await Promise.all(
-      inventory.runtimeDrivers.map(async (driver) => {
-        try {
-          const entry = await this.#normalizer.normalize({ driver, inventory, nodeStatus })
-          return {
-            driver,
-            entry: this.#validateCorrelation(entry, driver, inventory, nodeStatus),
-          }
-        } catch (error) {
-          if (error instanceof RuntimeInventoryIngestionError) throw error
-          fail('INVENTORY_NORMALIZATION_FAILED')
-        }
-      })
-    )
-    const connectionIds = normalized.map(({ entry }) => entry.registration.runtimeConnectionId)
-    const identityDigests = normalized.map(({ entry }) => entry.registration.identityDigest)
-    if (
-      new Set(connectionIds).size !== connectionIds.length ||
-      new Set(identityDigests).size !== identityDigests.length
-    ) {
-      fail('INVENTORY_CORRELATION_MISMATCH')
-    }
+    const normalized = prepared ?? (await this.#normalize(inventory, nodeStatus))
     const updated: RuntimeConnection[] = []
     for (const { driver, entry } of normalized) {
       await this.#registry.register(entry.registration)
@@ -368,6 +362,30 @@ export class RuntimeInventoryIngestionService {
       updated,
       disappeared,
     }
+  }
+
+  async #normalize(
+    inventory: GatewayInventoryEnvelope,
+    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked'
+  ): Promise<PreparedInventory> {
+    const normalized = await Promise.all(
+      inventory.runtimeDrivers.map(async (driver) => {
+        try {
+          const entry = await this.#normalizer.normalize(
+            structuredClone({ driver, inventory, nodeStatus })
+          )
+          return { driver, entry: this.#validateCorrelation(entry, driver, inventory, nodeStatus) }
+        } catch (error) {
+          if (error instanceof RuntimeInventoryIngestionError) throw error
+          fail('INVENTORY_NORMALIZATION_FAILED')
+        }
+      })
+    )
+    const ids = normalized.map(({ entry }) => entry.registration.runtimeConnectionId)
+    const digests = normalized.map(({ entry }) => entry.registration.identityDigest)
+    if (new Set(ids).size !== ids.length || new Set(digests).size !== digests.length)
+      fail('INVENTORY_CORRELATION_MISMATCH')
+    return normalized
   }
 
   #assertSource(inventory: GatewayInventoryEnvelope, source: ActiveRuntimeNodeChannelRecord): void {

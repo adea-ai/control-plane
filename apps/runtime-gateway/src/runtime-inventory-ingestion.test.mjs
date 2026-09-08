@@ -21,6 +21,78 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('normalizer input mutation cannot rewrite the validated envelope', async () => {
+    let transactions = 0
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          input.inventory.nodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+      unitOfWork: {
+        async run() {
+          transactions++
+          throw new Error('UNEXPECTED_TRANSACTION')
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA)])
+    await expect(fixture.service.ingest(frame, source())).rejects.toThrow(
+      'INVENTORY_CORRELATION_MISMATCH'
+    )
+    expect(frame.nodeId).toBe(nodeId)
+    expect(transactions).toBe(0)
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+  })
+
+  test('normalizes before transaction entry and rechecks a checkpoint advanced during preparation', async () => {
+    const scoped = createFixture()
+    let release
+    let entered
+    let normalizations = 0
+    let transactions = 0
+    const held = new Promise((resolve) => {
+      release = resolve
+    })
+    const started = new Promise((resolve) => {
+      entered = resolve
+    })
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          normalizations++
+          entered()
+          await held
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+      unitOfWork: {
+        async run(_scope, operation) {
+          transactions++
+          return operation({
+            registry: scoped.registry,
+            health: scoped.health,
+            checkpoints: scoped.checkpoints,
+            projections: scoped.projections,
+          })
+        },
+      },
+    })
+    const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    await started
+    expect(transactions).toBe(0)
+    try {
+      await scoped.service.ingest(inventory(2, [driver(runtimeA)]), source())
+    } finally {
+      release()
+    }
+    expect(await pending).toMatchObject({ outcome: 'stale', snapshotVersion: 1 })
+    expect(normalizations).toBe(1)
+    expect(transactions).toBe(1)
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(2)
+  })
+
   test('uses transaction-bound ports and validates the source before entering the transaction', async () => {
     const scoped = createFixture()
     const scopes = []

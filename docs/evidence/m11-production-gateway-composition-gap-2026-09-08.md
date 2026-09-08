@@ -1,5 +1,23 @@
 # M11 production Runtime Gateway composition gap
 
+## Preparation outside inventory transactions
+
+Transactional ingestion now normalizes and validates all entries before entering
+the unit of work. It passes those prepared entries directly into the locked
+ingestion pass without calling the normalizer again. Source correlation and
+checkpoint/version/delta-base checks remain inside the transaction, so a snapshot
+that became stale during preparation is ignored against current durable state.
+The nontransactional fixture path retains its existing checkpoint-first behavior.
+
+Normalizer inputs are structured clones, preventing a plugin from mutating the
+validated envelope used for correlation and transaction scope. Focused tests
+hold normalization and verify no transaction entry, advance the checkpoint while
+preparation is held, then verify stale rejection with one normalization call.
+A mutation test rejects mismatched normalized identity before transaction entry.
+This removes normalizer waits from the database-lock interval; it is not an
+end-to-end deadline or proof of bounded history/database operations. Metrics-before-
+commit handling and the broader snapshot concurrency matrix remain open.
+
 ## Transaction-bound inventory ingestion
 
 RuntimeInventoryIngestionService accepts an optional unit-of-work port. It
