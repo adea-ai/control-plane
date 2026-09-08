@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.2.0...workflow-runtime-v1.3.0) (2026-09-08)
+
+
+### Features
+
+* **acp:** integrate native v1 process transport ([bf41225](https://github.com/adea-ai/control-plane/commit/bf412255869b4312947309995b8ae18ff11a0b86))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.1.2...workflow-runtime-v1.2.0) (2026-09-08)
 
 
