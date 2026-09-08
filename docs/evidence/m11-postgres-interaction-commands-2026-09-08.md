@@ -148,3 +148,14 @@ a reconstructed runtime completes the workflow retry, records cancellation once,
 and runs cleanup once without replacing or renewing the original command. The
 dispatch result and execution observations are controlled; this is not a Restate
 restart, database integration, or native-runtime cancellation certification.
+
+## Execution-level cancellation contract groundwork
+
+`ExecutionCancellationCommandSchema` defines `execution.cancel` independently of
+a pending interaction. It requires command identity, caller, workspace/project,
+issuance timestamp, and execution ID; its strict payload rejects caller-selected
+attempts, native handles, routing, leases, and privileged reasons. The result
+schema permits only accepted/replayed acknowledgement, not a claim that native
+work stopped. Three focused tests (28 assertions) pass. These exported schemas
+are groundwork only: no public route, SDK method, durable cancellation receipt,
+authorization implementation, or composition wiring is claimed by this change.

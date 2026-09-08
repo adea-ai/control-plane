@@ -357,6 +357,28 @@ export const ExecutionAcceptanceResponseSchema = successResponse(
   })
 )
 
+/** Requests execution-level cancellation; runtime routing and leases remain server-owned. */
+export const ExecutionCancellationCommandSchema = CommandContextSchema.extend({
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('execution.cancel'),
+  issuedAt: TimestampSchema,
+  payload: z.strictObject({ executionId: IdentifierSchemas.executionId }),
+}).strict()
+
+/** Confirms signal acceptance only, never that native work has stopped. */
+export const ExecutionCancellationCommandResultSchema = successResponse(
+  z.strictObject({
+    commandId: IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId,
+    status: z.literal('accepted'),
+    replayed: z.boolean(),
+  })
+)
+export type ExecutionCancellationCommand = z.input<typeof ExecutionCancellationCommandSchema>
+export type ExecutionCancellationCommandResult = z.output<
+  typeof ExecutionCancellationCommandResultSchema
+>
+
 export const InteractionResponseCommandSchema = CommandContextSchema.extend({
   projectId: IdentifierSchemas.projectId,
   operation: z.literal('interaction.respond'),
