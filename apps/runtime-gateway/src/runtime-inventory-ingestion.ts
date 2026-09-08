@@ -397,6 +397,7 @@ export class RuntimeInventoryIngestionService {
       healthReport.versions.protocol !== expectedProtocol ||
       healthReport.capabilitySnapshot.version !== inventory.snapshotVersion ||
       healthReport.capabilitySnapshot.observedAt !== inventory.observedAt ||
+      healthReport.capabilitySnapshot.ttlMs > (driver.capabilityTtlMs ?? 60_000) ||
       Date.parse(registration.lastDiscoveredAt) > Date.parse(inventory.observedAt) ||
       Date.parse(registration.lastHeartbeatAt) > Date.parse(inventory.observedAt) ||
       Date.parse(registration.lastHealthCheckAt) > Date.parse(inventory.observedAt)

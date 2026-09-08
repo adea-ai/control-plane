@@ -20,6 +20,51 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('rejects normalized TTL extension before applying any inventory state', async () => {
+    const fixture = createFixture()
+    const frame = inventory(
+      1,
+      [driver(runtimeB), { ...driver(runtimeA), capabilityTtlMs: 5_000 }],
+      {
+        protocolVersion: { major: 1, minor: 6 },
+      }
+    )
+    await expect(
+      fixture.service.ingest(frame, { ...source(), protocolVersion: { major: 1, minor: 6 } })
+    ).rejects.toMatchObject({ code: 'INVENTORY_CORRELATION_MISMATCH' })
+    expect(await fixture.registry.listByRuntimeNode(nodeId)).toEqual([])
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+    expect(fixture.projections.runtimeConnections).toEqual([])
+    expect(fixture.changes.events).toEqual([])
+  })
+
+  test('allows conservative normalization but rejects extension of the legacy ceiling', async () => {
+    const base = new DefaultRuntimeInventoryNormalizer()
+    const normalizeWithTtl = (ttlMs) => ({
+      async normalize(input) {
+        const entry = await base.normalize(input)
+        entry.healthReport.capabilitySnapshot.ttlMs = ttlMs
+        return entry
+      },
+    })
+    const shorter = createFixture({ normalizer: normalizeWithTtl(1_000) })
+    const frame = inventory(1, [{ ...driver(runtimeA), capabilityTtlMs: 5_000 }], {
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const result = await shorter.service.ingest(frame, {
+      ...source(),
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    expect(result.updated[0].capabilitySnapshotExpiresAt).toBe(
+      new Date(Date.parse(frame.observedAt) + 1_000).toISOString()
+    )
+    const extended = createFixture({ normalizer: normalizeWithTtl(60_001) })
+    await expect(
+      extended.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    ).rejects.toMatchObject({ code: 'INVENTORY_CORRELATION_MISMATCH' })
+    expect(await extended.registry.listByRuntimeNode(nodeId)).toEqual([])
+  })
+
   test('preserves a shorter advertised capability TTL during normalization', async () => {
     const frame = inventory(1, [{ ...driver(runtimeA), capabilityTtlMs: 5_000 }], {
       protocolVersion: { major: 1, minor: 6 },

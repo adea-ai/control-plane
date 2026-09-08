@@ -1,5 +1,18 @@
 # M11 runtime inventory TTL
 
+## Normalizer boundary follow-up
+
+The ingestion correlation check now also rejects a normalized capability TTL
+greater than the driver's advertised lifetime, or sixty seconds when omitted.
+This closes a reproduced extension through an injected normalizer even though
+the default normalizer already preserved the advertised value. A conservative
+shorter lifetime remains permitted. Validation runs before any registry,
+projection, availability-event or checkpoint mutation; the regression includes
+a valid sibling driver to check that an invalid batch does not partially apply.
+Focused tests cover advertised extension, legacy ceiling extension and a valid
+shorter normalized lifetime. These are in-memory ingestion tests, not evidence
+of deployed scheduling, provider consumers or Local inventory freshness.
+
 Scope: CP-RNODE-011, default remote runtime inventory ingestion. The revalidated
 RuntimeNode specification requires inventory freshness of at most 60 seconds,
 with shorter safe TTLs advertised by concrete adapters/providers respected.
