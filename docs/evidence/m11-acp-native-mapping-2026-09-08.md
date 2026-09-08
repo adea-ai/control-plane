@@ -275,3 +275,28 @@ activity port. It does not certify real Restate together with ACP, published-inp
 acceptance, native tools/MCP, live model quality, approvals, cancellation, host
 restart, or full M11.3. Its runtime requirement set is empty and does not claim
 filesystem capabilities. The 44 ms observation is not a performance benchmark.
+
+# Real Restate and native ACP acceptance follow-up
+
+The Local probe was extended after `e9f9b2e` to remove the workflow stubs. It now
+uses Local's real pinned Restate 1.7.8, stores a compiled fixture ExecutionPlan,
+accepts through `executionAcceptanceService`, waits for terminal persistence and
+the Restate workflow attach result, and replays the original acceptance request.
+It asserts one attempt and the persisted native output/usage.
+
+Two isolated runs completed on 2026-09-08 with the same ACP/Codex/image versions
+listed above. The first verified execution persistence (46 ms fixture turn); the
+second additionally verified successful workflow completion through attach
+(110 ms fixture turn). Each retained 11 input and 3 output tokens. Acceptance
+replay retained the original execution and one attempt. The loopback model fixture
+count was exactly two across both runs, so neither acceptance replay added a model
+request. After each Local shutdown, no ACP/Codex process remained in the container.
+The container and model fixture were removed after verification.
+
+This replaces the stub-workflow limitation of the earlier probe, not the remaining
+M11 gates. Model responses remain deterministic. The plan is inserted as a fixture,
+not published through the full profile/skill/policy/context API flow; only
+`stream.output` is required. Native tools/MCP, interactions, cancellation, crash
+recovery, live model quality, and other deployment profiles remain unverified by
+this probe. Loopback Local Restate uses its existing unsigned handler configuration;
+this is not evidence for the signed Hosted boundary.

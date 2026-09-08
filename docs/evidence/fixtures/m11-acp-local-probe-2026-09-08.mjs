@@ -1,13 +1,15 @@
-// Real native harness + Local process ownership + SQLite effects; workflow host is a stub.
+// Real native harness + Local Restate + SQLite; model responses remain deterministic fixtures.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import { ControlApiFixtures } from '@control-plane/contracts'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   createLocalAcpRuntime,
   LocalControlPlaneComposition,
-  DirectRuntimeActivityPort,
 } from '../../../apps/local-control-plane/src/index.ts'
 
 const container = process.argv[2]
@@ -50,58 +52,69 @@ const composition = new LocalControlPlaneComposition({
       requestTimeoutMs: 20000,
       turnTimeoutMs: 30000,
     }),
-  workflowRuntime: { profile: 'local', start: async () => {}, stop: async () => {} },
-  endpointFactory: { create: async () => ({ run: async () => {}, shutdown: async () => {} }) },
+  workflowEndpointPort: 19083,
 })
 try {
   await composition.start()
   const runtime = composition.runtimeTransport
   assert.equal((await runtime.inspect()).health, 'healthy')
-  const activities = new DirectRuntimeActivityPort(
-    composition.persistence,
-    composition.objectStore,
-    runtime
-  )
-  const input = {
-    executionId: 'exe_01JABCDEF0123456789ABCDEFG',
-    attemptId: 'att_01JABCDEF0123456789ABCDEFG',
-    effectKey: 'local-native:dispatch',
-    executionPlan: {
-      schemaVersion: 1,
-      executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
-      contentDigest: `sha256:${'a'.repeat(64)}`,
-      runtimeRequirements: [],
+  const plan = createExecutionPlanTestFixture({
+    profileCapabilityRequirements: ['stream.output'],
+    skillRequiredCapabilities: [],
+  })
+  await composition.executionPlans.put(plan)
+  const issuedAt = new Date().toISOString()
+  const request = {
+    ...ControlApiFixtures.executionAcceptance.request,
+    requestId: plan.correlation.requestId,
+    workspaceId: plan.correlation.workspaceId,
+    projectId: plan.correlation.projectId,
+    issuedAt,
+    payload: {
+      taskId: plan.correlation.taskId,
+      agentId: plan.correlation.agentId,
+      executionPlan: {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      },
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
     },
   }
-  const outcome = await activities.dispatch(input)
-  assert.equal(outcome.outcome, 'completed')
-  // A fresh activity instance must replay the SQLite outcome without another native prompt.
-  assert.deepEqual(
-    await new DirectRuntimeActivityPort(
-      composition.persistence,
-      composition.objectStore,
-      runtime
-    ).dispatch(input),
-    outcome
+  const accepted = await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
+  let execution
+  const deadline = Date.now() + 45000
+  while (Date.now() < deadline) {
+    execution = await composition.executions.getExecution(accepted.data.executionId)
+    if (['completed', 'failed', 'cancelled', 'timed_out'].includes(execution?.state)) break
+    await delay(50)
+  }
+  assert.equal(execution.state, 'completed')
+  const workflowResult = await fetch(
+    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${execution.executionId}/attach`,
+    { signal: AbortSignal.timeout(15000) }
   )
+  assert.equal(workflowResult.ok, true)
+  assert.equal((await workflowResult.json()).status, 'completed')
+  const replay = await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
+  assert.equal(replay.data.executionId, execution.executionId)
+  assert.equal((await composition.executions.listAttempts(execution.executionId)).length, 1)
   const stored = await composition.objectStore.get(
-    `executions/${input.executionId}/attempts/${input.attemptId}/result.json`
+    `executions/${execution.executionId}/attempts/${execution.latestAttemptId}/result.json`
   )
   const result = JSON.parse(new TextDecoder().decode(stored.body))
   assert.equal(result.output.text, 'M11 isolated ACP response.')
   assert.equal(result.usage.inputTokens, 11)
   assert.equal(result.usage.outputTokens, 3)
-  await activities.cleanup({
-    executionId: input.executionId,
-    attemptId: input.attemptId,
-    effectKey: 'local-native:cleanup',
-  })
   console.log(
     JSON.stringify({
-      state: outcome.outcome,
+      state: execution.state,
       persistedUsage: result.usage,
-      sqliteReplay: true,
-      nativeCleanup: true,
+      acceptanceReplay: true,
+      attempts: 1,
+      realRestate: true,
+      workflowCompleted: true,
     })
   )
 } finally {
