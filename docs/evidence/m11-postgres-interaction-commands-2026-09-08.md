@@ -176,3 +176,14 @@ These tests use an in-memory receipt fixture and recording dispatcher. Productio
 SQLite/PostgreSQL receipt implementations, Restate cancellation dispatch, HTTP/SDK
 entrypoints, and composition wiring remain unfinished. The service does not claim
 atomic ordering between execution termination and cancellation admission.
+
+## SQLite cancellation receipt persistence
+
+`SqliteExecutionCancellationRepository` uses the existing transactional record
+store in a dedicated namespace. It preserves the first request and acknowledgement
+timestamp, rejects preconfirmed reservation and missing acknowledgement targets,
+and validates the stored scope against the lookup key. Its real SQLite regression
+passes 22 assertions covering eight concurrent reservations, unconfirmed and
+confirmed database reopen, immutable ACK time, and principal/workspace/project/key
+separation. No SQLite schema migration is needed. This adds durable storage but
+does not yet wire cancellation into the Local composition or public HTTP API.
