@@ -1,6 +1,9 @@
 ---
 name: code-review
 description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+metadata:
+  version: "1.0.0"
+  owner: "Control Plane maintainers"
 ---
 
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
@@ -10,7 +13,16 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
-The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, tell the user to run `/setup-matt-pocock-skills`.
+Use the repository's [issue-tracker guide](../../../docs/agents/issue-tracker.md)
+to retrieve the spec. No skill installer or external setup command is required.
+Review is read-only: follow [repository policy](../../../AGENTS.md) and
+[contribution boundaries](../../../.github/CONTRIBUTING.md). A review request does
+not authorize fixes, issue edits, PR comments, or merges.
+
+Record the resolved base and head commits and dirty state. The committed diff
+below does not include staged, unstaged, or untracked work; when the request
+includes work in progress, inspect those surfaces separately and report which
+ones were reviewed. Preserve all existing changes.
 
 ## Process
 
@@ -20,13 +32,17 @@ Whatever the user said is the fixed point — a commit SHA, branch name, tag, `m
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
+Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`)
+and at least one requested review surface is non-empty. A committed-only review
+with an empty diff ends here. A work-in-progress review may still have staged,
+unstaged, or untracked changes even when the committed diff is empty; include
+those exact surfaces in each reviewer's scope. Resolve bad refs before delegation.
 
 ### 2. Identify the spec source
 
 Look for the originating spec, in this order:
 
-1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.) — fetch via the workflow in `docs/agents/issue-tracker.md`.
+1. Issue references in the commit messages (`#123`, `Closes #45`, etc.) — resolve repository identity and fetch via the issue-tracker guide.
 2. A path the user passed as an argument.
 3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
 4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
@@ -70,12 +86,20 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 - The brief: "Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
 
 If the spec is missing, skip the Spec sub-agent and note this in the final report.
+If delegation is unavailable, perform both axes sequentially and disclose the
+lack of independent review. Do not claim two independent reviews from one pass.
 
 ### 5. Aggregate
 
 Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
 
 End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
+
+Include exact candidate scope, spec provenance, checks actually observed, missing
+or skipped evidence, and task-owned worker cleanup. Closed issues and green CI
+do not prove spec compliance; a missing spec is an unverified axis, not a pass.
+Review this repository adaptation when tracker, policy, or review tooling changes;
+version routing changes in metadata and retain history in Git.
 
 ## Why two axes
 
