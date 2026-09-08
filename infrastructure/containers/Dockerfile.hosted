@@ -3,6 +3,7 @@ FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f
 WORKDIR /workspace
 
 COPY package.json bun.lock bunfig.toml turbo.json tsconfig.base.json ./
+COPY patches ./patches
 COPY apps ./apps
 COPY packages ./packages
 
@@ -22,6 +23,7 @@ ENV APP_NAME=${APP_NAME} \
 WORKDIR /workspace
 
 COPY --from=build --chown=bun:bun /workspace/package.json /workspace/bun.lock /workspace/bunfig.toml ./
+COPY --from=build --chown=bun:bun /workspace/patches ./patches
 COPY --from=build --chown=bun:bun /workspace/apps ./apps
 COPY --from=build --chown=bun:bun /workspace/packages ./packages
 COPY --chown=bun:bun infrastructure/containers/entrypoint.sh /usr/local/bin/control-plane-entrypoint

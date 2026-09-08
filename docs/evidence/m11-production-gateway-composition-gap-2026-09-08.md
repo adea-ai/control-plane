@@ -1,5 +1,21 @@
 # M11 production Runtime Gateway composition gap
 
+## Closed-socket driver recovery follow-up
+
+The timeout experiment below led to an upstream-matching defect in the pinned
+`postgres` 3.4.9 driver. A repository-scoped guard now settles deferred writes
+against a closed socket in both ESM and CommonJS. See
+[patch provenance and acceptance scope](../../patches/README.md).
+
+The child-process integration probe exercises idle and active-query transaction
+timeouts, checks rollback and subsequent transaction use, and requires bounded
+shutdown with no uncaught-error output. Both entry points passed within the
+31-test PostgreSQL integration suite and complete integration/recovery run.
+The full suite also passed 1,224 unit/E2E/smoke tests and 41 builds.
+This addresses the reproduced crash path, not every
+driver failure mode. Inventory transaction deadlines remain disabled pending
+reapplication and verification of the inventory-specific timeout matrix.
+
 ## Transaction deadline experiment: not promoted
 
 An integration experiment on PostgreSQL 18.3 with `postgres` 3.4.9 and Bun 1.4.0

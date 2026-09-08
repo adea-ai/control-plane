@@ -108,6 +108,37 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated?.dispose()
   })
 
+  test('survives backend transaction timeouts without late driver crashes or committed writes', async () => {
+    await isolated.migrate()
+    const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+    applicationUrl.pathname = `/${isolated.name}`
+    for (const mode of ['esm', 'cjs']) {
+      const probe = spawnSync(
+        process.execPath,
+        [fileURLToPath(new URL('./transaction-timeout-probe.mjs', import.meta.url))],
+        {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: {
+            PATH: process.env.PATH,
+            TEST_APPLICATION_URL: applicationUrl.toString(),
+            TEST_POSTGRES_MODE: mode,
+          },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      )
+      expect(probe.error).toBeUndefined()
+      expect(probe.signal).toBeNull()
+      expect({ mode, status: probe.status, diagnostic: probe.stderr }).toEqual({
+        mode,
+        status: 0,
+        diagnostic: '',
+      })
+      expect(probe.stderr).toBe('')
+      expect(probe.stdout).toBe('')
+    }
+  })
+
   test('migrates an empty database and re-applies migrations deterministically', async () => {
     await isolated.migrate()
     await isolated.migrate()

@@ -3,6 +3,7 @@ FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5d
 WORKDIR /workspace
 
 COPY package.json bun.lock bunfig.toml turbo.json tsconfig.base.json ./
+COPY patches ./patches
 COPY apps ./apps
 COPY packages ./packages
 
