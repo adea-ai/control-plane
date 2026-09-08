@@ -319,6 +319,58 @@ describe('SQLite domain repositories', () => {
           workspaceId: 'wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV',
         })
       ).toEqual([])
+      const scope = { workspaceId: ids.workspaceId, runtimeNodeRefId: ids.runtimeNodeRefId }
+      const expected = runtimeDiscoveryModel()
+      const next = {
+        ...expected,
+        observedAt: new Date(Date.parse(expected.observedAt) + 1_000).toISOString(),
+      }
+      const pointReads = new SqliteRuntimeDiscoveryRepository({
+        transaction: (operation) =>
+          provider.transaction((transaction) =>
+            operation({
+              get: (...args) => transaction.get(...args),
+              list: () => {
+                throw new Error('Point lookup must not list history')
+              },
+            })
+          ),
+      })
+      expect(await pointReads.getRuntimeConnection(scope, ids.runtimeConnectionId)).toEqual(
+        expected
+      )
+      expect(
+        await reopened.compareAndSetRuntimeConnection(
+          { ...scope, workspaceId: 'wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV' },
+          expected,
+          next
+        )
+      ).toBe(false)
+      const updates = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          reopened.compareAndSetRuntimeConnection(scope, expected, next)
+        )
+      )
+      expect(updates.filter(Boolean)).toHaveLength(1)
+      expect(await reopened.compareAndSetRuntimeConnection(scope, expected, next)).toBe(false)
+      await expect(reopened.compareAndSetRuntimeConnection(scope, next, expected)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH'
+      )
+      await expect(
+        reopened.compareAndSetRuntimeConnection(scope, next, {
+          ...next,
+          runtimeConnectionId: 'rtc_01BRZ3NDEKTSV4RRFFQ69G5FAV',
+        })
+      ).rejects.toThrow('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      expect(
+        await new SqliteRuntimeDiscoveryRepository(provider).getRuntimeConnection(
+          scope,
+          ids.runtimeConnectionId
+        )
+      ).toEqual(next)
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

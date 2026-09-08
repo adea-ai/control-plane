@@ -1,10 +1,12 @@
 import {
   ExternalSessionDiscoveryReadModelSchema,
   RuntimeConnectionDiscoveryReadModelSchema,
+  IdentifierSchemas,
   type ExternalSessionDiscoveryReadModel,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import { isDeepStrictEqual } from 'node:util'
 
 const runtimeNamespace = 'runtime-discovery-connections'
 const sessionNamespace = 'runtime-discovery-sessions'
@@ -30,6 +32,36 @@ interface SessionProjectionRecord {
 
 export class SqliteRuntimeDiscoveryRepository {
   constructor(readonly provider: PersistenceProvider) {}
+
+  async compareAndSetRuntimeConnection(
+    scopeValue: SqliteRuntimeDiscoveryScope,
+    expectedValue: RuntimeConnectionDiscoveryReadModel,
+    nextValue: RuntimeConnectionDiscoveryReadModel
+  ): Promise<boolean> {
+    const scope = runtimeScope(scopeValue)
+    const expected = RuntimeConnectionDiscoveryReadModelSchema.parse(expectedValue)
+    const next = RuntimeConnectionDiscoveryReadModelSchema.parse(nextValue)
+    if (
+      expected.runtimeConnectionId !== next.runtimeConnectionId ||
+      expected.runtimeDefinitionId !== next.runtimeDefinitionId ||
+      expected.node?.runtimeNodeRefId !== next.node?.runtimeNodeRefId ||
+      Date.parse(next.observedAt) < Date.parse(expected.observedAt)
+    )
+      throw new Error('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+    return this.provider.transaction(async (transaction) => {
+      const stored = await transaction.get(runtimeNamespace, expected.runtimeConnectionId)
+      if (!stored) return false
+      const current = parseRuntimeRecord(stored.value)
+      if (!matchesScope(current, scope) || !isDeepStrictEqual(current.model, expected)) return false
+      await transaction.put({
+        namespace: runtimeNamespace,
+        id: expected.runtimeConnectionId,
+        expectedRevision: stored.revision,
+        value: { ...current, model: next } as JsonValue,
+      })
+      return true
+    })
+  }
 
   putRuntimeConnection(
     workspaceId: string,
@@ -73,9 +105,16 @@ export class SqliteRuntimeDiscoveryRepository {
     scope: SqliteRuntimeDiscoveryScope,
     runtimeConnectionId: string
   ): Promise<RuntimeConnectionDiscoveryReadModel | undefined> {
-    return (await this.listRuntimeConnections(scope)).find(
-      (model) => model.runtimeConnectionId === runtimeConnectionId
-    )
+    const parsedScope = runtimeScope(scope)
+    const id = IdentifierSchemas.runtimeConnectionId.parse(runtimeConnectionId)
+    return this.provider.transaction(async (transaction) => {
+      const stored = await transaction.get(runtimeNamespace, id)
+      if (!stored) return undefined
+      const current = parseRuntimeRecord(stored.value)
+      if (current.model.runtimeConnectionId !== id)
+        throw new Error('RUNTIME_DISCOVERY_RECORD_ID_MISMATCH')
+      return matchesScope(current, parsedScope) ? structuredClone(current.model) : undefined
+    })
   }
 
   async listExternalSessions(
@@ -126,6 +165,25 @@ function parseRuntimeRecord(value: JsonValue): RuntimeProjectionRecord {
     ...(record.runtimeNodeRefId === undefined ? {} : { runtimeNodeRefId: record.runtimeNodeRefId }),
     model: RuntimeConnectionDiscoveryReadModelSchema.parse(record.model),
   }
+}
+
+function runtimeScope(scope: SqliteRuntimeDiscoveryScope): SqliteRuntimeDiscoveryScope {
+  return {
+    workspaceId: IdentifierSchemas.workspaceId.parse(scope.workspaceId),
+    ...(scope.runtimeNodeRefId === undefined
+      ? {}
+      : { runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId.parse(scope.runtimeNodeRefId) }),
+  }
+}
+
+function matchesScope(
+  record: RuntimeProjectionRecord,
+  scope: SqliteRuntimeDiscoveryScope
+): boolean {
+  return (
+    record.workspaceId === scope.workspaceId &&
+    (scope.runtimeNodeRefId === undefined || record.runtimeNodeRefId === scope.runtimeNodeRefId)
+  )
 }
 
 function parseSessionRecord(value: JsonValue): SessionProjectionRecord {

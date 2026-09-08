@@ -1,5 +1,21 @@
 # M11 production Runtime Gateway composition gap
 
+## SQLite projection prerequisite parity
+
+SqliteRuntimeDiscoveryRepository now exposes the same conditional runtime
+projection update: expected-model comparison, scope check and revision-protected
+write occur inside its persistence transaction. Runtime/definition/node identity
+changes and backwards observation time reject. A single-runtime read now uses
+the namespaced record key directly rather than listing the entire projection
+collection, while retaining workspace/node filtering.
+
+The file-backed SQLite test checks one winner among eight same-provider calls,
+wrong workspace, stale expected state, backwards time, changed runtime identity
+and persistence of the winner after closing/reopening the database. A point-read
+fixture throws if collection listing is attempted. This does not prove
+cross-process contention behavior, SQLite runtime-registry/scanner support or a
+Local maintenance composition; those remain separate gates.
+
 ## Inventory maintenance implementation
 
 RuntimeInventoryMaintenance now consumes the checkpoint and per-node connection
