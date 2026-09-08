@@ -27,22 +27,25 @@ test('the shared skill lock matches discoverable skill directories and valid ide
   }
 })
 
-test('the repository audit router has versioned ownership, resolvable references, and real commands', async () => {
-  const path = resolve(skillRoot, 'control-plane-audit/SKILL.md')
-  const text = await readFile(path, 'utf8')
-  const metadata = Bun.YAML.parse(/^---\n([\s\S]*?)\n---/.exec(text)[1])
-  expect(metadata.metadata.version).toMatch(/^\d+\.\d+\.\d+$/)
-  expect(metadata.metadata.owner.trim().length).toBeGreaterThan(0)
-  const canonicalRoot = await realpath(root)
-  const links = [...text.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1])
-  expect(links.length).toBeGreaterThan(0)
-  for (const link of links) {
-    const target = await realpath(resolve(dirname(path), link))
-    const local = relative(canonicalRoot, target)
-    expect(local.startsWith('..')).toBe(false)
+test.each(['control-plane-audit', 'code-review'])(
+  '%s has versioned ownership, resolvable references, and real commands',
+  async (name) => {
+    const path = resolve(skillRoot, name, 'SKILL.md')
+    const text = await readFile(path, 'utf8')
+    const metadata = Bun.YAML.parse(/^---\n([\s\S]*?)\n---/.exec(text)[1])
+    expect(metadata.metadata.version).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(metadata.metadata.owner.trim().length).toBeGreaterThan(0)
+    const canonicalRoot = await realpath(root)
+    const links = [...text.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1])
+    expect(links.length).toBeGreaterThan(0)
+    for (const link of links) {
+      const target = await realpath(resolve(dirname(path), link))
+      const local = relative(canonicalRoot, target)
+      expect(local.startsWith('..')).toBe(false)
+    }
+    const scripts = JSON.parse(await read('package.json')).scripts
+    const commands = [...text.matchAll(/`bun run ([a-z0-9:-]+)`/g)].map((match) => match[1])
+    if (name === 'control-plane-audit') expect(commands.length).toBeGreaterThan(0)
+    for (const command of commands) expect(typeof scripts[command]).toBe('string')
   }
-  const scripts = JSON.parse(await read('package.json')).scripts
-  const commands = [...text.matchAll(/`bun run ([a-z0-9:-]+)`/g)].map((match) => match[1])
-  expect(commands.length).toBeGreaterThan(0)
-  for (const command of commands) expect(typeof scripts[command]).toBe('string')
-})
+)

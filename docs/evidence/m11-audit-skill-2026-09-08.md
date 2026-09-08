@@ -9,8 +9,12 @@ containing this document, not a claim that the milestone's final candidate is fr
 Added the repository-owned `control-plane-audit` router, version 1.0.0, with
 maintainer ownership, ten evidence lanes, explicit mutation boundaries, and
 partial/fixture/skipped-evidence limitations. Its 13 local references route to
-existing policy, contracts, commands, and evidence guidance. The eight existing
-skills are unchanged; the lock now inventories nine skills.
+existing policy, contracts, commands, and evidence guidance. The lock now
+inventories nine skills. A follow-up inspection found that `code-review` referenced
+a missing issue-tracker guide and unavailable setup command. Added the actual
+read-only GitHub retrieval guide, versioned that repository adaptation, and
+clarified dirty-worktree scope and unavailable-spec/delegation reporting. The
+other seven existing skills are unchanged.
 
 Added smoke tests for inventory consistency, skill frontmatter, router metadata,
 repository-contained local links, and referenced package commands. These checks
@@ -19,13 +23,14 @@ are structural, not proof that an agent will follow the instructions.
 ## Verification
 
 - Isolated `uv run --with PyYAML==6.0.3 python
-/Users/amf/.codex/skills/.system/skill-creator/scripts/quick_validate.py
+<installed-skill-creator>/scripts/quick_validate.py
 .agents/skills/control-plane-audit`: passed. The initial direct Python invocation
   lacked PyYAML; no global Python packages were changed.
 - `bun test tests/agent-skill-library.test.mjs tests/repository.test.mjs`:
-  23 passed, 72 assertions, zero failures.
-- Root lint, type-check, format-check, and test sequence: passed before the final
-  documentation-only routing refinements. The E2E group reported 101 passed and
+  initially 23 passed / 72 assertions; after extending structural coverage to
+  `code-review`, 24 passed / 78 assertions, zero failures.
+- Root lint, type-check, format-check, and test sequence: passed again after the
+  review-guide and structural-test changes. The E2E group reported 101 passed and
   571 assertions. Lint warnings are not represented as absent.
 
 ## Behavioral forward test
