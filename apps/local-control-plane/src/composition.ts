@@ -104,6 +104,7 @@ export interface LocalControlPlaneCompositionOptions {
 
 export class LocalControlPlaneComposition {
   readonly interactionCommandService: LocalControlApiComposition['interactionCommandService']
+  readonly executionCancellationService: LocalControlApiComposition['executionCancellationService']
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
   readonly persistence: SqlitePersistenceProvider
@@ -200,6 +201,7 @@ export class LocalControlPlaneComposition {
         : controlApi.executionAcceptanceService
     this.executionValidationService = controlApi.executionValidationService
     this.interactionCommandService = controlApi.interactionCommandService
+    this.executionCancellationService = controlApi.executionCancellationService
     this.profileResolutionService = controlApi.profileResolutionService
     this.projectStateResolutionService = controlApi.projectStateResolutionService
     this.contextPackageResolutionService = controlApi.contextPackageResolutionService

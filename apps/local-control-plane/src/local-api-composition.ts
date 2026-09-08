@@ -10,6 +10,7 @@ import {
 import {
   CommandInboxService,
   DurableInteractionCommandService,
+  DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
 } from '@control-plane/domain'
 import {
@@ -27,6 +28,7 @@ import {
   SqliteExecutionRepository,
   SqliteInteractionRepository,
   SqliteInteractionCommandRepository,
+  SqliteExecutionCancellationRepository,
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
   SqliteRuntimeCommandRepository,
@@ -39,6 +41,7 @@ import {
 } from '@control-plane/sqlite-persistence'
 
 export class LocalControlApiComposition {
+  readonly executionCancellationService: DurableExecutionCancellationService
   readonly interactionCommandService: DurableInteractionCommandService
   readonly commandRepository: SqliteCommandAcceptanceRepository
   readonly commands: CommandInboxService
@@ -67,6 +70,11 @@ export class LocalControlApiComposition {
     contextAuthoring?: ContextAuthoringCompositionOptions
   ) {
     this.commandRepository = new SqliteCommandAcceptanceRepository(persistence)
+    this.executionCancellationService = new DurableExecutionCancellationService(
+      new SqliteExecutionCancellationRepository(persistence),
+      this.commandRepository,
+      new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
+    )
     this.catalog = new SqliteVersionedCatalogRepository(persistence)
     this.contextPackages = new SqliteContextPackageRepository(persistence)
     this.executionPlans = new SqliteExecutionPlanRepository(persistence)

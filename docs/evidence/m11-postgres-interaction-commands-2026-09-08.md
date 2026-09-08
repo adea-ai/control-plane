@@ -198,3 +198,15 @@ oversized acknowledgement bodies, and invalid invocation IDs. Focused cancellati
 and retained interaction dispatcher tests pass (14 tests, 28 assertions). Network
 responses are controlled in these tests; composition wiring and a real Restate
 lost-ACK test for this new method remain outstanding.
+
+## Local cancellation composition
+
+Local API composition now assembles the cancellation service with the SQLite
+receipt repository, accepted-execution repository, and Restate dispatcher; the
+Local all-in-one composition exposes this service. A real SQLite/TCP regression
+accepts a frozen plan, rejects a mismatched principal before dispatch, receives an
+unconfirmed cancellation response, reopens SQLite, and retries with the first
+stored command identity. Confirmed replay sends no further signal (8 assertions).
+The TCP fixture returns 503 for the first cancellation acknowledgement; it is not
+a real Restate server. Public HTTP/SDK access and PostgreSQL composition remain
+unfinished, and profile acceptance dispositions remain partial.
