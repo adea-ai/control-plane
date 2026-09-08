@@ -1,5 +1,30 @@
 # M11 production Runtime Gateway composition gap
 
+## Established channel credential expiry
+
+The authenticator previously checked credential expiry only when accepting a
+channel. Its later command guard checked revocation and scope, but an otherwise
+active channel could continue using expired claims. A deterministic clock-based
+regression reproduced a command being allowed after expiry plus the configured
+clock-skew tolerance.
+
+Channels now receive the authenticator's clock and tolerance. Active-state checks
+permanently invalidate expired channels; outbound commands receive the normalized
+`RUNTIME_NODE_CREDENTIAL_EXPIRED` error. Existing receive/open guards consume that
+state, and the periodic sweep disconnects invalidated channels, including sockets
+awaiting hello. Tests cover the exact tolerance boundary, clock rollback, inbound
+frame suppression, outbound suppression, ownership release and idle cleanup.
+The existing real-WebSocket tests still pass with synthetic identity.
+
+Local validation passed 23 focused authentication/lifecycle/network tests,
+format, lint, types, 41 builds, 1,237 unit/E2E/smoke tests, 31 database tests and
+the complete integration and connection-loss/restart/backup-restore drills.
+
+This is a Control Plane validation/lifecycle change, not credential issuance or
+live Agent HQ integration. It does not establish atomic expiry/revocation fencing
+for an operation already admitted before a deadline, nor solve unbounded
+dependency latency or production identity-backend composition.
+
 ## Inventory timeout test uses the production budget
 
 The intermittent Neon failure recurred at `08605c3`. The retained diagnostic

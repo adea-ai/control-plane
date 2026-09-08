@@ -19,7 +19,7 @@ export interface RuntimeNodeAuthenticationExpectation {
   readonly challenge: string
 }
 
-export type RuntimeNodeChannelInvalidationReason = 'replaced' | 'revoked'
+export type RuntimeNodeChannelInvalidationReason = 'replaced' | 'revoked' | 'expired'
 
 export class RuntimeNodeAuthenticationError extends Error {
   constructor(readonly code: string) {
@@ -31,17 +31,24 @@ export class RuntimeNodeAuthenticationError extends Error {
 export class RuntimeNodeChannel {
   readonly claims: RuntimeNodeCredentialClaims
   readonly #identityValidator: RuntimeNodeIdentityValidationPort
+  readonly #now: () => Date
+  readonly #clockSkewMs: number
   #invalidationReason: RuntimeNodeChannelInvalidationReason | undefined
 
   constructor(
     claims: RuntimeNodeCredentialClaims,
-    identityValidator: RuntimeNodeIdentityValidationPort
+    identityValidator: RuntimeNodeIdentityValidationPort,
+    options: { readonly now?: () => Date; readonly clockSkewMs?: number } = {}
   ) {
     this.claims = claims
     this.#identityValidator = identityValidator
+    this.#now = options.now ?? (() => new Date())
+    this.#clockSkewMs = options.clockSkewMs ?? 30_000
   }
 
   get active(): boolean {
+    if (Date.parse(this.claims.expiresAt) < this.#now().getTime() - this.#clockSkewMs)
+      this.invalidate('expired')
     return this.#invalidationReason === undefined
   }
 
@@ -66,7 +73,9 @@ export class RuntimeNodeChannel {
       throw new RuntimeNodeAuthenticationError(
         this.#invalidationReason === 'revoked'
           ? 'RUNTIME_NODE_CREDENTIAL_REVOKED'
-          : 'RUNTIME_NODE_CHANNEL_REPLACED'
+          : this.#invalidationReason === 'expired'
+            ? 'RUNTIME_NODE_CREDENTIAL_EXPIRED'
+            : 'RUNTIME_NODE_CHANNEL_REPLACED'
       )
     }
     const command = GatewayCommandEnvelopeSchema.parse(commandValue)
@@ -180,7 +189,10 @@ export class RuntimeNodeChannelAuthenticator {
       this.#reject('RUNTIME_NODE_CHANNEL_GENERATION_STALE', claims)
     }
 
-    const channel = new RuntimeNodeChannel(claims, this.#identityValidator)
+    const channel = new RuntimeNodeChannel(claims, this.#identityValidator, {
+      now: this.#now,
+      clockSkewMs: this.#clockSkewMs,
+    })
     existing?.invalidate('replaced')
     this.#activeChannels.set(claims.nodeId, channel)
     this.#usedCredentialIds.add(claims.credentialId)

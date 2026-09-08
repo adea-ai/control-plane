@@ -225,6 +225,10 @@ export class RuntimeGatewayWebSocketLifecycle {
     // Snapshot the live connection map: #disconnect deletes entries during iteration.
     // oxlint-disable-next-line unicorn/no-useless-spread
     for (const connection of [...this.#connections.values()]) {
+      if (!connection.authenticatedChannel.active) {
+        await this.#disconnect(connection, 1008, 'authentication_invalidated')
+        continue
+      }
       if (connection.state !== 'active' || connection.record === undefined) continue
       const owner = await this.#coordination.lookup(connection.record.nodeId)
       if (owner === undefined || !sameChannel(connection.record, owner)) {
