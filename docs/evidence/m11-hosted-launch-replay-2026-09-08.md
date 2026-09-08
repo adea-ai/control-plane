@@ -42,3 +42,30 @@ simultaneous client calls with different clocks may conflict rather than replay.
 Production admission must resolve that distinction with an atomic, persisted
 first-admission identity and deadline, and provide explicit reconciliation for
 uncertain allocation. The in-memory failure fence is not a restart guarantee.
+
+## Concurrent client clock follow-up
+
+The different-clock limitation above was reproduced with eight independent
+clients and a deterministic advancing clock: one identical command succeeded and
+seven rejected because their derived deadlines differed. The host still recorded
+one launch; this was a replay-availability failure, not duplicate execution.
+
+After a host launch reports `HOSTED_PI_IDEMPOTENCY_CONFLICT`, the client now reads
+the admitted receipt again and applies the same strict attempt/key/configuration
+comparison used on initial receipt lookup. A matching command returns the original
+handle without another launch or deadline renewal. A changed command still
+conflicts. Other launch errors are not treated as successful admissions, and a
+conflict without a valid receipt is not converted into success.
+
+The regression includes eight independent simultaneous clients plus a changed
+configuration racing them. All eight identical calls recover the original handle,
+the changed command rejects, one effect is recorded, and the first deadline is
+unchanged. This validates the hosted client against the reference provider only;
+durable production receipt storage, native sandbox execution, worker restart,
+and full M11.3 deployment acceptance remain open.
+
+Validation: `bun run type-check`, `bun run lint`, `bun run format:check`, and
+`bun run test` pass. The full test command builds all 41 workspaces and passes
+992 unit, 104 E2E, and 67 smoke tests. A separate error-path regression confirms
+that missing receipts preserve the original conflict and unrelated launch errors
+do not trigger receipt recovery.

@@ -13,6 +13,7 @@ import { GatewayResultEnvelopeSchema } from '@control-plane/runtime-gateway-prot
 import {
   evaluateRuntimeEligibility,
   RemoteRuntimeGatewayTransport,
+  RuntimeAdapterError,
   routeRuntimeConnections,
   runRuntimeAdapterConformance,
 } from '@control-plane/runtime-sdk'
@@ -106,6 +107,83 @@ function fixture(scenario = 'complete') {
 }
 
 describe('hosted managed Pi runtime worker', () => {
+  test('does not turn a launch error without an admitted receipt into success', async () => {
+    const { host } = fixture('running')
+    for (const code of ['HOSTED_PI_IDEMPOTENCY_CONFLICT', 'HOSTED_PI_CAPACITY_UNAVAILABLE']) {
+      const failure = new RuntimeAdapterError({
+        code,
+        classification: code === 'HOSTED_PI_IDEMPOTENCY_CONFLICT' ? 'conflict' : 'unavailable',
+        message: 'TEST_LAUNCH_FAILURE',
+        retryable: false,
+      })
+      let lookups = 0
+      const client = new HostedManagedPiClient({
+        host: {
+          inspect: () => host.inspect(),
+          getLaunch: async () => {
+            lookups += 1
+            return undefined
+          },
+          launch: async () => {
+            throw failure
+          },
+        },
+        now: () => new Date(now),
+        resolveAuthority: async () => ({ modelGrantRefs: [], toolGrantRefs: [] }),
+      })
+      await expect(
+        client.start({
+          attemptId: ids.attemptId,
+          idempotencyKey: 'hosted-pi:no-receipt',
+          configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+        })
+      ).rejects.toBe(failure)
+      expect(lookups).toBe(code === 'HOSTED_PI_IDEMPOTENCY_CONFLICT' ? 2 : 1)
+    }
+  })
+
+  test('replays concurrent clients with independently derived deadlines', async () => {
+    const { host } = fixture('running')
+    let tick = 0
+    const command = {
+      attemptId: ids.attemptId,
+      idempotencyKey: 'hosted-pi:concurrent-clocks',
+      configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+    }
+    const clients = Array.from(
+      { length: 8 },
+      () =>
+        new HostedManagedPiClient({
+          host,
+          now: () => new Date(Date.parse(now) + tick++),
+          resolveAuthority: async () => ({
+            modelGrantRefs: ['authz:model:managed-default'],
+            toolGrantRefs: ['authz:tool:project-files:read'],
+          }),
+        })
+    )
+    const changed = structuredClone(command)
+    changed.configuration.limits.duration.maximumMs += 1
+    const allResults = await Promise.allSettled([
+      ...clients.map((client) => client.start(command)),
+      clients[0].start(changed),
+    ])
+    const results = allResults.slice(0, 8)
+    expect(allResults[8]).toMatchObject({
+      status: 'rejected',
+      reason: { code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT' },
+    })
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(8)
+    expect(results.every((result) => JSON.stringify(result) === JSON.stringify(results[0]))).toBe(
+      true
+    )
+    expect(host.launches()).toHaveLength(1)
+    expect(host.effectCount(ids.attemptId)).toBe(1)
+    expect(host.launches()[0].deadlineAt).toBe(
+      new Date(Date.parse(now) + command.configuration.limits.duration.maximumMs).toISOString()
+    )
+  })
+
   test('coalesces simultaneous first-launch retries into one admitted execution', async () => {
     const { host, client } = fixture('running')
     const command = {

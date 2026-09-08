@@ -276,25 +276,8 @@ export class HostedManagedPiClient implements ManagedPiClient {
       configuration: true,
     }).parse(command)
     const { configuration } = input
-    const admitted = await this.#host.getLaunch(input.idempotencyKey)
-    if (admitted) {
-      const request = HostedManagedPiLaunchRequestSchema.parse(admitted.request)
-      const handle = RuntimeExecutionHandleSchema.parse(admitted.handle)
-      if (
-        request.idempotencyKey !== input.idempotencyKey ||
-        request.attemptId !== input.attemptId ||
-        handle.attemptId !== input.attemptId ||
-        canonicalJson(request.configuration) !== canonicalJson(configuration)
-      ) {
-        throw new RuntimeAdapterError({
-          code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
-          classification: 'conflict',
-          message: 'Hosted managed Pi launch idempotency key was reused',
-          retryable: false,
-        })
-      }
-      return handle
-    }
+    const admitted = await this.#admittedHandle(input)
+    if (admitted) return admitted
     const inspection = HostedRuntimeHostInspectionSchema.parse(await this.#host.inspect())
     if (inspection.health === 'unavailable' || inspection.capacity.maximumConcurrent === 0) {
       throw unavailableHost()
@@ -333,7 +316,38 @@ export class HostedManagedPiClient implements ManagedPiClient {
         issuedAt.getTime() + configuration.limits.duration.maximumMs
       ).toISOString(),
     })
-    return RuntimeExecutionHandleSchema.parse(await this.#host.launch(request))
+    try {
+      return RuntimeExecutionHandleSchema.parse(await this.#host.launch(request))
+    } catch (error) {
+      if (error instanceof RuntimeAdapterError && error.code === 'HOSTED_PI_IDEMPOTENCY_CONFLICT') {
+        // Another client may have admitted this command after our initial lookup,
+        // with its own deadline/authority. Only the original command may replay it.
+        const concurrentAdmission = await this.#admittedHandle(input)
+        if (concurrentAdmission) return concurrentAdmission
+      }
+      throw error
+    }
+  }
+
+  async #admittedHandle(input: ManagedPiStartCommand): Promise<RuntimeExecutionHandle | undefined> {
+    const admitted = await this.#host.getLaunch(input.idempotencyKey)
+    if (!admitted) return undefined
+    const request = HostedManagedPiLaunchRequestSchema.parse(admitted.request)
+    const handle = RuntimeExecutionHandleSchema.parse(admitted.handle)
+    if (
+      request.idempotencyKey !== input.idempotencyKey ||
+      request.attemptId !== input.attemptId ||
+      handle.attemptId !== input.attemptId ||
+      canonicalJson(request.configuration) !== canonicalJson(input.configuration)
+    ) {
+      throw new RuntimeAdapterError({
+        code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+        classification: 'conflict',
+        message: 'Hosted managed Pi launch idempotency key was reused',
+        retryable: false,
+      })
+    }
+    return handle
   }
 
   progress(
