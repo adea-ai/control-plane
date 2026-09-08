@@ -167,6 +167,31 @@ validation. Listing alone is not native lifecycle certification.
 The process suite passed 21 tests / 60 assertions; root lint, type-check,
 formatting, build, and tests passed, including 101 E2E tests / 571 assertions.
 
+## Native resume follow-up
+
+Resume now supplies the configured absolute cwd and MCP server configuration,
+registers discovered native sessions before their early notifications arrive,
+and coalesces repeated requests until a successful close ends that attachment.
+Running sessions and unconfirmed closes are rejected. A lost resume response
+retains uncertainty and fences prompts rather than silently retrying. Cleanup
+waits for a pending resume before closing; a successful close permits a new
+resume cycle. Existing completed execution snapshots are retained unchanged.
+Tracked creation and resumed sessions share the 128-session admission bound.
+
+The focused process suite passed 24 tests / 70 assertions, including discovery,
+duplicate resume, close/reopen, lost acknowledgement, and completed-result
+preservation. Root lint, type-check, formatting, build, and test passed, including
+101 E2E tests / 571 assertions.
+
+The retained driver probe ran in a fresh disposable container with the same
+exact versions and isolation controls above. After its single completed prompt,
+it closed the session, listed exactly one native session, resumed it, compared
+the old driver result for exact equality, and closed it again. It reported
+`resumePreservedResult: true`, usage 11/3, and one fixture model request. The
+container and installation were removed afterwards. This verifies the pinned
+agent's successful resume path, not reconnect/crash recovery, multiple-turn
+execution on an existing handle, load/history replay, or live-model behavior.
+
 This implementation is not exported from the package entrypoint or ready for
 promotion. Required follow-up includes late/ambiguous create reconciliation,
 retained-result limits, remaining native session lifecycle

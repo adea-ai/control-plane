@@ -72,6 +72,12 @@ try {
   assert.ok(outputs > 0)
   await driver.cleanup(handle)
   await driver.cleanup(handle)
+  const inventory = await transport.request('session/list', {})
+  assert.equal(inventory.sessions.length, 1)
+  const nativeSessionId = inventory.sessions[0].sessionId
+  await transport.request('session/resume', { sessionId: nativeSessionId })
+  assert.deepEqual((await driver.status(handle)).result, status.result)
+  await transport.cleanup(nativeSessionId)
   console.log(
     JSON.stringify({
       state: status.state,
@@ -79,6 +85,7 @@ try {
       usage: status.result.usage,
       duplicateHandle: true,
       cleanupConfirmed: true,
+      resumePreservedResult: true,
     })
   )
 } finally {

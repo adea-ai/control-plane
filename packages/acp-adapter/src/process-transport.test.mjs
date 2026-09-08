@@ -3,7 +3,7 @@ import { AcpDriver } from './index.ts'
 import { AcpProcessTransport } from './process-transport.ts'
 
 const source = `
-let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0;
+let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0, resumes=0;
 const pending=new Map();
 const creating=[];
 const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
@@ -23,6 +23,13 @@ process.stdin.on('data',chunk=>{
   if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:process.env.SCENARIO==='no-close'?{}:{sessionCapabilities:{close:{}}}});
   if(m.method==='session/close'){closes++;if(process.env.SCENARIO!=='lost-close')reply(m.id,{});}
   if(m.method==='close-probe')reply(m.id,{closes});
+  if(m.method==='resume-probe')reply(m.id,{resumes});
+  if(m.method==='session/resume'){
+   resumes++;
+   if(m.params.cwd!==process.cwd()||!Array.isArray(m.params.mcpServers))throw Error('missing resume configuration');
+   send({jsonrpc:'2.0',method:'session/update',params:{sessionId:m.params.sessionId,update:{sessionUpdate:'available_commands_update'}}});
+   if(process.env.SCENARIO!=='lost-resume')setTimeout(()=>reply(m.id,{}),20);
+  }
   if(m.method==='late-probe')reply(m.id,{lateCancelled});
   if(m.method==='session/list'){
    if(process.env.SCENARIO==='list-cycle')reply(m.id,{sessions:[],nextCursor:'repeat'});
@@ -76,6 +83,66 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('native resume attaches discovery with configuration and coalesces calls', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    await driver.inspect()
+    await Promise.all([
+      transport.request('session/resume', { sessionId: 'discovered' }),
+      transport.request('session/resume', { sessionId: 'discovered' }),
+    ])
+    expect(await transport.request('resume-probe', {})).toEqual({ resumes: 1 })
+    await transport.cleanup('discovered')
+    await transport.request('session/resume', { sessionId: 'discovered' })
+    expect(await transport.request('resume-probe', {})).toEqual({ resumes: 2 })
+    await transport.cleanup('discovered')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 2 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test('reopening a completed native session preserves its execution result', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    const handle = await driver.start(startRequest)
+    for await (const event of driver.progress(handle))
+      if (event.type === 'interaction')
+        await driver.submitApproval(handle, {
+          interactionId: event.data.interactionId,
+          idempotencyKey: 'resume-control',
+          decision: 'approve',
+        })
+    const before = await transport.snapshot('native-1')
+    expect(before.state).toBe('completed')
+    await transport.cleanup('native-1')
+    await transport.request('session/resume', { sessionId: 'native-1' })
+    expect(await transport.snapshot('native-1')).toEqual(before)
+    await transport.cleanup('native-1')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 2 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test('uncertain native resume is fenced and does not silently retry', async () => {
+  const { transport, driver } = fixture('lost-resume')
+  try {
+    await transport.open()
+    await driver.inspect()
+    await expect(transport.request('session/resume', { sessionId: 'discovered' })).rejects.toThrow()
+    await expect(transport.request('session/resume', { sessionId: 'discovered' })).rejects.toThrow()
+    await expect(
+      transport.request('session/prompt', { sessionId: 'discovered', prompt: [] })
+    ).rejects.toThrow('ACP_NATIVE_SESSION_RESUMING')
+    expect(await transport.request('resume-probe', {})).toEqual({ resumes: 1 })
+  } finally {
+    await transport.close()
+  }
+})
 
 test('native list collects all pages and normalizes nullable titles', async () => {
   const { transport, driver } = fixture()
