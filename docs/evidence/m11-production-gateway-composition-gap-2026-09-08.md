@@ -1,5 +1,27 @@
 # M11 production Runtime Gateway composition gap
 
+## Accumulated inventory bounds checked before writes
+
+The protocol bounds each incoming inventory frame, while the checkpoint bounds
+the accumulated active runtime set at 128. Previously an otherwise valid delta
+adding the 129th active runtime failed checkpoint validation only after registry,
+health and projection writes. The nontransactional path therefore retained a
+registered runtime from rejected inventory. A regression reproduced that partial
+state before the change.
+
+Checkpoint construction and validation now occur after scope/version/base checks
+and before inventory writes. The regression verifies unchanged registry,
+checkpoint, projections, availability events and metrics after rejection. It also
+accepts a remove-one/add-one delta at the 128-runtime boundary. The transactional
+path still uses the current checkpoint read inside its unit of work; no stale
+preparation-time checkpoint is substituted. This prevents this validation failure
+from causing partial writes, not arbitrary storage failures on the raw path.
+Unbounded historical connection listing remains separate work.
+
+Validation: 23 focused inventory tests passed, followed by format, lint, types,
+41 builds, 1,226 unit/E2E/smoke tests, 31 PostgreSQL database tests, the complete
+integration matrix and local connection-loss/restart/backup-restore drills.
+
 ## Actual Neon verification passed on the diagnostic candidate
 
 Candidate `26d65c7` completed the real preview verification: 41 builds, migration

@@ -308,6 +308,26 @@ export class RuntimeInventoryIngestionService {
       fail('INVENTORY_DELTA_BASE_MISMATCH')
     }
 
+    const previousRefs = new Set(current?.activeRuntimeRefs ?? [])
+    const reportedRefs = new Set(inventory.runtimeDrivers.map(({ opaqueRef }) => opaqueRef))
+    const removedRefs = new Set(inventory.removedRuntimeRefs ?? [])
+    const activeRefs =
+      mode === 'snapshot'
+        ? reportedRefs
+        : new Set(
+            [...previousRefs, ...reportedRefs].filter((runtimeRef) => !removedRefs.has(runtimeRef))
+          )
+    // Validate the accumulated delta, not just the bounded incoming frame,
+    // before any registry, health, projection or disappearance writes.
+    const checkpoint = RuntimeInventoryCheckpointSchema.parse({
+      runtimeNodeRefId: inventory.nodeId,
+      workspaceId: inventory.workspaceId,
+      snapshotVersion: inventory.snapshotVersion,
+      snapshotDigest: digest,
+      observedAt: inventory.observedAt,
+      activeRuntimeRefs: [...activeRefs].sort(),
+      revision: (current?.revision ?? 0) + 1,
+    })
     const normalized = prepared ?? (await this.#normalize(inventory, nodeStatus))
     const updated: RuntimeConnection[] = []
     for (const { driver, entry } of normalized) {
@@ -335,15 +355,6 @@ export class RuntimeInventoryIngestionService {
       )
     }
 
-    const previousRefs = new Set(current?.activeRuntimeRefs ?? [])
-    const reportedRefs = new Set(inventory.runtimeDrivers.map(({ opaqueRef }) => opaqueRef))
-    const removedRefs = new Set(inventory.removedRuntimeRefs ?? [])
-    const activeRefs =
-      mode === 'snapshot'
-        ? reportedRefs
-        : new Set(
-            [...previousRefs, ...reportedRefs].filter((runtimeRef) => !removedRefs.has(runtimeRef))
-          )
     const disappearedRefs =
       mode === 'snapshot'
         ? [...previousRefs].filter((runtimeRef) => !reportedRefs.has(runtimeRef))
@@ -354,15 +365,6 @@ export class RuntimeInventoryIngestionService {
       inventory.observedAt
     )
 
-    const checkpoint = RuntimeInventoryCheckpointSchema.parse({
-      runtimeNodeRefId: inventory.nodeId,
-      workspaceId: inventory.workspaceId,
-      snapshotVersion: inventory.snapshotVersion,
-      snapshotDigest: digest,
-      observedAt: inventory.observedAt,
-      activeRuntimeRefs: [...activeRefs].sort(),
-      revision: (current?.revision ?? 0) + 1,
-    })
     if (!(await this.#checkpoints.compareAndSet(current?.revision, checkpoint))) {
       const winner = await this.#checkpoints.get(inventory.nodeId)
       if (

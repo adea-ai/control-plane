@@ -21,6 +21,54 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('rejects an overflowing delta before writes and permits a same-size replacement', async () => {
+    const metrics = new RecordingGatewayMetrics()
+    const fixture = createFixture({ metrics, normalizer: new DefaultRuntimeInventoryNormalizer() })
+    const refs = Array.from(
+      { length: 129 },
+      (_, index) => `nref_${String(index).padStart(26, '0')}`
+    )
+    await fixture.service.ingest(
+      inventory(
+        1,
+        refs.slice(0, 128).map((ref) => driver(ref))
+      ),
+      source()
+    )
+    const before = {
+      connections: await fixture.registry.listByRuntimeNode(nodeId),
+      checkpoint: await fixture.checkpoints.get(nodeId),
+      projections: structuredClone(fixture.projections.runtimeConnections),
+      events: structuredClone(fixture.changes.events),
+      metrics: structuredClone(metrics.samples),
+    }
+    await expect(
+      fixture.service.ingest(
+        inventory(2, [driver(refs[128])], { mode: 'delta', baseSnapshotVersion: 1 }),
+        source()
+      )
+    ).rejects.toThrow()
+    expect(await fixture.registry.listByRuntimeNode(nodeId)).toEqual(before.connections)
+    expect(await fixture.checkpoints.get(nodeId)).toEqual(before.checkpoint)
+    expect(fixture.projections.runtimeConnections).toEqual(before.projections)
+    expect(fixture.changes.events).toEqual(before.events)
+    expect(metrics.samples).toEqual(before.metrics)
+    const replacement = await fixture.service.ingest(
+      inventory(2, [driver(refs[128])], {
+        mode: 'delta',
+        baseSnapshotVersion: 1,
+        removedRuntimeRefs: [refs[0]],
+      }),
+      source()
+    )
+    expect(replacement.outcome).toBe('applied')
+    expect(replacement.disappeared).toHaveLength(1)
+    const checkpoint = await fixture.checkpoints.get(nodeId)
+    expect(checkpoint.activeRuntimeRefs).toHaveLength(128)
+    expect(checkpoint.activeRuntimeRefs).toContain(refs[128])
+    expect(checkpoint.activeRuntimeRefs).not.toContain(refs[0])
+  })
+
   test('publishes inventory metrics only after the unit of work commits', async () => {
     for (const commitFails of [true, false]) {
       const scoped = createFixture()
