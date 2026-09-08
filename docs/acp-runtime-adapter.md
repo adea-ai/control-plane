@@ -77,3 +77,29 @@ executing a second native side effect.
 The package includes a deterministic ACP transport covering negotiation, execution, permission,
 cancellation, disconnect, timeout, native-session opacity, and the shared RuntimeAdapter conformance
 suite. The transport is test evidence and a driver fixture, not a production process launcher.
+
+## Explicit Local process composition
+
+The Local package exports `createLocalAcpRuntime(options)` for programmatic
+`runtimeFactory` configuration. It uses the native v1 process transport and requires
+an absolute executable path, explicit working directory and child environment,
+and caller-owned opaque session/interaction ID mappings. It does not install,
+authenticate, or configure the native harness. The CLI runtime default is unchanged.
+
+Local composition opens lifecycle-aware runtime adapters before its workflow
+endpoint and closes them after the endpoint stops, including startup rollback.
+Adapters without lifecycle hooks retain their existing behavior. This wiring does
+not establish process-restart recovery or complete Milestone 11 acceptance.
+
+The Local lifecycle regression also runs a disposable native-wire subprocess
+through the published-plan lookup, attempt lifecycle, SQLite outcome persistence,
+and duplicate dispatch replay. Its no-filesystem capability profile is explicit:
+the default fixture's `filesystem.read` requirement is separately asserted
+ineligible. Native ACP tool support must not be treated as evidence of a specific
+filesystem capability. This regression uses a wire fixture, not a real model or
+filesystem-tool certification.
+
+Local's direct loopback Restate endpoint uses bidirectional streaming so terminal
+control signals can arrive while a native dispatch activity is pending. Shared
+endpoint callers retain request/response mode unless they explicitly opt in;
+streaming support through external proxies is not inferred from the Local probe.

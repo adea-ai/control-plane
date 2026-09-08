@@ -65,7 +65,7 @@ describe('M5 runtime gateway acceptance manifest', () => {
   test('records every supported Runtime Gateway protocol version', () => {
     expect(GatewayProtocolManifest).toEqual({
       name: 'control-plane-runtime-gateway',
-      current: { major: 1, minor: 5 },
+      current: { major: 1, minor: 6 },
       supported: [
         { major: 1, minor: 0 },
         { major: 1, minor: 1 },
@@ -73,6 +73,7 @@ describe('M5 runtime gateway acceptance manifest', () => {
         { major: 1, minor: 3 },
         { major: 1, minor: 4 },
         { major: 1, minor: 5 },
+        { major: 1, minor: 6 },
       ],
     })
   })

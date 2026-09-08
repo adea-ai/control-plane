@@ -78,3 +78,7 @@ export {
   reconciliationCheckpointState,
   reconciliationReason,
 } from './reconciliation.js'
+export { interactionCommands } from './interaction-commands.js'
+export { executionCancellations } from './execution-cancellations.js'
+export { retiredCommandKeys } from './retired-command-keys.js'
+export { runtimeChannelOwnership } from './runtime-channel-ownership.js'

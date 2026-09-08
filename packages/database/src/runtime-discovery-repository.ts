@@ -5,7 +5,7 @@ import {
   type ExternalSessionDiscoveryReadModel,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
-import { and, asc, eq, type SQL } from 'drizzle-orm'
+import { and, asc, eq, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { runtimeDiscoveryProjections } from './schema/runtime-discovery-projections.js'
 
@@ -16,7 +16,40 @@ export interface PostgresRuntimeDiscoveryScope {
 }
 
 export class PostgresRuntimeDiscoveryRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>) {}
+
+  async compareAndSetRuntimeConnection(
+    scopeValue: PostgresRuntimeDiscoveryScope,
+    expectedValue: RuntimeConnectionDiscoveryReadModel,
+    nextValue: RuntimeConnectionDiscoveryReadModel
+  ): Promise<boolean> {
+    const scope = parseScope(scopeValue)
+    const expected = RuntimeConnectionDiscoveryReadModelSchema.parse(expectedValue)
+    const next = RuntimeConnectionDiscoveryReadModelSchema.parse(nextValue)
+    if (
+      expected.runtimeConnectionId !== next.runtimeConnectionId ||
+      expected.runtimeDefinitionId !== next.runtimeDefinitionId ||
+      expected.node?.runtimeNodeRefId !== next.node?.runtimeNodeRefId ||
+      Date.parse(next.observedAt) < Date.parse(expected.observedAt)
+    ) {
+      throw new Error('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+    }
+    const rows = await this.database
+      .update(runtimeDiscoveryProjections)
+      .set({
+        model: next,
+        updatedAt: new Date(next.observedAt),
+      })
+      .where(
+        and(
+          ...conditions('runtime_connection', scope),
+          eq(runtimeDiscoveryProjections.resourceId, expected.runtimeConnectionId),
+          sql`${runtimeDiscoveryProjections.model} = ${JSON.stringify(expected)}::jsonb`
+        )
+      )
+      .returning({ resourceId: runtimeDiscoveryProjections.resourceId })
+    return rows.length === 1
+  }
 
   async putRuntimeConnection(
     workspaceIdValue: string,
@@ -24,15 +57,37 @@ export class PostgresRuntimeDiscoveryRepository {
   ): Promise<void> {
     const workspaceId = IdentifierSchemas.workspaceId.parse(workspaceIdValue)
     const model = RuntimeConnectionDiscoveryReadModelSchema.parse(input)
-    await this.#put({
-      kind: 'runtime_connection',
+    const row = {
+      kind: 'runtime_connection' as const,
       resourceId: model.runtimeConnectionId,
       workspaceId,
       projectId: null,
       runtimeNodeRefId: model.node?.runtimeNodeRefId ?? null,
       model,
       updatedAt: new Date(model.observedAt),
-    })
+    }
+    const written = await this.database
+      .insert(runtimeDiscoveryProjections)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [runtimeDiscoveryProjections.kind, runtimeDiscoveryProjections.resourceId],
+        set: { model, updatedAt: row.updatedAt },
+        setWhere:
+          and(
+            eq(runtimeDiscoveryProjections.workspaceId, workspaceId),
+            sql`${runtimeDiscoveryProjections.runtimeNodeRefId} IS NOT DISTINCT FROM ${row.runtimeNodeRefId}`,
+            sql`${runtimeDiscoveryProjections.model}->>'runtimeDefinitionId' = ${model.runtimeDefinitionId}`,
+            or(
+              lt(runtimeDiscoveryProjections.updatedAt, row.updatedAt),
+              and(
+                eq(runtimeDiscoveryProjections.updatedAt, row.updatedAt),
+                sql`${runtimeDiscoveryProjections.model} = ${JSON.stringify(model)}::jsonb`
+              )
+            )
+          ) ?? sql`false`,
+      })
+      .returning({ resourceId: runtimeDiscoveryProjections.resourceId })
+    if (written.length !== 1) throw new Error('RUNTIME_DISCOVERY_WRITE_CONFLICT')
   }
 
   async putExternalSession(

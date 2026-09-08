@@ -22,10 +22,12 @@ interface RemoteRuntimeCommandInput {
   readonly executionId: string
   readonly attempt: ExecutionAttempt
   readonly effectKey: string
+  readonly issuedAt?: string
   readonly marketplacePluginReferences?: ExecutionWorkflowInput['marketplacePluginReferences']
 }
 
 export interface RemoteRuntimeCommandFactory {
+  getCommandId?(effectKey: string, operation: GatewayCommandEnvelope['operation']): string
   createExecute(
     input: RemoteRuntimeCommandInput & { readonly executionPlan: ExecutionPlan }
   ): Promise<unknown> | unknown
@@ -80,6 +82,7 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
     readonly effectKey: string
   }): Promise<WorkflowRuntimeOutcome> {
     const attempt = await this.#requiredAttempt(input.executionId, input.attemptId)
+    const issuedAt = await this.#replayIssuedAt(input.effectKey, 'runtime.execute')
     const command = GatewayCommandEnvelopeSchema.parse(
       await this.#factory.createExecute({
         executionId: input.executionId,
@@ -89,6 +92,7 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
           ? {}
           : { marketplacePluginReferences: input.marketplacePluginReferences }),
         effectKey: input.effectKey,
+        ...(issuedAt === undefined ? {} : { issuedAt }),
       })
     )
     if (command.operation !== 'runtime.execute') throw new Error('REMOTE_RUNTIME_OPERATION_INVALID')
@@ -106,12 +110,20 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       throw new Error('REMOTE_RUNTIME_INTERACTION_UNCONFIGURED')
     }
     const attempt = await this.#requiredAttempt(input.executionId, input.attemptId)
+    const operation =
+      input.action === 'input'
+        ? 'runtime.input'
+        : input.action === 'cancel'
+          ? 'runtime.cancel'
+          : 'runtime.approval'
+    const issuedAt = await this.#replayIssuedAt(input.effectKey, operation)
     const command = GatewayCommandEnvelopeSchema.parse(
       await this.#factory.createInteraction({
         executionId: input.executionId,
         attempt,
         response: input,
         effectKey: input.effectKey,
+        ...(issuedAt === undefined ? {} : { issuedAt }),
       })
     )
     if (!['runtime.input', 'runtime.approval', 'runtime.cancel'].includes(command.operation)) {
@@ -136,7 +148,7 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       })
     )
     if (command.operation !== 'runtime.cancel') throw new Error('REMOTE_RUNTIME_OPERATION_INVALID')
-    await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
+    const outcome = await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
       this.#factory.createCancel({
         executionId: input.executionId,
         attempt,
@@ -145,9 +157,25 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
         issuedAt,
       })
     )
+    // Returning normally authorizes the workflow to persist cancellation.
+    // Neither delivery failure nor a competing terminal outcome confirms it.
+    if (outcome.outcome !== 'cancelled') {
+      throw new Error('REMOTE_RUNTIME_CANCELLATION_UNCONFIRMED')
+    }
   }
 
   async cleanup(): Promise<void> {}
+
+  async #replayIssuedAt(
+    effectKey: string,
+    operation: GatewayCommandEnvelope['operation']
+  ): Promise<string | undefined> {
+    const commandId = this.#factory.getCommandId?.(effectKey, operation)
+    if (commandId === undefined) return undefined
+    // Internal timestamp only. Enqueue still compares the full command, including scope,
+    // payload and routing, and returns the original record without renewing its lease.
+    return (await this.#commands.get(commandId))?.issuedAt
+  }
 
   async #requiredAttempt(executionId: string, attemptId: string): Promise<ExecutionAttempt> {
     const attempt = await this.#attempts.getAttempt(attemptId)

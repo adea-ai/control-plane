@@ -9,6 +9,8 @@ import { ControlApiOperations } from './operations.js'
 
 const defaultCredential = 'stub-agent-hq-token'
 const fixtureByPath = new Map<string, unknown>([
+  [ControlApiOperations.cancelExecution.path, ControlApiFixtures.executionCancellation.response],
+  [ControlApiOperations.respondToInteraction.path, ControlApiFixtures.interactionResponse.response],
   [ControlApiOperations.verifyAuthentication.path, ControlApiFixtures.authentication.response],
   [ControlApiOperations.resolveProfile.path, ControlApiFixtures.profileResolution.response],
   [

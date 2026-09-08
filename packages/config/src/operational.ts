@@ -105,6 +105,12 @@ export function retryDelayMs(
 }
 
 export function operationalPolicyDigest(policy: OperationalPolicyConfig): `sha256:${string}` {
-  const canonical = JSON.stringify(policy, Object.keys(policy).sort())
+  const canonical = JSON.stringify(policy, (_key, value: unknown) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        )
+      : value
+  )
   return `sha256:${createHash('sha256').update(canonical).digest('hex')}`
 }

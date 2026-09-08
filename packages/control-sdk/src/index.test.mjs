@@ -9,6 +9,42 @@ import {
 } from './index.ts'
 
 describe('Control Plane SDK public client', () => {
+  test('interaction command sends exact scope and validates the acknowledgement', async () => {
+    const calls = []
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://control-plane.test/root/',
+      credential: 'interaction-token',
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init })
+        return Response.json(ControlApiFixtures.interactionResponse.response)
+      },
+    })
+    expect(
+      await client.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+    ).toEqual(ControlApiFixtures.interactionResponse.response)
+    expect(calls[0].url).toBe('https://control-plane.test/root/v1/interactions/respond')
+    expect(calls[0].init.headers.authorization).toBe('Bearer interaction-token')
+    expect(JSON.parse(calls[0].init.body)).toEqual(ControlApiFixtures.interactionResponse.request)
+    await expect(
+      client.respondToInteraction({
+        ...ControlApiFixtures.interactionResponse.request,
+        respondingPrincipalId: 'svc_other',
+      })
+    ).rejects.toThrow()
+    expect(calls).toHaveLength(1)
+    const invalid = new ControlPlaneClient({
+      baseUrl: 'https://control-plane.test',
+      credential: 'token',
+      fetch: async () =>
+        Response.json({
+          ...ControlApiFixtures.interactionResponse.response,
+          data: { ...ControlApiFixtures.interactionResponse.response.data, status: 'completed' },
+        }),
+    })
+    await expect(
+      invalid.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+    ).rejects.toBeInstanceOf(ControlPlaneClientError)
+  })
   test('sends validated requests with service authentication and correlation headers', async () => {
     const calls = []
     const client = new ControlPlaneClient({

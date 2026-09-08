@@ -19,6 +19,71 @@ const ids = {
 }
 
 describe('managed Pi remote command factory', () => {
+  test.each(['grant', 'deny', 'input'])(
+    'durable %s response replay retains the first remote command and rejects a stale response',
+    async (action) => {
+      const plan = createExecutionPlanTestFixture()
+      const commands = new InMemoryRuntimeCommandRepository()
+      const interaction = respondedInteraction(action, action === 'input' ? 'continue' : undefined)
+      let clock = '2026-08-25T12:06:00.000Z'
+      const factory = new ManagedPiRemoteCommandFactory({
+        contextPackages: { get: async () => undefined },
+        runtimeDiscovery: { getRuntimeConnection: async () => runtimeConnection() },
+        executions: {
+          getExecution: async () => ({
+            executionId: ids.executionId,
+            correlation: plan.correlation,
+          }),
+        },
+        interactions: { get: async () => interaction },
+        now: () => new Date(clock),
+      })
+      const observed = []
+      const createRuntime = () =>
+        new DurableRemoteWorkflowRuntime({
+          attempts: { getAttempt: async () => attempt() },
+          commands,
+          factory,
+          waiter: {
+            wait: async ({ command }) => {
+              observed.push(command)
+              return { outcome: 'completed' }
+            },
+          },
+        })
+      const input = {
+        executionId: ids.executionId,
+        attemptId: ids.attemptId,
+        interactionId: ids.interactionId,
+        responseId: ids.responseId,
+        action,
+        effectKey: `workflow:interaction:${action}`,
+      }
+      await createRuntime().applyInteraction(input)
+      clock = '2026-08-25T12:31:00.000Z'
+      await Promise.all(Array.from({ length: 8 }, () => createRuntime().applyInteraction(input)))
+      expect(observed).toHaveLength(9)
+      for (const record of observed) expect(record).toEqual(observed[0])
+      expect(observed[0].issuedAt).toBe('2026-08-25T12:06:00.000Z')
+      expect(observed[0].commandEnvelope.operation).toBe(
+        action === 'input' ? 'runtime.input' : 'runtime.approval'
+      )
+      expect(observed[0].commandEnvelope.payload.parameters).toMatchObject(
+        action === 'input'
+          ? { text: 'continue' }
+          : { decision: action === 'grant' ? 'approve' : 'deny' }
+      )
+      await expect(
+        createRuntime().applyInteraction({ ...input, responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+      ).rejects.toThrow('REMOTE_RUNTIME_INTERACTION_STALE')
+      expect(observed).toHaveLength(9)
+      expect(await commands.get(observed[0].commandId)).toEqual(observed[0])
+      await expect(
+        createRuntime().applyInteraction({ ...input, effectKey: `${input.effectKey}:new` })
+      ).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
+    }
+  )
+
   test('durable cancellation replay preserves the first payload and lease across clock changes', async () => {
     const plan = createExecutionPlanTestFixture()
     const commands = new InMemoryRuntimeCommandRepository()
@@ -92,6 +157,7 @@ describe('managed Pi remote command factory', () => {
       },
     }
     const scopes = []
+    let clock = '2026-08-25T12:00:00.000Z'
     const factory = new ManagedPiRemoteCommandFactory({
       contextPackages: { get: async () => contextPackage },
       runtimeDiscovery: {
@@ -108,7 +174,7 @@ describe('managed Pi remote command factory', () => {
       },
       executions: { getExecution: async () => undefined },
       interactions: { get: async () => undefined },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      now: () => new Date(clock),
     })
     const input = {
       executionId: ids.executionId,
@@ -156,6 +222,34 @@ describe('managed Pi remote command factory', () => {
         runtimeConnectionId: ids.runtimeConnectionId,
       },
     ])
+    const commands = new InMemoryRuntimeCommandRepository()
+    const observed = []
+    const runtime = new DurableRemoteWorkflowRuntime({
+      attempts: { getAttempt: async () => attempt() },
+      commands,
+      factory,
+      waiter: {
+        wait: async ({ command }) => {
+          observed.push(command)
+          return { outcome: 'completed' }
+        },
+      },
+    })
+    const dispatch = {
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      executionPlan: plan,
+      effectKey: input.effectKey,
+    }
+    await runtime.dispatch(dispatch)
+    clock = '2026-08-25T12:31:00.000Z'
+    await runtime.dispatch(dispatch)
+    expect(observed).toHaveLength(2)
+    expect(observed[1]).toEqual(observed[0])
+    expect(observed[1].expiresAt).toBe('2026-08-25T12:30:00.000Z')
+    await expect(
+      runtime.dispatch({ ...dispatch, effectKey: `${dispatch.effectKey}:new` })
+    ).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
   })
 
   test('fails closed without exactly one immutable local project grant', async () => {
@@ -251,6 +345,26 @@ describe('managed Pi remote command factory', () => {
       requiredCapabilities: [expected.capability],
       payload: { version: 1, parameters: expected.parameters },
     })
+    const afterDeadline = factory.createInteraction({
+      executionId: ids.executionId,
+      attempt: { ...attempt(), deadlineAt: '2026-08-25T12:05:00.000Z' },
+      response: {
+        interactionId: ids.interactionId,
+        responseId: ids.responseId,
+        action: expected.action,
+      },
+      effectKey: `workflow:execution-lifecycle-v1:${expected.action}:expired`,
+    })
+    if (expected.action === 'cancel') {
+      expect(await afterDeadline).toMatchObject({
+        operation: 'runtime.cancel',
+        issuedAt: '2026-08-25T12:05:01.000Z',
+        expiresAt: '2026-08-25T12:10:01.000Z',
+        payload: { version: 1, parameters: expected.parameters },
+      })
+    } else {
+      await expect(afterDeadline).rejects.toThrow('REMOTE_RUNTIME_COMMAND_EXPIRED')
+    }
   })
 
   test('fails closed when an interaction response is stale or unsupported', async () => {

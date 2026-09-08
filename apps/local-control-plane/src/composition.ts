@@ -44,6 +44,7 @@ import {
   DurableExecutionLifecycleActivities,
 } from '@control-plane/workflow-worker'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
+import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
 import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 
@@ -67,6 +68,12 @@ export interface LocalComponentManifest {
   }
 }
 
+/** Optional process lifecycle owned by the Local composition, not by individual attempts. */
+export interface LocalRuntimeTransport extends RuntimeAdapterWithTransport {
+  open?(): Promise<void>
+  close?(): Promise<void>
+}
+
 export interface LocalControlPlaneCompositionOptions {
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
@@ -80,12 +87,12 @@ export interface LocalControlPlaneCompositionOptions {
   readonly graphActivitiesFactory?: (input: {
     readonly persistence: SqlitePersistenceProvider
   }) => GraphSegmentActivityPort
-  readonly runtimeTransport?: RuntimeAdapterWithTransport
+  readonly runtimeTransport?: LocalRuntimeTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
     readonly contextPackages: LocalControlApiComposition['contextPackages']
     readonly dataDirectory: string
-  }) => RuntimeAdapterWithTransport
+  }) => LocalRuntimeTransport
   readonly secrets?: SecretsProvider
   readonly remoteControl?: RemoteControlHostAdapter<unknown>
   readonly remoteControlFactory?: (
@@ -96,13 +103,15 @@ export interface LocalControlPlaneCompositionOptions {
 }
 
 export class LocalControlPlaneComposition {
+  readonly interactionCommandService: LocalControlApiComposition['interactionCommandService']
+  readonly executionCancellationService: LocalControlApiComposition['executionCancellationService']
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
   readonly persistence: SqlitePersistenceProvider
   readonly objectStore: ObjectStore
   readonly workflow: WorkflowRuntime
   readonly secrets: SecretsProvider
-  readonly runtimeTransport: RuntimeAdapterWithTransport | undefined
+  readonly runtimeTransport: LocalRuntimeTransport | undefined
   readonly remoteControl: RemoteControlHostAdapter<unknown> | undefined
   readonly executionAcceptanceService: ExecutionAcceptanceService
   readonly executionValidationService: LocalControlApiComposition['executionValidationService']
@@ -120,6 +129,7 @@ export class LocalControlPlaneComposition {
   readonly contextPackages: LocalControlApiComposition['contextPackages']
   readonly executionPlans: LocalControlApiComposition['executionPlans']
   readonly executions: LocalControlApiComposition['executions']
+  readonly interactions: LocalControlApiComposition['interactions']
   readonly commands: LocalControlApiComposition['commands']
   readonly commandRepository: LocalControlApiComposition['commandRepository']
   readonly executionLifecycleActivities: ExecutionLifecycleActivities
@@ -190,6 +200,8 @@ export class LocalControlPlaneComposition {
         ? new UnavailableExecutionAcceptanceService()
         : controlApi.executionAcceptanceService
     this.executionValidationService = controlApi.executionValidationService
+    this.interactionCommandService = controlApi.interactionCommandService
+    this.executionCancellationService = controlApi.executionCancellationService
     this.profileResolutionService = controlApi.profileResolutionService
     this.projectStateResolutionService = controlApi.projectStateResolutionService
     this.contextPackageResolutionService = controlApi.contextPackageResolutionService
@@ -204,6 +216,7 @@ export class LocalControlPlaneComposition {
     this.contextPackages = controlApi.contextPackages
     this.executionPlans = controlApi.executionPlans
     this.executions = controlApi.executions
+    this.interactions = controlApi.interactions
     this.commands = controlApi.commands
     this.commandRepository = controlApi.commandRepository
     if (options.remoteControl !== undefined && options.remoteControlFactory !== undefined) {
@@ -221,7 +234,8 @@ export class LocalControlPlaneComposition {
             runtime: new DirectRuntimeActivityPort(
               this.persistence,
               this.objectStore,
-              runtimeTransport
+              runtimeTransport,
+              new LocalRuntimeInteractions(this.interactions, this.commandRepository)
             ),
             graph:
               options.graphActivities ??
@@ -234,6 +248,8 @@ export class LocalControlPlaneComposition {
       options.endpointFactory ??
       createRestateEndpointFactory({
         host: '127.0.0.1',
+        // Local Restate connects directly: allow control signals during long-running activities.
+        bidirectional: true,
         port: workflowEndpointPort,
         activities: this.executionLifecycleActivities,
       })
@@ -264,15 +280,19 @@ export class LocalControlPlaneComposition {
     if (this.#started) throw new Error('LOCAL_CONTROL_PLANE_ALREADY_STARTED')
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
     await this.persistence.migrate()
-    this.#endpoint = await this.#endpointFactory.create()
-    await this.#endpoint.run()
     try {
+      await this.runtimeTransport?.open?.()
+      this.#endpoint = await this.#endpointFactory.create()
+      await this.#endpoint.run()
       await this.workflow.start()
       await this.remoteControl?.start()
     } catch (error) {
-      await this.remoteControl?.stop()
+      await Promise.resolve()
+        .then(() => this.remoteControl?.stop())
+        .catch(() => undefined)
       await this.workflow.stop().catch(() => undefined)
-      await this.#endpoint.shutdown().catch(() => undefined)
+      await this.#endpoint?.shutdown().catch(() => undefined)
+      await this.runtimeTransport?.close?.().catch(() => undefined)
       this.#endpoint = undefined
       throw error
     }
@@ -312,15 +332,25 @@ export class LocalControlPlaneComposition {
   async close(): Promise<void> {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
-    await this.remoteControl?.stop()
-    await this.workflow.stop().catch(() => undefined)
-    await this.#endpoint?.shutdown().catch(() => undefined)
-    this.#endpoint = undefined
-    await this.secrets.close()
-    await this.objectStore.close()
-    this.persistence.close()
-    this.coordination.close()
-    this.observability.close()
+    try {
+      await this.remoteControl?.stop()
+    } finally {
+      await this.workflow.stop().catch(() => undefined)
+      await this.#endpoint?.shutdown().catch(() => undefined)
+      this.#endpoint = undefined
+      try {
+        await this.runtimeTransport?.close?.()
+      } finally {
+        await this.secrets.close()
+        await this.objectStore.close()
+        try {
+          this.persistence.close({ checkpoint: true })
+        } finally {
+          this.coordination.close()
+          this.observability.close()
+        }
+      }
+    }
   }
 }
 

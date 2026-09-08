@@ -102,5 +102,8 @@
     "bun": ">=1.4.0 <2",
     "node": ">=24 <25"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.0",
+  "patchedDependencies": {
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch"
+  }
 }

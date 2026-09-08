@@ -55,6 +55,21 @@ concrete supported ACP launcher is selected. A remote-gateway adapter is rejecte
 runtime deliberately leaves execution acceptance unavailable rather than selecting a fixture or
 silently routing to Cloud.
 
+`createLocalAcpRuntime` requires an explicit `resolvePrompt` function. The repository helper
+`createRepositoryAcpTaskPromptResolver(contextPackages)` resolves and verifies the exact
+ExecutionPlan/ContextPackage digests, schema/compiler pin and workspace/project scope, then sends
+the objective, bounded context, success criteria and output contract as task data. It preserves
+native harness instructions and authority; identifiers alone are not an executable task. The
+driver resolves this input before creating a native session, applies its request deadline, and
+rejects empty or greater-than-256-KiB UTF-8 prompts. Failed or timed-out resolution cannot later
+launch a session. Resolvers must be read-only and honor the supplied AbortSignal.
+
+This task-data resolver does not materialize profile/Skill instructions, configure or certify the
+native model route, install/authenticate a harness, grant filesystem/tool authority, or solve
+native aggregate usage and restart recovery. Those remain separate acceptance gates. The generic
+driver retains its reference-only metadata prompt for compatibility; the concrete Local factory
+does not silently select that fallback.
+
 Runtime interactions use the same durable workflow signal as other profiles. Input responses carry
 the bounded structured value validated by the interaction domain and are translated to the direct
 driver only after the workflow resumes. Approval, denial, cancellation, and input effects retain
@@ -68,6 +83,15 @@ owner-only. Do not back up one of those paths independently while work is admitt
 
 Stop the Local Control Plane and confirm the process plus bundled Restate child have exited. Create
 and verify an integrity manifest without printing file contents:
+
+Successful Local composition shutdown requests a cold SQLite checkpoint before closing the
+database. It truncates the WAL and verifies the switch to DELETE journal mode so deferred
+statement cleanup cannot remove sidecars during filesystem copying. Normal startup reinstates
+WAL mode. If another connection prevents this transition, shutdown reports
+`SQLITE_CHECKPOINT_BUSY`; do not proceed with the directory checkpoint until all users of the
+database are stopped and a clean shutdown/checkpoint succeeds. Ordinary provider `close()`
+remains available without this exclusive cold-checkpoint requirement. Never manually delete a
+live WAL to make backup succeed.
 
 ```sh
 bun run checkpoint create --profile local --source "$CONTROL_PLANE_DATA_DIR" --destination ./backups/local-pre-upgrade

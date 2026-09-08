@@ -35,7 +35,7 @@ export type GatewayProtocolVersion = z.output<typeof GatewayProtocolVersionSchem
 
 export const GatewayProtocolManifest = Object.freeze({
   name: 'control-plane-runtime-gateway',
-  current: { major: 1, minor: 5 },
+  current: { major: 1, minor: 6 },
   supported: [
     { major: 1, minor: 0 },
     { major: 1, minor: 1 },
@@ -43,6 +43,7 @@ export const GatewayProtocolManifest = Object.freeze({
     { major: 1, minor: 3 },
     { major: 1, minor: 4 },
     { major: 1, minor: 5 },
+    { major: 1, minor: 6 },
   ],
 })
 
@@ -350,6 +351,7 @@ const DriverInventorySchema = z
     adapterVersion: VersionStringSchema.optional(),
     driverVersion: VersionStringSchema,
     harnessVersion: VersionStringSchema.optional(),
+    capabilityTtlMs: z.number().int().positive().max(60_000).optional(),
     protocolVersion: GatewayProtocolVersionSchema,
     health: z.enum(['healthy', 'degraded', 'unavailable']),
     capabilities: z.array(CapabilitySchema).max(128),
@@ -372,6 +374,17 @@ export const GatewayInventoryEnvelopeSchema = CommonEnvelopeSchema.extend({
 })
   .strict()
   .superRefine((inventory, context) => {
+    for (const family of ['runtimeDrivers', 'contextProviders'] as const) {
+      inventory[family].forEach((driver, index) => {
+        if (driver.capabilityTtlMs !== undefined && inventory.protocolVersion.minor < 6) {
+          context.addIssue({
+            code: 'custom',
+            path: [family, index, 'capabilityTtlMs'],
+            message: 'Advertised capability TTL requires protocol v1.6',
+          })
+        }
+      })
+    }
     const mode = inventory.mode ?? 'snapshot'
     if (mode === 'delta' && inventory.protocolVersion.minor < 2) {
       context.addIssue({

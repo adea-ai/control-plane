@@ -85,6 +85,18 @@ const RuntimeConnectionTransitionSchema = z
 export type RuntimeConnectionRegistration = z.input<typeof RuntimeConnectionRegistrationSchema>
 export type RuntimeConnectionUpdate = z.input<typeof RuntimeConnectionUpdateSchema>
 
+export const RuntimeConnectionScanSchema = z
+  .object({
+    runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId,
+    afterConnectionId: IdentifierSchemas.runtimeConnectionId.optional(),
+    limit: z.number().int().min(1).max(128),
+  })
+  .strict()
+export type RuntimeConnectionScan = z.output<typeof RuntimeConnectionScanSchema>
+export interface RuntimeConnectionScanner {
+  scanByRuntimeNode(input: RuntimeConnectionScan): Promise<readonly RuntimeConnection[]>
+}
+
 export interface RuntimeConnectionRepository {
   insert(connection: RuntimeConnection): Promise<boolean>
   get(runtimeConnectionId: string): Promise<RuntimeConnection | undefined>
@@ -253,7 +265,9 @@ export class RuntimeConnectionRegistry {
   }
 }
 
-export class InMemoryRuntimeConnectionRepository implements RuntimeConnectionRepository {
+export class InMemoryRuntimeConnectionRepository
+  implements RuntimeConnectionRepository, RuntimeConnectionScanner
+{
   readonly #connections = new Map<string, RuntimeConnection>()
   readonly #identities = new Map<string, string>()
 
@@ -296,6 +310,15 @@ export class InMemoryRuntimeConnectionRepository implements RuntimeConnectionRep
       .filter((connection) => connection.runtimeNodeRefId === runtimeNodeRefId)
       .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
       .map(clone)
+  }
+
+  async scanByRuntimeNode(input: RuntimeConnectionScan): Promise<readonly RuntimeConnection[]> {
+    const { runtimeNodeRefId, afterConnectionId, limit } = RuntimeConnectionScanSchema.parse(input)
+    return (await this.listByRuntimeNode(runtimeNodeRefId))
+      .filter(
+        (row) => afterConnectionId === undefined || row.runtimeConnectionId > afterConnectionId
+      )
+      .slice(0, limit)
   }
 }
 

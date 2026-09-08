@@ -319,6 +319,8 @@ export async function renderRequirementsReport(ledger) {
     '',
     `Generated from [control-plane-requirements.v1.json](./control-plane-requirements.v1.json) for candidate \`${ledger.candidate.commit}\`. Do not edit this report directly; run \`bun run requirements:write\`.`,
     '',
+    'The candidate metadata and independent review below describe the recorded audit baseline, not the current branch head. Later requirement-level evidence is scoped to its own cited commit and does not re-certify that baseline or establish whole-milestone completion.',
+    '',
     '## Candidate',
     '',
     `- Audited commit: \`${ledger.candidate.commit}\` (\`${ledger.candidate.ref}\`)`,

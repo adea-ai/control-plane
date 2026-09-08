@@ -137,6 +137,7 @@ export function createRestateEndpointFactory(
   options: {
     readonly port?: number
     readonly host?: string
+    readonly bidirectional?: boolean
     readonly activities?: ExecutionLifecycleActivities
     readonly requestIdentityPublicKey?: string
   } = {}
@@ -174,13 +175,14 @@ export function createRestateEndpointFactory(
 
 export function createRestateEndpointOptions(
   options: {
+    readonly bidirectional?: boolean
     readonly activities?: ExecutionLifecycleActivities
     readonly requestIdentityPublicKey?: string
   } = {}
 ) {
   return {
     services: [createRestateWorkflowDefinition(options.activities)],
-    bidirectional: false,
+    bidirectional: options.bidirectional ?? false,
     ...(options.requestIdentityPublicKey === undefined
       ? {}
       : { identityKeys: [options.requestIdentityPublicKey] }),

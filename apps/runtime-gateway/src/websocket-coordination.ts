@@ -1,4 +1,31 @@
 import type { GatewayProtocolVersion } from '@control-plane/runtime-gateway-protocol'
+import type { RuntimeChannelOwnershipRepository } from '@control-plane/runtime-sdk'
+
+/** Repository ownership is authoritative; lifecycle sweeps reconcile without push delivery. */
+export class RepositoryRuntimeNodeCoordination implements RuntimeNodeCoordinationPort {
+  constructor(readonly repository: RuntimeChannelOwnershipRepository) {}
+
+  claim(record: ActiveRuntimeNodeChannelRecord): Promise<RuntimeNodeChannelClaimResult> {
+    return this.repository.claim(record)
+  }
+
+  heartbeat(record: ActiveRuntimeNodeChannelRecord): Promise<boolean> {
+    return this.repository.heartbeat(record)
+  }
+
+  lookup(nodeId: string): Promise<ActiveRuntimeNodeChannelRecord | undefined> {
+    return this.repository.lookup(nodeId)
+  }
+
+  release(record: ActiveRuntimeNodeChannelRecord): Promise<boolean> {
+    return this.repository.release(record)
+  }
+
+  subscribeReplacements(): () => void {
+    // No notification dependency: incoming frames, sends and sweeps consult the repository.
+    return () => undefined
+  }
+}
 
 export interface ActiveRuntimeNodeChannelRecord {
   readonly nodeId: string

@@ -357,6 +357,70 @@ export const ExecutionAcceptanceResponseSchema = successResponse(
   })
 )
 
+/** Requests execution-level cancellation; runtime routing and leases remain server-owned. */
+export const ExecutionCancellationCommandSchema = CommandContextSchema.extend({
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('execution.cancel'),
+  issuedAt: TimestampSchema,
+  payload: z.strictObject({ executionId: IdentifierSchemas.executionId }),
+}).strict()
+
+/** Confirms signal acceptance only, never that native work has stopped. */
+export const ExecutionCancellationCommandResultSchema = successResponse(
+  z.strictObject({
+    commandId: IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId,
+    status: z.literal('accepted'),
+    replayed: z.boolean(),
+  })
+)
+export type ExecutionCancellationCommand = z.input<typeof ExecutionCancellationCommandSchema>
+export type ExecutionCancellationCommandResult = z.output<
+  typeof ExecutionCancellationCommandResultSchema
+>
+
+export const InteractionResponseCommandSchema = CommandContextSchema.extend({
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('interaction.respond'),
+  issuedAt: TimestampSchema,
+  payload: z
+    .strictObject({
+      executionId: IdentifierSchemas.executionId,
+      attemptId: IdentifierSchemas.attemptId,
+      interactionId: IdentifierSchemas.interactionId,
+      expectedVersion: z.number().int().positive(),
+      action: z.enum(['approve', 'deny', 'input', 'grant', 'resume', 'cancel']),
+      value: z.json().optional(),
+    })
+    .superRefine((payload, context) => {
+      if ((payload.action === 'input') !== (payload.value !== undefined))
+        context.addIssue({ code: 'custom', message: 'Only input actions require a value' })
+      if (
+        payload.value !== undefined &&
+        new TextEncoder().encode(JSON.stringify(payload.value)).byteLength > 8_192
+      )
+        context.addIssue({ code: 'custom', message: 'Interaction input exceeds 8 KiB' })
+    }),
+}).strict()
+
+/** Acknowledges durable signal acceptance, not execution completion. */
+export const InteractionResponseCommandResultSchema = successResponse(
+  z.strictObject({
+    commandId: IdentifierSchemas.commandId,
+    responseId: IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    interactionId: IdentifierSchemas.interactionId,
+    status: z.literal('accepted'),
+    replayed: z.boolean(),
+  })
+)
+
+export type InteractionResponseCommand = z.input<typeof InteractionResponseCommandSchema>
+export type InteractionResponseCommandResult = z.output<
+  typeof InteractionResponseCommandResultSchema
+>
+
 export type ServiceAuthenticationRequest = z.input<typeof ServiceAuthenticationRequestSchema>
 export type ServiceAuthenticationResponse = z.output<typeof ServiceAuthenticationResponseSchema>
 export type ProfileResolutionRequest = z.input<typeof ProfileResolutionRequestSchema>
@@ -403,6 +467,14 @@ const contextPackageReference = {
 }
 
 export interface ControlApiFixtureSet {
+  readonly executionCancellation: {
+    readonly request: ExecutionCancellationCommand
+    readonly response: z.input<typeof ExecutionCancellationCommandResultSchema>
+  }
+  readonly interactionResponse: {
+    readonly request: InteractionResponseCommand
+    readonly response: z.input<typeof InteractionResponseCommandResultSchema>
+  }
   readonly authentication: {
     readonly request: ServiceAuthenticationRequest
     readonly response: z.input<typeof ServiceAuthenticationResponseSchema>
@@ -436,6 +508,56 @@ export interface ControlApiFixtureSet {
 }
 
 export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
+  executionCancellation: {
+    request: {
+      ...requestContext,
+      commandId,
+      idempotencyKey: 'cancellation-01JABCDEF0123456789ABCDEFG',
+      payloadHash: 'f'.repeat(64),
+      operation: 'execution.cancel',
+      issuedAt: '2026-08-23T12:00:00.000Z',
+      payload: { executionId: 'exe_01JABCDEF0123456789ABCDEFG' },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        commandId,
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        status: 'accepted',
+        replayed: false,
+      },
+    },
+  },
+  interactionResponse: {
+    request: {
+      ...requestContext,
+      commandId,
+      idempotencyKey: 'interaction-01JABCDEF0123456789ABCDEFG',
+      payloadHash: 'f'.repeat(64),
+      operation: 'interaction.respond',
+      issuedAt: '2026-08-23T12:00:00.000Z',
+      payload: {
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        expectedVersion: 1,
+        action: 'input',
+        value: 'continue',
+      },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        commandId,
+        responseId: commandId,
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        status: 'accepted',
+        replayed: false,
+      },
+    },
+  },
   authentication: {
     request: {
       ...requestContext,

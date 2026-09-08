@@ -3,6 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import {
+  DurableInteractionCommandService,
+  DurableExecutionCancellationService,
+} from '@control-plane/domain'
+import {
   DurableRemoteWorkflowRuntime,
   RuntimeDiscoveryAttemptRouter,
 } from '@control-plane/workflow-worker'
@@ -122,6 +126,10 @@ describe('Hosted server composition', () => {
         'postgresql://postgres/control_plane'
       )
       expect(composition.runtimeActivityPort).toBeInstanceOf(DurableRemoteWorkflowRuntime)
+      expect(composition.interactionCommandService).toBeInstanceOf(DurableInteractionCommandService)
+      expect(composition.executionCancellationService).toBeInstanceOf(
+        DurableExecutionCancellationService
+      )
       expect(composition.runtimeAttemptRouter).toBeInstanceOf(RuntimeDiscoveryAttemptRouter)
       expect(calls).toEqual([
         'database:check',

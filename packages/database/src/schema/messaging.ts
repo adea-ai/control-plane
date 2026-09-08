@@ -47,9 +47,12 @@ export const outboxEvents = pgTable(
     revision: revisionColumn(),
     ...timestampColumns(),
     publishedAt: timestamp('published_at', { mode: 'date', withTimezone: true }),
+    nextAttemptAt: timestamp('next_attempt_at', { mode: 'date', withTimezone: true }),
+    quarantinedAt: timestamp('quarantined_at', { mode: 'date', withTimezone: true }),
   },
   (table) => [
     index('outbox_events_pending_index').on(table.status, table.createdAt),
+    index('outbox_events_retry_index').on(table.status, table.quarantinedAt, table.nextAttemptAt),
     index('outbox_events_aggregate_index').on(table.aggregateType, table.aggregateId),
   ]
 )

@@ -51,12 +51,17 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     this.#now = options.now ?? (() => new Date())
   }
 
+  getCommandId(effectKey: string, operation: GatewayCommandEnvelope['operation']): string {
+    return identifier('cmd', `${effectKey}:${operation}`)
+  }
+
   async createExecute(input: {
     readonly executionId: string
     readonly attempt: ExecutionAttempt
     readonly executionPlan: ExecutionPlan
     readonly marketplacePluginReferences?: ExecutionWorkflowInput['marketplacePluginReferences']
     readonly effectKey: string
+    readonly issuedAt?: string
   }): Promise<GatewayCommandEnvelope> {
     const contextPackageValue = await this.#contextPackages.get({
       contextPackageId: input.executionPlan.contextPackage.contextPackageId,
@@ -86,6 +91,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
       runtime,
       effectKey: input.effectKey,
       operation: 'runtime.execute',
+      ...(input.issuedAt === undefined ? {} : { issuedAt: new Date(input.issuedAt) }),
       requiredCapabilities: input.executionPlan.runtimeRequirements.map(
         ({ capability }) => capability
       ),
@@ -104,6 +110,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
     readonly attempt: ExecutionAttempt
     readonly response: WorkflowInteractionResponse
     readonly effectKey: string
+    readonly issuedAt?: string
   }): Promise<GatewayCommandEnvelope> {
     const [execution, interaction] = await Promise.all([
       this.#executions.getExecution(input.executionId),
@@ -139,6 +146,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
         runtime,
         effectKey: input.effectKey,
         operation: 'runtime.input',
+        ...(input.issuedAt === undefined ? {} : { issuedAt: new Date(input.issuedAt) }),
         requiredCapabilities: ['interaction.user-input'],
         parameters: { handleId, interactionId: interaction.interactionId, text },
       })
@@ -151,6 +159,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
         runtime,
         effectKey: input.effectKey,
         operation: 'runtime.approval',
+        ...(input.issuedAt === undefined ? {} : { issuedAt: new Date(input.issuedAt) }),
         requiredCapabilities: ['interaction.approval'],
         parameters: {
           handleId,
@@ -167,7 +176,10 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
         runtime,
         effectKey: input.effectKey,
         operation: 'runtime.cancel',
+        ...(input.issuedAt === undefined ? {} : { issuedAt: new Date(input.issuedAt) }),
         requiredCapabilities: ['execution.cancel'],
+        respectAttemptDeadline: false,
+        maximumDurationMs: 5 * 60 * 1_000,
         parameters: { handleId, requestedAt: interaction.response.respondedAt },
       })
     }
@@ -276,7 +288,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
       traceId: identifier('trc', input.executionId),
       sentAt: issuedAt.toISOString(),
       channelGeneration: 1,
-      commandId: identifier('cmd', identity),
+      commandId: this.getCommandId(input.effectKey, input.operation),
       idempotencyKey: `remote:${hash(identity).slice(0, 48)}`,
       payloadHash: `sha256:${hash(JSON.stringify(payload))}`,
       issuedAt: issuedAt.toISOString(),

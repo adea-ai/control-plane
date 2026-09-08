@@ -13,11 +13,7 @@ export interface RemoteRuntimeCommandReader {
 }
 
 export interface RemoteRuntimeEventReader {
-  queryAfter(
-    executionId: string,
-    afterSequence: number,
-    limit: number
-  ): Promise<readonly ExecutionEvent[]>
+  latestInteraction(executionId: string, attemptId: string): Promise<ExecutionEvent | undefined>
 }
 
 export interface PollingRemoteRuntimeOutcomeWaiterOptions {
@@ -58,11 +54,26 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     readonly executionId: string
     readonly attemptId: string
   }): Promise<WorkflowRuntimeOutcome> {
-    const operation = GatewayCommandEnvelopeSchema.parse(input.command.commandEnvelope).operation
+    const envelope = GatewayCommandEnvelopeSchema.parse(input.command.commandEnvelope)
+    const operation = envelope.operation
+    const parameters = 'parameters' in envelope.payload ? envelope.payload.parameters : undefined
+    const respondedInteractionId =
+      (operation === 'runtime.approval' || operation === 'runtime.input') &&
+      typeof parameters === 'object' &&
+      parameters !== null &&
+      !Array.isArray(parameters) &&
+      typeof parameters['interactionId'] === 'string'
+        ? parameters['interactionId']
+        : undefined
     for (;;) {
       const execution = await this.#executions.getExecution(input.executionId)
       if (execution === undefined) throw new Error('REMOTE_RUNTIME_EXECUTION_MISSING')
-      const outcome = await this.#executionOutcome(execution)
+      const outcome = await this.#executionOutcome(
+        execution,
+        input.attemptId,
+        operation === 'runtime.cancel',
+        respondedInteractionId
+      )
       if (outcome !== undefined) return outcome
       const command = await this.#commands.get(input.command.commandId)
       if (command === undefined) throw new Error('REMOTE_RUNTIME_COMMAND_MISSING')
@@ -91,7 +102,12 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     }
   }
 
-  async #executionOutcome(execution: Execution): Promise<WorkflowRuntimeOutcome | undefined> {
+  async #executionOutcome(
+    execution: Execution,
+    attemptId: string,
+    cancelling: boolean,
+    respondedInteractionId?: string
+  ): Promise<WorkflowRuntimeOutcome | undefined> {
     if (execution.state === 'completed') {
       if (execution.terminalResultRef === undefined) {
         throw new Error('REMOTE_RUNTIME_RESULT_REFERENCE_MISSING')
@@ -109,13 +125,13 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     if (execution.state === 'timed_out') {
       return { outcome: 'failed', failureCode: 'REMOTE_RUNTIME_TIMED_OUT', retryable: false }
     }
-    if (execution.state !== 'awaiting_input') return undefined
-    const events = await this.#events.queryAfter(execution.executionId, 0, 1_000)
-    const interaction = [...events]
-      .reverse()
-      .find((event) => event.type === 'interaction.requested')
+    // Control delivery can precede the next execution-state event. Do not
+    // re-suspend on the interaction this command answered, or let any pending
+    // interaction hide cancellation confirmation/expiry.
+    if (execution.state !== 'awaiting_input' || cancelling) return undefined
+    const interaction = await this.#events.latestInteraction(execution.executionId, attemptId)
     const interactionId = interaction?.payload['interactionId']
-    return typeof interactionId === 'string'
+    return typeof interactionId === 'string' && interactionId !== respondedInteractionId
       ? { outcome: 'awaiting_input', interactionId }
       : undefined
   }

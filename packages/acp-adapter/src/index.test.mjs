@@ -64,6 +64,154 @@ function fixture(options = {}) {
 }
 
 describe('ACP RuntimeAdapter', () => {
+  test.each(['resolved', 'failure', 'oversized', 'timeout'])(
+    'resolves task content before native session creation: %s',
+    async (mode) => {
+      const transport = new ReferenceAcpTransport({ now: () => now })
+      let signal
+      const driver = new AcpDriver({
+        transport,
+        adapterVersion: '1.0.0',
+        externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
+        interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+        requestTimeoutMs: 20,
+        resolvePrompt: async (request, abort) => {
+          signal = abort
+          expect(transport.calls().some(({ method }) => method === 'session/new')).toBe(false)
+          expect(request.attemptId).toBe(attemptId)
+          if (mode === 'failure') throw new Error('PRIVATE_RESOLVER_DETAIL')
+          if (mode === 'oversized') return 'x'.repeat(262_145)
+          if (mode === 'timeout') await delay(50)
+          return `Actual task for ${attemptId}: inspect the authorized evidence.`
+        },
+      })
+      const request = { attemptId, idempotencyKey: 'resolved-task', executionPlan: plan() }
+      if (mode === 'resolved') {
+        await driver.start(request)
+        const prompt = transport.calls().find(({ method }) => method === 'session/prompt')
+        expect(prompt.params.prompt[0].text).toContain('inspect the authorized evidence')
+        await driver.start(request)
+        expect(transport.calls().filter(({ method }) => method === 'session/prompt')).toHaveLength(
+          1
+        )
+      } else {
+        await expect(driver.start(request)).rejects.toMatchObject({
+          code: mode === 'oversized' ? 'ACP_PROMPT_INVALID' : 'ACP_PROMPT_RESOLUTION_FAILED',
+        })
+        if (mode === 'timeout') {
+          expect(signal.aborted).toBe(true)
+          await delay(60)
+        }
+        expect(transport.calls().some(({ method }) => method === 'session/new')).toBe(false)
+        expect(JSON.stringify(transport.calls())).not.toContain('PRIVATE_RESOLVER_DETAIL')
+      }
+    }
+  )
+
+  test.each(['permission', 'input'])(
+    'binds %s responses to the owning execution before dispatch',
+    async (kind) => {
+      const transport = new ReferenceAcpTransport({ scenario: 'running', now: () => now })
+      const originalUpdates = transport.updates.bind(transport)
+      if (kind === 'input')
+        transport.updates = async function* (...args) {
+          for await (const update of originalUpdates(...args))
+            yield update.sessionUpdate === 'request_permission'
+              ? {
+                  sessionUpdate: 'elicitation',
+                  requestId: update.requestId,
+                  prompt: 'Input required',
+                }
+              : update
+        }
+      let sessions = 0
+      const driver = new AcpDriver({
+        transport,
+        adapterVersion: '1.0.0',
+        externalSessionId: () =>
+          ++sessions === 1 ? 'ses_01JABCDEF0123456789ABCDEFG' : 'ses_01JABCDEF0123456789ABCDEFH',
+        interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+      })
+      const owner = await driver.start({
+        attemptId,
+        idempotencyKey: 'owner',
+        executionPlan: plan(),
+      })
+      const other = await driver.start({
+        attemptId: 'att_01JABCDEF0123456789ABCDEFH',
+        idempotencyKey: 'other',
+        executionPlan: plan(),
+      })
+      let interactionId
+      for await (const event of driver.progress(owner))
+        if (event.type === 'interaction') {
+          interactionId = event.data.interactionId
+          break
+        }
+      expect(interactionId).toBeDefined()
+      const submit = (handle, key) =>
+        kind === 'permission'
+          ? driver.submitApproval(handle, {
+              interactionId,
+              idempotencyKey: key,
+              decision: 'approve',
+            })
+          : driver.submitInput(handle, {
+              interactionId,
+              idempotencyKey: key,
+              text: 'approved input',
+            })
+      await expect(submit(other, 'wrong-owner')).rejects.toMatchObject({
+        code: 'ACP_INTERACTION_MISSING',
+      })
+      expect(transport.responses()).toEqual([])
+      await expect(
+        submit({ ...owner, attemptId: other.attemptId }, 'forged')
+      ).rejects.toMatchObject({ code: 'ACP_EXECUTION_HANDLE_MISSING' })
+      expect(transport.responses()).toEqual([])
+      await submit(owner, 'legitimate')
+      expect(transport.responses()).toHaveLength(1)
+      await submit(owner, 'legitimate')
+      expect(transport.responses()).toHaveLength(1)
+    }
+  )
+
+  test('keeps colliding interaction IDs isolated between executions', async () => {
+    const transport = new ReferenceAcpTransport({ scenario: 'running', now: () => now })
+    const originalUpdates = transport.updates.bind(transport)
+    let streams = 0
+    transport.updates = async function* (...args) {
+      const requestId = 40 + streams++
+      for await (const update of originalUpdates(...args))
+        yield update.sessionUpdate === 'request_permission' ? { ...update, requestId } : update
+    }
+    let sessions = 0
+    const driver = new AcpDriver({
+      transport,
+      adapterVersion: '1.0.0',
+      externalSessionId: () =>
+        ++sessions === 1 ? 'ses_01JABCDEF0123456789ABCDEFG' : 'ses_01JABCDEF0123456789ABCDEFH',
+      interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+    })
+    const handles = []
+    for (const id of [attemptId, 'att_01JABCDEF0123456789ABCDEFH']) {
+      const handle = await driver.start({
+        attemptId: id,
+        idempotencyKey: id,
+        executionPlan: plan(),
+      })
+      handles.push(handle)
+      for await (const event of driver.progress(handle)) if (event.type === 'interaction') break
+    }
+    for (const handle of handles)
+      await driver.submitApproval(handle, {
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: handle.attemptId,
+        decision: 'approve',
+      })
+    expect(transport.responses().map((response) => response.requestId)).toEqual([40, 41])
+  })
+
   test.each(['approve', 'deny'])(
     'preserves opaque native permission option IDs for %s',
     async (decision) => {

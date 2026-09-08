@@ -318,6 +318,7 @@
       "browser": false,
       "exports": [],
       "workspaceDependencies": [
+        "@control-plane/acp-adapter",
         "@control-plane/bootstrap",
         "@control-plane/config",
         "@control-plane/context",
@@ -889,6 +890,49 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-EXECUTION-CANCEL",
+      "name": "cancelExecution",
+      "operation": "execution.cancel",
+      "method": "POST",
+      "path": "/v1/executions/cancel",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "execution:cancel scope plus accepting principal and workspace/project ownership",
+        "service": "ExecutionCancellationController -> DurableExecutionCancellationService",
+        "persistence": "SQLite and PostgreSQL immutable cancellation receipts",
+        "execution": "Restate cancelExecution shared handler",
+        "delivery": "first-command idempotency key and strict signal acceptance",
+        "cleanup": "existing execution lifecycle cleanup after cancellation confirmation"
+      },
+      "assessment": "Local public SDK cancellation is verified through SQLite, real Restate and pinned native ACP with held model connection closure; all-profile cancellation is not certified.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/executions/execution-cancellation.controller.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/cancellation-replay.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/cancellation.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Verify PostgreSQL public cancellation with real Restate and remote native execution; complete relay support, retention and terminal-race reconciliation."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "execution.cancel",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-EXECUTION-VALIDATE",
       "name": "validateExecutionRequest",
       "operation": "execution.validate",
@@ -990,6 +1034,45 @@
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-INTERACTION-RESPOND",
+      "name": "respondToInteraction",
+      "operation": "interaction.respond",
+      "method": "POST",
+      "path": "/v1/interactions/respond",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with interaction:respond scope and stored principal/workspace/project ownership",
+        "service": "InteractionCommandController -> DurableInteractionCommandService",
+        "persistence": "SQLite command receipts and interaction records",
+        "execution": "Restate shared interaction handler -> direct runtime response",
+        "delivery": "durable signal acceptance and idempotent receipt replay",
+        "cleanup": "attempt interaction cleanup and composition shutdown"
+      },
+      "assessment": "Authenticated route and SQLite conflict/retry behavior are tested; Local wires the service and other profiles fail closed when unconfigured.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/executions/interaction-command.controller.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/interaction-command-service.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Verify native interactions through HTTP and complete PostgreSQL, relay, automatic reconciliation and retention/export parity."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "interaction.respond",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
     },
     {
       "id": "OP-MARKETPLACE-CATALOG",
@@ -1281,7 +1364,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:faacfe22c5b7fad2f7bc2c38e2b29ce138b47286210f205f673cda218423737c"
+      "sourceDigest": "sha256:431f71392778e97b611731a1f84e8661e7ffb2c1bb5b5ae7bcb3531a90d58c61"
     },
     {
       "id": "hosted-server",
@@ -1320,7 +1403,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:e54804d5feb87337dbff7477de05ca4f2f1a3469b559f74a95a92afb3c509e2d"
+      "sourceDigest": "sha256:2601db420518094bc7ff7d267c72354441a65b7f8c826fe0ec4a0403068ed205"
     },
     {
       "id": "hosted-simple",
@@ -1359,7 +1442,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
+      "sourceDigest": "sha256:bfbc4fbc7a08d9b7b5af7edc1a57215f8ddb0520864a6497378d34dd147ccd20"
     },
     {
       "id": "local",
@@ -1398,7 +1481,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
+      "sourceDigest": "sha256:bfbc4fbc7a08d9b7b5af7edc1a57215f8ddb0520864a6497378d34dd147ccd20"
     }
   ],
   "ownership": [

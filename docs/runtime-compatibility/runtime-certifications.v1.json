@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "matrixVersion": "1.0.0",
-  "updatedAt": "2026-08-29T12:00:00.000Z",
+  "matrixVersion": "1.1.0",
+  "updatedAt": "2026-09-08T10:11:00.000Z",
   "classifications": ["supported", "preview", "degraded", "incompatible", "revoked", "untested"],
   "minimumSupportedVersions": [
     {
@@ -20,6 +20,101 @@
     }
   ],
   "certifications": [
+    {
+      "certificationId": "managed-pi-reference-gateway-1-6-0",
+      "runtimeFamily": "pi",
+      "connectionType": "managed_local",
+      "classification": "supported",
+      "versions": {
+        "adapter": "1.0.0",
+        "driver": "1.0.0",
+        "harness": "0.52.1",
+        "protocol": "1.6.0"
+      },
+      "verifiedCapabilities": [
+        "execution.cancel",
+        "interaction.approval",
+        "interaction.user-input",
+        "stream.events",
+        "stream.output",
+        "tool.call"
+      ],
+      "limitations": ["REFERENCE_DRIVER_CERTIFICATION"],
+      "testedPlatform": {
+        "operatingSystem": "portable",
+        "architecture": "portable",
+        "location": "local_device",
+        "environment": "reference-runtime-node"
+      },
+      "certifiedAt": "2026-09-08T10:10:07.611Z",
+      "evidence": [
+        {
+          "suite": "runtime-adapter-conformance",
+          "source": "packages/managed-pi-adapter/src/index.test.mjs",
+          "command": "bun run test"
+        },
+        {
+          "suite": "direct-local-transport-integration",
+          "source": "packages/managed-pi-adapter/src/index.test.mjs",
+          "command": "bun run test"
+        },
+        {
+          "suite": "runtime-gateway-integration",
+          "source": "packages/managed-pi-adapter/src/gateway.test.mjs",
+          "command": "bun run test"
+        }
+      ]
+    },
+    {
+      "certificationId": "acp-reference-gateway-1-6-0",
+      "runtimeFamily": "acp",
+      "connectionType": "external_local",
+      "classification": "supported",
+      "versions": {
+        "adapter": "1.0.0",
+        "driver": "1.0.0",
+        "harness": "2.4.0",
+        "protocol": "1.6.0"
+      },
+      "verifiedCapabilities": [
+        "execution.cancel",
+        "interaction.approval",
+        "session.close",
+        "session.create",
+        "session.history",
+        "session.list",
+        "session.load",
+        "session.resume",
+        "stream.events",
+        "stream.output",
+        "tool.call"
+      ],
+      "limitations": ["REFERENCE_DRIVER_CERTIFICATION"],
+      "testedPlatform": {
+        "operatingSystem": "portable",
+        "architecture": "portable",
+        "location": "local_device",
+        "environment": "reference-runtime-node"
+      },
+      "certifiedAt": "2026-09-08T10:10:07.612Z",
+      "evidence": [
+        {
+          "suite": "runtime-adapter-conformance",
+          "source": "packages/acp-adapter/src/index.test.mjs",
+          "command": "bun run test"
+        },
+        {
+          "suite": "direct-local-transport-integration",
+          "source": "packages/acp-adapter/src/index.test.mjs",
+          "command": "bun run test"
+        },
+        {
+          "suite": "runtime-gateway-integration",
+          "source": "packages/acp-adapter/src/gateway.test.mjs",
+          "command": "bun run test"
+        }
+      ]
+    },
     {
       "certificationId": "managed-pi-reference-1-0-0",
       "runtimeFamily": "pi",

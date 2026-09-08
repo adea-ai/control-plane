@@ -1,7 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  RuntimeAdapterError,
   RuntimeExecutionHandleSchema,
   RuntimeInputRequestSchema,
   type RuntimeExecutionHandle,
@@ -12,6 +14,12 @@ import {
   type ManagedPiClient,
   type ManagedPiEvent,
 } from './index.js'
+import {
+  persistTerminalRecord,
+  readTerminalRecord,
+  readTerminalEvents,
+  recoverTerminalHandle,
+} from './terminal-record.js'
 
 const DRIVER_VERSION = '1.1.0'
 const PROTOCOL_VERSION = '1.0.0'
@@ -54,6 +62,7 @@ interface ProcessExecution {
   outputTokens: number
   durationMs: number
   error?: Error
+  persistence?: Promise<void>
 }
 
 export class ManagedPiProcessClient implements ManagedPiClient {
@@ -61,6 +70,10 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   readonly #environment: Readonly<Record<string, string>>
   readonly #executablePath: string
   readonly #executions = new Map<string, ProcessExecution>()
+  readonly #admissions = new Map<
+    string,
+    { readonly fingerprint: string; readonly result: Promise<RuntimeExecutionHandle> }
+  >()
   readonly #inputResolver: ManagedPiProcessInputResolver
   readonly #now: () => Date
   readonly #rpcTimeoutMs: number
@@ -119,11 +132,64 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       attemptId: commandInput.attemptId,
       startedAt: this.#now().toISOString(),
     })
-    const existing = this.#executions.get(handle.handleId)
-    if (existing !== undefined) return structuredClone(existing.handle)
+    if (
+      typeof commandInput.idempotencyKey !== 'string' ||
+      commandInput.idempotencyKey.length < 1 ||
+      commandInput.idempotencyKey.length > 256
+    )
+      throw new Error('PI_START_INVALID_IDEMPOTENCY_KEY')
+    const fingerprint = JSON.stringify(
+      { idempotencyKey: commandInput.idempotencyKey, configuration },
+      (_key, value: unknown) => {
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          return Object.fromEntries(
+            Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+          )
+        }
+        return value
+      }
+    )
+    const admitted = this.#admissions.get(handle.handleId)
+    if (admitted) {
+      if (admitted.fingerprint !== fingerprint) throw new Error('PI_START_IDEMPOTENCY_CONFLICT')
+      return structuredClone(await admitted.result)
+    }
+    const result = this.#startProcess(handle, configuration, fingerprint)
+    // Retain rejected admissions as well: failure does not establish absence of native effects.
+    this.#admissions.set(handle.handleId, { fingerprint, result })
+    return structuredClone(await result)
+  }
 
+  async #startProcess(
+    handle: RuntimeExecutionHandle,
+    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
+    fingerprint: string
+  ): Promise<RuntimeExecutionHandle> {
+    try {
+      await this.#reserveAdmission(handle, fingerprint)
+    } catch (error) {
+      if (
+        !(error instanceof RuntimeAdapterError) ||
+        error.code !== 'PI_START_RECONCILIATION_REQUIRED'
+      )
+        throw error
+      try {
+        return await recoverTerminalHandle(
+          this.#dataDirectory,
+          handle.attemptId,
+          createHash('sha256').update(fingerprint).digest('hex')
+        )
+      } catch (recoveryError) {
+        if (
+          recoveryError instanceof RuntimeAdapterError &&
+          recoveryError.code === 'PI_START_IDEMPOTENCY_CONFLICT'
+        )
+          throw recoveryError
+        throw error
+      }
+    }
     const invocation = await this.#inputResolver.resolve(configuration)
-    const directory = join(this.#dataDirectory, commandInput.attemptId)
+    const directory = join(this.#dataDirectory, handle.attemptId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const systemPromptPath = join(directory, 'system-prompt.md')
     await writeFile(systemPromptPath, invocation.systemPrompt, { encoding: 'utf8', mode: 0o600 })
@@ -183,11 +249,63 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     return structuredClone(handle)
   }
 
+  async #reserveAdmission(handle: RuntimeExecutionHandle, fingerprint: string): Promise<void> {
+    const directory = join(this.#dataDirectory, 'admissions')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const file = await open(join(directory, `${handle.attemptId}.json`), 'wx', 0o600).catch(
+      (error: unknown) => {
+        if (
+          error !== null &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'EEXIST'
+        ) {
+          throw new RuntimeAdapterError({
+            code: 'PI_START_RECONCILIATION_REQUIRED',
+            classification: 'unknown',
+            message: 'PI_START_RECONCILIATION_REQUIRED',
+            retryable: false,
+          })
+        }
+        throw error
+      }
+    )
+    try {
+      await file.writeFile(
+        JSON.stringify({
+          schemaVersion: 1,
+          commandDigest: createHash('sha256').update(fingerprint).digest('hex'),
+        }),
+        'utf8'
+      )
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+    const parent = await open(directory, 'r')
+    try {
+      await parent.sync()
+    } finally {
+      await parent.close()
+    }
+  }
+
   async *progress(handleInput: RuntimeExecutionHandle, afterSequence = 0, signal?: AbortSignal) {
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      if (signal?.aborted) return
+      for (const event of await readTerminalEvents(this.#dataDirectory, handle)) {
+        if (signal?.aborted) return
+        if (event.sequence > afterSequence) yield event
+      }
+      return
+    }
     const execution = this.#require(handleInput)
     let cursor = afterSequence
     while (true) {
+      if (execution.persistence) await execution.persistence
       for (const event of execution.events) {
+        if (execution.persistence) await execution.persistence
         if (event.sequence <= cursor) continue
         cursor = event.sequence
         yield event
@@ -210,23 +328,31 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async cancel(handleInput: RuntimeExecutionHandle) {
-    const execution = this.#require(handleInput)
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      return readTerminalRecord(this.#dataDirectory, handle)
+    }
+    const execution = this.#require(handle)
     if (execution.state === 'running') {
       await execution.rpc.request({ type: 'abort' }, this.#rpcTimeoutMs)
       if (execution.state !== 'running') return this.#status(execution)
       execution.state = 'cancelled'
       execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
       appendEvent(execution, { kind: 'status', state: 'cancelled' }, this.#now())
+      this.#persist(execution)
     }
     return this.#status(execution)
   }
 
   async status(handleInput: RuntimeExecutionHandle) {
-    return this.#status(this.#require(handleInput))
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const execution = this.#executions.get(handle.handleId)
+    if (!execution) return readTerminalRecord(this.#dataDirectory, handle)
+    return this.#status(this.#require(handle))
   }
 
   async reconcile(handleInput: RuntimeExecutionHandle) {
-    return this.#status(this.#require(handleInput))
+    return this.status(handleInput)
   }
 
   async session(): Promise<never> {
@@ -234,13 +360,23 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async cleanup(handleInput: RuntimeExecutionHandle): Promise<void> {
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      await readTerminalRecord(this.#dataDirectory, handle)
+      return
+    }
     const execution = this.#require(handleInput)
     await execution.rpc.stop()
-    await rm(execution.directory, { recursive: true, force: true })
-    this.#executions.delete(execution.handle.handleId)
+    try {
+      if (execution.persistence) await execution.persistence
+    } finally {
+      await rm(execution.directory, { recursive: true, force: true })
+      this.#executions.delete(execution.handle.handleId)
+    }
   }
 
   #observe(execution: ProcessExecution, event: Record<string, unknown>): void {
+    if (execution.state !== 'running') return
     if (event['type'] === 'message_update') {
       const update = asRecord(event['assistantMessageEvent'])
       const usage = asRecord(event['usage'])
@@ -307,6 +443,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         )
         appendEvent(execution, { kind: 'status', state: 'succeeded' }, this.#now())
       }
+      this.#persist(execution)
     } catch (error) {
       this.#fail(execution, asError(error))
     }
@@ -318,9 +455,26 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     execution.state = 'errored'
     execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
     appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
+    this.#persist(execution)
   }
 
-  #status(execution: ProcessExecution) {
+  #persist(execution: ProcessExecution): void {
+    execution.persistence = persistTerminalRecord(
+      this.#dataDirectory,
+      execution.handle,
+      this.#snapshot(execution),
+      execution.events
+    )
+    // Consumers await this same rejection; avoid an unhandled rejection before they poll.
+    void execution.persistence.catch(() => undefined)
+  }
+
+  async #status(execution: ProcessExecution) {
+    if (execution.persistence) await execution.persistence
+    return this.#snapshot(execution)
+  }
+
+  #snapshot(execution: ProcessExecution) {
     const observedAt = this.#now().toISOString()
     if (execution.state === 'succeeded') {
       return {

@@ -1,5 +1,23 @@
 # M11 standalone product evidence — 2026-08-30
 
+## Evidence scope correction — 2026-09-08
+
+This is historical candidate evidence, not current M11 certification. In particular,
+the broad scenario labels below do not turn component fixtures into native-runtime
+or sandbox-isolation proof. The cited runtime tests use `ReferenceAcpTransport`,
+managed Pi RPC fixtures, and `GenericRuntimeReferenceClient`; the tools/model/sandbox
+suite uses `FakeModelAdapter`, `FakeToolExecutor`, `FakeSandboxProvider`, and an
+in-memory usage ledger. They validate adapter and coordinator behavior, not live
+provider execution, operating-system isolation, or authoritative native usage.
+
+The later [native ACP probe](m11-native-acp-permission-2026-09-08.md) establishes
+bounded native permission/cancellation evidence but explicitly leaves aggregate
+usage and process-restart recovery open. The
+[task materialization report](m11-acp-task-materialization-2026-09-08.md) adds
+repository-backed task input, not a supported standalone ACP launcher or complete
+profile/Skill/model configuration. These remaining requirements belong to #188;
+none may be closed from the historical table's passing fixture results.
+
 ## Candidate and pinned components
 
 - Implementation candidate: `57a7fe4c9529ba56fbeb183d1ce6567c8800b79a`
@@ -109,20 +127,20 @@ modified.
 
 ## Scenario-to-requirement map
 
-| M11.3 scenario                                                                      | Primary executable evidence                                                                                               | Result                                                       |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Local managed Pi and ACP direct transport, Artifacts, usage, cancellation, recovery | `tests/m11-standalone-e2e.test.mjs`, `tests/m6-runtime-adapters.test.mjs`                                                 | Passed                                                       |
-| Restate durability, retries, interactions, fan-out/fan-in, budgets, promotion       | `tests/m3-durable-execution.test.mjs`, `tests/m8-multi-agent-orchestration.test.mjs`, `tests/m11-standalone-e2e.test.mjs` | Passed                                                       |
-| Tools, models, credentials, policy, sandbox, usage settlement                       | `tests/m7-tools-models-sandboxes.test.mjs`                                                                                | Passed                                                       |
-| Runtime Gateway authentication, inventory, delivery, reconnect, redelivery          | `tests/m5-runtime-gateway.test.mjs`                                                                                       | Passed as component E2E; production composition remains open |
-| No/disabled/fake/Cortana-compatible context providers                               | `@control-plane/context`, `@control-plane/cortana-context-adapter` package tests                                          | Passed                                                       |
-| Encrypted remote-control relay and opaque persistence                               | `@control-plane/remote-control-relay` package tests                                                                       | Passed                                                       |
-| Profile semantics and deployment adapters                                           | `tests/m10-portability-conformance.test.mjs`, `@control-plane/deployment` tests                                           | Passed                                                       |
-| Local SQLite persistence and restart                                                | `tests/m11-standalone-e2e.test.mjs`, SQLite persistence tests                                                             | Passed                                                       |
-| PostgreSQL repository semantics                                                     | `@control-plane/database` integration suite                                                                               | Passed with extended local timeout                           |
-| Self-hosted Simple clean start/restart                                              | fresh Compose run described above                                                                                         | Passed on local Docker                                       |
-| Self-hosted Server clean start/recovery                                             | Linux Hosted Compose run `33354286908`                                                                                    | Substrate passed; remote runtime execution remains open      |
-| Managed-cloud frozen candidate                                                      | `bun run certify:m9-cloud` against live Railway staging                                                                   | Passed at merged `staging` commit                            |
+| M11.3 scenario                                                                      | Primary executable evidence                                                                                               | Result                                                                          |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Local managed Pi and ACP direct transport, Artifacts, usage, cancellation, recovery | `tests/m11-standalone-e2e.test.mjs`, `tests/m6-runtime-adapters.test.mjs`                                                 | Fixture/component coverage passed; native acceptance open                       |
+| Restate durability, retries, interactions, fan-out/fan-in, budgets, promotion       | `tests/m3-durable-execution.test.mjs`, `tests/m8-multi-agent-orchestration.test.mjs`, `tests/m11-standalone-e2e.test.mjs` | Passed                                                                          |
+| Tools, models, credentials, policy, sandbox, usage settlement                       | `tests/m7-tools-models-sandboxes.test.mjs`                                                                                | Fake-provider coordinator coverage passed; native isolation and settlement open |
+| Runtime Gateway authentication, inventory, delivery, reconnect, redelivery          | `tests/m5-runtime-gateway.test.mjs`                                                                                       | Passed as component E2E; production composition remains open                    |
+| No/disabled/fake/Cortana-compatible context providers                               | `@control-plane/context`, `@control-plane/cortana-context-adapter` package tests                                          | Passed                                                                          |
+| Encrypted remote-control relay and opaque persistence                               | `@control-plane/remote-control-relay` package tests                                                                       | Passed                                                                          |
+| Profile semantics and deployment adapters                                           | `tests/m10-portability-conformance.test.mjs`, `@control-plane/deployment` tests                                           | Passed                                                                          |
+| Local SQLite persistence and restart                                                | `tests/m11-standalone-e2e.test.mjs`, SQLite persistence tests                                                             | Passed                                                                          |
+| PostgreSQL repository semantics                                                     | `@control-plane/database` integration suite                                                                               | Passed with extended local timeout                                              |
+| Self-hosted Simple clean start/restart                                              | fresh Compose run described above                                                                                         | Passed on local Docker                                                          |
+| Self-hosted Server clean start/recovery                                             | Linux Hosted Compose run `33354286908`                                                                                    | Substrate passed; remote runtime execution remains open                         |
+| Managed-cloud frozen candidate                                                      | `bun run certify:m9-cloud` against live Railway staging                                                                   | Passed at merged `staging` commit                                               |
 
 ## Honest remaining gates
 

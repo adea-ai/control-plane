@@ -3,9 +3,11 @@ import { Buffer } from 'node:buffer'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { loadManagedCloudConfiguration } from '@control-plane/config'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
-import { ControlApiFixtures } from '@control-plane/contracts'
+import { ControlApiFixtures, ErrorResponseEnvelopeSchema } from '@control-plane/contracts'
 import {
   CommandInboxService,
+  DurableInteractionCommandService,
+  DurableExecutionCancellationService,
   InMemoryCommandAcceptanceRepository,
   executionConstraintFixtures,
 } from '@control-plane/domain'
@@ -1228,9 +1230,9 @@ describe('Control API', () => {
       code: 'VALIDATION_ERROR',
       message: 'Request validation failed',
     })
-    expect(malformed.json().error.details).toContainEqual(
-      expect.objectContaining({ field: 'parameters.limit' })
-    )
+    expect(
+      ErrorResponseEnvelopeSchema.parse(malformed.json()).error.details.diagnostics
+    ).toContainEqual(expect.objectContaining({ field: 'parameters.limit' }))
   })
 
   test('generates versioned OpenAPI paths', async () => {
@@ -1372,6 +1374,10 @@ describe('Control API', () => {
 
     expect(composition.executionValidationService).toBeInstanceOf(DurableExecutionValidationService)
     expect(composition.executionAcceptanceService).toBeInstanceOf(DurableExecutionAcceptanceService)
+    expect(composition.interactionCommandService).toBeInstanceOf(DurableInteractionCommandService)
+    expect(composition.executionCancellationService).toBeInstanceOf(
+      DurableExecutionCancellationService
+    )
     expect(composition.serviceAuthenticator).toBeInstanceOf(PolicyServiceAuthenticator)
   })
 })

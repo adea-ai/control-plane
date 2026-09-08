@@ -1,0 +1,38 @@
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..617975b2c2a58a1c0182bbd79039909d7060b92d 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -254,4 +254,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function nextWrite(fn) {
++    if (!socket) {
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
+@@ -447,2 +453,3 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     socket.removeAllListeners()
+     socket = null
++    errorResponse = null
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..b4580e6868bf715a745737fedf95c06446bf1152 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -254,4 +254,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function nextWrite(fn) {
++    if (!socket) {
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
+@@ -447,2 +453,3 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     socket.removeAllListeners()
+     socket = null
++    errorResponse = null

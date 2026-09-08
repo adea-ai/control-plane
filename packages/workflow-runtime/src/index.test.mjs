@@ -10,4 +10,8 @@ describe('portable workflow runtime', () => {
     expect(options.bidirectional).toBe(false)
     expect(options.services).toHaveLength(1)
   })
+  test('allows explicit direct-connection streaming without changing the portable default', () => {
+    expect(createRestateEndpointOptions({ bidirectional: true }).bidirectional).toBe(true)
+    expect(createRestateEndpointOptions().bidirectional).toBe(false)
+  })
 })

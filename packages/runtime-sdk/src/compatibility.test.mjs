@@ -30,10 +30,11 @@ describe('runtime compatibility certification', () => {
       'revoked',
       'untested',
     ])
-    expect(parsed.certifications.map(({ runtimeFamily }) => runtimeFamily).sort()).toEqual([
-      'acp',
-      'pi',
-    ])
+    expect(
+      parsed.certifications
+        .map(({ runtimeFamily, versions }) => `${runtimeFamily}:${versions.protocol}`)
+        .sort()
+    ).toEqual(['acp:1.5.0', 'acp:1.6.0', 'pi:1.5.0', 'pi:1.6.0'])
     for (const certification of parsed.certifications) {
       expect(certification.classification).toBe('supported')
       expect(certification.verifiedCapabilities.length).toBeGreaterThan(0)
@@ -116,7 +117,9 @@ describe('runtime compatibility certification', () => {
 
   test('feeds incompatible and revoked certification into health, eligibility, and read models', async () => {
     const base = await matrix()
-    const certification = base.certifications[0]
+    const certification = base.certifications.find(
+      ({ certificationId }) => certificationId === 'managed-pi-reference-1-0-0'
+    )
     const incompatible = applyRuntimeCompatibilityCertification({
       matrix: {
         ...base,

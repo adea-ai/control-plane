@@ -24,6 +24,8 @@ import {
   PostgresExecutionValidationCommandRepository,
   PostgresExecutionRepository,
   PostgresInteractionRepository,
+  PostgresInteractionCommandRepository,
+  PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
   PostgresRuntimeCommandRepository,
   PostgresRuntimeDiscoveryRepository,
@@ -41,7 +43,13 @@ import {
   NodeProcessRuntimeProvider,
   StaticServiceDiscovery,
 } from '@control-plane/deployment'
-import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  ExecutionLifecycleService,
+  DurableInteractionCommandService,
+  DurableExecutionCancellationService,
+  DurableInteractionDeliveryService,
+} from '@control-plane/domain'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { RemoteRestateRuntime, RESTATE_SERVER_VERSION } from '@control-plane/restate-runtime'
@@ -124,6 +132,8 @@ export class HostedServerControlPlaneComposition {
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
+  readonly interactionCommandService: DurableInteractionCommandService
+  readonly executionCancellationService: DurableExecutionCancellationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
@@ -219,6 +229,19 @@ export class HostedServerControlPlaneComposition {
     const runtimeCommands = new PostgresRuntimeCommandRepository(this.connection.database)
     const executionEvents = new PostgresExecutionEventRepository(this.connection.database)
     const interactions = new PostgresInteractionRepository(this.connection.database)
+    this.interactionCommandService = new DurableInteractionCommandService(
+      new PostgresInteractionCommandRepository(this.connection.database),
+      new DurableInteractionDeliveryService(
+        interactions,
+        new PostgresCommandAcceptanceRepository(this.connection.database),
+        new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
+      )
+    )
+    this.executionCancellationService = new DurableExecutionCancellationService(
+      new PostgresExecutionCancellationRepository(this.connection.database),
+      new PostgresCommandAcceptanceRepository(this.connection.database),
+      new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
+    )
     this.runtimeActivityPort =
       options.runtimeActivityPort ??
       new DurableRemoteWorkflowRuntime({

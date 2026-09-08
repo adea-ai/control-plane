@@ -12,6 +12,7 @@ import {
   RuntimeInventoryMessageHandler,
   RuntimeInventoryIngestionError,
   RuntimeInventoryIngestionService,
+  RuntimeInventoryMaintenance,
 } from './index.js'
 
 const nodeId = 'rnr_01JABCDEF0123456789ABCDEFG'
@@ -20,6 +21,425 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('rejects an overflowing delta before writes and permits a same-size replacement', async () => {
+    const metrics = new RecordingGatewayMetrics()
+    const fixture = createFixture({ metrics, normalizer: new DefaultRuntimeInventoryNormalizer() })
+    const refs = Array.from(
+      { length: 129 },
+      (_, index) => `nref_${String(index).padStart(26, '0')}`
+    )
+    await fixture.service.ingest(
+      inventory(
+        1,
+        refs.slice(0, 128).map((ref) => driver(ref))
+      ),
+      source()
+    )
+    const before = {
+      connections: await fixture.registry.listByRuntimeNode(nodeId),
+      checkpoint: await fixture.checkpoints.get(nodeId),
+      projections: structuredClone(fixture.projections.runtimeConnections),
+      events: structuredClone(fixture.changes.events),
+      metrics: structuredClone(metrics.samples),
+    }
+    await expect(
+      fixture.service.ingest(
+        inventory(2, [driver(refs[128])], { mode: 'delta', baseSnapshotVersion: 1 }),
+        source()
+      )
+    ).rejects.toThrow()
+    expect(await fixture.registry.listByRuntimeNode(nodeId)).toEqual(before.connections)
+    expect(await fixture.checkpoints.get(nodeId)).toEqual(before.checkpoint)
+    expect(fixture.projections.runtimeConnections).toEqual(before.projections)
+    expect(fixture.changes.events).toEqual(before.events)
+    expect(metrics.samples).toEqual(before.metrics)
+    const replacement = await fixture.service.ingest(
+      inventory(2, [driver(refs[128])], {
+        mode: 'delta',
+        baseSnapshotVersion: 1,
+        removedRuntimeRefs: [refs[0]],
+      }),
+      source()
+    )
+    expect(replacement.outcome).toBe('applied')
+    expect(replacement.disappeared).toHaveLength(1)
+    const checkpoint = await fixture.checkpoints.get(nodeId)
+    expect(checkpoint.activeRuntimeRefs).toHaveLength(128)
+    expect(checkpoint.activeRuntimeRefs).toContain(refs[128])
+    expect(checkpoint.activeRuntimeRefs).not.toContain(refs[0])
+  })
+
+  test('publishes inventory metrics only after the unit of work commits', async () => {
+    for (const commitFails of [true, false]) {
+      const scoped = createFixture()
+      const metrics = new RecordingGatewayMetrics()
+      let samplesBeforeCommit
+      const fixture = createFixture({
+        metrics,
+        unitOfWork: {
+          async run(_scope, operation) {
+            const result = await operation(scoped)
+            samplesBeforeCommit = metrics.samples.length
+            if (commitFails) throw new Error('COMMIT_FAILED')
+            return result
+          },
+        },
+      })
+      const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+      if (commitFails) await expect(pending).rejects.toThrow('COMMIT_FAILED')
+      else expect((await pending).outcome).toBe('applied')
+      expect(samplesBeforeCommit).toBe(0)
+      expect(metrics.samples).toHaveLength(commitFails ? 0 : 2)
+    }
+  })
+
+  test('metrics exporter failure cannot reject committed inventory', async () => {
+    const scoped = createFixture()
+    let attempts = 0
+    const failMetric = () => {
+      attempts++
+      throw new Error('EXPORTER_FAILED')
+    }
+    const fixture = createFixture({
+      metrics: { increment: failMetric, setGauge: failMetric, observe: failMetric },
+      unitOfWork: { run: async (_scope, operation) => operation(scoped) },
+    })
+    expect((await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())).outcome).toBe(
+      'applied'
+    )
+    expect(attempts).toBe(2)
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+  })
+
+  test('shares one deeply immutable inventory snapshot across normalizers', async () => {
+    const inputs = []
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          inputs.push(input)
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA), driver(runtimeB)])
+    await fixture.service.ingest(frame, source())
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].inventory).toBe(inputs[1].inventory)
+    expect(inputs[0].driver).toBe(inputs[0].inventory.runtimeDrivers[0])
+    for (const input of inputs) {
+      expect(Object.isFrozen(input.inventory)).toBe(true)
+      expect(Object.isFrozen(input.inventory.runtimeDrivers)).toBe(true)
+      expect(Object.isFrozen(input.driver)).toBe(true)
+      expect(Object.isFrozen(input.driver.protocolVersion)).toBe(true)
+      expect(Object.isFrozen(input.driver.capabilities)).toBe(true)
+    }
+    expect(Object.isFrozen(frame)).toBe(false)
+    expect(Object.isFrozen(frame.runtimeDrivers[0])).toBe(false)
+  })
+
+  test('normalizer input mutation cannot rewrite the validated envelope', async () => {
+    let transactions = 0
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          input.inventory.nodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+      unitOfWork: {
+        async run() {
+          transactions++
+          throw new Error('UNEXPECTED_TRANSACTION')
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA)])
+    await expect(fixture.service.ingest(frame, source())).rejects.toThrow(
+      'INVENTORY_NORMALIZATION_FAILED'
+    )
+    expect(frame.nodeId).toBe(nodeId)
+    expect(transactions).toBe(0)
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+  })
+
+  test('normalizes before transaction entry and rechecks a checkpoint advanced during preparation', async () => {
+    const scoped = createFixture()
+    let release
+    let entered
+    let normalizations = 0
+    let transactions = 0
+    const held = new Promise((resolve) => {
+      release = resolve
+    })
+    const started = new Promise((resolve) => {
+      entered = resolve
+    })
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          normalizations++
+          entered()
+          await held
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+      unitOfWork: {
+        async run(_scope, operation) {
+          transactions++
+          return operation({
+            registry: scoped.registry,
+            health: scoped.health,
+            checkpoints: scoped.checkpoints,
+            projections: scoped.projections,
+          })
+        },
+      },
+    })
+    const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    await started
+    expect(transactions).toBe(0)
+    try {
+      await scoped.service.ingest(inventory(2, [driver(runtimeA)]), source())
+    } finally {
+      release()
+    }
+    expect(await pending).toMatchObject({ outcome: 'stale', snapshotVersion: 1 })
+    expect(normalizations).toBe(1)
+    expect(transactions).toBe(1)
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(2)
+  })
+
+  test('uses transaction-bound ports and validates the source before entering the transaction', async () => {
+    const scoped = createFixture()
+    const scopes = []
+    const fixture = createFixture({
+      unitOfWork: {
+        async run(scope, operation) {
+          scopes.push(scope)
+          return operation({
+            registry: scoped.registry,
+            health: scoped.health,
+            checkpoints: scoped.checkpoints,
+            projections: scoped.projections,
+          })
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA)])
+    await expect(
+      fixture.service.ingest(frame, { ...source(), workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' })
+    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
+    expect(scopes).toEqual([])
+    expect(await fixture.service.ingest(frame, source())).toMatchObject({ outcome: 'applied' })
+    expect(scopes).toEqual([{ workspaceId, runtimeNodeRefId: nodeId, channel: source() }])
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+  })
+  test('direct disappearance publication failure is not recovered by inventory replay', async () => {
+    const fixture = createFixture()
+    const initial = await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    const publish = fixture.changes.publish.bind(fixture.changes)
+    let attempts = 0
+    fixture.changes.publish = async (event) => {
+      if (event.diagnostics.includes('RUNTIME_DISAPPEARED')) {
+        attempts++
+        throw new Error('DISAPPEARANCE_PUBLICATION_UNAVAILABLE')
+      }
+      return publish(event)
+    }
+    const removed = inventory(2, [])
+    await expect(fixture.service.ingest(removed, source())).rejects.toThrow(
+      'DISAPPEARANCE_PUBLICATION_UNAVAILABLE'
+    )
+    expect(
+      (await fixture.registry.get(initial.updated[0].runtimeConnectionId)).availabilityState
+    ).toBe('offline')
+    expect((await fixture.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+    await fixture.service.ingest(removed, source())
+    expect((await fixture.checkpoints.get(nodeId)).snapshotVersion).toBe(2)
+    expect(attempts).toBe(1)
+    expect(
+      fixture.changes.events.filter((event) => event.diagnostics.includes('RUNTIME_DISAPPEARED'))
+    ).toHaveLength(0)
+  })
+
+  test('maintenance pages disconnected inventory, preserves restrictions and converges without repeated writes', async () => {
+    const fixture = createFixture()
+    const frame = inventory(1, [driver(runtimeA), driver(runtimeB)])
+    await fixture.service.ingest(frame, source())
+    const initial = fixture.projections.runtimeConnections[0].model
+    initial.access.entitlement = { state: 'denied' }
+    initial.eligibility.reasons.push('ENTITLEMENT_DENIED')
+    initial.eligibility.state = 'ineligible'
+    const worker = maintenance(fixture, { pageSize: 1 })
+    const first = worker.runPage()
+    expect(worker.runPage()).toBe(first)
+    expect(await first).toMatchObject({ visited: 1, updated: 1, failed: [] })
+    expect(await worker.runPage()).toMatchObject({ visited: 1, updated: 1, failed: [] })
+    expect(await worker.runPage()).toMatchObject({ visited: 0, cycleComplete: false })
+    expect(await worker.runPage()).toMatchObject({ cycleComplete: true })
+    const projected = await fixture.projections.getRuntimeConnection(
+      { workspaceId },
+      initial.runtimeConnectionId
+    )
+    expect(projected.eligibility).toMatchObject({ state: 'ineligible' })
+    expect(projected.eligibility.reasons).toContain('ENTITLEMENT_DENIED')
+    expect(projected.access).toEqual(initial.access)
+    expect(projected.freshness.state).toBe('stale')
+    expect(await worker.runPage()).toMatchObject({ visited: 1, updated: 0 })
+  })
+
+  test('maintenance expires disappeared history and preserves revocation', async () => {
+    const fixture = createFixture()
+    const initial = await fixture.service.ingest(
+      inventory(1, [driver(runtimeA), driver(runtimeB)]),
+      source()
+    )
+    await fixture.service.ingest(inventory(2, [driver(runtimeB)]), source())
+    const current = await fixture.registry.get(initial.updated[1].runtimeConnectionId)
+    await fixture.registry.revoke({
+      runtimeConnectionId: current.runtimeConnectionId,
+      expectedVersion: current.version,
+      observedAt: '2026-08-25T12:00:03.000Z',
+    })
+    const result = await maintenance(fixture).runPage()
+    expect(result).toMatchObject({ updated: 2, failed: [] })
+    expect((await fixture.registry.get(initial.updated[0].runtimeConnectionId)).status).toBe(
+      'expired'
+    )
+    const revoked = await fixture.projections.getRuntimeConnection(
+      { workspaceId },
+      current.runtimeConnectionId
+    )
+    expect(revoked.status).toBe('revoked')
+    expect(revoked.eligibility.state).toBe('ineligible')
+  })
+
+  test('maintenance reports conflicts and retries the projection after registry state changed', async () => {
+    const fixture = createFixture()
+    await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    const compare = fixture.projections.compareAndSetRuntimeConnection.bind(fixture.projections)
+    fixture.projections.compareAndSetRuntimeConnection = async () => false
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      updated: 0,
+      conflicts: 1,
+      failed: [],
+    })
+    fixture.projections.compareAndSetRuntimeConnection = compare
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      updated: 1,
+      conflicts: 0,
+      failed: [],
+    })
+  })
+
+  test('maintenance isolates a missing projection and rejects malformed scan scope', async () => {
+    const fixture = createFixture()
+    const result = await fixture.service.ingest(
+      inventory(1, [driver(runtimeA), driver(runtimeB)]),
+      source()
+    )
+    fixture.projections.runtimeConnections.shift()
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      visited: 2,
+      updated: 1,
+      failed: [result.updated[0].runtimeConnectionId],
+    })
+    const worker = maintenance(fixture, {
+      connections: {
+        scanByRuntimeNode: async () => [
+          { ...result.updated[0], runtimeNodeRefId: 'rnr_01JBBCDEF0123456789ABCDEFG' },
+        ],
+      },
+    })
+    await expect(worker.runPage()).rejects.toThrow('INVENTORY_MAINTENANCE_SCAN_INVALID')
+  })
+  test('rejects normalized TTL extension before applying any inventory state', async () => {
+    const fixture = createFixture()
+    const frame = inventory(
+      1,
+      [driver(runtimeB), { ...driver(runtimeA), capabilityTtlMs: 5_000 }],
+      {
+        protocolVersion: { major: 1, minor: 6 },
+      }
+    )
+    await expect(
+      fixture.service.ingest(frame, { ...source(), protocolVersion: { major: 1, minor: 6 } })
+    ).rejects.toMatchObject({ code: 'INVENTORY_CORRELATION_MISMATCH' })
+    expect(await fixture.registry.listByRuntimeNode(nodeId)).toEqual([])
+    expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
+    expect(fixture.projections.runtimeConnections).toEqual([])
+    expect(fixture.changes.events).toEqual([])
+  })
+
+  test('allows conservative normalization but rejects extension of the legacy ceiling', async () => {
+    const base = new DefaultRuntimeInventoryNormalizer()
+    const normalizeWithTtl = (ttlMs) => ({
+      async normalize(input) {
+        const entry = await base.normalize(input)
+        entry.healthReport.capabilitySnapshot.ttlMs = ttlMs
+        return entry
+      },
+    })
+    const shorter = createFixture({ normalizer: normalizeWithTtl(1_000) })
+    const frame = inventory(1, [{ ...driver(runtimeA), capabilityTtlMs: 5_000 }], {
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const result = await shorter.service.ingest(frame, {
+      ...source(),
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    expect(result.updated[0].capabilitySnapshotExpiresAt).toBe(
+      new Date(Date.parse(frame.observedAt) + 1_000).toISOString()
+    )
+    const extended = createFixture({ normalizer: normalizeWithTtl(60_001) })
+    await expect(
+      extended.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    ).rejects.toMatchObject({ code: 'INVENTORY_CORRELATION_MISMATCH' })
+    expect(await extended.registry.listByRuntimeNode(nodeId)).toEqual([])
+  })
+
+  test('preserves a shorter advertised capability TTL during normalization', async () => {
+    const frame = inventory(1, [{ ...driver(runtimeA), capabilityTtlMs: 5_000 }], {
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const normalizer = new DefaultRuntimeInventoryNormalizer()
+    expect(
+      (
+        await normalizer.normalize({
+          driver: frame.runtimeDrivers[0],
+          inventory: frame,
+          nodeStatus: 'online',
+        })
+      ).healthReport.capabilitySnapshot.ttlMs
+    ).toBe(5_000)
+    const legacy = inventory(1, [driver(runtimeA)])
+    expect(
+      (
+        await normalizer.normalize({
+          driver: legacy.runtimeDrivers[0],
+          inventory: legacy,
+          nodeStatus: 'online',
+        })
+      ).healthReport.capabilitySnapshot.ttlMs
+    ).toBe(60_000)
+    const fixture = createFixture({ normalizer })
+    const result = await fixture.service.ingest(frame, {
+      ...source(),
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const connection = result.updated[0]
+    expect(connection.capabilitySnapshotExpiresAt).toBe(
+      new Date(Date.parse(frame.observedAt) + 5_000).toISOString()
+    )
+    const refreshed = await fixture.health.refresh({
+      runtimeConnectionId: connection.runtimeConnectionId,
+      nodeStatus: 'online',
+      evaluatedAt: new Date(Date.parse(frame.observedAt) + 5_001).toISOString(),
+    })
+    expect(refreshed.connection.availabilityState).toBe('stale')
+  })
+
   test('normalizes and routes a live inventory frame through the production handler', async () => {
     const frame = inventory(1, [driver(runtimeA)])
     const normalizer = new DefaultRuntimeInventoryNormalizer()
@@ -210,7 +630,7 @@ function createFixture(options = {}) {
       maximumCapabilityTtlMs: 60_000,
     },
   })
-  const metrics = new RecordingGatewayMetrics()
+  const metrics = options.metrics ?? new RecordingGatewayMetrics()
   const normalizer = {
     async normalize({ driver: input, inventory: report, nodeStatus }) {
       const suffix = input.opaqueRef === runtimeA ? 'A' : 'B'
@@ -272,6 +692,19 @@ function createFixture(options = {}) {
   }
   const projections = {
     runtimeConnections: [],
+    async getRuntimeConnection(scope, id) {
+      return structuredClone(
+        this.runtimeConnections.findLast(
+          (row) => row.workspaceId === scope.workspaceId && row.model.runtimeConnectionId === id
+        )?.model
+      )
+    },
+    async compareAndSetRuntimeConnection(scope, expected, next) {
+      const current = await this.getRuntimeConnection(scope, expected.runtimeConnectionId)
+      if (JSON.stringify(current) !== JSON.stringify(expected)) return false
+      this.runtimeConnections.push({ workspaceId: scope.workspaceId, model: structuredClone(next) })
+      return true
+    },
     async putRuntimeConnection(workspaceId, model) {
       this.runtimeConnections.push({ workspaceId, model })
     },
@@ -282,17 +715,31 @@ function createFixture(options = {}) {
     registry,
     changes,
     projections,
+    health,
     service: new RuntimeInventoryIngestionService({
+      ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
       registry,
       health,
       checkpoints,
-      changes,
-      normalizer,
+      normalizer: options.normalizer ?? normalizer,
       projections,
       metrics,
       disappearanceTtlMs: 30_000,
     }),
   }
+}
+
+function maintenance(fixture, overrides = {}) {
+  return new RuntimeInventoryMaintenance({
+    checkpoints: fixture.checkpoints,
+    connections: fixture.repository,
+    registry: fixture.registry,
+    health: fixture.health,
+    projections: fixture.projections,
+    ownership: { lookup: async () => undefined },
+    now: () => new Date('2026-08-25T12:02:00.000Z'),
+    ...overrides,
+  })
 }
 
 function source(channelGeneration = 1) {

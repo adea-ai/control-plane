@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -66,6 +68,173 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('recovers acceptance after process exit immediately following the commit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-accept-crash-'))
+    const path = join(directory, 'state.sqlite')
+    let provider
+    try {
+      const child = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `
+        import { CommandInboxService } from '@control-plane/domain';
+        import { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } from ${JSON.stringify(new URL('./index.ts', import.meta.url).href)};
+        const provider = new SqlitePersistenceProvider({ path: ${JSON.stringify(path)} });
+        await provider.migrate();
+        const service = new CommandInboxService({
+          repository: new SqliteCommandAcceptanceRepository(provider),
+          executionIdFactory: () => ${JSON.stringify(ids.executionId)},
+          executionPlanValidator: { validate: async () => true },
+          now: () => ${JSON.stringify(receivedAt)},
+          failureInjector: { checkpoint(name) {
+            if (name === 'control_api.after_accept') process.exit(73);
+          } },
+        });
+        await service.acceptExecution(${JSON.stringify(commandInput())});
+        console.log('UNEXPECTED_ACCEPTANCE_REPLY');
+      `,
+        ],
+        {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: { PATH: process.env.PATH },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      )
+      expect(child.error).toBeUndefined()
+      expect(child.signal).toBeNull()
+      expect(child.status).toBe(73)
+      expect(child.stdout).toBe('')
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      const recovered = new CommandInboxService({
+        repository: new SqliteCommandAcceptanceRepository(provider),
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: {
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+          },
+        },
+        now: () => receivedAt,
+      })
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => recovered.acceptExecution(commandInput()))
+      )
+      expect(results.every((result) => result.replayed)).toBe(true)
+      expect(results.every((result) => result.execution.executionId === ids.executionId)).toBe(true)
+      expect(results.every((result) => result.command.commandId === ids.commandId)).toBe(true)
+      expect(
+        await provider.transaction((transaction) => transaction.list('executions'))
+      ).toHaveLength(1)
+      expect(
+        await provider.transaction((transaction) => transaction.list('command-inbox'))
+      ).toHaveLength(1)
+      await expect(
+        recovered.acceptExecution(commandInput({ payloadHash: 'c'.repeat(64) }))
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
+    } finally {
+      await provider?.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  test('retired command keys reject resurrection after payload removal and reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retired-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const accepted = await service(provider).acceptExecution(commandInput())
+      let repository = new SqliteCommandAcceptanceRepository(provider)
+      const retiredAt = '2026-09-24T10:00:00.000Z'
+      expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+      const terminalCommand = {
+        ...accepted.command,
+        status: 'failed',
+        terminalAt: receivedAt,
+        errorReference: 'error://test/cancelled',
+        version: 2,
+      }
+      expect(await repository.compareAndSet(1, terminalCommand)).toBe(true)
+      expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+      await provider.transaction(async (transaction) => {
+        const [execution] = await transaction.list('executions')
+        await transaction.put({
+          namespace: execution.namespace,
+          id: execution.id,
+          expectedRevision: execution.revision,
+          value: { ...execution.value, state: 'cancelled', terminalAt: receivedAt },
+        })
+      })
+      expect(
+        await repository.retireExpiredCommand(accepted.command, accepted.command.retentionExpiresAt)
+      ).toBe(false)
+      expect(
+        await Promise.all(
+          Array.from({ length: 8 }, () =>
+            repository.retireExpiredCommand(accepted.command, retiredAt)
+          )
+        )
+      ).toEqual(Array(8).fill(true))
+      await provider.transaction(async (transaction) => {
+        const [command] = await transaction.list('command-inbox')
+        // Simulate a future dependency-aware cleaner on this disposable database only.
+        await transaction.delete(command.namespace, command.id, command.revision)
+        const [tombstone] = await transaction.list('retired-command-keys')
+        expect(tombstone.value).toEqual({
+          retiredAt,
+          commandId: ids.commandId,
+          executionId: ids.executionId,
+        })
+      })
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      repository = new SqliteCommandAcceptanceRepository(provider)
+      await expect(repository.get(accepted.command)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      await expect(
+        repository.accept({ ...accepted.command, payloadHash: 'c'.repeat(64) }, accepted.execution)
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      await expect(
+        service(provider, retiredAt).acceptExecution(
+          commandInput({
+            commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+            receivedAt: retiredAt,
+            retentionExpiresAt: '2026-11-24T10:00:00.000Z',
+          })
+        )
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      expect(
+        await repository.get({ ...accepted.command, callerPrincipalId: 'svc_other' })
+      ).toBeUndefined()
+      expect(
+        await repository.get({ ...accepted.command, projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+      ).toBeUndefined()
+      const snapshot = await provider.backup()
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path: join(directory, 'restored.sqlite') })
+      await provider.restore(snapshot)
+      const restored = new SqliteCommandAcceptanceRepository(provider)
+      await expect(restored.get(accepted.command)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      await expect(restored.accept(accepted.command, accepted.execution)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      expect(
+        await provider.transaction((transaction) => transaction.list('command-inbox'))
+      ).toEqual([])
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test.each([1, 30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
     const path = join(directory, 'control-plane.sqlite')
@@ -150,6 +319,81 @@ describe('SQLite domain repositories', () => {
           workspaceId: 'wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV',
         })
       ).toEqual([])
+      const scope = { workspaceId: ids.workspaceId, runtimeNodeRefId: ids.runtimeNodeRefId }
+      const expected = runtimeDiscoveryModel()
+      const next = {
+        ...expected,
+        observedAt: new Date(Date.parse(expected.observedAt) + 1_000).toISOString(),
+      }
+      const pointReads = new SqliteRuntimeDiscoveryRepository({
+        transaction: (operation) =>
+          provider.transaction((transaction) =>
+            operation({
+              get: (...args) => transaction.get(...args),
+              list: () => {
+                throw new Error('Point lookup must not list history')
+              },
+            })
+          ),
+      })
+      expect(await pointReads.getRuntimeConnection(scope, ids.runtimeConnectionId)).toEqual(
+        expected
+      )
+      expect(
+        await reopened.compareAndSetRuntimeConnection(
+          { ...scope, workspaceId: 'wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV' },
+          expected,
+          next
+        )
+      ).toBe(false)
+      const updates = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          reopened.compareAndSetRuntimeConnection(scope, expected, next)
+        )
+      )
+      expect(updates.filter(Boolean)).toHaveLength(1)
+      expect(await reopened.compareAndSetRuntimeConnection(scope, expected, next)).toBe(false)
+      await expect(reopened.putRuntimeConnection(scope.workspaceId, expected)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+      )
+      await expect(reopened.compareAndSetRuntimeConnection(scope, next, expected)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH'
+      )
+      await expect(
+        reopened.compareAndSetRuntimeConnection(scope, next, {
+          ...next,
+          runtimeConnectionId: 'rtc_01BRZ3NDEKTSV4RRFFQ69G5FAV',
+        })
+      ).rejects.toThrow('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+      await reopened.putRuntimeConnection(scope.workspaceId, next)
+      await expect(
+        reopened.putRuntimeConnection('wsp_01BRZ3NDEKTSV4RRFFQ69G5FAV', next)
+      ).rejects.toThrow('RUNTIME_DISCOVERY_WRITE_CONFLICT')
+      for (const model of [
+        { ...next, node: { ...next.node, health: 'unknown' } },
+        { ...next, node: { ...next.node, runtimeNodeRefId: 'rnr_01BRZ3NDEKTSV4RRFFQ69G5FAV' } },
+        { ...next, runtimeDefinitionId: 'rtd_01BRZ3NDEKTSV4RRFFQ69G5FAV' },
+      ])
+        await expect(reopened.putRuntimeConnection(scope.workspaceId, model)).rejects.toThrow(
+          'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+        )
+      const future = {
+        ...next,
+        observedAt: new Date(Date.parse(next.observedAt) + 1_000).toISOString(),
+      }
+      await reopened.putRuntimeConnection(scope.workspaceId, future)
+      await expect(reopened.putRuntimeConnection(scope.workspaceId, next)).rejects.toThrow(
+        'RUNTIME_DISCOVERY_WRITE_CONFLICT'
+      )
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      expect(
+        await new SqliteRuntimeDiscoveryRepository(provider).getRuntimeConnection(
+          scope,
+          ids.runtimeConnectionId
+        )
+      ).toEqual(future)
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

@@ -8,10 +8,11 @@ import type {
   PersistenceBackup,
   PersistenceProvider,
   PersistenceRecord,
+  PersistenceScan,
   PersistenceTransaction,
   PersistenceWrite,
 } from '@control-plane/deployment'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, gt } from 'drizzle-orm'
 import {
   drizzle,
   type AsyncRemoteCallback,
@@ -27,6 +28,9 @@ import {
 
 export * from './repositories.js'
 export * from './repositories-extra.js'
+export * from './interaction-repository.js'
+export * from './interaction-command-repository.js'
+export * from './execution-cancellation-repository.js'
 export * from './durability-repositories.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
@@ -40,6 +44,7 @@ export type SqlitePersistenceErrorCode =
   | 'SQLITE_REVISION_CONFLICT'
   | 'SQLITE_SCHEMA_INCOMPATIBLE'
   | 'SQLITE_BACKUP_INVALID'
+  | 'SQLITE_CHECKPOINT_BUSY'
   | 'SQLITE_CLOSED'
 
 export class SqlitePersistenceError extends Error {
@@ -181,11 +186,27 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     }
   }
 
-  close(): void {
+  close(options: { readonly checkpoint?: boolean } = {}): void {
     if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
-    this.#native?.close()
-    this.#native = undefined
-    this.#drizzle = undefined
+    const database = this.#native
+    try {
+      if (database && options.checkpoint) {
+        // A cold directory checkpoint must not depend on deferred statement GC
+        // removing WAL sidecars after the caller starts copying files.
+        database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+        const mode = database.prepare('PRAGMA journal_mode = DELETE').get() as
+          | Readonly<Record<string, unknown>>
+          | undefined
+        if (mode?.['journal_mode'] !== 'delete')
+          throw new SqlitePersistenceError('SQLITE_CHECKPOINT_BUSY')
+      }
+    } catch {
+      throw new SqlitePersistenceError('SQLITE_CHECKPOINT_BUSY')
+    } finally {
+      database?.close()
+      this.#native = undefined
+      this.#drizzle = undefined
+    }
   }
 
   async #open(): Promise<DatabaseSync> {
@@ -341,6 +362,26 @@ class SqliteRecordTransaction implements PersistenceTransaction {
       .from(records)
       .where(eq(records.namespace, namespace))
       .orderBy(records.updatedAt, records.id)
+    return result.map(decodeRecord)
+  }
+
+  async scan(namespace: string, options: PersistenceScan): Promise<readonly PersistenceRecord[]> {
+    validName(namespace)
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 128) {
+      throw new SqlitePersistenceError('SQLITE_INVALID_RECORD')
+    }
+    if (options.afterId !== undefined) validIdentity(namespace, options.afterId)
+    const result = await this.database
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.namespace, namespace),
+          options.afterId === undefined ? undefined : gt(records.id, options.afterId)
+        )
+      )
+      .orderBy(records.id)
+      .limit(options.limit)
     return result.map(decodeRecord)
   }
 }

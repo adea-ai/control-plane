@@ -1,4 +1,4 @@
-import { deepStrictEqual, strictEqual, ok } from 'node:assert/strict'
+import { deepStrictEqual, strictEqual, ok, rejects } from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,7 @@ import {
   composeProviderContextPackage,
   contextPackageSerializationFixtures,
 } from '../packages/context/src/index.ts'
-import { ExecutionLifecycleService } from '../packages/domain/src/index.ts'
+import { ExecutionLifecycleService, InteractionService } from '../packages/domain/src/index.ts'
 import { RuntimeConnectionRegistry } from '../packages/runtime-sdk/src/index.ts'
 import {
   PostgresContextPackageRepository,
@@ -19,11 +19,17 @@ import {
   PostgresRuntimeEventEffectSink,
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
+  PostgresRuntimeHealthIngestionService,
+  PostgresRuntimeInventoryUnitOfWork,
+  PostgresRuntimeHealthEventDispatcher,
+  PostgresRuntimeChannelOwnershipRepository,
+  PostgresRuntimeInventoryCheckpointRepository,
   PostgresInteractionRepository,
 } from '../packages/database/src/index.ts'
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
 import { DurableRemoteWorkflowRuntime } from '../apps/workflow-worker/src/remote-workflow-runtime.ts'
 import { ManagedPiRemoteCommandFactory } from '../apps/workflow-worker/src/managed-pi-remote-command.ts'
+import { PollingRemoteRuntimeOutcomeWaiter } from '../apps/workflow-worker/src/remote-runtime-waiter.ts'
 import {
   RuntimeCommandDeliveryService,
   RuntimeEventIngestionService,
@@ -33,7 +39,12 @@ import {
   SyntheticRuntimeNodeIdentityAuthority,
   RuntimeGatewayWebSocketLifecycle,
   RuntimeGatewayWebSocketServer,
-  InMemoryRuntimeNodeCoordination,
+  RuntimeInventoryIngestionService,
+  RuntimeInventoryMessageHandler,
+  DefaultRuntimeInventoryNormalizer,
+  RuntimeInventoryMaintenance,
+  RuntimeHealthDeliveryWorker,
+  RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
 } from '../apps/runtime-gateway/src/index.ts'
@@ -44,13 +55,15 @@ import {
 import { FilesystemObjectStore } from '../packages/object-store/dist/index.js'
 import { golden } from '../packages/runtime-gateway-protocol/fixtures/index.mjs'
 import { GatewayProtocolManifest } from '../packages/runtime-gateway-protocol/src/index.ts'
+import { acceptRuntimeHealthFixture } from '../packages/database/src/runtime-health-consumer-fixture.mjs'
+import { outboxEvents } from '../packages/database/src/schema/messaging.ts'
 
 // Real database/network/Artifact plumbing; the synthetic node supplies a scripted
 // terminal status. This is not a live Pi provider or Restate certification.
 const database = await createIsolatedPostgres({ migrate: true })
 const directory = await mkdtemp(join(tmpdir(), 'cloud-remote-drill-'))
 const store = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 65536 })
-let server, native, socket, authenticator, dispatch
+let server, native, socket, authenticator, dispatch, approval, healthDeliveryWorker
 try {
   const now = new Date().toISOString()
   const deadlineAt = new Date(Date.now() + 15000).toISOString()
@@ -79,6 +92,8 @@ try {
     status: 'connected',
     health: 'healthy',
     capabilities: [
+      { name: 'execution.cancel', support: 'supported' },
+      { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
     ],
@@ -106,8 +121,10 @@ try {
     connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
     freshness: { state: 'fresh', observedAt: now, expiresAt: deadlineAt },
     versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1', protocol: '1.5.0' },
-    capabilities: ['filesystem.read', 'stream.output'],
+    capabilities: ['filesystem.read', 'stream.output', 'interaction.approval', 'execution.cancel'],
     capabilityDetails: [
+      { name: 'execution.cancel', support: 'supported' },
+      { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
     ],
@@ -171,8 +188,30 @@ try {
     identityValidator: authority.validationPort(),
     logger: { write() {} },
   })
-  const coordination = new InMemoryRuntimeNodeCoordination()
+  const ownership = new PostgresRuntimeChannelOwnershipRepository(database.application)
+  const coordination = new RepositoryRuntimeNodeCoordination(ownership)
   const metrics = new RecordingGatewayMetrics()
+  const runtimeRepository = new PostgresRuntimeConnectionRepository(database.application)
+  const runtimeRegistry = new RuntimeConnectionRegistry(runtimeRepository)
+  const checkpoints = new PostgresRuntimeInventoryCheckpointRepository(database.application)
+  const projections = new PostgresRuntimeDiscoveryRepository(database.application)
+  const health = new PostgresRuntimeHealthIngestionService(database.application, {
+    adapterMajor: 1,
+    driverMajor: 1,
+    harnessMajor: 1,
+    protocolMajor: 1,
+    healthTtlMs: 60_000,
+    maximumCapabilityTtlMs: 60_000,
+  })
+  const inventoryIngestion = new RuntimeInventoryIngestionService({
+    unitOfWork: new PostgresRuntimeInventoryUnitOfWork(database.application, health.policy),
+    registry: runtimeRegistry,
+    health,
+    checkpoints,
+    projections,
+    metrics,
+    normalizer: new DefaultRuntimeInventoryNormalizer(),
+  })
   const commands = new PostgresRuntimeCommandRepository(database.application)
   const received = []
   const quarantine = []
@@ -230,11 +269,7 @@ try {
   const router = new RuntimeGatewayMessageRouter({
     delivery,
     events,
-    inventory: {
-      handle: async () => {
-        throw new Error('UNEXPECTED_INVENTORY')
-      },
-    },
+    inventory: new RuntimeInventoryMessageHandler({ inventory: inventoryIngestion }),
   })
   server = new RuntimeGatewayWebSocketServer({
     lifecycle,
@@ -296,6 +331,77 @@ try {
     async () => (await commands.get(command.commandId)).status === 'acknowledged',
     'command-ack'
   )
+  // Seed an authorized response to exercise the real remote command and socket
+  // boundary. The fixture node does not originate a native permission request.
+  const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
+  const responseId = 'cmd_01JABCDEF0123456789ABCDEFH'
+  const interactionService = new InteractionService(
+    new PostgresInteractionRepository(database.application)
+  )
+  await interactionService.request({
+    interactionId,
+    executionId,
+    attemptId,
+    kind: 'permission',
+    prompt: { title: 'Approve isolated fixture' },
+    allowedActions: ['grant', 'deny'],
+    allowedPrincipalIds: ['svc_drill'],
+    requestedAt: now,
+    expiresAt: deadlineAt,
+  })
+  await interactionService.respond({
+    interactionId,
+    executionId,
+    attemptId,
+    responseId,
+    action: 'grant',
+    respondingPrincipalId: 'svc_drill',
+    expectedVersion: 1,
+    respondedAt: new Date().toISOString(),
+  })
+  const approvalInput = {
+    executionId,
+    attemptId,
+    interactionId,
+    responseId,
+    action: 'grant',
+    effectKey: 'remote-drill:approval',
+  }
+  approval = composition.runtime.applyInteraction(approvalInput)
+  let approvalError
+  approval.catch((error) => {
+    approvalError = error
+  })
+  let approvalRecord
+  await until(async () => {
+    if (approvalError) throw approvalError
+    approvalRecord = (await commands.listDispatchable(nodeId, new Date().toISOString(), 10)).find(
+      (record) => record.commandId !== command.commandId
+    )
+    return approvalRecord !== undefined
+  }, 'approval-queued')
+  await delivery.deliver(approvalRecord.commandId, { channelGeneration: 1, sequence: 2 })
+  await until(() => received.length === 3, 'approval-delivery')
+  const approvalCommand = received[2]
+  strictEqual(approvalCommand.operation, 'runtime.approval')
+  deepStrictEqual(approvalCommand.payload.parameters, {
+    handleId: `managed-pi:${attemptId}`,
+    interactionId,
+    decision: 'approve',
+  })
+  socket.send(
+    JSON.stringify({
+      ...golden.ack,
+      commandId: approvalCommand.commandId,
+      payloadHash: approvalCommand.payloadHash,
+      sentAt: new Date().toISOString(),
+      sequence: approvalCommand.sequence,
+    })
+  )
+  await until(
+    async () => (await commands.get(approvalCommand.commandId)).status === 'acknowledged',
+    'approval-ack'
+  )
   const bridge = new HostedManagedPiTerminalBridge({
     artifactStore: new ObjectStoreHostedArtifactStore(store),
   })
@@ -321,6 +427,11 @@ try {
     return (await executions.getExecution(executionId)).state === 'completed'
   }, 'terminal-execution')
   const outcome = await dispatch
+  deepStrictEqual(await approval, outcome)
+  const retainedApproval = await commands.get(approvalCommand.commandId)
+  deepStrictEqual(await composition.runtime.applyInteraction(approvalInput), outcome)
+  deepStrictEqual(await commands.get(approvalCommand.commandId), retainedApproval)
+  strictEqual(received.length, 3)
   strictEqual(outcome.outcome, 'completed')
   strictEqual(outcome.resultReference, result.result.artifact.artifactId)
   await until(
@@ -330,6 +441,34 @@ try {
   const terminalCommand = await commands.get(command.commandId)
   deepStrictEqual(await composition.runtime.dispatch(input), outcome)
   deepStrictEqual(await commands.get(command.commandId), terminalCommand)
+  const lateRuntime = new DurableRemoteWorkflowRuntime({
+    attempts: new PostgresExecutionRepository(database.application),
+    commands: new PostgresRuntimeCommandRepository(database.application),
+    factory: new ManagedPiRemoteCommandFactory({
+      contextPackages: new PostgresContextPackageRepository(database.application),
+      executions: new PostgresExecutionRepository(database.application),
+      interactions: new PostgresInteractionRepository(database.application),
+      runtimeDiscovery: {
+        getRuntimeConnection: ({ runtimeConnectionId, ...scope }) =>
+          discovery.getRuntimeConnection(scope, runtimeConnectionId),
+      },
+      now: () => new Date(Date.parse(deadlineAt) + 60_000),
+    }),
+    waiter: new PollingRemoteRuntimeOutcomeWaiter({
+      executions: new PostgresExecutionRepository(database.application),
+      commands: new PostgresRuntimeCommandRepository(database.application),
+      events: new PostgresExecutionEventRepository(database.application),
+    }),
+  })
+  deepStrictEqual(await lateRuntime.dispatch(input), outcome)
+  deepStrictEqual(await lateRuntime.applyInteraction(approvalInput), outcome)
+  deepStrictEqual(await commands.get(command.commandId), terminalCommand)
+  deepStrictEqual(await commands.get(approvalCommand.commandId), retainedApproval)
+  await rejects(
+    lateRuntime.dispatch({ ...input, effectKey: `${input.effectKey}:late-new` }),
+    /REMOTE_RUNTIME_COMMAND_EXPIRED/
+  )
+  strictEqual(received.length, 3)
   strictEqual(
     (await executions.getExecution(executionId)).terminalResultRef,
     outcome.resultReference
@@ -346,8 +485,8 @@ try {
   )
   deepStrictEqual(quarantine, [])
   ok(result.result.artifact.sizeBytes > 0)
-  // Persistence-only cancellation replay: the waiter is scripted, so this does
-  // not certify cancellation transport or a provider stopping work.
+  // Cancellation delivery and ACK use the real channel. The execution has
+  // already completed and the waiter is scripted: this does not prove a native stop.
   let cancellationClock = new Date()
   const cancellationFactory = new ManagedPiRemoteCommandFactory({
     contextPackages: new PostgresContextPackageRepository(database.application),
@@ -379,22 +518,112 @@ try {
     reason: 'user_request',
   }
   await cancellationRuntime().cancel(cancellationInput)
+  await delivery.deliver(cancellationRecords[0].commandId, { channelGeneration: 1, sequence: 4 })
+  await until(() => received.length === 4, 'cancellation-delivery')
+  const cancellationCommand = received[3]
+  strictEqual(cancellationCommand.operation, 'runtime.cancel')
+  deepStrictEqual(cancellationCommand.payload.parameters, {
+    handleId: `managed-pi:${attemptId}`,
+    requestedAt: cancellationRecords[0].issuedAt,
+  })
+  socket.send(
+    JSON.stringify({
+      ...golden.ack,
+      commandId: cancellationCommand.commandId,
+      payloadHash: cancellationCommand.payloadHash,
+      sentAt: new Date().toISOString(),
+      sequence: cancellationCommand.sequence,
+    })
+  )
+  await until(
+    async () => (await commands.get(cancellationCommand.commandId)).status === 'acknowledged',
+    'cancellation-ack'
+  )
+  const acknowledgedCancellation = await commands.get(cancellationCommand.commandId)
   cancellationClock = new Date(cancellationClock.getTime() + 6 * 60 * 1000)
   await Promise.all(
     Array.from({ length: 8 }, () => cancellationRuntime().cancel(cancellationInput))
   )
   strictEqual(cancellationRecords.length, 9)
-  for (const record of cancellationRecords) deepStrictEqual(record, cancellationRecords[0])
-  deepStrictEqual(await commands.get(cancellationRecords[0].commandId), cancellationRecords[0])
+  for (const record of cancellationRecords.slice(1)) {
+    deepStrictEqual(record, acknowledgedCancellation)
+  }
+  deepStrictEqual(await commands.get(cancellationCommand.commandId), acknowledgedCancellation)
+  strictEqual(received.length, 4)
+  deepStrictEqual(quarantine, [])
+  if (gatewayError) throw gatewayError
+  socket.send(
+    JSON.stringify({
+      ...golden.inventory,
+      protocolVersion: GatewayProtocolManifest.current,
+      sentAt: now,
+      observedAt: now,
+      runtimeDrivers: [
+        { ...golden.inventory.runtimeDrivers[0], adapterVersion: '1.0.0', capabilityTtlMs: 5_000 },
+      ],
+    })
+  )
+  await until(async () => (await checkpoints.get(nodeId)) !== undefined, 'inventory-ingested')
+  const admittedChannel = await ownership.lookup(nodeId)
+  ok(admittedChannel, 'Live WebSocket ownership must be persisted')
+  await server.close()
+  const recoveredOwnership = new PostgresRuntimeChannelOwnershipRepository(database.application)
+  strictEqual(await recoveredOwnership.lookup(nodeId), undefined)
+  deepStrictEqual(await recoveredOwnership.claim(admittedChannel), { accepted: false })
+  const maintenance = new RuntimeInventoryMaintenance({
+    checkpoints,
+    connections: runtimeRepository,
+    registry: runtimeRegistry,
+    health,
+    ownership: coordination,
+    projections,
+    now: () => new Date(Date.parse(now) + 60_001),
+  })
+  const refreshedInventory = await maintenance.runPage()
+  strictEqual(refreshedInventory.updated, 1)
+  deepStrictEqual(refreshedInventory.failed, [])
+  const discovered = await projections.listRuntimeConnections({
+    workspaceId,
+    runtimeNodeRefId: nodeId,
+  })
+  ok(
+    discovered.some(
+      (model) =>
+        model.freshness.state === 'stale' &&
+        model.eligibility.state === 'ineligible' &&
+        model.node.health === 'offline'
+    )
+  )
+  const deliveredHealth = new Set()
+  healthDeliveryWorker = new RuntimeHealthDeliveryWorker({
+    intervalMs: 5,
+    dispatcher: new PostgresRuntimeHealthEventDispatcher(database.application, {
+      async deliver(event) {
+        const receipt = await acceptRuntimeHealthFixture(database.application, event)
+        deliveredHealth.add(event.deliveryKey)
+        return receipt
+      },
+    }),
+  })
+  healthDeliveryWorker.start()
+  await until(async () => deliveredHealth.size === 2, 'health-outbox-delivered')
+  await healthDeliveryWorker.close()
+  const healthRows = (await database.application.select().from(outboxEvents)).filter(
+    (row) => row.eventType === 'runtime.availability_changed'
+  )
+  strictEqual(healthRows.length, 2)
+  ok(healthRows.every((row) => row.status === 'published'))
   console.log(
-    'Cloud remote drill passed: PostgreSQL dispatch, signed WebSocket ACK/result, Artifact-backed terminal state, immutable dispatch replay and persistence-only cancellation replay. Scripted node and cancellation waiter; cancellation transport, usage settlement and live provider execution remain unverified.'
+    'Cloud remote drill passed: PostgreSQL dispatch, approval and cancellation, authenticated WebSocket delivery/ACK and result, Artifact-backed terminal state, and immutable command replay. Approval response is seeded; node and cancellation waiter are scripted. Cancellation is delivered after execution completion, not a native stop proof. Native permission origination, active cancellation confirmation, usage settlement and live provider execution remain unverified.'
   )
 } finally {
   socket?.close()
   await server?.close()
+  await healthDeliveryWorker?.close()
   await native?.stop(true)
   authenticator?.close()
   await dispatch?.catch(() => {})
+  await approval?.catch(() => {})
   await store.close()
   await database.dispose()
   await rm(directory, { recursive: true, force: true })

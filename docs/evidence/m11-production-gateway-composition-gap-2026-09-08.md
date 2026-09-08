@@ -1,0 +1,668 @@
+# M11 production Runtime Gateway composition gap
+
+## Established channel credential expiry
+
+The authenticator previously checked credential expiry only when accepting a
+channel. Its later command guard checked revocation and scope, but an otherwise
+active channel could continue using expired claims. A deterministic clock-based
+regression reproduced a command being allowed after expiry plus the configured
+clock-skew tolerance.
+
+Channels now receive the authenticator's clock and tolerance. Active-state checks
+permanently invalidate expired channels; outbound commands receive the normalized
+`RUNTIME_NODE_CREDENTIAL_EXPIRED` error. Existing receive/open guards consume that
+state, and the periodic sweep disconnects invalidated channels, including sockets
+awaiting hello. Tests cover the exact tolerance boundary, clock rollback, inbound
+frame suppression, outbound suppression, ownership release and idle cleanup.
+The existing real-WebSocket tests still pass with synthetic identity.
+
+Local validation passed 23 focused authentication/lifecycle/network tests,
+format, lint, types, 41 builds, 1,237 unit/E2E/smoke tests, 31 database tests and
+the complete integration and connection-loss/restart/backup-restore drills.
+
+This is a Control Plane validation/lifecycle change, not credential issuance or
+live Agent HQ integration. It does not establish atomic expiry/revocation fencing
+for an operation already admitted before a deadline, nor solve unbounded
+dependency latency or production identity-backend composition.
+
+## Inventory timeout test uses the production budget
+
+The intermittent Neon failure recurred at `08605c3`. The retained diagnostic
+reported `INVENTORY_TIMEOUT_BEFORE_WRITES:CONNECTION_CLOSED:650ms`; 30 other
+database tests passed. This confirms rejection before the intended post-write
+stall, not successful rollback coverage. The error code alone cannot prove which
+network/backend component closed the connection, but the 500 ms override creates
+a timing assumption that ordinary remote inventory writes need not satisfy.
+
+Evidence: [diagnostic Neon failure](https://github.com/adea-ai/control-plane/actions/runs/34245541340/job/102127072133).
+
+The inventory regression now uses the unmodified production default of 10 seconds
+and injects 11-second idle-callback / active-query stalls. Both cases must still
+complete their writes, reject, roll back registry/outbox/projection/checkpoint
+changes, release ownership locking and recover through the same pool. Only this
+combined test receives a 60-second runner budget. The separate small driver probe
+retains its 500 ms deadline. No production timeout, database setting, retry or
+acceptance assertion is relaxed. Live Neon acceptance must be rerun on this
+candidate before treating the timing hypothesis as resolved.
+
+## Accumulated inventory bounds checked before writes
+
+The protocol bounds each incoming inventory frame, while the checkpoint bounds
+the accumulated active runtime set at 128. Previously an otherwise valid delta
+adding the 129th active runtime failed checkpoint validation only after registry,
+health and projection writes. The nontransactional path therefore retained a
+registered runtime from rejected inventory. A regression reproduced that partial
+state before the change.
+
+Checkpoint construction and validation now occur after scope/version/base checks
+and before inventory writes. The regression verifies unchanged registry,
+checkpoint, projections, availability events and metrics after rejection. It also
+accepts a remove-one/add-one delta at the 128-runtime boundary. The transactional
+path still uses the current checkpoint read inside its unit of work; no stale
+preparation-time checkpoint is substituted. This prevents this validation failure
+from causing partial writes, not arbitrary storage failures on the raw path.
+Unbounded historical connection listing remains separate work.
+
+Validation: 23 focused inventory tests passed, followed by format, lint, types,
+41 builds, 1,226 unit/E2E/smoke tests, 31 PostgreSQL database tests, the complete
+integration matrix and local connection-loss/restart/backup-restore drills.
+
+## Actual Neon verification passed on the diagnostic candidate
+
+Candidate `26d65c7` completed the real preview verification: 41 builds, migration
+validation/application, all 31 database tests, the other integration packages
+(35 successful integration/build tasks), and the scripted remote PostgreSQL /
+WebSocket drill. Step-level results confirm verification ran and succeeded, not
+merely that the job concluded green. A direct read-only connection to the preview
+reported PostgreSQL `18.6 (c5250a2)` and a default `transaction_timeout` of `0`;
+the inventory deadline remains transaction-local.
+
+Evidence: [executed successful verification](https://github.com/adea-ai/control-plane/actions/runs/34244646245/job/102123434597).
+The 500 ms test deadline and write-before-stall assertion were unchanged. The
+earlier rejection before writes did not reproduce; its underlying error code was
+not captured by that earlier candidate, so its root cause remains unconfirmed.
+The bounded diagnostic is retained. This success is not proof that the first
+failure was repaired or that the deadline test is free of timing sensitivity.
+
+Local verification on the same code passed format, lint, type checks, the full
+1,224-test unit/E2E/smoke suite, all 31 database tests, and connection-loss,
+restart and backup/restore drills. Remote disruption/restore is deliberately
+skipped by the runner; local drill results must not be presented as Neon recovery
+evidence. The remote WebSocket drill still uses scripted node/approval inputs,
+not a live native provider or production identity authority. Production Gateway
+composition and the remaining milestone gates below remain open.
+
+## Preview credentials enabled; first real Neon run failed
+
+The subsequent authorized configuration created `control_plane_admin` on the
+staging branch only, with login and database creation but without superuser,
+role creation or row-security bypass. Membership in the existing application
+and migration roles permits inherited privileges and role switching, but not
+membership administration. Login was verified before transferring the generated
+password through stdin to `NEON_CI_ADMIN_PASSWORD`; no password was printed or
+written to a local file. Production has no corresponding admin role.
+
+Rerun attempt 2 at candidate `7b70bed` passed the credential gate, created the
+staging-descended PR preview, prepared ownership, and actually executed migration
+and transaction verification. It failed with 30 database tests passing and one
+failing: the inventory timeout case rejected before its `wrote` flag became true.
+The original assertion hid the rejection cause. A diagnostic follow-up records
+only a bounded error code and elapsed milliseconds, never SQL, parameters or
+credentials, to distinguish deadline expiry from other failures before changing
+the test. This is not a successful Neon acceptance run.
+
+Evidence: [actual preview test failure](https://github.com/adea-ai/control-plane/actions/runs/34243349876/job/102120100565).
+The staging role and repository secret remain owned by preview CI; the PR branch
+remains under the workflow's close/expiry lifecycle. Production was untouched.
+
+## Live Neon metadata and skipped preview verification
+
+Read-only revalidation on September 8 resolved the repository's `NEON_PROJECT_ID`
+to the `control-plane` project `muddy-firefly-58711535`. The authenticated Neon
+CLI reports `pg_version: 18`, with separate `production` and `staging` branches.
+This confirms the configured project's major version, not the actual Railway
+connection destination, server patch version, pooled-session behavior or a
+successful execution of the inventory deadline against Neon.
+
+Crucially, the green `Migrate Neon Branch` job for candidate `35e9416` was a
+credential-gated no-op. The job's step results show `Create Neon branch`,
+`Prepare isolated preview database ownership`, and `Verify migrations and
+transactions` all skipped. Repository secret metadata lists
+`NEON_CI_APP_PASSWORD` and `NEON_CI_MIGRATION_PASSWORD`, but not
+`NEON_CI_ADMIN_PASSWORD`. Secret values were not read or printed. The effective
+three-credential gate was unsatisfied; a successful job conclusion is not Neon
+migration or transaction acceptance evidence.
+
+Evidence: [exact job and skipped steps](https://github.com/adea-ai/control-plane/actions/runs/34243104995/job/102118094553).
+No branch, role, credential, database setting or local environment file was
+changed during this check. Provisioning and validating the scoped preview-admin
+credential, then executing the actual preview matrix, remains required. Prior
+summaries calling this green job a Neon migration pass are superseded by this
+step-level verification. Local PostgreSQL integration/recovery evidence remains
+valid and separate.
+
+## Inventory deadline with patched driver recovery
+
+The inventory unit of work now sets transaction-local `transaction_timeout`
+before ownership locking. The default is 10 seconds, with a constructor override
+restricted to integers from 1 through 30,000 milliseconds. The five-second
+per-lock acquisition timeout remains. No global setting or migration is changed.
+
+The inventory-specific PostgreSQL case writes registry/health, outbox, projection
+and checkpoint state before an idle-callback or active-query stall. A
+500-millisecond test deadline must reject each transaction, roll back every
+write, release the channel lock for a heartbeat, and allow subsequent normal
+ingestion through the same pool. The test waits for the abandoned callback to
+settle and verifies writes actually occurred before the stall. Invalid timeout
+values are rejected before a transaction starts. The earlier unpatched experiment
+below remains historical evidence, not the current implementation.
+
+This depends on PostgreSQL transaction-timeout support and the pinned client
+patch. The repository PostgreSQL 18.3 baseline supports the setting; actual Neon
+server/pool acceptance remains required. Unsupported servers fail closed. The
+deadline covers the server transaction after setup, not pool acquisition,
+normalization, network failure detection or JavaScript callback completion.
+Callbacks must not perform external effects. Bounded history work and complete
+request deadlines remain separate gates.
+
+## Closed-socket driver recovery follow-up
+
+The timeout experiment below led to an upstream-matching defect in the pinned
+`postgres` 3.4.9 driver. A repository-scoped guard now settles deferred writes
+against a closed socket in both ESM and CommonJS. See
+[patch provenance and acceptance scope](../../patches/README.md).
+
+The child-process integration probe exercises idle and active-query transaction
+timeouts, checks rollback and subsequent transaction use, and requires bounded
+shutdown with no uncaught-error output. Both entry points passed within the
+31-test PostgreSQL integration suite and complete integration/recovery run.
+The full suite also passed 1,224 unit/E2E/smoke tests and 41 builds.
+This addresses the reproduced crash path, not every
+driver failure mode. The inventory-specific deadline matrix is described above.
+
+## Transaction deadline experiment: not promoted
+
+An integration experiment on PostgreSQL 18.3 with `postgres` 3.4.9 and Bun 1.4.0
+set transaction-local `transaction_timeout` to 500 milliseconds before ownership
+locking. Its callback wrote registry/health, outbox, projection and checkpoint
+state, then awaited a one-second JavaScript timer. Without the setting, the
+transaction committed; with it, the test exposed a client failure rather than
+safe recovery: `TypeError: null is not an object (evaluating 'socket.write')` in
+`postgres/src/connection.js:255`. A subsequent database test also encountered the
+same error. The run was interrupted through its recorded process session after
+the failure spread to subsequent cases.
+
+Source inspection shows `postgres/src/index.js:243` racing callback scope against
+connection closure, while the scope later attempts rollback or commit through
+its reserved connection (`:266` and `:278`). The observed idle callback continued
+after backend closure. This identifies the driver transaction lifecycle as the
+next investigation boundary; it does not establish that every timeout or every
+runtime has the same failure. The active-query case and complete rollback/pool
+recovery assertions were not reached and remain unverified.
+
+PostgreSQL documents that this timeout terminates the session:
+[transaction timeout documentation](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-TRANSACTION-TIMEOUT).
+The experimental implementation and failing matrix were removed from the
+candidate at that time. The subsequent client patch and inventory-specific
+deadline are described above. Complete-request bounds must still cover pool
+acquisition, normalization and network failure detection.
+
+## Transactional inventory channel fencing
+
+The PostgreSQL inventory unit of work now requires the authenticated channel
+record in addition to workspace/node scope. It validates that scope, acquires
+the same node-keyed advisory lock used by channel claim/heartbeat/release, and
+checks the active durable owner before entering inventory work. Generation,
+gateway, connection, connection start and protocol must match; heartbeat time
+may advance. Ownership remains locked through commit, with the channel lock
+always acquired before the inventory lock.
+
+A real PostgreSQL regression reproduced an old channel entering inventory work
+after replacement. Coverage now checks stale and released owners, wrong
+connection identity, unchanged checkpoint on rejection, and an independent
+transaction's inability to acquire the channel lock during inventory work.
+The gateway passes its authenticated source through the unit-of-work boundary.
+
+This fences transactional inventory against participating channel ownership
+writers, not every command or event operation. It does not establish credential
+revocation atomically with inventory, add a production identity authority, or
+bound transaction duration. Heartbeat/replacement can wait behind ingestion;
+bounded database work and transaction deadlines remain acceptance gates.
+
+## Commit-aware inventory telemetry
+
+Transactional ingestion buffers its inventory metric emissions until the unit of
+work resolves after commit. A rejected transaction discards those emissions.
+Exporter exceptions after commit are isolated per emission and cannot reject the
+committed inventory result. Tests reproduce premature success metrics and an
+exporter exception, then verify deferred publication, discard on commit failure,
+and a successful committed result despite exporter failures. These callback
+tests complement the existing real PostgreSQL rollback tests; they do not prove
+durable or exactly-once metric delivery. A crash after commit can lose metrics,
+and the nontransactional fixture path retains its existing behavior.
+
+## Preparation outside inventory transactions
+
+Transactional ingestion now normalizes and validates all entries before entering
+the unit of work. It passes those prepared entries directly into the locked
+ingestion pass without calling the normalizer again. Source correlation and
+checkpoint/version/delta-base checks remain inside the transaction, so a snapshot
+that became stale during preparation is ignored against current durable state.
+The nontransactional fixture path retains its existing checkpoint-first behavior.
+
+Normalizer inputs share one deeply frozen schema-parsed envelope, preventing a
+plugin from mutating correlation or transaction scope without cloning the entire
+inventory once per driver. The caller's original input remains unfrozen. A
+regression test checks shared identity, nested object/array freezing and caller
+isolation; it failed against the previous per-driver cloning implementation.
+This removes the copy multiplier, not arbitrary plugin allocations, concurrent
+request growth or normalization deadlines. Focused tests
+hold normalization and verify no transaction entry, advance the checkpoint while
+preparation is held, then verify stale rejection with one normalization call.
+A mutation test rejects attempted input mutation before transaction entry.
+This removes normalizer waits from the database-lock interval; it is not an
+end-to-end deadline or proof of bounded history/database operations. The broader
+snapshot concurrency matrix remains open.
+
+## Transaction-bound inventory ingestion
+
+RuntimeInventoryIngestionService accepts an optional unit-of-work port. It
+validates envelope/source correlation before entering it, then uses the supplied
+registry, health, projection and checkpoint ports for the entire ingestion pass.
+PostgresRuntimeInventoryUnitOfWork binds those ports to one transaction, including
+health/disappearance outbox inserts, and takes a node-keyed advisory transaction
+lock before reading the checkpoint. Lock acquisition has a five-second timeout.
+An existing checkpoint's workspace must match before the callback is entered.
+The real PostgreSQL/WebSocket drill now injects this unit of work.
+
+The database case throws after registry/health, outbox, projection and checkpoint
+writes and verifies they all roll back, then verifies successful commit. Eight
+independent unit-of-work instances serialize checkpoint increments; another
+workspace cannot enter the callback. A gateway test verifies that scoped ports,
+not the outer repositories, receive ingestion and that source rejection occurs
+before transaction entry. These are bounded standalone cases, not the complete
+concurrent full/delta snapshot acceptance matrix.
+
+The optional nontransactional fixture path still exists. Production factories
+must inject the durable composition. Normalization runs before the
+transaction and must not perform external effects; transaction duration, bounded
+history scanning and full-profile/concurrent snapshot verification remain open
+gates. Inventory source-generation fencing is described above; other operations
+still require their own ownership/authorization audit.
+
+## Guarded ordinary runtime projection writes
+
+A failing SQLite regression demonstrated that an ordinary put could replace a
+newer projection with an older observation after maintenance had updated it.
+PostgreSQL and SQLite runtime puts now reject backwards observation time,
+different content at the same observation instant, or changes to workspace,
+node or runtime-definition identity. Identical replay remains accepted; later
+observations can update the same identity. PostgreSQL enforces the guard in its
+atomic conflict-update predicate without overwriting ownership columns; SQLite
+checks and writes inside its existing transaction. Rejection is explicit as
+RUNTIME_DISCOVERY_WRITE_CONFLICT, not a reported successful update.
+
+The persistence cases cover old writes, identical replay, same-time conflict,
+cross-workspace/node/definition attempts, later valid writes and persistence
+after repository recreation or file reopen. External-session writes are unchanged.
+This guard prevents the specific stale projection overwrite; it does not make
+the registry, projection and inventory checkpoint one transaction or prove every
+concurrent inventory scenario. Equal-time conflicting observations require
+reconciliation rather than silently choosing whichever writer arrives last.
+
+## Atomic disappearance notification
+
+The direct-publisher characterization reproduces the disappearance gap: the
+connection becomes offline, publication fails with the checkpoint still old,
+and replay advances the checkpoint without a second publication attempt.
+Inventory ingestion now delegates this transition to health.markDisappeared
+instead of maintaining its own update/publish pair. The PostgreSQL health
+composition runs it in the same transaction as the outbox insert. A failed
+insert rolls back the connection change, and a committed transition retains its
+event even if the later inventory checkpoint write fails or is replayed.
+
+The database case verifies outbox failure rollback, node-scope rejection, exactly
+one retained disappearance event and identical replay after service recreation.
+Input validation requires an expiry after observation; registry version,
+observation and revocation guards remain in force. The gateway drill already
+injects this PostgreSQL health composition. The raw SDK service still requires a
+transaction-aware composition; its direct-publisher fixture is not durable proof.
+Whole-inventory atomicity, bounded disappearance history scanning and concurrent
+snapshot/checkpoint convergence remain separate gates.
+
+## Independent health-delivery worker
+
+RuntimeHealthDeliveryWorker owns a completion-scheduled timer separate from
+WebSocket ownership sweeps. Defaults are one event per batch and a 1000 ms
+interval; validated bounds are 1–128 events and 1–60000 ms. No next batch is
+scheduled until the current batch settles. Failed/conflicted batches report only
+a fixed diagnostic, and reporter failure cannot stop later passes. Persistent
+backoff and quarantine remain dispatcher responsibilities.
+
+Close cancels future ticks, shares its drain promise and waits for the current
+batch. Closed instances cannot restart. Injected gateway startup registers
+reverse-order cleanup so channels close before event-delivery drain; startup
+failure also cleans both resources. Tests hold delivery while ownership sweeps
+continue, and cover nonoverlap, drain, close-before-tick, failure isolation and
+configuration bounds. The PostgreSQL/WebSocket drill runs the worker against the
+durable synthetic consumer and verifies both health outbox records are published.
+
+Transport timeouts do not bound hung database operations; bootstrap shutdown
+limits remain relevant. This is an injectable composition plus standalone drill,
+not the missing production identity/transport/configuration factory. Fleet
+contention, authenticated workspace routing and operator quarantine recovery
+remain open. No new production service or database was deployed for this change.
+
+## Durable retry and quarantine policy
+
+Migration 0038 adds nullable next-attempt and quarantine timestamps plus a retry
+index to the shared outbox. Existing rows remain readable and immediately due.
+The health dispatcher filters due, nonquarantined rows in SQL. Failed deliveries
+persist exponential delays from a default 1000 ms base, capped at 60000 ms;
+the default maximum is five attempts. Configured base delay is 1–60000 ms and
+attempt limit is 1–100. Retry deadlines survive dispatcher recreation.
+
+Invalid payloads or aggregate mismatches quarantine without invoking transport;
+exhausted deliveries quarantine rather than retrying indefinitely. Quarantine
+retains the failed row and clears its retry deadline; it neither deletes evidence
+nor silently republishes it. Batch `failed` includes newly quarantined rows.
+No raw exception text is stored. The integration case checks before/exact due
+boundaries, persisted backoff, exhaustion, restart exclusion, malformed payloads,
+scope mismatches and invalid policy bounds. Operator inspection/requeue policy,
+fleet concurrency and independent scheduler wiring remain separate gates.
+
+## Consumer process-exit conformance
+
+The health-dispatch PostgreSQL case now uses a repository-local consumer fixture
+instead of a Map. The fixture commits a uniquely keyed inbox receipt and a
+synthetic effect in one transaction. A child process with isolated database
+application credentials commits the first delivery and exits with code 73 before
+acknowledgement. The parent verifies the exit and persisted effect, recreates the
+dispatcher, retries the stable key and observes no duplicate effect. Eight
+concurrent duplicate deliveries return the retained acknowledgement; reusing the
+key with changed payload rejects. Hung-transport and wrong-ack checks remain.
+
+This establishes committed receipt/effect recovery across consumer process exit
+in the standalone fixture. It does not establish Agent HQ product projection,
+WorkspaceEvents, authenticated routing, ordering policy, or host power-loss
+durability. The fixture is not exported as a production consumer. Live integration
+remains M12; complete standalone routing/conformance remains part of M11.
+
+## Standalone health-event dispatch
+
+Live #188 and #197 explicitly put live Agent HQ dependencies in M12. The missing
+live runtime-health receiver is not itself an M11 blocker; M11 must prove the
+standalone producer/consumer contract without creating a second product authority.
+
+PostgresRuntimeHealthEventDispatcher reads at most 128 pending/failed health
+events, validates payload and aggregate identity, and delivers a versioned internal
+envelope with a stable opaque deduplication key derived from the durable record.
+It does not expose the database UUID. An exact-key acknowledgement permits a
+revision-conditional publication update. Failed/ambiguous attempts remain durable
+and move behind older attempts; concurrent calls on one instance coalesce.
+Transport attempts have a configurable 1–60000 ms deadline (default 10000) and
+abort signal. A transport ignoring abort may still finish later: delivery is
+at-least-once, and receivers must durably deduplicate before acknowledging.
+
+The PostgreSQL test uses a synthetic deduplicating consumer to cover an applied
+event with lost acknowledgement, dispatcher recreation, stable-key retry, empty
+published queues, a hung transport, wrong-key acknowledgement and invalid limits.
+The synthetic consumer's Map is not proof of durable Agent HQ application. Fleet
+concurrency, consumer crash recovery, authenticated routing/workspace binding,
+backoff/quarantine policy, scheduler wiring and the final standalone conformance
+matrix remain open. No HTTP endpoint or live receiver has been invented or called.
+
+## Atomic PostgreSQL health-event acceptance
+
+A focused SDK reproduction confirms the direct-publisher failure boundary:
+ingestion commits healthy state, publication throws, and replay returns
+`replayed_report` without another publication attempt. This low-level service
+still requires a transaction-aware publisher composition for durable use.
+
+PostgresRuntimeHealthIngestionService now constructs the registry and health
+service inside one database transaction and inserts availability changes into
+the existing outbox_events table there. Report ingestion and freshness refresh
+therefore commit state plus a pending event together, or roll back both. The
+PostgreSQL integration case injects outbox insertion failure for both paths,
+checks rollback, then checks pending events survive service recreation and are
+not duplicated by report or freshness replay. The real WebSocket/PostgreSQL
+drill uses this composition for health ingestion and maintenance.
+
+This proves pending-event acceptance, not delivery. A bounded dispatcher with
+stable event-ID deduplication, acknowledgement/retry and restart tests remains
+required. Inventory disappearance publication still uses its separate publisher;
+this change does not make that path atomic. Production identity, telemetry,
+executable composition and profile acceptance remain open.
+
+## Bounded SQLite storage scan prerequisite
+
+PersistenceTransaction now exposes an exclusive storage-ID scan with a validated
+page limit of 1 through 128. SQLite applies namespace equality, optional ID lower
+bound, ID ordering and LIMIT in SQL against the existing namespace/ID primary
+key. It does not load a namespace and slice the result in application memory.
+Existing list ordering and behavior are unchanged. The file-backed test covers
+out-of-order insertion, namespace isolation, page continuation after reopen,
+empty pages and invalid limits/cursors.
+
+This is a storage primitive, not RuntimeInventoryCheckpointScanner parity:
+SQLite durability records currently hash domain identifiers into their storage
+keys. A storage cursor cannot be substituted for the runtime scanner's node-ID
+cursor. The compatible domain-index/migration design and SQLite runtime registry
+remain outstanding, as does production composition. Pages are not a durable
+snapshot across transactions; callers must account for concurrent changes.
+
+## SQLite projection prerequisite parity
+
+SqliteRuntimeDiscoveryRepository now exposes the same conditional runtime
+projection update: expected-model comparison, scope check and revision-protected
+write occur inside its persistence transaction. Runtime/definition/node identity
+changes and backwards observation time reject. A single-runtime read now uses
+the namespaced record key directly rather than listing the entire projection
+collection, while retaining workspace/node filtering.
+
+The file-backed SQLite test checks one winner among eight same-provider calls,
+wrong workspace, stale expected state, backwards time, changed runtime identity
+and persistence of the winner after closing/reopening the database. A point-read
+fixture throws if collection listing is attempted. This does not prove
+cross-process contention behavior, SQLite runtime-registry/scanner support or a
+Local maintenance composition; those remain separate gates.
+
+## Inventory maintenance implementation
+
+RuntimeInventoryMaintenance now consumes the checkpoint and per-node connection
+scanners, registry, health service, ownership lookup and conditional projection
+writer. Each pass handles at most one node and one connection page (default 32,
+maximum 128). Concurrent calls share the running pass. Cursors advance through
+history and reset at cycle end; restart begins a fresh cycle. Invalid scan
+ordering/scope rejects before writes. Per-record failures are reported and do
+not prevent later records/cycles from being visited.
+
+The pass refreshes stale/disconnected inventory, expires disappeared history at
+its declared expiry and preserves revocation. Projection updates retain existing
+access restrictions, eligibility reasons, capability metadata and remediation;
+they only reduce eligibility. A scoped compare-and-set prevents replacement of
+a changed projection, and later cycles can retry after registry state already
+changed. Unchanged projections do not generate repeated writes. Registry and
+projection writes remain separate transactions, not an atomic cross-repository
+commit. Retried availability-event publication remains a separate durability
+concern.
+
+RuntimeGatewayWebSocketServer accepts an injected maintenance pass and runs it
+after lifecycle sweeps, using the same non-overlap/shutdown behavior. Incomplete
+pages produce the fixed sweep-failure diagnostic. Production startup still must
+supply this composition; simply constructing a server without maintenance does
+not enable inventory refresh. Dependency timeouts, fleet latency and SQLite
+scanner support remain unverified/unimplemented respectively.
+
+Focused tests cover pagination, disconnected state, restriction preservation,
+idempotent convergence, disappeared expiry, revocation, projection conflicts,
+missing projections and invalid scan scope. The cloud remote drill now routes a
+real WebSocket inventory frame into PostgreSQL rather than rejecting inventory.
+After channel drain, an explicit maintenance pass produces stale/ineligible
+discovery with offline node health. That PostgreSQL-backed drill and existing
+database restart/restore lanes pass. Identity and native responses are still
+synthetic/scripted; the clock for post-disconnect expiry is advanced in the
+fixture. This is not production deployment, multi-host load or native runtime
+acceptance. Earlier inspection entries below retain historical provenance.
+
+## Per-node connection scan prerequisite
+
+RuntimeConnectionScanner adds a node-scoped, exclusive connection-ID cursor with
+a validated 1–128 result limit. PostgreSQL applies the node predicate, cursor,
+ordering and limit in SQL, instead of loading all historical rows into the
+worker. The scan intentionally includes revoked/disappeared history; callers
+must preserve those states rather than implicitly revive them. The original
+unbounded list method remains available for existing consumers.
+
+In-memory and PostgreSQL tests check out-of-order insertion, stable pages,
+cross-node exclusion, invalid bounds/cursors and an empty final page. The
+PostgreSQL test also includes a revoked record and continues a page through a
+recreated repository. This bounds returned rows, not query execution time or
+whole-fleet cycle latency. SQLite scan support, the actual refresh loop and
+performance/deployed acceptance remain separate unfinished work.
+
+## Discovery refresh concurrency prerequisite
+
+PostgresRuntimeDiscoveryRepository now exposes a scoped compare-and-set for
+runtime projections. It compares the complete expected JSON projection in the
+same SQL update, preserves stored workspace/node ownership, rejects identity
+changes or backwards observation time, and returns false if the row is missing,
+outside scope or changed since the read. The existing ingestion upsert remains
+unchanged; refresh callers must use the new conditional operation.
+
+The PostgreSQL integration regression starts eight competing updates from the
+same prior projection and observes one winner. It also checks wrong-workspace
+rejection, stale expected-state rejection, retained winner state, backwards time
+and changed runtime identity. This protects a future refresh writer from
+overwriting a newer projection; it does not make the registry and projection
+one atomic transaction or implement the refresh worker itself.
+
+## Durable inventory scan prerequisite
+
+RuntimeInventoryCheckpointScanner now provides an internal keyset scan by node
+identity, with an exclusive cursor and a validated page limit of 1–128. The
+PostgreSQL implementation bounds the SQL result itself and does not depend on
+live channels or nonempty runtime references. A matching in-memory implementation
+supports deterministic worker tests. SQLite does not yet implement this scan.
+
+Tests cover stable ordering, page continuation after repository recreation,
+empty final page, invalid bounds/cursors and mutation isolation for the fixture.
+The PostgreSQL case uses actual stored checkpoints with empty runtime lists;
+it is not a transport disconnect/restart certification. This enables subsequent
+bounded refresh work but does not schedule it or update health/discovery yet.
+A worker must finish and restart scan cycles so records inserted behind a cursor
+are revisited, and preserve workspace ownership from each checkpoint. The scan
+is deliberately not a public discovery operation or an authorization bypass for
+end-user APIs.
+
+## Server lifecycle scheduling follow-up
+
+RuntimeGatewayWebSocketServer now schedules lifecycle sweeps after startup with
+a default one-second interval (configurable positive integer up to sixty
+seconds). Scheduling is completion-based: a slow sweep never overlaps the next
+one. Failure reports a fixed diagnostic with no raw persistence error and allows
+a later retry. This is not a hard real-time deadline or a timeout on repository
+calls; production dependency timeouts remain necessary.
+
+Shutdown cancels the timer, awaits the current sweep, prevents new upgrades
+(including authentication finishing during drain), closes the lifecycle and
+stops the native listener even when lifecycle cleanup fails. Repeated close
+calls share the same completion. Restarting a closed instance is rejected.
+
+Scheduler tests cover non-overlap, drain waiting, cancellation before the first
+tick, isolated reporting failure, retry, cleanup failure and upgrade/drain race.
+A real-WebSocket test with synthetic identity and an in-memory repository
+changes ownership without push notification or a manual sweep and observes
+automatic stale-socket closure. This closes the server's missing lifecycle
+timer, not inventory health/disappearance scheduling or production composition.
+
+## Gateway repository coordination follow-up
+
+The cloud remote drill now composes this adapter with the PostgreSQL ownership
+repository instead of its former in-memory coordinator. It requires the live
+WebSocket owner to exist in PostgreSQL, drains the server, then checks through a
+recreated repository that active ownership is gone but replay of that generation
+is still rejected. The historical inventory below describes the earlier
+inspected candidate; this follow-up changes its coordination entry only.
+Identity and runtime responses remain synthetic/scripted, inventory frames
+remain unsupported by the drill, and this is not a deployed multi-host test.
+
+RepositoryRuntimeNodeCoordination now adapts the ownership repository to the
+gateway's coordination port. It intentionally does not require push replacement
+notifications: active inbound frames and lifecycle sweeps consult authoritative
+ownership, as outbound sends already did. An old channel closes without
+publishing an offline event for its replacement. This provides reconciliation
+when notifications are absent; an actual bounded sweep schedule is still a
+production composition requirement.
+
+Two lifecycle regressions use separate coordinator instances sharing an
+in-memory repository fixture. With no replacement callback, either a stale
+inbound ACK or an explicit sweep closes the old socket, does not dispatch its
+message, preserves the newer owner and avoids a false offline event. These
+tests prove the lifecycle integration, not PostgreSQL-backed live sockets or
+cross-host timing. Ownership changes during an already-running handler still
+require operation-level fencing; a pre-dispatch lookup alone is not an atomic
+transaction with downstream effects. Production identity/startup, scheduling
+and deployed concurrent replacement/recovery acceptance remain open.
+
+## Durable ownership prerequisite implementation
+
+The follow-up adds RuntimeChannelOwnershipRepository in runtime-sdk and its
+PostgreSQL implementation with migration `0037_runtime_channel_ownership`.
+Per-node transaction locks serialize claims, heartbeats and releases. A release
+marks the row inactive instead of deleting its generation fence. Claims from a
+different workspace reject; stale generations cannot take ownership, heartbeat
+or release a replacement. Heartbeat updates cannot move time backwards or
+change the admitted channel identity/protocol.
+
+The real PostgreSQL integration test exercises eight concurrent repository
+claims (one winner), replacement, stale heartbeat/release, wrong-workspace
+mutation, monotonic heartbeat, release, repository recreation and generation
+replay. All 29 database tests and the configured integration/remote/drill lanes
+pass. Repository recreation is not a native gateway restart certification;
+the existing database restart/restore drills are not a dedicated channel
+recovery test. Cross-instance replacement notification, gateway wiring and
+production identity validation are still required. No production migration has
+been applied. The inactive fence currently has no deletion policy and must not
+be deleted without preserving replay protection.
+
+Inspected candidate: `be6fc08f6be872fe346de00e0d822d1c439d30a6`.
+Status: high-severity implementation and acceptance gap under #188/#194;
+requirements/wiring reconciliation under #186/#187. Not a permissions failure
+or a validated exploit finding.
+
+## Dependency inventory
+
+| Boundary                   | Current reachable evidence                                                                                                                                                                                                                        | Required production work                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Executable                 | `apps/runtime-gateway/package.json` starts `src/start.ts`; it calls `start()` with no server. `src/index.ts` rejects missing server outside local environments.                                                                                   | Build and wire the validated composition before readiness; preserve refusal on missing dependencies.                                                                                                                                     |
+| Identity                   | `packages/runtime-gateway-protocol/src/authentication.ts` declares verification, revocation lookup and revocation subscription. The authenticator consumes this port; no concrete production validator was found in the TypeScript source search. | Resolve the accepted issuer/proof-validation and revocation boundary, configure its trust inputs explicitly, and test expiry, wrong scope, replay and revocation during a live channel. Do not promote synthetic identity to production. |
+| Channel ownership          | `apps/runtime-gateway/src/websocket-coordination.ts` contains the coordination interface and an in-memory implementation.                                                                                                                         | Durable generation fencing and cross-instance replacement delivery, with restart, competing claims, stale heartbeat/release and workspace isolation tests.                                                                               |
+| Persistence                | PostgreSQL runtime connection, inventory checkpoint, discovery projection, command and event-effect implementations exist under `packages/database/src`.                                                                                          | Compose these using the application database role; prove coherent updates/recovery instead of assuming separately durable writes are atomic.                                                                                             |
+| Inventory and freshness    | RuntimeInventoryIngestionService is constructed by tests. No production caller of health refresh or disappearance expiry was found.                                                                                                               | Wire message routing plus bounded scheduling and discovery updates; verify shorter TTL, exact expiry, restart and reconnect against durable state.                                                                                       |
+| Reachability and telemetry | The coordination module provides recording publishers/metrics used by fixtures.                                                                                                                                                                   | Connect bounded production telemetry and authoritative reachability publication with redaction, failure behavior and shutdown tests.                                                                                                     |
+
+`scripts/run-cloud-remote-drill.mjs` constructs a real WebSocket server and
+PostgreSQL command/event services, but uses synthetic identity, in-memory
+coordination and recording telemetry. Its inventory handler explicitly throws
+`UNEXPECTED_INVENTORY`. It cannot prove production startup, durable channel
+ownership or inventory ingestion/freshness, regardless of a passing drill.
+
+## Implementation order and release gate
+
+1. Establish the identity-validation integration contract without changing the
+   owning identity authority or reusing fixture keys/credentials.
+2. Implement durable channel coordination and replacement notification with
+   explicit concurrency and restart semantics.
+3. Compose the existing durable repositories, real message handlers and
+   operational sinks; add bounded health/disappearance refresh and cleanup.
+4. Wire configuration through the executable, including dependency readiness
+   and graceful drain. Test the actual executable, not only injected `start`.
+5. Run the pinned Railway/Neon/Restate candidate with real authenticated native
+   runtime traffic and the #188 fault matrix. Keep native execution-host work
+   in `m11-native-remote-host-gap-2026-09-08.md` as a separate prerequisite.
+
+These are prerequisites, not completed checklist items. The existing startup
+tests establish fail-closed missing composition and injected lifecycle only.
+No production configuration, identity authority or service was modified during
+this inspection. No workers or servers were started.

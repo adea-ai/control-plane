@@ -22,6 +22,21 @@ export function gatewayJsonSchema() {
     $id: 'https://schemas.control-plane.dev/runtime-gateway/gateway-envelope.v1.json',
     title: 'Control Plane Runtime Gateway Envelope v1',
     ...z.toJSONSchema(GatewayEnvelopeSchema),
+    // Zod refinements are not emitted by toJSONSchema. Preserve the new
+    // inventory-field negotiation requirement for non-TypeScript consumers.
+    allOf: [
+      {
+        if: {
+          properties: { type: { const: 'inventory' } },
+          required: ['type'],
+          anyOf: ['runtimeDrivers', 'contextProviders'].map((family) => ({
+            properties: { [family]: { contains: { required: ['capabilityTtlMs'] } } },
+            required: [family],
+          })),
+        },
+        then: { properties: { protocolVersion: { properties: { minor: { minimum: 6 } } } } },
+      },
+    ],
     'x-control-plane-prohibitedPayloadKeys': [
       'credential',
       'databaseId',

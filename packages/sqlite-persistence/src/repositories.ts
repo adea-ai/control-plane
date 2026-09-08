@@ -8,6 +8,7 @@ import type {
 import {
   CommandInboxRecordSchema,
   CommandInboxScopeSchema,
+  CommandInboxError,
   ExecutionAttemptSchema,
   ExecutionSchema,
   type CommandAcceptanceRepository,
@@ -35,6 +36,7 @@ import {
 
 const namespaces = {
   commands: 'command-inbox',
+  retiredCommands: 'retired-command-keys',
   commandByExecution: 'command-by-execution',
   executions: 'executions',
   attempts: 'execution-attempts',
@@ -52,6 +54,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     const execution = ExecutionSchema.parse(executionInput)
     return this.provider.transaction(async (transaction) => {
       const commandId = recordId(scopeKey(command))
+      await this.#assertNotRetired(transaction, commandId)
       const existingRecord = await transaction.get(namespaces.commands, commandId)
       if (existingRecord === undefined) {
         if (
@@ -102,9 +105,47 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
   async get(scopeInput: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
     const scope = CommandInboxScopeSchema.parse(scopeInput)
     return this.provider.transaction(async (transaction) => {
+      await this.#assertNotRetired(transaction, recordId(scopeKey(scope)))
       const record = await transaction.get(namespaces.commands, recordId(scopeKey(scope)))
       return record === undefined ? undefined : CommandInboxRecordSchema.parse(record.value)
     })
+  }
+
+  /** Reserve a rejection key before a future retention worker removes payloads.
+   * This does not delete domain records or authorize external cleanup.
+   */
+  retireExpiredCommand(scopeInput: CommandInboxScope, retiredAt: string): Promise<boolean> {
+    const scope = CommandInboxScopeSchema.parse(scopeInput)
+    const timestamp = new Date(retiredAt)
+    if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== retiredAt)
+      throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
+    return this.provider.transaction(async (transaction) => {
+      const id = recordId(scopeKey(scope))
+      if (await transaction.get(namespaces.retiredCommands, id)) return true
+      const stored = await transaction.get(namespaces.commands, id)
+      if (!stored) return false
+      const command = CommandInboxRecordSchema.parse(stored.value)
+      if (scopeKey(command) !== scopeKey(scope))
+        throw new Error('COMMAND_RETIREMENT_SCOPE_MISMATCH')
+      const execution = await this.#execution(transaction, command.executionId)
+      if (
+        !['completed', 'failed'].includes(command.status) ||
+        !['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state) ||
+        timestamp.getTime() <= Date.parse(command.retentionExpiresAt)
+      )
+        return false
+      await transaction.put({
+        namespace: namespaces.retiredCommands,
+        id,
+        value: { retiredAt, commandId: command.commandId, executionId: command.executionId },
+      })
+      return true
+    })
+  }
+
+  async #assertNotRetired(transaction: PersistenceTransaction, id: string): Promise<void> {
+    if (await transaction.get(namespaces.retiredCommands, id))
+      throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
   }
 
   async getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined> {

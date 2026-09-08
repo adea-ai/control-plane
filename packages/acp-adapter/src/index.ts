@@ -14,6 +14,7 @@ import {
   RuntimeSessionOperationSchema,
   RuntimeSessionResultSchema,
   RuntimeStartRequestSchema,
+  RuntimeUsageSchema,
   TransportedRuntimeAdapter,
   inspectRuntimeCapabilities,
   assessExternalSession,
@@ -226,7 +227,12 @@ export const AcpUpdateSchema = z.union([
 ])
 
 export const AcpSnapshotSchema = z.discriminatedUnion('state', [
-  z.object({ state: z.enum(['starting', 'running']), observedAt: TimestampSchema }).strict(),
+  z
+    .object({
+      state: z.enum(['starting', 'running', 'awaiting_input']),
+      observedAt: TimestampSchema,
+    })
+    .strict(),
   z
     .object({
       state: z.literal('completed'),
@@ -242,7 +248,13 @@ export const AcpSnapshotSchema = z.discriminatedUnion('state', [
       artifacts: z.array(RuntimeArtifactReferenceSchema).max(1024),
     })
     .strict(),
-  z.object({ state: z.literal('cancelled'), observedAt: TimestampSchema }).strict(),
+  z
+    .object({
+      state: z.literal('cancelled'),
+      observedAt: TimestampSchema,
+      usage: RuntimeUsageSchema.optional(),
+    })
+    .strict(),
   z
     .object({
       state: z.enum(['failed', 'timed_out']),
@@ -288,6 +300,7 @@ export interface AcpTransport {
 
 export interface AcpSessionReplay {
   readonly updates: readonly AcpUpdate[]
+  readonly nativeUpdates?: readonly z.util.JSONType[]
   readonly completeness: 'complete' | 'partial' | 'unavailable'
 }
 
@@ -319,6 +332,11 @@ export interface AcpDriverOptions {
   readonly adapterVersion: string
   readonly externalSessionId: (nativeSessionId: string) => string
   readonly interactionId: (nativeRequestId: number) => string
+  /** Resolve authorized task content before creating a native session. No external effects. */
+  readonly resolvePrompt?: (
+    request: ReturnType<typeof RuntimeStartRequestSchema.parse>,
+    signal: AbortSignal
+  ) => Promise<string>
   readonly now?: () => Date
   readonly protocolVersion?: number
   readonly requestTimeoutMs?: number
@@ -340,6 +358,7 @@ export class AcpDriver implements RuntimeAdapter {
   readonly #adapterVersion: string
   readonly #externalSessionId: (nativeSessionId: string) => string
   readonly #interactionId: (nativeRequestId: number) => string
+  readonly #resolvePrompt: AcpDriverOptions['resolvePrompt']
   readonly #now: () => Date
   readonly #protocolVersion: number
   readonly #requestTimeoutMs: number
@@ -350,6 +369,7 @@ export class AcpDriver implements RuntimeAdapter {
   readonly #pendingAttempts = new Map<string, CachedValue<Promise<RuntimeExecutionHandle>>>()
   readonly #createReclamations = new Map<string, Promise<void>>()
   readonly #uncertainAttempts = new Set<string>()
+  readonly #uncertainCreateTokens = new Map<string, string>()
   readonly #actions = new Map<string, CachedValue<RuntimeExecutionStatus>>()
   readonly #sessionActions = new Map<string, CachedValue<RuntimeSessionResult>>()
   readonly #pendingSessionActions = new Map<string, CachedValue<Promise<RuntimeSessionResult>>>()
@@ -399,6 +419,7 @@ export class AcpDriver implements RuntimeAdapter {
     this.#adapterVersion = SemanticVersionSchema.parse(options.adapterVersion)
     this.#externalSessionId = options.externalSessionId
     this.#interactionId = options.interactionId
+    this.#resolvePrompt = options.resolvePrompt
     this.#now = options.now ?? (() => new Date())
     this.#protocolVersion = options.protocolVersion ?? 2
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000
@@ -517,6 +538,16 @@ export class AcpDriver implements RuntimeAdapter {
     if (inspection.health === 'unavailable' || !inspection.capabilityEvaluation?.eligible) {
       fail('ACP_RUNTIME_INELIGIBLE', 'unsupported', false)
     }
+    const resolvePrompt = this.#resolvePrompt
+    const prompt = resolvePrompt
+      ? await withTimeout(
+          this.#requestTimeoutMs,
+          (signal) => resolvePrompt(structuredClone(request), signal),
+          () => new Error('ACP_PROMPT_RESOLUTION_TIMEOUT')
+        ).catch(() => fail('ACP_PROMPT_RESOLUTION_FAILED', 'validation', false))
+      : acpPrompt(request.attemptId, request.executionPlan)
+    if (typeof prompt !== 'string' || prompt.length === 0 || Buffer.byteLength(prompt) > 262_144)
+      fail('ACP_PROMPT_INVALID', 'validation', false)
     const nativeSessionId = await this.#createNativeSession(request.attemptId)
     let externalSessionId: string | undefined
     let handle: RuntimeExecutionHandle | undefined
@@ -530,7 +561,7 @@ export class AcpDriver implements RuntimeAdapter {
       })
       await this.#request('session/prompt', {
         sessionId: nativeSessionId,
-        prompt: [{ type: 'text', text: acpPrompt(request.attemptId, request.executionPlan) }],
+        prompt: [{ type: 'text', text: prompt }],
       })
       this.#nativeByExternalSession.set(externalSessionId, nativeSessionId)
       this.#executions.set(handle.handleId, { handle, nativeSessionId })
@@ -574,13 +605,13 @@ export class AcpDriver implements RuntimeAdapter {
     handleInput: RuntimeExecutionHandle,
     requestInput: RuntimeInputRequest
   ): Promise<RuntimeExecutionStatus> {
-    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const { handle } = this.#execution(handleInput)
     const request = RuntimeInputRequestSchema.parse(requestInput)
     return this.#idempotentAction(
       `input:${request.idempotencyKey}`,
       { handle, request },
       async () => {
-        const interaction = this.#interactions.get(request.interactionId)
+        const interaction = this.#interactions.get(`${handle.handleId}:${request.interactionId}`)
         if (!interaction || interaction.kind !== 'input') {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
@@ -600,13 +631,13 @@ export class AcpDriver implements RuntimeAdapter {
     handleInput: RuntimeExecutionHandle,
     requestInput: RuntimeApprovalRequest
   ): Promise<RuntimeExecutionStatus> {
-    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const { handle } = this.#execution(handleInput)
     const request = RuntimeApprovalRequestSchema.parse(requestInput)
     return this.#idempotentAction(
       `approval:${request.idempotencyKey}`,
       { handle, request },
       async () => {
-        const interaction = this.#interactions.get(request.interactionId)
+        const interaction = this.#interactions.get(`${handle.handleId}:${request.interactionId}`)
         if (!interaction || interaction.kind !== 'permission') {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
@@ -784,7 +815,13 @@ export class AcpDriver implements RuntimeAdapter {
                   ? 'ACP_HISTORY_PARTIAL'
                   : 'ACP_HISTORY_UNAVAILABLE',
               ],
-        entries: normalizeHistory(replay.updates, this.#now),
+        entries: replay.nativeUpdates
+          ? replay.nativeUpdates.map((update, index) => ({
+              sequence: (operation.afterSequence ?? 0) + index + 1,
+              occurredAt: this.#now().toISOString(),
+              data: { type: 'native-acp-update', update },
+            }))
+          : normalizeHistory(replay.updates, this.#now, operation.afterSequence ?? 0),
       })
     }
     if (operation.operation === 'load') {
@@ -994,6 +1031,8 @@ export class AcpDriver implements RuntimeAdapter {
   }
 
   async #createNativeSession(attemptId: string): Promise<string> {
+    if (this.#uncertainCreateTokens.size >= 128)
+      fail('ACP_CREATE_BACKPRESSURE', 'unavailable', true)
     const createToken = `acp-create:${createHash('sha256')
       .update(`${attemptId}:${++this.#createSequence}`)
       .digest('hex')}`
@@ -1007,6 +1046,7 @@ export class AcpDriver implements RuntimeAdapter {
     } catch (error) {
       if (request) {
         this.#uncertainAttempts.add(attemptId)
+        this.#uncertainCreateTokens.set(attemptId, createToken)
         this.#uncertainCreateOperationCount += 1
         const reclamation = this.#reclaimCreatedSession(attemptId, createToken).finally(() => {
           if (this.#createReclamations.get(attemptId) === reclamation) {
@@ -1026,6 +1066,7 @@ export class AcpDriver implements RuntimeAdapter {
               (await this.#cleanupFailedStart(identifiable.data.sessionId))
             ) {
               this.#uncertainAttempts.delete(attemptId)
+              this.#uncertainCreateTokens.delete(attemptId)
             }
           })
           .catch(() => undefined)
@@ -1072,12 +1113,16 @@ export class AcpDriver implements RuntimeAdapter {
     if (!identifiable.success) return
     if (await this.#cleanupFailedStart(identifiable.data.sessionId)) {
       this.#uncertainAttempts.delete(attemptId)
+      this.#uncertainCreateTokens.delete(attemptId)
     }
   }
 
   async #awaitCreateReclamation(attemptId: string): Promise<void> {
     const reclamation = this.#createReclamations.get(attemptId)
     if (reclamation) await reclamation
+    const createToken = this.#uncertainCreateTokens.get(attemptId)
+    if (this.#uncertainAttempts.has(attemptId) && createToken)
+      await this.#reclaimCreatedSession(attemptId, createToken)
     if (this.#uncertainAttempts.has(attemptId)) {
       fail('ACP_START_OUTCOME_UNKNOWN', 'conflict', false)
     }
@@ -1232,7 +1277,7 @@ export class AcpDriver implements RuntimeAdapter {
     }
     if (update.sessionUpdate === 'request_permission') {
       const interactionId = this.#interactionId(update.requestId)
-      this.#interactions.set(interactionId, {
+      this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
         requestId: update.requestId,
         kind: 'permission',
         options: update.options.map(({ kind, optionId }) => ({ kind, optionId })),
@@ -1250,7 +1295,10 @@ export class AcpDriver implements RuntimeAdapter {
     }
     if (update.sessionUpdate === 'elicitation') {
       const interactionId = this.#interactionId(update.requestId)
-      this.#interactions.set(interactionId, { requestId: update.requestId, kind: 'input' })
+      this.#interactions.set(`${execution.handle.handleId}:${interactionId}`, {
+        requestId: update.requestId,
+        kind: 'input',
+      })
       return RuntimeExecutionProgressSchema.parse({
         ...common,
         type: 'interaction',
@@ -1686,7 +1734,8 @@ function safeNativeDisplayName(value: string | undefined): string | undefined {
 
 function normalizeHistory(
   updates: readonly AcpUpdate[],
-  now: () => Date
+  now: () => Date,
+  afterSequence = 0
 ): Array<{ sequence: number; occurredAt: string; data: Record<string, z.util.JSONType> }> {
   return updates.flatMap((update, index) => {
     if (
@@ -1697,7 +1746,7 @@ function normalizeHistory(
     }
     return [
       {
-        sequence: index + 1,
+        sequence: afterSequence + index + 1,
         occurredAt: now().toISOString(),
         data: { type: 'output', text: update.text, messageId: update.messageId },
       },
@@ -1723,6 +1772,14 @@ function acpPrompt(attemptId: string, plan: RuntimeExecutionPlanSnapshot): strin
 
 function normalizeSnapshot(handle: RuntimeExecutionHandle, snapshotInput: AcpSnapshot) {
   const snapshot = AcpSnapshotSchema.parse(snapshotInput)
+  if (snapshot.state === 'cancelled') {
+    return RuntimeExecutionStatusSchema.parse({
+      handle,
+      state: 'cancelled',
+      observedAt: snapshot.observedAt,
+      ...(snapshot.usage === undefined ? {} : { terminalUsage: snapshot.usage }),
+    })
+  }
   if (snapshot.state === 'completed') {
     return RuntimeExecutionStatusSchema.parse({
       handle,
@@ -2159,3 +2216,4 @@ function stable(value: unknown): string {
 
 export * from './gateway.js'
 export * from './stdio-client.js'
+export * from './process-transport.js'

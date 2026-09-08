@@ -225,7 +225,16 @@ export class RuntimeGatewayWebSocketLifecycle {
     // Snapshot the live connection map: #disconnect deletes entries during iteration.
     // oxlint-disable-next-line unicorn/no-useless-spread
     for (const connection of [...this.#connections.values()]) {
+      if (!connection.authenticatedChannel.active) {
+        await this.#disconnect(connection, 1008, 'authentication_invalidated')
+        continue
+      }
       if (connection.state !== 'active' || connection.record === undefined) continue
+      const owner = await this.#coordination.lookup(connection.record.nodeId)
+      if (owner === undefined || !sameChannel(connection.record, owner)) {
+        await this.#disconnect(connection, 4001, 'stale_channel_replaced', false)
+        continue
+      }
       const silenceMs = now.getTime() - Date.parse(connection.record.lastHeartbeatAt)
       if (silenceMs > this.#limits.idleTimeoutMs) {
         await this.#disconnect(connection, 4000, 'idle_timeout')
@@ -313,6 +322,11 @@ export class RuntimeGatewayWebSocketLifecycle {
       return
     }
     const envelope = envelopeResult.data
+    const owner = await this.#coordination.lookup(connection.record.nodeId)
+    if (owner === undefined || !sameChannel(connection.record, owner)) {
+      await this.#disconnect(connection, 4001, 'stale_channel_replaced', false)
+      return
+    }
     if (!matchesRecord(envelope, connection.record)) {
       await this.#disconnect(connection, 1008, 'frame_scope_mismatch')
       return

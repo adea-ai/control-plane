@@ -872,7 +872,7 @@
       "heading": "Atomic acceptance and conflict (section 4)",
       "requirement": "Validation, authorization, inbox insertion and logical execution creation are atomic where possible; conflicting payload hash reuse is rejected and replay returns the recorded response or processing state.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -880,13 +880,19 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-acceptance-map.md",
+          "commit": "5c3b505fdb3ac88e3895d7caef6d0a7c033d7343",
+          "scope": "SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Partial evidence at 5c3b505: SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
       }
     },
     {
@@ -987,7 +993,7 @@
       "heading": "Cancellation terminal precedence (section 9)",
       "requirement": "If execution completion wins a cancellation race, return the existing terminal result without rewriting it as cancelled.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -995,13 +1001,19 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-native-pi-terminal-cancellation-2026-09-08.md",
+          "commit": "79d454e401c126f6f2cd15b1bf0c7f5317804a55",
+          "scope": "Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Partial evidence at 79d454e: Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
       }
     },
     {
@@ -1235,6 +1247,351 @@
       }
     },
     {
+      "id": "CP-CONS-018",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider failure defaults (section 15.1)",
+      "requirement": "Preferred provider policy defaults to continue_without, required defaults to fail, and await_input requires explicit pinned policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-019",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider discovery authority (section 15.1)",
+      "requirement": "Provider discovery or installation alone never authorizes retrieval.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-020",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Deterministic provider selection (section 15.1)",
+      "requirement": "Provider selection follows the pinned policy deterministically and is not delegated to an LLM.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-021",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider read envelope (section 15.1)",
+      "requirement": "Every provider read carries stable request/correlation identity, workspace and mapped scope, contract version, capability requirements, budget, deadline and policy snapshot.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-022",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider authority invalidation (section 15.1)",
+      "requirement": "Provider removal, replacement or revocation invalidates affected future retrieval and write authority without implicitly deleting provider-owned data.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-023",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider substitution contract (sections 15.1 and 18)",
+      "requirement": "Cortana, another conforming provider and no provider preserve the same Task and Execution contracts; replacement changes only adapter/configuration and contribution metadata.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-024",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Terminal disagreement precedence (section 8)",
+      "requirement": "Record terminal-state disagreement as an incident and resolve it in favor of the authoritative Control Plane execution result unless an explicit administrative override exists.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-025",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Reconciliation job safety (section 8)",
+      "requirement": "Reconciliation jobs are idempotent, rate limited, observable and safe to rerun.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-026",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider proposal reconciliation (section 8)",
+      "requirement": "Reconcile non-terminal MemoryWriteProposals against authoritative provider status where supported; do not promote proposals to canonical memory or reconstruct missing provider evidence without authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-027",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Contribution recovery policy (section 8)",
+      "requirement": "After recovery rebuild or reject read-only ContextContributions under pinned freshness/revision policy rather than treating them as durable provider-side effects.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-028",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider error taxonomy (section 16)",
+      "requirement": "Provider errors distinguish unavailable, unauthorized, incompatible contract, revoked mapping, stale contribution, degraded response, malformed response, over-budget response, required-provider failure and provider-write reconciliation, with source layer, category, retryability, safe message, remediation and correlation identifiers.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-029",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider rejection and omission (section 16)",
+      "requirement": "Permanently reject provider contract, scope, digest or authorization failures rather than retrying; omit a preferred provider only if pinned policy permits and never silently degrade a required provider to none.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-030",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Execution trace continuity (section 17)",
+      "requirement": "Preserve request correlation through Control Plane inbox, provider selection/read/validation/contribution, ContextPackage/ExecutionPlan, Execution/Attempt, Restate, optional graph, direct or remote runtime commands and normalized events; correlate provider write/reconciliation separately and expose references for external consumer continuation.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-031",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Consistency diagnostics (section 17)",
+      "requirement": "Measure Control Plane inbox duplicates, payload conflicts, provider selection/omission/degradation, contribution freshness/rebuild/rejection, provider latency/error/timeout/scope denial, memory-write approval/denial/expiry/duplicate/reconciliation, reconciliation repairs, sequence gaps and dead letters.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-032",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Content-safe consistency telemetry (section 17)",
+      "requirement": "Exclude secrets, reusable provider credentials, private or synchronized content and keys, HPKE plaintext/private keys, unrestricted contributions, native memory values, private paths, sensitive context and Artifact bytes from logs; relay telemetry may expose bounded ciphertext size/key ID/expiry metadata only.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
       "id": "CP-RNODE-001",
       "sourceId": "runtime-node-spec",
       "heading": "Ownership Model",
@@ -1416,6 +1773,518 @@
         "severity": "high",
         "owner": "runtime-security",
         "disposition": "Extracted from the recovered canonical source; verify all supported composition roots and durable behavior before assigning implementation completion."
+      }
+    },
+    {
+      "id": "CP-RNODE-009",
+      "sourceId": "runtime-node-spec",
+      "heading": "Remote session supersession (section 6)",
+      "requirement": "Allow at most one active logical session per remote transport role/endpoint; reconnect uses session identity and last acknowledged sequence, and a newer authenticated session supersedes an older stale connection.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-010",
+      "sourceId": "runtime-node-spec",
+      "heading": "Remote heartbeat thresholds (sections 6 and 13)",
+      "requirement": "Remote heartbeat defaults to 15 seconds, degrades after two misses and marks the node offline after three misses or 45 seconds; Local direct-path offline status derives from process/IPC health instead.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-011",
+      "sourceId": "runtime-node-spec",
+      "heading": "Inventory freshness (section 14)",
+      "requirement": "Runtime and provider inventory becomes stale after 60 seconds unless the concrete adapter/provider advertises a shorter safe TTL.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-runtime-inventory-ttl-2026-09-08.md",
+          "commit": "6bb4b26d716da86c3d257fbc52474cf0500f9cc5",
+          "scope": "Protocol v1.6 default remote runtime normalization preserves a five-second advertised TTL and health refresh marks it stale after expiry; legacy omission retains sixty seconds. In-memory registry/checkpoints only; live advertisement, durable/scheduled expiry, Local freshness and ContextProvider consumers remain unverified."
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Partial evidence at 6bb4b26: Protocol v1.6 default remote runtime normalization preserves a five-second advertised TTL and health refresh marks it stale after expiry; legacy omission retains sixty seconds. In-memory registry/checkpoints only; live advertisement, durable/scheduled expiry, Local freshness and ContextProvider consumers remain unverified."
+      }
+    },
+    {
+      "id": "CP-RNODE-012",
+      "sourceId": "runtime-node-spec",
+      "heading": "Clock-skew admission (section 14)",
+      "requirement": "Node clock skew beyond configured tolerance blocks new effect-producing commands until corrected or explicitly handled.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-013",
+      "sourceId": "runtime-node-spec",
+      "heading": "Unknown command recovery (section 14)",
+      "requirement": "When a requested command is no longer in the ledger, return explicit unknown or expired status and reconcile authoritative status before retrying.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-014",
+      "sourceId": "runtime-node-spec",
+      "heading": "Acknowledgement before running (sections 9 and 14)",
+      "requirement": "Remote acceptance requires node acknowledgement and queued work is not marked running before start acknowledgement; direct execution preserves equivalent logical acknowledgement/idempotency semantics.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-015",
+      "sourceId": "runtime-node-spec",
+      "heading": "Terminal cancellation precedence (section 9)",
+      "requirement": "Cancellation is idempotent and a terminal result wins over a later cancellation request.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-016",
+      "sourceId": "runtime-node-spec",
+      "heading": "Version negotiation (section 16)",
+      "requirement": "Negotiate overlapping remote protocol versions during hello; direct transport rejects incompatible component versions during local startup/handshake using the same versioned command and payload contracts.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-017",
+      "sourceId": "runtime-node-spec",
+      "heading": "Independent adapter and driver compatibility (section 10)",
+      "requirement": "Negotiate adapter and driver versions independently; required runtime incompatibility makes its connection ineligible, while required provider incompatibility makes that provider unavailable without silently substituting against pinned policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-018",
+      "sourceId": "runtime-node-spec",
+      "heading": "Node and connection health separation (section 13)",
+      "requirement": "Track RuntimeConnection and ContextProviderConnection health separately from RuntimeNode state; an online node does not imply a healthy, present, compatible or authorized harness/provider.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-019",
+      "sourceId": "runtime-node-spec",
+      "heading": "Driver authority limits (section 10)",
+      "requirement": "Node drivers consume already authorized commands and scoped grants/mappings; they do not select runtimes/providers, broaden scope, compile context, decide memory policy or mutate Agent HQ product state or Control Plane ProjectState.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-020",
+      "sourceId": "runtime-node-spec",
+      "heading": "Reassignment identity (section 9)",
+      "requirement": "Local-only work or required local-provider requests are never silently reassigned; explicit runtime reassignment creates a new attempt, while authorized provider substitution creates a new contribution and ContextPackage version.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-transport",
+      "lane": "integration",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-transport",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-021",
+      "sourceId": "runtime-node-spec",
+      "heading": "Command rejection (section 9)",
+      "requirement": "Reject commands that are expired, addressed to another node/workspace, incompatible with negotiated protocol/schema or current permissions, or oversized.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-022",
+      "sourceId": "runtime-node-spec",
+      "heading": "Provider descriptor privacy (section 12.1)",
+      "requirement": "Optional provider capability descriptors expose opaque connection/mapping references, versions, health, operations, location and limitations, but exclude loopback URLs, database/source paths, credentials, corpus contents and native memory.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-023",
+      "sourceId": "runtime-node-spec",
+      "heading": "Runtime telemetry redaction (section 15)",
+      "requirement": "Redact reusable tokens, runtime/provider credentials, private keys, local-content keys/plaintext, loopback endpoints, database/source paths, provider evidence/native memory, environment secrets, raw file content and sensitive command fields from logs/traces; relay diagnostics expose bounded ciphertext metadata only.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+      }
+    },
+    {
+      "id": "CP-RNODE-024",
+      "sourceId": "runtime-node-spec",
+      "heading": "Native invocation boundary (section 11)",
+      "requirement": "Native commands must be explicitly registered, allowlisted, input validated and callable only from trusted application origins and windows.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-025",
+      "sourceId": "runtime-node-spec",
+      "heading": "Constrained process launch (section 11)",
+      "requirement": "Process operations must enforce approved executable identities, argument and working-directory constraints, environment-variable allowlists, timeout limits and output-size limits.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-026",
+      "sourceId": "runtime-node-spec",
+      "heading": "Opaque credential access (section 11)",
+      "requirement": "Packaged Local secret values remain in OS-secure storage; Control Plane receives opaque handles or narrow authorized-use operations, and approved driver/provider executors never return credential values in responses.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-027",
+      "sourceId": "runtime-node-spec",
+      "heading": "Protected key-role exclusion (section 11)",
+      "requirement": "Ordinary credential APIs must not expose the Agent HQ local-content master key, RuntimeNode E2E private key, ContentSyncDevice private key or unwrapped ContentKeyEpoch material as generic driver credentials.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-028",
+      "sourceId": "runtime-node-spec",
+      "heading": "Bounded local context requests (section 12)",
+      "requirement": "Every LocalContextRequest declares the allowed operation, file selectors, maximum files, maximum bytes, token budget, freshness requirement and return schema.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-029",
+      "sourceId": "runtime-node-spec",
+      "heading": "Explicit local-content promotion (section 12)",
+      "requirement": "Promotion of local source content into cloud ProjectState or cloud Artifact storage must be explicit, preserve provenance and sensitivity, and enforce workspace authorization and redaction policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+      }
+    },
+    {
+      "id": "CP-RNODE-030",
+      "sourceId": "runtime-node-spec",
+      "heading": "Provider revocation without data deletion (section 12.1)",
+      "requirement": "Removing or revoking a local provider blocks new requests without deleting provider-owned data.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [186, 188, 190, 194],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
       }
     },
     {
@@ -5300,6 +6169,66 @@
       "sourceId": "execution-consistency-spec"
     },
     {
+      "id": "CP-CONS-018",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-019",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-020",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-021",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-022",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-023",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-024",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-025",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-026",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-027",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-028",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-029",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-030",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-031",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-032",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
       "id": "CP-RNODE-001",
       "sourceId": "runtime-node-spec"
     },
@@ -5329,6 +6258,94 @@
     },
     {
       "id": "CP-RNODE-008",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-009",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-010",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-011",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-012",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-013",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-014",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-015",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-016",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-017",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-018",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-019",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-020",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-021",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-022",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-023",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-024",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-025",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-026",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-027",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-028",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-029",
+      "sourceId": "runtime-node-spec"
+    },
+    {
+      "id": "CP-RNODE-030",
       "sourceId": "runtime-node-spec"
     },
     {

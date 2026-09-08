@@ -41,6 +41,14 @@ export interface PersistenceTransaction {
   put(write: PersistenceWrite): Promise<PersistenceRecord>
   delete(namespace: string, id: string, expectedRevision?: number): Promise<boolean>
   list(namespace: string): Promise<readonly PersistenceRecord[]>
+  /** Exclusive storage-ID cursor; does not imply ordering by fields inside value. */
+  scan(namespace: string, options: PersistenceScan): Promise<readonly PersistenceRecord[]>
+}
+
+export interface PersistenceScan {
+  readonly afterId?: string
+  /** Maximum records returned, an integer from 1 through 128. */
+  readonly limit: number
 }
 
 export interface PersistenceBackup {

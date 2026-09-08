@@ -43,6 +43,42 @@ function registration(overrides = {}) {
 }
 
 describe('RuntimeConnection registry', () => {
+  test('scans node-scoped history in bounded stable pages', async () => {
+    const repository = new InMemoryRuntimeConnectionRepository()
+    const registry = new RuntimeConnectionRegistry(repository)
+    const records = []
+    for (const index of [3, 1, 2, 4])
+      records.push(
+        await registry.register(
+          registration({
+            runtimeConnectionId: `rtc_01ZRZ3NDEKTSV4RRFFQ69G5FA${index}`,
+            identityDigest: `sha256:${String(index).repeat(64)}`,
+            runtimeNodeRefId:
+              index === 4 ? 'rnr_01ZRZ3NDEKTSV4RRFFQ69G5FAV' : registration().runtimeNodeRefId,
+          })
+        )
+      )
+    const query = { runtimeNodeRefId: registration().runtimeNodeRefId, limit: 2 }
+    const first = await repository.scanByRuntimeNode(query)
+    expect(first).toEqual([records[1], records[2]])
+    const last = await repository.scanByRuntimeNode({
+      ...query,
+      afterConnectionId: first[1].runtimeConnectionId,
+    })
+    expect(last).toEqual([records[0]])
+    expect(
+      await repository.scanByRuntimeNode({
+        ...query,
+        afterConnectionId: last[0].runtimeConnectionId,
+      })
+    ).toEqual([])
+    for (const invalid of [
+      { ...query, limit: 0 },
+      { ...query, limit: 129 },
+      { ...query, afterConnectionId: 'bad' },
+    ])
+      await expect(repository.scanByRuntimeNode(invalid)).rejects.toThrow()
+  })
   test('stores multiple runtime endpoints on one Agent HQ node without conflating health', async () => {
     const registry = new RuntimeConnectionRegistry(new InMemoryRuntimeConnectionRepository())
     const healthy = await registry.register(registration())

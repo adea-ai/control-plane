@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { LocalRuntimeInteractions } from './runtime-interactions.js'
 import type { JsonValue, ObjectStore, PersistenceProvider } from '@control-plane/deployment'
 import type {
   RuntimeExecutionHandle,
@@ -31,7 +32,8 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   constructor(
     readonly persistence: PersistenceProvider,
     readonly objectStore: ObjectStore,
-    readonly runtime: RuntimeAdapterWithTransport
+    readonly runtime: RuntimeAdapterWithTransport,
+    readonly interactions?: LocalRuntimeInteractions
   ) {
     if (runtime.transportKind !== 'direct-local') {
       throw new Error('DIRECT_RUNTIME_TRANSPORT_REQUIRED')
@@ -129,16 +131,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
         await this.#cancelHandle(handle, cancellation)
         return { outcome: 'cancelled' }
       }
-      let interactionId: string | undefined
-      for await (const progress of this.runtime.progress(handle)) {
-        const candidate = progress.data['interactionId']
-        if (progress.type === 'interaction' && typeof candidate === 'string') {
-          interactionId = candidate
-          break
-        }
-      }
-      const status = await this.runtime.status(handle)
-      return this.#outcome(input.executionId, input.attemptId, status, interactionId)
+      return this.#observe(input.executionId, input.attemptId, handle)
     })
   }
 
@@ -153,12 +146,13 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   }): Promise<WorkflowRuntimeOutcome> {
     return this.#effect(input.effectKey, async () => {
       const handle = await this.#handle(input.executionId, input.attemptId, true)
+      await this.interactions?.assertResponse(input)
       let status: RuntimeExecutionStatus
-      if (input.action === 'approve' || input.action === 'deny') {
+      if (input.action === 'approve' || input.action === 'deny' || input.action === 'grant') {
         status = await this.runtime.submitApproval(handle, {
           interactionId: input.interactionId,
           idempotencyKey: input.effectKey,
-          decision: input.action,
+          decision: input.action === 'grant' ? 'approve' : input.action,
         })
       } else if (input.action === 'cancel') {
         status = await this.runtime.cancel(handle, {
@@ -186,8 +180,30 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
           retryable: false,
         }
       }
+      if (['starting', 'running', 'awaiting_input'].includes(status.state))
+        return this.#observe(input.executionId, input.attemptId, handle, input.interactionId)
       return this.#outcome(input.executionId, input.attemptId, status)
     })
+  }
+
+  async #observe(
+    executionId: string,
+    attemptId: string,
+    handle: RuntimeExecutionHandle,
+    respondedInteractionId?: string
+  ): Promise<WorkflowRuntimeOutcome> {
+    let interactionId: string | undefined
+    for await (const progress of this.runtime.progress(handle)) {
+      const candidate = progress.data['interactionId']
+      if (progress.type !== 'interaction' || typeof candidate !== 'string') continue
+      // Progress is replayable. Previously resolved requests must not suspend
+      // this resumed turn again; their durable records retain the scope check.
+      const pending = await this.interactions?.record(executionId, attemptId, progress)
+      if (pending === false || candidate === respondedInteractionId) continue
+      interactionId = candidate
+      break
+    }
+    return this.#outcome(executionId, attemptId, await this.runtime.status(handle), interactionId)
   }
 
   async cancel(input: {
@@ -209,6 +225,9 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   }): Promise<void> {
     await this.#effect(input.effectKey, async () => {
       const handle = await this.#handle(input.executionId, input.attemptId, false)
+      const attemptId = input.attemptId ?? handle?.attemptId
+      if (attemptId !== undefined)
+        await this.interactions?.resolveTerminal(input.executionId, attemptId)
       if (handle !== undefined) await this.runtime.cleanup(handle)
       return { cleaned: true }
     })

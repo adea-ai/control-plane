@@ -68,6 +68,8 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
       await composition.start()
       const authentication = await createLocalApiAuthentication(composition.dataDirectory)
       const application = await createControlApiApplication({
+        interactionCommandService: composition.interactionCommandService,
+        executionCancellationService: composition.executionCancellationService,
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
         profileResolutionService: composition.profileResolutionService,
@@ -98,6 +100,7 @@ export * from './authentication.js'
 export * from './local-api-composition.js'
 export * from './direct-runtime-activities.js'
 export * from './managed-pi-runtime.js'
+export * from './acp-runtime.js'
 
 export function resolveLocalRuntimeOptions(
   environment: Readonly<Record<string, string | undefined>>

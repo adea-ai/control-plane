@@ -19,9 +19,11 @@ describe('Control API generated contract', () => {
       '/v1/authentication/verify',
       '/v1/context-packages/resolve',
       '/v1/executions/accept',
+      '/v1/executions/cancel',
       '/v1/executions/validate',
       '/v1/external-sessions/get',
       '/v1/external-sessions/list',
+      '/v1/interactions/respond',
       '/v1/marketplace/catalog',
       '/v1/marketplace/install',
       '/v1/profiles/resolve',
@@ -30,6 +32,18 @@ describe('Control API generated contract', () => {
       '/v1/runtime-connections/list',
       '/v1/runtimes/list',
     ])
+  })
+
+  test('protects HTTP 202 acknowledgement schemas as well as HTTP 200 responses', () => {
+    const baseline = createControlApiOpenApiDocument()
+    const changed = structuredClone(baseline)
+    delete changed.paths['/v1/interactions/respond'].post.responses['202']
+    expect(findBreakingContractChanges(baseline, changed).length).toBeGreaterThan(0)
+    const malformed = structuredClone(baseline)
+    malformed.paths['/v1/interactions/respond'].post.responses['202'].content[
+      'application/json'
+    ].schema.properties.data.properties.status = { type: 'number' }
+    expect(findBreakingContractChanges(baseline, malformed).length).toBeGreaterThan(0)
   })
 
   test('allows additive optional fields while rejecting breaking v2 changes', () => {

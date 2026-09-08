@@ -1,15 +1,38 @@
 import {
   RuntimeConnectionSchema,
+  RuntimeConnectionScanSchema,
+  type RuntimeConnectionScan,
+  type RuntimeConnectionScanner,
   runtimeConnectionsShareStableIdentity,
   type RuntimeConnection,
   type RuntimeConnectionRepository,
 } from '@control-plane/runtime-sdk'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, gt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { runtimeConnections } from './schema/runtime-connections.js'
 
-export class PostgresRuntimeConnectionRepository implements RuntimeConnectionRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+export class PostgresRuntimeConnectionRepository
+  implements RuntimeConnectionRepository, RuntimeConnectionScanner
+{
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>) {}
+
+  async scanByRuntimeNode(input: RuntimeConnectionScan): Promise<readonly RuntimeConnection[]> {
+    const { runtimeNodeRefId, afterConnectionId, limit } = RuntimeConnectionScanSchema.parse(input)
+    const rows = await this.database
+      .select()
+      .from(runtimeConnections)
+      .where(
+        and(
+          eq(runtimeConnections.runtimeNodeRefId, runtimeNodeRefId),
+          afterConnectionId === undefined
+            ? undefined
+            : gt(runtimeConnections.runtimeConnectionId, afterConnectionId)
+        )
+      )
+      .orderBy(asc(runtimeConnections.runtimeConnectionId))
+      .limit(limit)
+    return rows.map(fromRuntimeConnectionRow)
+  }
 
   async insert(connectionInput: RuntimeConnection): Promise<boolean> {
     const connection = RuntimeConnectionSchema.parse(connectionInput)

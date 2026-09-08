@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createExecutionPlanTestFixture } from '../packages/execution-plan/src/testing.ts'
-import { ManagedPiAdapter, ManagedPiDriver } from '../packages/managed-pi-adapter/src/index.ts'
+import {
+  ManagedPiAdapter,
+  ManagedPiDriver,
+  translateExecutionPlanToManagedPi,
+} from '../packages/managed-pi-adapter/src/index.ts'
 import { ManagedPiProcessClient } from '../packages/managed-pi-adapter/src/process-client.ts'
 import { DirectLocalRuntimeTransport } from '../packages/runtime-sdk/src/index.ts'
 
@@ -117,7 +121,7 @@ try {
     }),
     { mode: 0o600 }
   )
-  const client = new ManagedPiProcessClient({
+  const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
     environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', PI_CODING_AGENT_DIR: agentDirectory },
@@ -129,7 +133,8 @@ try {
         model: 'fixture',
       }),
     },
-  })
+  }
+  const client = new ManagedPiProcessClient(clientOptions)
   adapter = new ManagedPiAdapter({
     transport: new DirectLocalRuntimeTransport(
       new ManagedPiDriver({
@@ -158,8 +163,18 @@ try {
     idempotencyKey: 'real-pi-certification',
     executionPlan: plan,
   }
-  const handle = await adapter.start(command)
+  const nativeCommand = {
+    attemptId: command.attemptId,
+    idempotencyKey: command.idempotencyKey,
+    configuration: translateExecutionPlanToManagedPi(plan, '1.2.0'),
+  }
+  const admitted = await Promise.all(Array.from({ length: 8 }, () => client.start(nativeCommand)))
+  const handle = admitted[0]
   handles.push(handle)
+  for (const entry of admitted) assert.deepEqual(entry, handle)
+  const changed = structuredClone(nativeCommand)
+  changed.configuration.limits.duration.maximumMs += 1
+  await assert.rejects(client.start(changed), /PI_START_IDEMPOTENCY_CONFLICT/)
   assert.deepEqual(await adapter.start(command), handle)
   const events = []
   await bounded(
@@ -220,6 +235,37 @@ try {
     assert.equal(request.body.stream, true)
     assert.equal(request.body.tools?.length ?? 0, 0)
   }
+  const originalEvents = []
+  for await (const event of client.progress(handle)) originalEvents.push(event)
+  await adapter.cleanup(handle)
+  handles.splice(handles.indexOf(handle), 1)
+  const recreated = new ManagedPiProcessClient(clientOptions)
+  assert.deepEqual(await recreated.start(nativeCommand), handle)
+  const recovered = await recreated.reconcile(handle)
+  assert.equal(recovered.state, 'succeeded')
+  assert.deepEqual(recovered.result.output, status.result.output)
+  assert.deepEqual(recovered.result.usage, status.result.usage)
+  const replayedCancellations = await Promise.all(
+    Array.from({ length: 8 }, () => recreated.cancel(handle))
+  )
+  assert.deepEqual(
+    replayedCancellations,
+    Array.from({ length: 8 }, () => recovered)
+  )
+  const recoveredEvents = []
+  for await (const event of recreated.progress(handle)) recoveredEvents.push(event)
+  assert.deepEqual(recoveredEvents, originalEvents)
+  const resumedEvents = []
+  for await (const event of recreated.progress(handle, 2)) resumedEvents.push(event)
+  assert.deepEqual(
+    resumedEvents,
+    originalEvents.filter((event) => event.sequence > 2)
+  )
+  await adapter.cleanup(cancelled)
+  handles.splice(handles.indexOf(cancelled), 1)
+  assert.equal((await recreated.reconcile(cancelled)).state, 'cancelled')
+  assert.equal((await recreated.cancel(cancelled)).state, 'cancelled')
+  assert.equal(requests.length, 3, 'A recreated client must not repeat the cleaned native attempt')
   report = {
     schemaVersion: 1,
     suite: 'm11-real-pi-process',
@@ -232,6 +278,12 @@ try {
     completed: true,
     cancellation: true,
     duplicateStart: 'same-handle-one-request',
+    concurrentNativeStarts: 8,
+    changedNativeCommand: 'rejected',
+    clientRecreationAfterCleanup: 'original-terminal-handle-no-new-request',
+    terminalRecoveryAfterCleanup: ['succeeded-with-original-output-and-usage', 'cancelled'],
+    terminalCancellationAfterCleanup: 'original-terminal-state-no-new-request',
+    eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {
       persistence: 'sqlite',
       workflow: 'real-local-restate',

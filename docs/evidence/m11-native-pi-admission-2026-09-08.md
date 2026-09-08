@@ -1,0 +1,164 @@
+# M11 Local native Pi admission identity
+
+The production-used `ManagedPiProcessClient` previously checked its execution map
+before awaiting input resolution. Eight simultaneous calls could all enter that
+resolver. A regression using a failing resolver reproduced eight calls instead
+of one without creating files or starting a child process. Existing-attempt
+lookup also returned a handle without comparing the incoming command.
+
+The client now reserves an admission promise by attempt handle before awaiting
+resolution. Its canonical fingerprint includes the idempotency key and validated
+configuration, not a newly generated timestamp. Matching calls share the original
+outcome; changed configuration or command key conflicts. Rejected admissions
+remain fenced because failure is not proof that no native effect occurred.
+
+The process-backed Pi RPC fixture exercises eight concurrent client starts,
+changed-configuration rejection, and replay through the ordinary adapter, then
+verifies output, usage, and restricted invocation flags. The failing-resolver
+test verifies one resolution, retained failure on retry, and changed-key
+rejection. These tests exercise the native process client with a wire fixture,
+not the actual Pi distribution or a live provider.
+
+Admission receipts remain in memory. Client/process restart, explicit uncertain
+allocation reconciliation, persistent receipt retention, real tool/approval
+support, and native sandbox isolation remain separate acceptance gates. This
+change does not enable Pi orchestration or relax disabled native tools/context.
+
+## Published runtime verification
+
+The extended `scripts/certify-m11-managed-pi.mjs` passed against a disposable
+installation of published Pi **0.84.2**, Node **24.18.0**, and Bun **1.4.0**.
+Eight concurrent calls entered the native process client and returned one handle;
+the completed prompt reached the deterministic loopback model endpoint exactly
+once. A changed configuration was rejected. Adapter replay, native cancellation,
+and the real Local SQLite/Restate composition also passed, with exactly three
+model requests across the complete runner and 11/3 input/output tokens on the
+completed calls. The global runtime installation was not modified.
+
+The runner emitted `cleanup: completed`. This strengthens the admission evidence
+from a wire fixture to the published Pi executable; it does not change the
+explicit tool, approval, sandbox, real-provider-quality, or restart limitations.
+
+## Persistent duplicate-admission prevention
+
+The process client now exclusively creates `admissions/<attemptId>.json` in its
+private data directory before resolving inputs or launching a process. The
+0600 record contains a schema version and SHA-256 command digest only. Its file
+and containing directory are synced before proceeding. Normal execution cleanup
+does not delete this record. Same-client retries still share the original
+in-memory result; a recreated client encountering any existing record returns
+non-retryable `PI_START_RECONCILIATION_REQUIRED` with unknown classification.
+
+The restart regression failed before this change by calling input resolution
+again. It now passes. Eight separate clients competing for a fresh attempt allow
+only one input resolution; the other seven require reconciliation. A truncated
+record also remains blocking, and tests verify the minimal record and mode.
+
+This prevents duplicate admission across client reconstruction on retained local
+storage. It does **not** restore output, status, native process attachment, usage,
+or terminal settlement. It is not a power-loss, filesystem rollback, malicious
+local-owner, or full daemon-recovery certification. The data directory must remain
+private, trustworthy, persistent, and part of recovery policy. Never delete these
+records merely to retry: explicit reconciliation and retention/backup treatment
+remain required. The previously documented in-memory-only limitation applies to
+returning original outcomes, not this new persistent refusal of duplicate work.
+
+The published Pi 0.84.2 runner was repeated after this persistent-record change
+with Node 24.18.0 and Bun 1.4.0. It cleaned the completed native process, recreated
+the client against the same data directory, and verified the unknown,
+non-retryable reconciliation-required error. The model endpoint still observed
+exactly three requests across concurrent completion, cancellation, and Local
+composition. The report emitted
+`clientRecreationAfterCleanup: reconciliation-required-no-new-request` and
+`cleanup: completed`. This proves retained refusal after ordinary process cleanup
+and client recreation, not abrupt host loss or restoration of the old result.
+
+## Terminal-result recovery implementation
+
+The client now stores validated terminal snapshots under
+`terminal-results/<attemptId>.json`, separately from disposable prompt/process
+directories. Snapshots contain the exact handle and terminal status, including
+completed output and usage, or a normalized failure/cancellation. Files use 0600
+permissions, an 8 MiB bound, a synced temporary file, atomic rename, and directory
+sync before status/progress consumers observe a terminal outcome. Cleanup keeps
+the snapshot and admission fence while removing temporary prompt material.
+
+Fresh-client status/reconciliation validates the persisted record and exact
+handle identity, refusing missing, malformed, oversized, symlinked, nonterminal,
+or mismatched records as unknown/non-retryable reconciliation work. Late native
+events cannot mutate settled results. A persistence failure does not publish a
+completed outcome; cleanup still stops the child and removes prompt material.
+
+The process-backed suite passes 8 tests / 42 assertions, including recovered
+success, cancellation, and runtime failure after cleanup, damaged records,
+mismatched handle timestamps, and blocked terminal storage. This supersedes the
+earlier statement that no completed results can be recovered. Live in-flight
+reattachment, progress-history replay, replaying start after recreation, abrupt
+host-loss/power-loss certification, and real-Pi verification of this terminal
+storage change remain open. This is not full M11.3 recovery acceptance.
+
+The extended published-Pi runner subsequently passed terminal recovery on Pi
+0.84.2 / Node 24.18.0 / Bun 1.4.0. After native cleanup, a fresh client recovered
+the completed output and usage exactly and recovered the cancelled attempt as
+cancelled. The fixture still received exactly three model requests across all
+scenarios. The report records `terminalRecoveryAfterCleanup` as
+`succeeded-with-original-output-and-usage` and `cancelled`, with cleanup complete.
+Thus real-Pi verification of these terminal reads is now established; live
+in-flight reattachment, event-history replay, and abrupt host-loss testing are
+not established by this run.
+
+Validation caveat for this runner update: the first full local suite had three
+E2E failures, including two `EADDRINUSE` errors on port 19080 and a Local Pi
+execution timeout. No listener remained when inspected after the run; the
+original port owner was not captured. The unchanged isolated E2E rerun passed
+104 tests with seed 1104. This is retained as an unresolved transient test
+environment/lifecycle observation, not a proven code fix or a clean first pass.
+The subsequent unchanged full-suite rerun also passed: 990 unit, 104 E2E, and
+67 smoke tests. No unrelated process was stopped to obtain the passing reruns.
+
+## Terminal event-history recovery
+
+Terminal records now also contain the original ordered native event stream,
+including its final status and usage events. Persistence starts only after those
+events have been appended, and consumers still wait for durable persistence
+before observing terminal events. A fresh client reads the original sequences
+and applies `afterSequence` without synthesizing new events or counters.
+
+Records enforce contiguous sequences starting at one, a final status matching
+the terminal snapshot, at most 4096 events, and the existing 8 MiB total bound.
+Exceeding these bounds requires reconciliation rather than silently truncating
+history. Existing schema-version-1 records without events still support status
+reads, but progress recovery explicitly requires reconciliation. These event
+payloads belong to the same private terminal-snapshot retention class.
+
+The process-backed suite passes 8 tests / 48 assertions: exact replay after
+cleanup, cursor filtering, pre-aborted reads, legacy status compatibility,
+legacy-history refusal, and damaged sequence refusal are covered. This is not
+live in-flight process reattachment or a published-Pi event-recovery proof.
+
+The published-Pi runner subsequently verified exact event-history recovery and
+cursor filtering with Pi 0.84.2, Node 24.18.0, and Bun 1.4.0. The recovered events
+deep-equaled the original stream, and recovery after sequence 2 returned exactly
+the original events above that cursor. The report emitted
+`eventRecoveryAfterCleanup: exact-history-and-cursor-filtering`; total model
+requests remained three and cleanup completed. This establishes terminal event
+recovery for the pinned runtime, not live in-flight reattachment.
+
+## Completed-start replay after client recreation
+
+A recreated client's `start` now recovers the original handle only when the
+bounded, no-follow admission record contains the exact canonical command digest
+and a valid terminal snapshot exists for that attempt. A changed command produces
+an idempotency conflict. Missing, malformed, or incomplete evidence retains the
+unknown/non-retryable admission refusal; no inputs are resolved and no process is
+launched during recovery. Cleanup of a recovered terminal handle validates the
+snapshot without removing its admission, result, or event evidence.
+
+The process-backed test covers eight independent concurrent terminal replays,
+changed-command rejection, and retained recovery after repeated cleanup. The
+published Pi 0.84.2 runner also passed on Node 24.18.0 / Bun 1.4.0, reporting
+`clientRecreationAfterCleanup: original-terminal-handle-no-new-request`, exactly
+three fixture model requests, recovered output/usage/events/cancellation, and
+cleanup complete. Earlier reconciliation-required reports remain historical
+evidence of the prior implementation, not current completed-start behavior.
+In-flight reattachment and abrupt host-loss acceptance remain open.

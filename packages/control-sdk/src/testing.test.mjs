@@ -9,6 +9,22 @@ afterEach(async () => {
 })
 
 describe('deterministic Control Plane stub', () => {
+  test('supports the public execution cancellation command', async () => {
+    const stub = await createControlPlaneStub()
+    stubs.push(stub)
+    const client = new ControlPlaneClient({ baseUrl: stub.url, credential: 'stub-agent-hq-token' })
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      operation: 'execution.cancel',
+      payload: { executionId: 'exe_01JABCDEF0123456789ABCDEFG' },
+    }
+    expect((await client.cancelExecution(request)).data).toMatchObject({
+      commandId: request.commandId,
+      executionId: request.payload.executionId,
+      status: 'accepted',
+    })
+    expect(stub.requests.map(({ operation }) => operation)).toEqual(['execution.cancel'])
+  })
   test('supports representative Agent HQ contract flows', async () => {
     const stub = await createControlPlaneStub()
     stubs.push(stub)
@@ -38,6 +54,9 @@ describe('deterministic Control Plane stub', () => {
     expect(await client.acceptExecution(ControlApiFixtures.executionAcceptance.request)).toEqual(
       ControlApiFixtures.executionAcceptance.response
     )
+    expect(
+      await client.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+    ).toEqual(ControlApiFixtures.interactionResponse.response)
 
     expect(stub.requests.map((request) => request.operation)).toEqual([
       'authentication.verify',
@@ -47,6 +66,7 @@ describe('deterministic Control Plane stub', () => {
       'runtime.list',
       'execution.validate',
       'execution.accept',
+      'interaction.respond',
     ])
     expect(JSON.stringify(stub.requests)).not.toContain('stub-agent-hq-token')
   })

@@ -36,6 +36,7 @@ export interface AcpStdioClientOptions {
 export class AcpStdioClient {
   readonly #options: AcpStdioClientOptions
   readonly #pending = new Map<RpcId, Pending>()
+  readonly #lateResults = new Map<RpcId, (value: Json) => void>()
   readonly #incoming = new Set<RpcId>()
   #child: ChildProcessWithoutNullStreams | undefined
   #buffer = Buffer.alloc(0)
@@ -92,7 +93,7 @@ export class AcpStdioClient {
   request(
     method: string,
     params: RpcParams,
-    options: { timeoutMs?: number; signal?: AbortSignal } = {}
+    options: { timeoutMs?: number; signal?: AbortSignal; onLateResult?: (value: Json) => void } = {}
   ): Promise<Json> {
     const timeoutMs = options.timeoutMs ?? 30_000
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3_600_000) {
@@ -103,17 +104,21 @@ export class AcpStdioClient {
     if (options.signal?.aborted) return Promise.reject(new Error('ACP_PROCESS_ABORTED'))
     if (this.#pending.size >= PendingLimit)
       return Promise.reject(new Error('ACP_PROCESS_BACKPRESSURE'))
+    if (options.onLateResult && this.#lateResults.size >= PendingLimit)
+      return Promise.reject(new Error('ACP_PROCESS_LATE_RESULT_LIMIT'))
     const id = `cp:${++this.#sequence}`
+    if (options.onLateResult) this.#lateResults.set(id, options.onLateResult)
     return new Promise((resolve, reject) => {
-      const finish = (callback: () => void) => {
+      const finish = (callback: () => void, retainLate = false) => {
         if (!this.#pending.delete(id)) return
+        if (!retainLate) this.#lateResults.delete(id)
         clearTimeout(timer)
         options.signal?.removeEventListener('abort', aborted)
         callback()
       }
-      const aborted = () => finish(() => reject(new Error('ACP_PROCESS_ABORTED')))
+      const aborted = () => finish(() => reject(new Error('ACP_PROCESS_ABORTED')), true)
       const timer = setTimeout(
-        () => finish(() => reject(new Error('ACP_PROCESS_REQUEST_TIMEOUT'))),
+        () => finish(() => reject(new Error('ACP_PROCESS_REQUEST_TIMEOUT')), true),
         timeoutMs
       )
       timer.unref()
@@ -245,7 +250,12 @@ export class AcpStdioClient {
       throw new Error('ACP_PROCESS_PROTOCOL_ERROR')
     }
     const pending = this.#pending.get(message.id)
-    if (!pending) return // Late responses after timeout/abort are not new effects.
+    if (!pending) {
+      const lateResult = this.#lateResults.get(message.id)
+      this.#lateResults.delete(message.id)
+      if (!message.error) lateResult?.(message.result ?? null)
+      return
+    }
     if (message.error) pending.reject(new Error(`ACP_PROCESS_RPC_ERROR:${message.error.code}`))
     else pending.resolve(message.result ?? null)
   }
@@ -254,6 +264,7 @@ export class AcpStdioClient {
     this.#failure ??= error
     for (const pending of this.#pending.values()) pending.reject(this.#failure)
     this.#incoming.clear()
+    this.#lateResults.clear()
     this.#buffer = Buffer.alloc(0)
   }
 }

@@ -3,6 +3,7 @@ import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { RuntimeNodeChannel } from './authentication.js'
 import {
   InMemoryRuntimeNodeCoordination,
+  RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
   RuntimeGatewayWebSocketServer,
@@ -14,6 +15,83 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test.each(['frame', 'sweep', 'send', 'awaiting-hello'])(
+    'stops expired credential authority through %s',
+    async (trigger) => {
+      let clock = new Date('2026-08-25T12:00:01.000Z')
+      const now = () => clock
+      const delivered = []
+      const fixture = setup(
+        'gateway-a',
+        undefined,
+        now,
+        {},
+        {
+          handle: async (...args) => delivered.push(args),
+        }
+      )
+      const socket = new FakeSocket()
+      fixture.gateway.open(connection('expired-channel', channel(1, nodeId, now), socket))
+      if (trigger !== 'awaiting-hello')
+        await fixture.gateway.receive('expired-channel', JSON.stringify(golden.hello))
+      const sentBefore = socket.sent.length
+      clock = new Date('2026-08-25T12:05:30.001Z')
+      if (trigger === 'frame')
+        await fixture.gateway.receive('expired-channel', JSON.stringify(golden.ack))
+      else {
+        if (trigger === 'send')
+          await expect(fixture.gateway.send(golden.command)).rejects.toMatchObject({
+            code: 'RUNTIME_NODE_CREDENTIAL_EXPIRED',
+          })
+        await fixture.gateway.sweep()
+      }
+      expect(socket.closed).toEqual({ code: 1008, reason: 'authentication_invalidated' })
+      expect(socket.sent).toHaveLength(sentBefore)
+      expect(delivered).toEqual([])
+      expect(await fixture.coordination.lookup(nodeId)).toBeUndefined()
+      await fixture.gateway.close()
+    }
+  )
+
+  test.each(['frame', 'sweep'])(
+    'reconciles replaced ownership without notifications via %s',
+    async (trigger) => {
+      const repository = new InMemoryRuntimeNodeCoordination()
+      const delivered = []
+      const first = setup(
+        'gateway-a',
+        new RepositoryRuntimeNodeCoordination(repository),
+        undefined,
+        {},
+        {
+          handle: async (...args) => delivered.push(args),
+        }
+      )
+      const second = setup('gateway-b', new RepositoryRuntimeNodeCoordination(repository))
+      const oldSocket = new FakeSocket()
+      const newSocket = new FakeSocket()
+      first.gateway.open(connection('gwc-a', channel(1), oldSocket))
+      await first.gateway.receive('gwc-a', JSON.stringify(golden.hello))
+      second.gateway.open(connection('gwc-b', channel(2), newSocket))
+      await second.gateway.receive('gwc-b', JSON.stringify(hello(2)))
+      expect(oldSocket.closed).toBeUndefined()
+      if (trigger === 'frame') {
+        await first.gateway.receive('gwc-a', JSON.stringify(golden.ack))
+      } else {
+        await first.gateway.sweep()
+      }
+      expect(oldSocket.closed).toEqual({ code: 4001, reason: 'stale_channel_replaced' })
+      expect(delivered).toEqual([])
+      expect(await repository.lookup(nodeId)).toMatchObject({
+        gatewayInstanceId: 'gateway-b',
+        channelGeneration: 2,
+      })
+      expect(first.reachability.events.filter(({ state }) => state === 'offline')).toEqual([])
+      await first.gateway.close()
+      await second.gateway.close()
+    }
+  )
+
   test('negotiates hello and registers one authenticated active channel', async () => {
     const fixture = setup('gateway-a')
     const socket = new FakeSocket()
@@ -302,7 +380,7 @@ function setup(
   return { coordination, gateway, metrics, reachability }
 }
 
-function channel(channelGeneration, id = nodeId) {
+function channel(channelGeneration, id = nodeId, now = () => new Date('2026-08-25T12:00:01.000Z')) {
   return new RuntimeNodeChannel(
     {
       schemaVersion: 1,
@@ -323,7 +401,8 @@ function channel(channelGeneration, id = nodeId) {
       isRevoked: async () => false,
       subscribeRevocations: () => () => undefined,
       verify: async () => undefined,
-    }
+    },
+    { now }
   )
 }
 

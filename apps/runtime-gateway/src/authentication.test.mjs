@@ -14,6 +14,24 @@ const audience = 'control-plane-runtime-gateway'
 const issuer = 'https://identity.test.example'
 
 describe('RuntimeNode channel authentication', () => {
+  test('expires an established channel after its credential tolerance and cannot revive it', async () => {
+    let clock = now.getTime()
+    const fixture = setup(() => new Date(clock))
+    const issued = fixture.authority.issueCredential(fixture.device, { channelGeneration: 1 })
+    const channel = await authenticate(fixture, issued, 'challenge-expiry-lifecycle-0001')
+    clock = Date.parse(issued.claims.expiresAt) + 30_000
+    expect(channel.active).toBe(true)
+    clock++
+    await expect(channel.assertCommandAllowed(golden.command)).rejects.toMatchObject({
+      code: 'RUNTIME_NODE_CREDENTIAL_EXPIRED',
+    })
+    expect(channel.active).toBe(false)
+    expect(channel.invalidatedReason).toBe('expired')
+    clock = now.getTime()
+    expect(channel.active).toBe(false)
+    fixture.authenticator.close()
+  })
+
   test('establishes a device-bound channel without a user session credential', async () => {
     const fixture = setup()
     const issued = fixture.authority.issueCredential(fixture.device, { channelGeneration: 1 })
@@ -141,14 +159,14 @@ describe('RuntimeNode channel authentication', () => {
   })
 })
 
-function setup() {
+function setup(clock = () => now) {
   const entries = []
-  const authority = new SyntheticRuntimeNodeIdentityAuthority({ audience, issuer, now: () => now })
+  const authority = new SyntheticRuntimeNodeIdentityAuthority({ audience, issuer, now: clock })
   const device = authority.registerNode({ nodeId, workspaceId })
   const authenticator = new RuntimeNodeChannelAuthenticator({
     identityValidator: authority.validationPort(),
     logger: { write: (entry) => entries.push(entry) },
-    now: () => now,
+    now: clock,
   })
   return { authority, authenticator, device, entries }
 }

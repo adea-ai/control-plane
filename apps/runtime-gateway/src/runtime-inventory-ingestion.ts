@@ -10,7 +10,6 @@ import {
   RuntimeHealthReportSchema,
   RuntimeInventoryCheckpointSchema,
   projectRuntimeConnectionDiscovery,
-  type RuntimeAvailabilityChangePublisher,
   type RuntimeConnection,
   type RuntimeConnectionRegistration,
   type RuntimeHealthIngestionService,
@@ -22,6 +21,10 @@ import { createHash } from 'node:crypto'
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
 
 type InventoryDriver = GatewayInventoryEnvelope['runtimeDrivers'][number]
+type PreparedInventory = readonly {
+  driver: InventoryDriver
+  entry: NormalizedRuntimeInventoryEntry
+}[]
 
 export interface NormalizedRuntimeInventoryEntry {
   readonly registration: RuntimeConnectionRegistration
@@ -29,6 +32,7 @@ export interface NormalizedRuntimeInventoryEntry {
 }
 
 export interface RuntimeInventoryNormalizer {
+  /** Inputs are deeply frozen and shared across this inventory's normalizations. */
   normalize(input: {
     readonly driver: InventoryDriver
     readonly inventory: GatewayInventoryEnvelope
@@ -103,7 +107,7 @@ export class DefaultRuntimeInventoryNormalizer implements RuntimeInventoryNormal
         capabilitySnapshot: {
           version: inventory.snapshotVersion,
           observedAt: inventory.observedAt,
-          ttlMs: 60_000,
+          ttlMs: driver.capabilityTtlMs ?? 60_000,
           verification: 'verified',
           source: 'adapter_driver_negotiation',
           capabilities,
@@ -137,14 +141,30 @@ export interface RuntimeDiscoveryProjectionWriter {
 }
 
 export interface RuntimeInventoryIngestionOptions {
+  readonly unitOfWork?: RuntimeInventoryUnitOfWork
   readonly registry: RuntimeConnectionRegistry
-  readonly health: RuntimeHealthIngestionService
+  readonly health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly checkpoints: RuntimeInventoryCheckpointRepository
-  readonly changes: RuntimeAvailabilityChangePublisher
   readonly normalizer: RuntimeInventoryNormalizer
   readonly metrics: GatewayMetrics
   readonly projections: RuntimeDiscoveryProjectionWriter
   readonly disappearanceTtlMs?: number
+}
+
+export interface RuntimeInventoryUnitOfWork {
+  run<Result>(
+    scope: {
+      workspaceId: string
+      runtimeNodeRefId: string
+      channel: ActiveRuntimeNodeChannelRecord
+    },
+    operation: (
+      ports: Pick<
+        RuntimeInventoryIngestionOptions,
+        'registry' | 'health' | 'checkpoints' | 'projections'
+      >
+    ) => Promise<Result>
+  ): Promise<Result>
 }
 
 export interface RuntimeInventoryIngestionResult {
@@ -171,9 +191,9 @@ export class RuntimeInventoryIngestionError extends Error {
 }
 
 export class RuntimeInventoryIngestionService {
-  readonly #changes: RuntimeAvailabilityChangePublisher
+  readonly #unitOfWork: RuntimeInventoryUnitOfWork | undefined
   readonly #checkpoints: RuntimeInventoryCheckpointRepository
-  readonly #health: RuntimeHealthIngestionService
+  readonly #health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly #disappearanceTtlMs: number
   readonly #metrics: GatewayMetrics
   readonly #normalizer: RuntimeInventoryNormalizer
@@ -181,10 +201,10 @@ export class RuntimeInventoryIngestionService {
   readonly #registry: RuntimeConnectionRegistry
 
   constructor(options: RuntimeInventoryIngestionOptions) {
+    this.#unitOfWork = options.unitOfWork
     this.#registry = options.registry
     this.#health = options.health
     this.#checkpoints = options.checkpoints
-    this.#changes = options.changes
     this.#normalizer = options.normalizer
     this.#projections = options.projections
     this.#metrics = options.metrics
@@ -232,6 +252,45 @@ export class RuntimeInventoryIngestionService {
   ): Promise<RuntimeInventoryIngestionResult> {
     const inventory = GatewayInventoryEnvelopeSchema.parse(inventoryValue)
     this.#assertSource(inventory, source)
+    if (this.#unitOfWork) {
+      const prepared = await this.#normalize(inventory, nodeStatus)
+      const emissions: (() => void)[] = []
+      const metrics: GatewayMetrics = {
+        increment: (name, labels) => emissions.push(() => this.#metrics.increment(name, labels)),
+        setGauge: (name, value, labels) =>
+          emissions.push(() => this.#metrics.setGauge(name, value, labels)),
+        observe: (name, value, labels) =>
+          emissions.push(() => this.#metrics.observe(name, value, labels)),
+      }
+      const result = await this.#unitOfWork.run(
+        { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId, channel: source },
+        (ports) =>
+          new RuntimeInventoryIngestionService({
+            ...ports,
+            normalizer: this.#normalizer,
+            metrics,
+            disappearanceTtlMs: this.#disappearanceTtlMs,
+          }).#ingestPrepared(inventory, source, nodeStatus, prepared)
+      )
+      for (const emit of emissions) {
+        try {
+          emit()
+        } catch {
+          // Telemetry is best-effort and cannot undo a committed inventory.
+        }
+      }
+      return result
+    }
+    return this.#ingestPrepared(inventory, source, nodeStatus)
+  }
+
+  async #ingestPrepared(
+    inventory: GatewayInventoryEnvelope,
+    source: ActiveRuntimeNodeChannelRecord,
+    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked',
+    prepared?: PreparedInventory
+  ): Promise<RuntimeInventoryIngestionResult> {
+    this.#assertSource(inventory, source)
     const digest = hashInventory(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {
@@ -249,28 +308,27 @@ export class RuntimeInventoryIngestionService {
       fail('INVENTORY_DELTA_BASE_MISMATCH')
     }
 
-    const normalized = await Promise.all(
-      inventory.runtimeDrivers.map(async (driver) => {
-        try {
-          const entry = await this.#normalizer.normalize({ driver, inventory, nodeStatus })
-          return {
-            driver,
-            entry: this.#validateCorrelation(entry, driver, inventory, nodeStatus),
-          }
-        } catch (error) {
-          if (error instanceof RuntimeInventoryIngestionError) throw error
-          fail('INVENTORY_NORMALIZATION_FAILED')
-        }
-      })
-    )
-    const connectionIds = normalized.map(({ entry }) => entry.registration.runtimeConnectionId)
-    const identityDigests = normalized.map(({ entry }) => entry.registration.identityDigest)
-    if (
-      new Set(connectionIds).size !== connectionIds.length ||
-      new Set(identityDigests).size !== identityDigests.length
-    ) {
-      fail('INVENTORY_CORRELATION_MISMATCH')
-    }
+    const previousRefs = new Set(current?.activeRuntimeRefs ?? [])
+    const reportedRefs = new Set(inventory.runtimeDrivers.map(({ opaqueRef }) => opaqueRef))
+    const removedRefs = new Set(inventory.removedRuntimeRefs ?? [])
+    const activeRefs =
+      mode === 'snapshot'
+        ? reportedRefs
+        : new Set(
+            [...previousRefs, ...reportedRefs].filter((runtimeRef) => !removedRefs.has(runtimeRef))
+          )
+    // Validate the accumulated delta, not just the bounded incoming frame,
+    // before any registry, health, projection or disappearance writes.
+    const checkpoint = RuntimeInventoryCheckpointSchema.parse({
+      runtimeNodeRefId: inventory.nodeId,
+      workspaceId: inventory.workspaceId,
+      snapshotVersion: inventory.snapshotVersion,
+      snapshotDigest: digest,
+      observedAt: inventory.observedAt,
+      activeRuntimeRefs: [...activeRefs].sort(),
+      revision: (current?.revision ?? 0) + 1,
+    })
+    const normalized = prepared ?? (await this.#normalize(inventory, nodeStatus))
     const updated: RuntimeConnection[] = []
     for (const { driver, entry } of normalized) {
       await this.#registry.register(entry.registration)
@@ -297,15 +355,6 @@ export class RuntimeInventoryIngestionService {
       )
     }
 
-    const previousRefs = new Set(current?.activeRuntimeRefs ?? [])
-    const reportedRefs = new Set(inventory.runtimeDrivers.map(({ opaqueRef }) => opaqueRef))
-    const removedRefs = new Set(inventory.removedRuntimeRefs ?? [])
-    const activeRefs =
-      mode === 'snapshot'
-        ? reportedRefs
-        : new Set(
-            [...previousRefs, ...reportedRefs].filter((runtimeRef) => !removedRefs.has(runtimeRef))
-          )
     const disappearedRefs =
       mode === 'snapshot'
         ? [...previousRefs].filter((runtimeRef) => !reportedRefs.has(runtimeRef))
@@ -316,15 +365,6 @@ export class RuntimeInventoryIngestionService {
       inventory.observedAt
     )
 
-    const checkpoint = RuntimeInventoryCheckpointSchema.parse({
-      runtimeNodeRefId: inventory.nodeId,
-      workspaceId: inventory.workspaceId,
-      snapshotVersion: inventory.snapshotVersion,
-      snapshotDigest: digest,
-      observedAt: inventory.observedAt,
-      activeRuntimeRefs: [...activeRefs].sort(),
-      revision: (current?.revision ?? 0) + 1,
-    })
     if (!(await this.#checkpoints.compareAndSet(current?.revision, checkpoint))) {
       const winner = await this.#checkpoints.get(inventory.nodeId)
       if (
@@ -345,6 +385,31 @@ export class RuntimeInventoryIngestionService {
       updated,
       disappeared,
     }
+  }
+
+  async #normalize(
+    inventory: GatewayInventoryEnvelope,
+    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked'
+  ): Promise<PreparedInventory> {
+    // The schema parser owns this JSON tree; sharing it avoids one full-envelope
+    // clone per driver without permitting a normalizer to rewrite another input.
+    freezeInventoryInput(inventory)
+    const normalized = await Promise.all(
+      inventory.runtimeDrivers.map(async (driver) => {
+        try {
+          const entry = await this.#normalizer.normalize({ driver, inventory, nodeStatus })
+          return { driver, entry: this.#validateCorrelation(entry, driver, inventory, nodeStatus) }
+        } catch (error) {
+          if (error instanceof RuntimeInventoryIngestionError) throw error
+          fail('INVENTORY_NORMALIZATION_FAILED')
+        }
+      })
+    )
+    const ids = normalized.map(({ entry }) => entry.registration.runtimeConnectionId)
+    const digests = normalized.map(({ entry }) => entry.registration.identityDigest)
+    if (new Set(ids).size !== ids.length || new Set(digests).size !== digests.length)
+      fail('INVENTORY_CORRELATION_MISMATCH')
+    return normalized
   }
 
   #assertSource(inventory: GatewayInventoryEnvelope, source: ActiveRuntimeNodeChannelRecord): void {
@@ -397,6 +462,7 @@ export class RuntimeInventoryIngestionService {
       healthReport.versions.protocol !== expectedProtocol ||
       healthReport.capabilitySnapshot.version !== inventory.snapshotVersion ||
       healthReport.capabilitySnapshot.observedAt !== inventory.observedAt ||
+      healthReport.capabilitySnapshot.ttlMs > (driver.capabilityTtlMs ?? 60_000) ||
       Date.parse(registration.lastDiscoveredAt) > Date.parse(inventory.observedAt) ||
       Date.parse(registration.lastHeartbeatAt) > Date.parse(inventory.observedAt) ||
       Date.parse(registration.lastHealthCheckAt) > Date.parse(inventory.observedAt)
@@ -423,29 +489,14 @@ export class RuntimeInventoryIngestionService {
       ) {
         continue
       }
-      const next = await this.#registry.update({
+      const next = await this.#health.markDisappeared({
         runtimeConnectionId: connection.runtimeConnectionId,
+        runtimeNodeRefId,
         expectedVersion: connection.version,
         observedAt,
-        status: 'unavailable',
-        health: 'unavailable',
-        availabilityState: 'offline',
-        compatibilityState: 'unavailable',
-        diagnostics: ['RUNTIME_DISAPPEARED'],
         expiresAt: new Date(Date.parse(observedAt) + this.#disappearanceTtlMs).toISOString(),
       })
       disappeared.push(next)
-      if (connection.availabilityState !== 'offline') {
-        await this.#changes.publish({
-          type: 'runtime.availability_changed',
-          runtimeConnectionId: next.runtimeConnectionId,
-          nodeStatus: 'online',
-          previousState: connection.availabilityState ?? 'unknown',
-          currentState: 'offline',
-          occurredAt: observedAt,
-          diagnostics: ['RUNTIME_DISAPPEARED'],
-        })
-      }
     }
     return disappeared
   }
@@ -457,6 +508,12 @@ export class RuntimeInventoryIngestionService {
     this.#metrics.increment('runtime_gateway.inventory_ignored', { outcome })
     return { outcome, snapshotVersion, updated: [], disappeared: [] }
   }
+}
+
+function freezeInventoryInput(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeInventoryInput(child)
+  Object.freeze(value)
 }
 
 function publicNodeStatus(

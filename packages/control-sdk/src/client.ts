@@ -1,4 +1,8 @@
 import {
+  type ExecutionCancellationCommand,
+  type ExecutionCancellationCommandResult,
+  type InteractionResponseCommand,
+  type InteractionResponseCommandResult,
   ContractVersionSchema,
   ErrorResponseEnvelopeSchema,
   PublicContractManifest,
@@ -160,6 +164,18 @@ export class ControlPlaneClient {
 
   acceptExecution(input: ExecutionAcceptanceRequest): Promise<ExecutionAcceptanceResponse> {
     return this.#request(ControlApiOperations.acceptExecution, input)
+  }
+
+  respondToInteraction(
+    input: InteractionResponseCommand
+  ): Promise<InteractionResponseCommandResult> {
+    return this.#request(ControlApiOperations.respondToInteraction, input)
+  }
+
+  cancelExecution(
+    input: ExecutionCancellationCommand
+  ): Promise<ExecutionCancellationCommandResult> {
+    return this.#request(ControlApiOperations.cancelExecution, input)
   }
 
   marketplaceCatalog(input: MarketplaceCatalogRequest): Promise<MarketplaceCatalogResponse> {

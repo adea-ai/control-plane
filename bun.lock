@@ -93,6 +93,7 @@
       "name": "@control-plane/local-control-plane",
       "version": "1.1.2",
       "dependencies": {
+        "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -519,6 +520,9 @@
         "@restatedev/restate-sdk": "1.17.0",
       },
     },
+  },
+  "patchedDependencies": {
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch",
   },
   "overrides": {
     "esbuild": "0.28.2",
