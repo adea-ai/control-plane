@@ -198,6 +198,7 @@ describe('ManagedPiProcessClient', () => {
         state: 'succeeded',
         result: nativeStatus.result,
       })
+      expect(await recreated.cancel(recoveredHandle)).toEqual(recovered)
       expect(await recreated.start(nativeCommand)).toEqual(recoveredHandle)
       const parallelReplays = await Promise.all(
         Array.from({ length: 8 }, () =>
@@ -244,6 +245,9 @@ describe('ManagedPiProcessClient', () => {
       await expect(
         recreated.reconcile({ ...recoveredHandle, startedAt: '2026-01-01T00:00:00.000Z' })
       ).rejects.toMatchObject({ code: 'PI_TERMINAL_RECONCILIATION_REQUIRED' })
+      await expect(
+        recreated.cancel({ ...recoveredHandle, startedAt: '2026-01-01T00:00:00.000Z' })
+      ).rejects.toMatchObject({ code: 'PI_TERMINAL_RECONCILIATION_REQUIRED' })
       await writeFile(
         join(directory, 'executions', 'terminal-results', `${recoveredHandle.attemptId}.json`),
         '{'
@@ -252,6 +256,9 @@ describe('ManagedPiProcessClient', () => {
         code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
         classification: 'unknown',
         retryable: false,
+      })
+      await expect(recreated.cancel(recoveredHandle)).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
       })
     } finally {
       if (handle !== undefined) await adapter.cleanup(handle).catch(() => undefined)
@@ -331,6 +338,10 @@ describe('ManagedPiProcessClient', () => {
         state: 'errored',
         error: { code: 'PI_RUNTIME_ERROR', retryable: false },
       })
+      expect(await fixture.recreate().cancel(handle)).toMatchObject({
+        state: 'errored',
+        error: { code: 'PI_RUNTIME_ERROR', retryable: false },
+      })
       handle = undefined
     } finally {
       if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
@@ -378,6 +389,7 @@ describe('ManagedPiProcessClient', () => {
       expect((await fixture.adapter.status(handle)).state).toBe('cancelled')
       await fixture.adapter.cleanup(handle)
       expect((await fixture.recreate().reconcile(handle)).state).toBe('cancelled')
+      expect((await fixture.recreate().cancel(handle)).state).toBe('cancelled')
       handle = undefined
     } finally {
       if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)

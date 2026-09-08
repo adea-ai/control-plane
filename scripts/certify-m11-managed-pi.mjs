@@ -245,6 +245,13 @@ try {
   assert.equal(recovered.state, 'succeeded')
   assert.deepEqual(recovered.result.output, status.result.output)
   assert.deepEqual(recovered.result.usage, status.result.usage)
+  const replayedCancellations = await Promise.all(
+    Array.from({ length: 8 }, () => recreated.cancel(handle))
+  )
+  assert.deepEqual(
+    replayedCancellations,
+    Array.from({ length: 8 }, () => recovered)
+  )
   const recoveredEvents = []
   for await (const event of recreated.progress(handle)) recoveredEvents.push(event)
   assert.deepEqual(recoveredEvents, originalEvents)
@@ -257,6 +264,7 @@ try {
   await adapter.cleanup(cancelled)
   handles.splice(handles.indexOf(cancelled), 1)
   assert.equal((await recreated.reconcile(cancelled)).state, 'cancelled')
+  assert.equal((await recreated.cancel(cancelled)).state, 'cancelled')
   assert.equal(requests.length, 3, 'A recreated client must not repeat the cleaned native attempt')
   report = {
     schemaVersion: 1,
@@ -274,6 +282,7 @@ try {
     changedNativeCommand: 'rejected',
     clientRecreationAfterCleanup: 'original-terminal-handle-no-new-request',
     terminalRecoveryAfterCleanup: ['succeeded-with-original-output-and-usage', 'cancelled'],
+    terminalCancellationAfterCleanup: 'original-terminal-state-no-new-request',
     eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {
       persistence: 'sqlite',

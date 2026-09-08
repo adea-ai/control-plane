@@ -328,7 +328,11 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async cancel(handleInput: RuntimeExecutionHandle) {
-    const execution = this.#require(handleInput)
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      return readTerminalRecord(this.#dataDirectory, handle)
+    }
+    const execution = this.#require(handle)
     if (execution.state === 'running') {
       await execution.rpc.request({ type: 'abort' }, this.#rpcTimeoutMs)
       if (execution.state !== 'running') return this.#status(execution)
