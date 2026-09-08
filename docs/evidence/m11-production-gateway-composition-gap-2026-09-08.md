@@ -1,5 +1,34 @@
 # M11 production Runtime Gateway composition gap
 
+## Transaction deadline experiment: not promoted
+
+An integration experiment on PostgreSQL 18.3 with `postgres` 3.4.9 and Bun 1.4.0
+set transaction-local `transaction_timeout` to 500 milliseconds before ownership
+locking. Its callback wrote registry/health, outbox, projection and checkpoint
+state, then awaited a one-second JavaScript timer. Without the setting, the
+transaction committed; with it, the test exposed a client failure rather than
+safe recovery: `TypeError: null is not an object (evaluating 'socket.write')` in
+`postgres/src/connection.js:255`. A subsequent database test also encountered the
+same error. The run was interrupted through its recorded process session after
+the failure spread to subsequent cases.
+
+Source inspection shows `postgres/src/index.js:243` racing callback scope against
+connection closure, while the scope later attempts rollback or commit through
+its reserved connection (`:266` and `:278`). The observed idle callback continued
+after backend closure. This identifies the driver transaction lifecycle as the
+next investigation boundary; it does not establish that every timeout or every
+runtime has the same failure. The active-query case and complete rollback/pool
+recovery assertions were not reached and remain unverified.
+
+PostgreSQL documents that this timeout terminates the session:
+[transaction timeout documentation](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-TRANSACTION-TIMEOUT).
+The experimental implementation and failing matrix were removed from the
+candidate. No dependency, database setting or migration was changed. Inventory
+still has only its five-second lock-acquisition timeout, not a transaction
+deadline. A verified client cancellation/recovery strategy is required before
+enabling server-enforced termination. Complete-request bounds must also cover
+pool acquisition, normalization and network failure detection.
+
 ## Transactional inventory channel fencing
 
 The PostgreSQL inventory unit of work now requires the authenticated channel
