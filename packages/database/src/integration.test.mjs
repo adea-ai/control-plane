@@ -1905,6 +1905,8 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     for (const stall of ['idle', 'query']) {
       let finished
       let wrote = false
+      let rejectionCode = 'UNKNOWN'
+      const startedAt = performance.now()
       const settled = new Promise((resolve) => {
         finished = resolve
       })
@@ -1930,9 +1932,20 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
             await applyInventory(ports)
             wrote = true
             if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 1_000))
-          })
+          }),
+          (error) => {
+            for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
+              if (typeof cause.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(cause.code))
+                rejectionCode = cause.code
+            }
+            return true
+          }
         )
         await settled
+        if (!wrote)
+          throw new Error(
+            `INVENTORY_TIMEOUT_BEFORE_WRITES:${rejectionCode}:${Math.round(performance.now() - startedAt)}ms`
+          )
         expect(wrote).toBe(true)
         phase = 'registry'
         expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)

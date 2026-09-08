@@ -1,5 +1,28 @@
 # M11 production Runtime Gateway composition gap
 
+## Preview credentials enabled; first real Neon run failed
+
+The subsequent authorized configuration created `control_plane_admin` on the
+staging branch only, with login and database creation but without superuser,
+role creation or row-security bypass. Membership in the existing application
+and migration roles permits inherited privileges and role switching, but not
+membership administration. Login was verified before transferring the generated
+password through stdin to `NEON_CI_ADMIN_PASSWORD`; no password was printed or
+written to a local file. Production has no corresponding admin role.
+
+Rerun attempt 2 at candidate `7b70bed` passed the credential gate, created the
+staging-descended PR preview, prepared ownership, and actually executed migration
+and transaction verification. It failed with 30 database tests passing and one
+failing: the inventory timeout case rejected before its `wrote` flag became true.
+The original assertion hid the rejection cause. A diagnostic follow-up records
+only a bounded error code and elapsed milliseconds, never SQL, parameters or
+credentials, to distinguish deadline expiry from other failures before changing
+the test. This is not a successful Neon acceptance run.
+
+Evidence: [actual preview test failure](https://github.com/adea-ai/control-plane/actions/runs/34243349876/job/102120100565).
+The staging role and repository secret remain owned by preview CI; the PR branch
+remains under the workflow's close/expiry lifecycle. Production was untouched.
+
 ## Live Neon metadata and skipped preview verification
 
 Read-only revalidation on September 8 resolved the repository's `NEON_PROJECT_ID`
