@@ -159,3 +159,20 @@ schema permits only accepted/replayed acknowledgement, not a claim that native
 work stopped. Three focused tests (28 assertions) pass. These exported schemas
 are groundwork only: no public route, SDK method, durable cancellation receipt,
 authorization implementation, or composition wiring is claimed by this change.
+
+## Execution cancellation authorization and replay service
+
+`DurableExecutionCancellationService` now checks the authenticated caller against
+the accepting principal and both accepted-command and execution workspace/project
+scope before receipt access or dispatch. It reserves an immutable first request,
+compares actual target payload rather than trusting a supplied hash, and sends
+that stored identity on retries. A confirmed receipt replays without another
+signal; an unconfirmed receipt can reconcile a lost ACK after terminal state.
+New cancellation of already-terminal work is rejected. Tests cover lost ACK with
+service reconstruction, ownership rejection without reservation, concurrent
+first-writer identity, terminal admission, and conflicting stored targets.
+
+These tests use an in-memory receipt fixture and recording dispatcher. Production
+SQLite/PostgreSQL receipt implementations, Restate cancellation dispatch, HTTP/SDK
+entrypoints, and composition wiring remain unfinished. The service does not claim
+atomic ordering between execution termination and cancellation admission.
