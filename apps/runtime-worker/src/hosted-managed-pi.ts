@@ -206,6 +206,16 @@ export class HostedManagedPiTerminalBridge {
 
 export interface RuntimeHostProvider {
   inspect(): Promise<HostedRuntimeHostInspection>
+  /** Read an admitted launch without launching work or renewing its authority/deadline.
+   * Production providers must retain this receipt across worker restarts.
+   */
+  getLaunch(idempotencyKey: string): Promise<
+    | {
+        readonly request: HostedManagedPiLaunchRequest
+        readonly handle: RuntimeExecutionHandle
+      }
+    | undefined
+  >
   launch(request: HostedManagedPiLaunchRequest): Promise<RuntimeExecutionHandle>
   progress(
     handle: RuntimeExecutionHandle,
@@ -260,7 +270,31 @@ export class HostedManagedPiClient implements ManagedPiClient {
   }
 
   async start(command: ManagedPiStartCommand): Promise<RuntimeExecutionHandle> {
-    const configuration = ManagedPiConfigurationSchema.parse(command.configuration)
+    const input = HostedManagedPiLaunchRequestSchema.pick({
+      attemptId: true,
+      idempotencyKey: true,
+      configuration: true,
+    }).parse(command)
+    const { configuration } = input
+    const admitted = await this.#host.getLaunch(input.idempotencyKey)
+    if (admitted) {
+      const request = HostedManagedPiLaunchRequestSchema.parse(admitted.request)
+      const handle = RuntimeExecutionHandleSchema.parse(admitted.handle)
+      if (
+        request.idempotencyKey !== input.idempotencyKey ||
+        request.attemptId !== input.attemptId ||
+        handle.attemptId !== input.attemptId ||
+        canonicalJson(request.configuration) !== canonicalJson(configuration)
+      ) {
+        throw new RuntimeAdapterError({
+          code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+          classification: 'conflict',
+          message: 'Hosted managed Pi launch idempotency key was reused',
+          retryable: false,
+        })
+      }
+      return handle
+    }
     const inspection = HostedRuntimeHostInspectionSchema.parse(await this.#host.inspect())
     if (inspection.health === 'unavailable' || inspection.capacity.maximumConcurrent === 0) {
       throw unavailableHost()
@@ -289,8 +323,8 @@ export class HostedManagedPiClient implements ManagedPiClient {
     const authority = HostedAuthoritySchema.parse(await this.#resolveAuthority(configuration))
     const issuedAt = this.#now()
     const request = HostedManagedPiLaunchRequestSchema.parse({
-      attemptId: command.attemptId,
-      idempotencyKey: command.idempotencyKey,
+      attemptId: input.attemptId,
+      idempotencyKey: input.idempotencyKey,
       configuration,
       authority,
       sandbox: configuration.limits.sandbox,
@@ -492,7 +526,11 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
   readonly #executions = new Map<string, HostedExecution>()
   readonly #launchByIdempotencyKey = new Map<
     string,
-    { readonly fingerprint: string; readonly handle: RuntimeExecutionHandle }
+    {
+      readonly fingerprint: string
+      readonly handle: RuntimeExecutionHandle
+      readonly request: HostedManagedPiLaunchRequest
+    }
   >()
   readonly #launches: HostedManagedPiLaunchRequest[] = []
   readonly #effects = new Map<string, number>()
@@ -543,6 +581,13 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
     })
   }
 
+  async getLaunch(idempotencyKey: string) {
+    const receipt = this.#launchByIdempotencyKey.get(idempotencyKey)
+    return receipt
+      ? structuredClone({ request: receipt.request, handle: receipt.handle })
+      : undefined
+  }
+
   async launch(requestInput: HostedManagedPiLaunchRequest): Promise<RuntimeExecutionHandle> {
     if (this.#health === 'unavailable') throw unavailableHost()
     const request = HostedManagedPiLaunchRequestSchema.parse(requestInput)
@@ -566,7 +611,7 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
     })
     const execution = await this.#createExecution(handle, request.attemptId)
     this.#executions.set(handle.handleId, execution)
-    this.#launchByIdempotencyKey.set(request.idempotencyKey, { fingerprint, handle })
+    this.#launchByIdempotencyKey.set(request.idempotencyKey, { fingerprint, handle, request })
     this.#launches.push(structuredClone(request))
     this.#effects.set(request.attemptId, (this.#effects.get(request.attemptId) ?? 0) + 1)
     return structuredClone(handle)

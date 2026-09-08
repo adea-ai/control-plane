@@ -106,6 +106,73 @@ function fixture(scenario = 'complete') {
 }
 
 describe('hosted managed Pi runtime worker', () => {
+  test('replays an admitted launch after client restart and clock advance without renewing its deadline', async () => {
+    const { host } = fixture('running')
+    let currentTime = now
+    const makeClient = () =>
+      new HostedManagedPiClient({
+        host,
+        now: () => new Date(currentTime),
+        resolveAuthority: async () => ({
+          modelGrantRefs: ['authz:model:managed-default'],
+          toolGrantRefs: ['authz:tool:project-files:read'],
+        }),
+      })
+    const command = {
+      attemptId: ids.attemptId,
+      idempotencyKey: 'hosted-pi:late-launch-replay',
+      configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+    }
+    const handle = await makeClient().start(command)
+    const originalLaunch = host.launches()[0]
+    currentTime = '2026-08-26T12:00:00.000Z'
+    expect(await makeClient().start(command)).toEqual(handle)
+    expect(host.launches()).toEqual([originalLaunch])
+    expect(host.effectCount(ids.attemptId)).toBe(1)
+    const changed = structuredClone(command)
+    changed.configuration.limits.duration.maximumMs += 1
+    await expect(makeClient().start(changed)).rejects.toMatchObject({
+      code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+    })
+    await expect(
+      makeClient().start({ ...command, attemptId: `att_${'1'.repeat(26)}` })
+    ).rejects.toMatchObject({
+      code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+    })
+  })
+
+  test('replays an admitted launch when the host is now at capacity', async () => {
+    const artifactStore = new InMemoryHostedArtifactStore({ now: () => now })
+    const host = new ReferenceRuntimeHostProvider({
+      now: () => now,
+      scenario: 'running',
+      artifactStore,
+      maximumConcurrent: 1,
+    })
+    const client = new HostedManagedPiClient({
+      host,
+      now: () => new Date(now),
+      resolveAuthority: async () => ({
+        modelGrantRefs: ['authz:model:managed-default'],
+        toolGrantRefs: ['authz:tool:project-files:read'],
+      }),
+    })
+    const command = {
+      attemptId: ids.attemptId,
+      idempotencyKey: 'hosted-pi:full-host-replay',
+      configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+    }
+    const handle = await client.start(command)
+    expect((await host.inspect()).capacity.active).toBe(1)
+    expect(await client.start(command)).toEqual(handle)
+    expect(host.effectCount(ids.attemptId)).toBe(1)
+    await expect(
+      client.start({ ...command, idempotencyKey: 'hosted-pi:new-launch' })
+    ).rejects.toMatchObject({
+      code: 'HOSTED_PI_CAPACITY_UNAVAILABLE',
+    })
+  })
+
   test('publishes terminal hosted output as an Artifact-backed gateway result', async () => {
     const artifactStore = new InMemoryHostedArtifactStore({ now: () => now })
     const bridge = new HostedManagedPiTerminalBridge({ artifactStore })
