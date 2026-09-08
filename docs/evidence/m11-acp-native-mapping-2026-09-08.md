@@ -300,3 +300,30 @@ not published through the full profile/skill/policy/context API flow; only
 recovery, live model quality, and other deployment profiles remain unverified by
 this probe. Loopback Local Restate uses its existing unsigned handler configuration;
 this is not evidence for the signed Hosted boundary.
+
+# Open cancellation responsiveness defect
+
+The real Restate/native ACP probe now accepts a `cancel` argument and a model
+fixture started with `M11_HOLD_RESPONSES=1`. It waits until the native model
+request exists, signals Restate's `cancelExecution` handler, waits for workflow
+completion, and asserts cancellation settles within 5 seconds, well below the
+configured 30-second prompt timeout. This is a diagnostic responsiveness gate,
+not an approved product-wide latency SLO.
+
+Two runs on 2026-09-08 settled only after the prompt timeout. In the retained
+asserting reproduction, the cancellation handler completed at 04:40:00.471 UTC;
+the main workflow did not resume until 04:40:30.333 UTC. Final measured cancellation
+latency was **29,948 ms**, and the probe exited 1 with
+`CANCELLATION_WAITED_FOR_NATIVE_PROMPT_TIMEOUT`. It did converge to `cancelled`,
+retained one attempt, replayed acceptance to the same execution, and made only
+one new model request. Those properties do not make timely cancellation pass.
+
+The current workflow races its terminal promise against `ctx.run('dispatch', ...)`,
+whose Local implementation waits for native progress/terminal status. The evidence
+points to this long-lived activity boundary delaying terminal handling; the exact
+SDK behavior and corrective design still require investigation. No production
+fix is claimed. The probe signals the internal Restate handler, not a public
+Control API cancellation route. M11.3/M11 recovery acceptance remains open.
+
+Both runs closed Local resources; the disposable cancellation container and its
+model fixture were stopped and removed. No host authentication was used.

@@ -11,6 +11,8 @@ const server = createServer((request, response) => {
     return
   }
   calls++
+  // Cancellation probe: keep the native model request pending until its caller aborts.
+  if (process.env.M11_HOLD_RESPONSES === '1') return
   const item = {
     id: `msg_${calls}`,
     type: 'message',
