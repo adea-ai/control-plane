@@ -38,3 +38,27 @@ completed calls. The global runtime installation was not modified.
 The runner emitted `cleanup: completed`. This strengthens the admission evidence
 from a wire fixture to the published Pi executable; it does not change the
 explicit tool, approval, sandbox, real-provider-quality, or restart limitations.
+
+## Persistent duplicate-admission prevention
+
+The process client now exclusively creates `admissions/<attemptId>.json` in its
+private data directory before resolving inputs or launching a process. The
+0600 record contains a schema version and SHA-256 command digest only. Its file
+and containing directory are synced before proceeding. Normal execution cleanup
+does not delete this record. Same-client retries still share the original
+in-memory result; a recreated client encountering any existing record returns
+non-retryable `PI_START_RECONCILIATION_REQUIRED` with unknown classification.
+
+The restart regression failed before this change by calling input resolution
+again. It now passes. Eight separate clients competing for a fresh attempt allow
+only one input resolution; the other seven require reconciliation. A truncated
+record also remains blocking, and tests verify the minimal record and mode.
+
+This prevents duplicate admission across client reconstruction on retained local
+storage. It does **not** restore output, status, native process attachment, usage,
+or terminal settlement. It is not a power-loss, filesystem rollback, malicious
+local-owner, or full daemon-recovery certification. The data directory must remain
+private, trustworthy, persistent, and part of recovery policy. Never delete these
+records merely to retry: explicit reconciliation and retention/backup treatment
+remain required. The previously documented in-memory-only limitation applies to
+returning original outcomes, not this new persistent refusal of duplicate work.

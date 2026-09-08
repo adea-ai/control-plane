@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -12,10 +12,11 @@ import { writeManagedPiRpcFixture } from './test-support/managed-pi-rpc-fixture.
 
 describe('ManagedPiProcessClient', () => {
   test('coalesces concurrent input resolution and retains rejected admission identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-admission-'))
     let resolutions = 0
-    const client = new ManagedPiProcessClient({
+    const options = {
       executablePath: '/must-not-be-launched',
-      dataDirectory: '/tmp/m11-pi-admission-must-not-be-created',
+      dataDirectory: directory,
       inputResolver: {
         resolve: async () => {
           resolutions += 1
@@ -23,20 +24,60 @@ describe('ManagedPiProcessClient', () => {
           throw new Error('TEST_INPUT_RESOLUTION_FAILED')
         },
       },
-    })
+    }
+    const client = new ManagedPiProcessClient(options)
     const command = {
       attemptId: `att_${'1'.repeat(26)}`,
       idempotencyKey: 'native-pi:admission',
       configuration: translateExecutionPlanToManagedPi(createExecutionPlanTestFixture(), '1.2.0'),
     }
-    const results = await Promise.allSettled(Array.from({ length: 8 }, () => client.start(command)))
-    expect(results.every((result) => result.status === 'rejected')).toBe(true)
-    expect(resolutions).toBe(1)
-    await expect(client.start(command)).rejects.toThrow('TEST_INPUT_RESOLUTION_FAILED')
-    expect(resolutions).toBe(1)
-    await expect(client.start({ ...command, idempotencyKey: 'native-pi:changed' })).rejects.toThrow(
-      'PI_START_IDEMPOTENCY_CONFLICT'
-    )
+    try {
+      const results = await Promise.allSettled(
+        Array.from({ length: 8 }, () => client.start(command))
+      )
+      expect(results.every((result) => result.status === 'rejected')).toBe(true)
+      expect(resolutions).toBe(1)
+      await expect(client.start(command)).rejects.toThrow('TEST_INPUT_RESOLUTION_FAILED')
+      expect(resolutions).toBe(1)
+      await expect(
+        client.start({ ...command, idempotencyKey: 'native-pi:changed' })
+      ).rejects.toThrow('PI_START_IDEMPOTENCY_CONFLICT')
+      await expect(new ManagedPiProcessClient(options).start(command)).rejects.toThrow(
+        'PI_START_RECONCILIATION_REQUIRED'
+      )
+      expect(resolutions).toBe(1)
+      const markerPath = join(directory, 'admissions', `${command.attemptId}.json`)
+      expect(JSON.parse(await readFile(markerPath, 'utf8'))).toEqual({
+        schemaVersion: 1,
+        commandDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
+      expect((await stat(markerPath)).mode & 0o777).toBe(0o600)
+      await writeFile(markerPath, '{')
+      await expect(new ManagedPiProcessClient(options).start(command)).rejects.toThrow(
+        'PI_START_RECONCILIATION_REQUIRED'
+      )
+      expect(resolutions).toBe(1)
+      const other = { ...command, attemptId: `att_${'2'.repeat(26)}` }
+      const competing = await Promise.allSettled(
+        Array.from({ length: 8 }, () => new ManagedPiProcessClient(options).start(other))
+      )
+      expect(
+        competing.filter(
+          (result) =>
+            result.status === 'rejected' && result.reason.message === 'TEST_INPUT_RESOLUTION_FAILED'
+        )
+      ).toHaveLength(1)
+      expect(
+        competing.filter(
+          (result) =>
+            result.status === 'rejected' &&
+            result.reason.message === 'PI_START_RECONCILIATION_REQUIRED'
+        )
+      ).toHaveLength(7)
+      expect(resolutions).toBe(2)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('executes through strict Pi RPC with ambient authority disabled', async () => {

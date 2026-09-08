@@ -1,7 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  RuntimeAdapterError,
   RuntimeExecutionHandleSchema,
   RuntimeInputRequestSchema,
   type RuntimeExecutionHandle,
@@ -145,7 +147,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       if (admitted.fingerprint !== fingerprint) throw new Error('PI_START_IDEMPOTENCY_CONFLICT')
       return structuredClone(await admitted.result)
     }
-    const result = this.#startProcess(handle, configuration)
+    const result = this.#startProcess(handle, configuration, fingerprint)
     // Retain rejected admissions as well: failure does not establish absence of native effects.
     this.#admissions.set(handle.handleId, { fingerprint, result })
     return structuredClone(await result)
@@ -153,8 +155,10 @@ export class ManagedPiProcessClient implements ManagedPiClient {
 
   async #startProcess(
     handle: RuntimeExecutionHandle,
-    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>
+    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
+    fingerprint: string
   ): Promise<RuntimeExecutionHandle> {
+    await this.#reserveAdmission(handle, fingerprint)
     const invocation = await this.#inputResolver.resolve(configuration)
     const directory = join(this.#dataDirectory, handle.attemptId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -214,6 +218,47 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       throw error
     }
     return structuredClone(handle)
+  }
+
+  async #reserveAdmission(handle: RuntimeExecutionHandle, fingerprint: string): Promise<void> {
+    const directory = join(this.#dataDirectory, 'admissions')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const file = await open(join(directory, `${handle.attemptId}.json`), 'wx', 0o600).catch(
+      (error: unknown) => {
+        if (
+          error !== null &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'EEXIST'
+        ) {
+          throw new RuntimeAdapterError({
+            code: 'PI_START_RECONCILIATION_REQUIRED',
+            classification: 'unknown',
+            message: 'PI_START_RECONCILIATION_REQUIRED',
+            retryable: false,
+          })
+        }
+        throw error
+      }
+    )
+    try {
+      await file.writeFile(
+        JSON.stringify({
+          schemaVersion: 1,
+          commandDigest: createHash('sha256').update(fingerprint).digest('hex'),
+        }),
+        'utf8'
+      )
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+    const parent = await open(directory, 'r')
+    try {
+      await parent.sync()
+    } finally {
+      await parent.close()
+    }
   }
 
   async *progress(handleInput: RuntimeExecutionHandle, afterSequence = 0, signal?: AbortSignal) {
