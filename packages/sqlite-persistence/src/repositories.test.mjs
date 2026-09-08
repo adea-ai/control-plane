@@ -66,6 +66,86 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('retired command keys reject resurrection after payload removal and reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retired-'))
+    const path = join(directory, 'control-plane.sqlite')
+    let provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const accepted = await service(provider).acceptExecution(commandInput())
+      let repository = new SqliteCommandAcceptanceRepository(provider)
+      const retiredAt = '2026-09-24T10:00:00.000Z'
+      expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+      const terminalCommand = {
+        ...accepted.command,
+        status: 'failed',
+        terminalAt: receivedAt,
+        errorReference: 'error://test/cancelled',
+        version: 2,
+      }
+      expect(await repository.compareAndSet(1, terminalCommand)).toBe(true)
+      expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+      await provider.transaction(async (transaction) => {
+        const [execution] = await transaction.list('executions')
+        await transaction.put({
+          namespace: execution.namespace,
+          id: execution.id,
+          expectedRevision: execution.revision,
+          value: { ...execution.value, state: 'cancelled', terminalAt: receivedAt },
+        })
+      })
+      expect(
+        await repository.retireExpiredCommand(accepted.command, accepted.command.retentionExpiresAt)
+      ).toBe(false)
+      expect(
+        await Promise.all(
+          Array.from({ length: 8 }, () =>
+            repository.retireExpiredCommand(accepted.command, retiredAt)
+          )
+        )
+      ).toEqual(Array(8).fill(true))
+      await provider.transaction(async (transaction) => {
+        const [command] = await transaction.list('command-inbox')
+        // Simulate a future dependency-aware cleaner on this disposable database only.
+        await transaction.delete(command.namespace, command.id, command.revision)
+        const [tombstone] = await transaction.list('retired-command-keys')
+        expect(tombstone.value).toEqual({
+          retiredAt,
+          commandId: ids.commandId,
+          executionId: ids.executionId,
+        })
+      })
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path })
+      await provider.migrate()
+      repository = new SqliteCommandAcceptanceRepository(provider)
+      await expect(repository.get(accepted.command)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      await expect(
+        repository.accept({ ...accepted.command, payloadHash: 'c'.repeat(64) }, accepted.execution)
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      await expect(
+        service(provider, retiredAt).acceptExecution(
+          commandInput({
+            commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+            receivedAt: retiredAt,
+            retentionExpiresAt: '2026-11-24T10:00:00.000Z',
+          })
+        )
+      ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+      expect(
+        await repository.get({ ...accepted.command, callerPrincipalId: 'svc_other' })
+      ).toBeUndefined()
+      expect(
+        await repository.get({ ...accepted.command, projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+      ).toBeUndefined()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test.each([1, 30, 31])('preserves a %i-day replay deadline across reopen', async (days) => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
     const path = join(directory, 'control-plane.sqlite')

@@ -4,6 +4,28 @@ Status: incomplete. This inventory is implementation input, not evidence of a
 working retention service. Scope is every durable data class in issue #194,
 across PostgreSQL, SQLite, workflow storage, object storage, and backups.
 
+## Increment: SQLite command rejection keys
+
+`SqliteCommandAcceptanceRepository.retireExpiredCommand` now reserves a minimal
+rejection record in `retired-command-keys`. It requires an expired command with
+terminal command and execution states. It intentionally retains all original
+domain records: reference checks, holds, external cleanup, and deletion workers
+are not implemented by this method. No scheduler or public endpoint invokes it.
+
+Both scoped lookup and transactional acceptance reject a retired key with
+`COMMAND_RETENTION_EXPIRED`. Reservation uses the same SQLite write transaction
+serialization as acceptance. The record contains original command/execution IDs
+and retirement time, not request payload or the raw scoped idempotency key.
+The key uses the existing repository scope hash. There is no expiry of these
+rejection records until an admission-epoch policy can make forgetting safe.
+
+The file-backed repository test verifies active command/execution refusal,
+the existing inclusive replay-deadline boundary, eight concurrent retirements,
+payload removal simulated in a disposable test database, full close/reopen,
+direct repository admission and service replay rejection despite altered request
+metadata, and caller/project isolation. This is SQLite-only prerequisite
+coverage; it does not prove PostgreSQL parity or full retention acceptance.
+
 ## Current evidence
 
 - `packages/config/src/operational.ts` specifies 30-day command-inbox and
