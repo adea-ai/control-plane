@@ -33,6 +33,28 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('retains individually extracted native host and local-content boundaries', () => {
+    const expected = [
+      ['024', 'Native invocation boundary (section 11)'],
+      ['025', 'Constrained process launch (section 11)'],
+      ['026', 'Opaque credential access (section 11)'],
+      ['027', 'Protected key-role exclusion (section 11)'],
+      ['028', 'Bounded local context requests (section 12)'],
+      ['029', 'Explicit local-content promotion (section 12)'],
+      ['030', 'Provider revocation without data deletion (section 12.1)'],
+    ]
+    for (const [suffix, heading] of expected) {
+      const row = ledger.requirements.find(({ id }) => id === `CP-RNODE-${suffix}`)
+      expect(row).toMatchObject({
+        sourceId: 'runtime-node-spec',
+        normativeState: 'accepted',
+        heading,
+      })
+      expect(row.issueRefs).toContain(186)
+      expect(row.issueRefs).toContain(190)
+    }
+  })
+
   test('distinguishes the recorded audit baseline from later scoped evidence', async () => {
     const report = await renderRequirementsReport(ledger)
     expect(report).toContain('not the current branch head')
