@@ -32,6 +32,11 @@ record store.
   attempt/execution, and value. A permission `grant` maps to native approval. A focused
   direct-activity test uses SQLite and proves an unconfirmed response has zero runtime
   submissions before the domain service records an authorized response.
+- Request creation and response validation also reread current execution state and
+  require the same latest attempt in `running` or `awaiting_input`. Regression tests
+  reject completed, failed, cancelled, timed-out, cancelling, reconciliation-required,
+  and replaced-attempt cases. This rejects already-observed terminal state; it is not
+  a claim of atomic ordering against a concurrently arriving terminal update.
 - Verify this request/response bridge through real native pending interactions and
   restart, including terminal cleanup of pending records and user-visible prompt details.
 - Compose the existing domain interaction service with authenticated, workspace-safe

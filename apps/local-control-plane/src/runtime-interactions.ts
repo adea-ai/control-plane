@@ -6,6 +6,8 @@ import {
 } from '@control-plane/domain'
 import type { RuntimeExecutionProgress } from '@control-plane/runtime-sdk'
 
+const interactionStates = new Set(['running', 'awaiting_input'])
+
 export class LocalRuntimeInteractions {
   constructor(
     readonly repository: InteractionRepository,
@@ -24,6 +26,7 @@ export class LocalRuntimeInteractions {
     if (
       !command ||
       !execution ||
+      !interactionStates.has(execution.state) ||
       command.executionId !== executionId ||
       execution.latestAttemptId !== attemptId ||
       command.workspaceId !== execution.correlation.workspaceId ||
@@ -80,8 +83,14 @@ export class LocalRuntimeInteractions {
     action: string
     value?: unknown
   }): Promise<void> {
-    const request = await this.repository.get(input.interactionId)
+    const [request, execution] = await Promise.all([
+      this.repository.get(input.interactionId),
+      this.commands.getExecution(input.executionId),
+    ])
     if (
+      !execution ||
+      !interactionStates.has(execution.state) ||
+      execution.latestAttemptId !== input.attemptId ||
       !request ||
       request.executionId !== input.executionId ||
       request.attemptId !== input.attemptId ||

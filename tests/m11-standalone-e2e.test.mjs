@@ -262,6 +262,7 @@ describe('M11 standalone execution composition', () => {
           effectKey: `${workflowId}:attempt`,
         })
         await activities.persistStatus(status(executionId, 'starting', attemptId))
+        await activities.persistStatus(status(executionId, 'running', attemptId))
         const outcome = await activities.dispatch({
           executionId,
           attemptId,

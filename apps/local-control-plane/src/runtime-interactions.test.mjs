@@ -14,6 +14,7 @@ const command = {
   retentionExpiresAt: '2099-01-01T00:00:00.000Z',
 }
 const execution = {
+  state: 'running',
   latestAttemptId: attemptId,
   correlation: { workspaceId: command.workspaceId, projectId: command.projectId },
 }
@@ -104,4 +105,42 @@ test('runtime response requires the exact durably authorized response', async ()
     await expect(bridge.assertResponse({ ...response, ...changed })).rejects.toThrow(
       'LOCAL_INTERACTION_RESPONSE_UNCONFIRMED'
     )
+})
+
+test.each([
+  'completed',
+  'failed',
+  'cancelled',
+  'timed_out',
+  'cancelling',
+  'reconciliation_required',
+  'replaced-attempt',
+])('retained response cannot drive a terminal or replaced execution: %s', async (state) => {
+  let current = { ...execution, state: 'awaiting_input' }
+  const { bridge, repository } = setup({ getExecution: async () => current })
+  await bridge.record(executionId, attemptId, event('input'))
+  const response = {
+    interactionId,
+    executionId,
+    attemptId,
+    responseId: `cmd_${suffix}`,
+    action: 'input',
+    value: 'authorized earlier',
+  }
+  await new InteractionService(repository).respond({
+    ...response,
+    expectedVersion: 1,
+    respondingPrincipalId: 'svc_owner',
+    respondedAt: new Date().toISOString(),
+  })
+  current =
+    state === 'replaced-attempt'
+      ? { ...current, latestAttemptId: `att_${suffix.slice(0, -1)}W` }
+      : { ...current, state }
+  await expect(bridge.assertResponse(response)).rejects.toThrow(
+    'LOCAL_INTERACTION_RESPONSE_UNCONFIRMED'
+  )
+  await expect(bridge.record(executionId, attemptId, event())).rejects.toThrow(
+    'LOCAL_INTERACTION_SCOPE_MISSING'
+  )
 })

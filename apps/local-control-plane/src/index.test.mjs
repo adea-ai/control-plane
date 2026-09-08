@@ -466,6 +466,7 @@ describe('Local Control Plane composition', () => {
         }),
         getExecution: async () => ({
           latestAttemptId: input.attemptId,
+          state: 'awaiting_input',
           correlation: input.executionPlan.correlation,
         }),
       })
