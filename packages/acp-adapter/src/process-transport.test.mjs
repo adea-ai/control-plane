@@ -24,6 +24,13 @@ process.stdin.on('data',chunk=>{
   if(m.method==='session/close'){closes++;if(process.env.SCENARIO!=='lost-close')reply(m.id,{});}
   if(m.method==='close-probe')reply(m.id,{closes});
   if(m.method==='late-probe')reply(m.id,{lateCancelled});
+  if(m.method==='session/list'){
+   if(process.env.SCENARIO==='list-cycle')reply(m.id,{sessions:[],nextCursor:'repeat'});
+   else if(process.env.SCENARIO==='list-item-limit')reply(m.id,m.params.cursor?{sessions:[{sessionId:'overflow'}]}:{sessions:Array.from({length:128},(_,i)=>({sessionId:'listed-'+i})),nextCursor:'next'});
+   else if(process.env.SCENARIO==='list-limit')reply(m.id,{sessions:[],nextCursor:String(Number(m.params.cursor||0)+1)});
+   else if(process.env.SCENARIO==='list-duplicate')reply(m.id,{sessions:[{sessionId:'same'}],nextCursor:m.params.cursor?null:'next'});
+   else reply(m.id,m.params.cursor?{sessions:[{sessionId:'listed-2',title:'Second'}],nextCursor:null}:{sessions:[{sessionId:'listed-1',title:null}],nextCursor:'next'});
+  }
   if(m.method==='session/new'){
    creates++;
    if(process.env.SCENARIO==='concurrent'){
@@ -69,6 +76,36 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('native list collects all pages and normalizes nullable titles', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    await driver.inspect()
+    expect(await transport.request('session/list', {})).toEqual({
+      sessions: [{ sessionId: 'listed-1' }, { sessionId: 'listed-2', title: 'Second' }],
+    })
+    await expect(transport.request('session/list', { cursor: 'next' })).rejects.toThrow(
+      'ACP_NATIVE_PARTIAL_LIST_UNSUPPORTED'
+    )
+  } finally {
+    await transport.close()
+  }
+})
+
+test.each(['list-cycle', 'list-limit', 'list-item-limit', 'list-duplicate'])(
+  'native inventory rejects incomplete or inconsistent pagination: %s',
+  async (scenario) => {
+    const { transport, driver } = fixture(scenario)
+    try {
+      await transport.open()
+      await driver.inspect()
+      await expect(transport.request('session/list', {})).rejects.toThrow('ACP_NATIVE_LIST_')
+    } finally {
+      await transport.close()
+    }
+  }
+)
 
 test('native cleanup closes once, retains snapshots, and fences later prompts', async () => {
   const { transport, driver } = fixture()

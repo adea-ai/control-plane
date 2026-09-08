@@ -144,6 +144,7 @@ export class AcpProcessTransport implements AcpTransport {
     signal?: AbortSignal
   ): Promise<unknown> {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
+    if (method === 'session/list') return this.#listSessions(params, signal)
     if (method === 'initialize') {
       const result = await this.#rpc.request(method, params, this.#requestOptions(signal))
       this.#supportsClose = z
@@ -183,6 +184,49 @@ export class AcpProcessTransport implements AcpTransport {
       return {}
     }
     return this.#rpc.request(method, params, this.#requestOptions(signal))
+  }
+
+  async #listSessions(params: Record<string, Json>, signal?: AbortSignal) {
+    if (params['cursor'] !== undefined) throw new Error('ACP_NATIVE_PARTIAL_LIST_UNSUPPORTED')
+    const sessions: { sessionId: string; title?: string }[] = []
+    const cursors = new Set<string>()
+    const ids = new Set<string>()
+    let cursor: string | undefined
+    for (let page = 0; page < 16; page++) {
+      const response = z
+        .object({
+          sessions: z
+            .array(
+              z
+                .object({ sessionId: SessionId, title: z.string().max(512).nullable().optional() })
+                .passthrough()
+            )
+            .max(128),
+          nextCursor: z.string().min(1).max(4096).nullable().optional(),
+        })
+        .passthrough()
+        .parse(
+          await this.#rpc.request(
+            'session/list',
+            { ...params, ...(cursor ? { cursor } : {}) },
+            this.#requestOptions(signal)
+          )
+        )
+      for (const session of response.sessions) {
+        if (ids.has(session.sessionId)) throw new Error('ACP_NATIVE_LIST_DUPLICATE_SESSION')
+        if (sessions.length >= 128) throw new Error('ACP_NATIVE_LIST_LIMIT')
+        ids.add(session.sessionId)
+        sessions.push({
+          sessionId: session.sessionId,
+          ...(session.title ? { title: session.title } : {}),
+        })
+      }
+      if (!response.nextCursor) return { sessions }
+      if (cursors.has(response.nextCursor)) throw new Error('ACP_NATIVE_LIST_CURSOR_REPEATED')
+      cursor = response.nextCursor
+      cursors.add(cursor)
+    }
+    throw new Error('ACP_NATIVE_LIST_LIMIT')
   }
 
   async respond(

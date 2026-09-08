@@ -147,6 +147,26 @@ The disposable container and its package installation were removed. This is
 native successful-close evidence; crash recovery, lost acknowledgements against
 the real agent, and all-platform descendant cleanup remain unverified.
 
+## Complete native inventory mapping
+
+The pinned `CodexAcpClient.listSessions` forwards the native cursor and emits
+nullable titles. The driver's list operation expects one complete inventory and
+then marks unlisted registered sessions removed. The process transport now
+collects native pages before returning any inventory and omits null/empty titles.
+It rejects repeated cursors, duplicate session IDs, more than 16 pages, more than
+128 sessions, and caller-supplied cursors (which would request a partial inventory).
+Transport errors or aborts reject the operation rather than returning accumulated
+pages. The existing driver therefore cannot treat the collected first page as a
+complete successful listing.
+
+These bounds intentionally fail the inventory operation; they do not silently
+truncate it. Pagination and nullable-title coverage uses the disposable protocol
+fixture, not a real multi-page Codex history. Native resume/load and preservation
+of earlier execution snapshots across reopening still require implementation and
+validation. Listing alone is not native lifecycle certification.
+The process suite passed 21 tests / 60 assertions; root lint, type-check,
+formatting, build, and tests passed, including 101 E2E tests / 571 assertions.
+
 This implementation is not exported from the package entrypoint or ready for
 promotion. Required follow-up includes late/ambiguous create reconciliation,
 retained-result limits, remaining native session lifecycle
