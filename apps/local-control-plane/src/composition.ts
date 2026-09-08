@@ -103,6 +103,7 @@ export interface LocalControlPlaneCompositionOptions {
 }
 
 export class LocalControlPlaneComposition {
+  readonly interactionCommandService: LocalControlApiComposition['interactionCommandService']
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
   readonly persistence: SqlitePersistenceProvider
@@ -198,6 +199,7 @@ export class LocalControlPlaneComposition {
         ? new UnavailableExecutionAcceptanceService()
         : controlApi.executionAcceptanceService
     this.executionValidationService = controlApi.executionValidationService
+    this.interactionCommandService = controlApi.interactionCommandService
     this.profileResolutionService = controlApi.profileResolutionService
     this.projectStateResolutionService = controlApi.projectStateResolutionService
     this.contextPackageResolutionService = controlApi.contextPackageResolutionService

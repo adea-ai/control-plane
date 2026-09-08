@@ -68,6 +68,7 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
       await composition.start()
       const authentication = await createLocalApiAuthentication(composition.dataDirectory)
       const application = await createControlApiApplication({
+        interactionCommandService: composition.interactionCommandService,
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
         profileResolutionService: composition.profileResolutionService,

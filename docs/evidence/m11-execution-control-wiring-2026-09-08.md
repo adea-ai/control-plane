@@ -33,15 +33,19 @@ and index retention/export policy have not been certified.
 The public `interaction.respond` command/result schemas now define complete command
 and attempt scope, strict authority fields, the domain-equivalent 8 KiB UTF-8 JSON
 input limit, and a signal-acceptance acknowledgement that cannot claim execution
-completion or include private response content. They are not yet registered as an
-API/SDK operation. A caller/workspace/project/operation/idempotency-key-scoped SQLite
+completion or include private response content. The authenticated API route is now
+`POST /v1/interactions/respond`, requiring `interaction:respond`; the SDK operation
+is still outstanding. A caller/workspace/project/operation/idempotency-key-scoped SQLite
 receipt repository retains the first command identity under concurrent reservation
 and restart, and separately records confirmed signal acceptance. The command service
-must still authorize before reservation, compare actual payloads (not trust the
-caller-supplied hash), reject conflicting key reuse, and reconcile unconfirmed sends.
-PostgreSQL receipts and receipt retention/export are also not implemented yet.
+now authorizes before reservation or receipt replay, compares actual payloads rather
+than trusting the caller-supplied hash, and rejects conflicting key reuse. Confirmed
+receipts replay after completion without another signal; unconfirmed active attempts
+retry with the original response ID. SQLite tests cover lost ACK, reopen, receipt-write
+failure and concurrent different command IDs. Automatic reconciliation, PostgreSQL
+receipts and receipt retention/export are not implemented yet.
 
-`DurableInteractionDeliveryService` now supplies a shared, not-yet-routed response
+`DurableInteractionDeliveryService` supplies the shared response
 boundary. It checks accepted-command and execution workspace/project scope, exact
 interaction execution/attempt ownership, allowed principal, and active/latest attempt
 before recording the response. Caller-supplied principal/timestamp fields are rejected;
@@ -55,7 +59,11 @@ or `PreviouslyAccepted`, matching [Restate 1.7.8 ingress source](https://github.
 HTTP 409 remains a supported workflow-start replay only, not an accepted interaction
 signal. Tests cover exact-body retry, preserved response identity after a lost ACK,
 cross-scope answered replay rejection, spoofed principal, inactive/replaced execution,
-and invalid dispatch status. Public API/SDK/relay composition remains outstanding.
+and invalid dispatch status. Local composition now wires the command service into
+the API; profiles without a configured service return 503. Authenticated route tests
+cover missing credentials, missing scope, wrong workspace/project and safe error
+normalization. A full native-interaction run through this HTTP route, SDK/relay
+wiring, and the remaining profile compositions are still outstanding.
 
 - Local direct runtime dispatch now persists pending input/approval/permission requests
   before returning `awaiting_input`. Execution and attempt scope come from the accepted

@@ -16,6 +16,7 @@ import {
 } from './cloud-composition.js'
 import type { ExecutionValidationService } from './executions/execution-validation.service.js'
 import type { ExecutionAcceptanceService } from './executions/execution-acceptance.service.js'
+import type { InteractionCommandService } from './executions/interaction-command.controller.js'
 import type { RuntimeDiscoveryRepository } from './runtime-discovery/runtime-discovery.repository.js'
 import type { ProfileResolutionService } from './queries/profile-resolution.service.js'
 import type { ProjectStateResolutionService } from './queries/project-state-resolution.service.js'
@@ -26,6 +27,7 @@ import type { MarketplaceRegistryService } from './marketplace/registry.js'
 export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
+  readonly interactionCommandService?: InteractionCommandService
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly cwd?: string
   readonly environment?: RawEnvironment
@@ -99,6 +101,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       const marketplaceInstallationService =
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
+        ...(options.interactionCommandService === undefined
+          ? {}
+          : { interactionCommandService: options.interactionCommandService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),
         ...(executionValidationService === undefined ? {} : { executionValidationService }),
         health,

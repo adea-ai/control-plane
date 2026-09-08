@@ -34,6 +34,20 @@ export class DurableInteractionDeliveryService {
   ) {}
 
   async respond(input: unknown, authenticatedPrincipalId: string): Promise<InteractionRequest> {
+    const parsed = await this.authorize(input, authenticatedPrincipalId)
+    const saved = await new InteractionService(this.interactions).respond({
+      ...parsed,
+      respondingPrincipalId: authenticatedPrincipalId,
+      respondedAt: this.now(),
+    })
+    if (!saved.response) throw new Error('INTERACTION_DELIVERY_RESPONSE_MISSING')
+    // Sending the stored response, rather than caller input, preserves replay identity.
+    await this.dispatcher.deliver({ ...saved, response: saved.response })
+    return saved
+  }
+
+  /** Confirmed receipt replay checks ownership without requiring a still-active attempt. */
+  async authorize(input: unknown, authenticatedPrincipalId: string, requireActive = true) {
     const parsed = ScopedInteractionResponseSchema.parse(input)
     const [command, execution, interaction] = await Promise.all([
       this.commands.getByExecutionId(parsed.executionId),
@@ -55,18 +69,11 @@ export class DurableInteractionDeliveryService {
     )
       throw new Error('INTERACTION_DELIVERY_SCOPE_REJECTED')
     if (
-      execution.latestAttemptId !== parsed.attemptId ||
-      (execution.state !== 'running' && execution.state !== 'awaiting_input')
+      requireActive &&
+      (execution.latestAttemptId !== parsed.attemptId ||
+        (execution.state !== 'running' && execution.state !== 'awaiting_input'))
     )
       throw new Error('INTERACTION_DELIVERY_EXECUTION_INACTIVE')
-    const saved = await new InteractionService(this.interactions).respond({
-      ...parsed,
-      respondingPrincipalId: authenticatedPrincipalId,
-      respondedAt: this.now(),
-    })
-    if (!saved.response) throw new Error('INTERACTION_DELIVERY_RESPONSE_MISSING')
-    // Sending the stored response, rather than caller input, preserves replay identity.
-    await this.dispatcher.deliver({ ...saved, response: saved.response })
-    return saved
+    return parsed
   }
 }

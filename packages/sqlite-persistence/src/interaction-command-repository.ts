@@ -24,15 +24,18 @@ export class SqliteInteractionCommandRepository implements InteractionCommandRep
     })
   }
 
-  async reserve(input: InteractionCommandReceipt): Promise<InteractionCommandReceipt> {
+  async reserve(
+    input: InteractionCommandReceipt
+  ): Promise<{ receipt: InteractionCommandReceipt; inserted: boolean }> {
     const receipt = InteractionCommandReceiptSchema.parse(input)
     if (receipt.acceptedAt !== undefined) throw new Error('INTERACTION_RECEIPT_ALREADY_ACCEPTED')
     return this.provider.transaction(async (transaction) => {
       const id = recordId(receipt.request)
       const existing = await transaction.get(namespace, id)
-      if (existing) return InteractionCommandReceiptSchema.parse(existing.value)
+      if (existing)
+        return { receipt: InteractionCommandReceiptSchema.parse(existing.value), inserted: false }
       await transaction.put({ namespace, id, value: json(receipt) })
-      return receipt
+      return { receipt, inserted: true }
     })
   }
 

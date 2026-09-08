@@ -14,6 +14,12 @@ import { AuthenticationController } from './auth/authentication.controller.js'
 import { HealthController } from './health/health.controller.js'
 import { ExecutionAcceptanceController } from './executions/execution-acceptance.controller.js'
 import {
+  InteractionCommandController,
+  INTERACTION_COMMAND_SERVICE,
+  UnavailableInteractionCommandService,
+  type InteractionCommandService,
+} from './executions/interaction-command.controller.js'
+import {
   EXECUTION_ACCEPTANCE_SERVICE,
   UnavailableExecutionAcceptanceService,
   type ExecutionAcceptanceService,
@@ -74,6 +80,7 @@ import {
 } from './queries/context-package-resolution.service.js'
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
+  readonly interactionCommandService?: InteractionCommandService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
   readonly executionValidationService?: ExecutionValidationService
   readonly serviceAuthenticator?: ServiceAuthenticator
@@ -108,6 +115,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       AuthenticationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
+      InteractionCommandController,
       ExecutionValidationController,
       HealthController,
       ProfileResolutionController,
@@ -117,6 +125,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       SystemController,
     ],
     providers: [
+      {
+        provide: INTERACTION_COMMAND_SERVICE,
+        useValue: options.interactionCommandService ?? new UnavailableInteractionCommandService(),
+      },
       { provide: API_HEALTH, useValue: options.health },
       {
         provide: API_DEPENDENCY_READINESS,

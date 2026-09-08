@@ -18,7 +18,9 @@ export type InteractionCommandReceipt = z.output<typeof InteractionCommandReceip
 export interface InteractionCommandRepository {
   get(scope: InteractionCommandScope): Promise<InteractionCommandReceipt | undefined>
   /** Atomically retains the first request, including its response/command identity. */
-  reserve(receipt: InteractionCommandReceipt): Promise<InteractionCommandReceipt>
+  reserve(
+    receipt: InteractionCommandReceipt
+  ): Promise<{ receipt: InteractionCommandReceipt; inserted: boolean }>
   /** Records confirmed signal acceptance without changing the original request. */
   markAccepted(scope: InteractionCommandScope, at: string): Promise<InteractionCommandReceipt>
 }

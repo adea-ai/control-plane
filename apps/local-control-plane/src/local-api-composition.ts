@@ -7,7 +7,11 @@ import {
   RepositoryProjectStateResolutionService,
   RepositoryContextPackageResolutionService,
 } from '@control-plane/control-api'
-import { CommandInboxService } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  DurableInteractionCommandService,
+  DurableInteractionDeliveryService,
+} from '@control-plane/domain'
 import {
   ContextPackageAuthoringService,
   type ContextAuthoringCompositionOptions,
@@ -22,6 +26,7 @@ import {
   SqliteExecutionValidationCommandRepository,
   SqliteExecutionRepository,
   SqliteInteractionRepository,
+  SqliteInteractionCommandRepository,
   SqliteProjectStateRepository,
   SqliteReconciliationCheckpointRepository,
   SqliteRuntimeCommandRepository,
@@ -34,6 +39,7 @@ import {
 } from '@control-plane/sqlite-persistence'
 
 export class LocalControlApiComposition {
+  readonly interactionCommandService: DurableInteractionCommandService
   readonly commandRepository: SqliteCommandAcceptanceRepository
   readonly commands: CommandInboxService
   readonly catalog: SqliteVersionedCatalogRepository
@@ -66,6 +72,14 @@ export class LocalControlApiComposition {
     this.executionPlans = new SqliteExecutionPlanRepository(persistence)
     this.executions = new SqliteExecutionRepository(persistence)
     this.interactions = new SqliteInteractionRepository(persistence)
+    this.interactionCommandService = new DurableInteractionCommandService(
+      new SqliteInteractionCommandRepository(persistence),
+      new DurableInteractionDeliveryService(
+        this.interactions,
+        this.commandRepository,
+        new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
+      )
+    )
     this.executionEvents = new SqliteExecutionEventRepository(persistence)
     this.projectStates = new SqliteProjectStateRepository(persistence)
     this.statePromotionProposals = new SqliteStatePromotionProposalRepository(persistence)
