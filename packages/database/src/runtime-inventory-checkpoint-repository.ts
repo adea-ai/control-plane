@@ -1,14 +1,36 @@
 import {
   RuntimeInventoryCheckpointSchema,
+  RuntimeInventoryScanSchema,
+  type RuntimeInventoryScan,
+  type RuntimeInventoryCheckpointScanner,
   type RuntimeInventoryCheckpoint,
   type RuntimeInventoryCheckpointRepository,
 } from '@control-plane/runtime-sdk'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq, gt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { runtimeInventoryCheckpoints } from './schema/runtime-inventory-checkpoints.js'
 
-export class PostgresRuntimeInventoryCheckpointRepository implements RuntimeInventoryCheckpointRepository {
+export class PostgresRuntimeInventoryCheckpointRepository
+  implements RuntimeInventoryCheckpointRepository, RuntimeInventoryCheckpointScanner
+{
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  async scan(input: RuntimeInventoryScan): Promise<readonly RuntimeInventoryCheckpoint[]> {
+    const { afterNodeId, limit } = RuntimeInventoryScanSchema.parse(input)
+    const rows = await this.database
+      .select()
+      .from(runtimeInventoryCheckpoints)
+      .where(
+        afterNodeId === undefined
+          ? undefined
+          : gt(runtimeInventoryCheckpoints.runtimeNodeRefId, afterNodeId)
+      )
+      .orderBy(asc(runtimeInventoryCheckpoints.runtimeNodeRefId))
+      .limit(limit)
+    return rows.map((row) =>
+      RuntimeInventoryCheckpointSchema.parse({ ...row, observedAt: row.observedAt.toISOString() })
+    )
+  }
 
   async get(runtimeNodeRefId: string): Promise<RuntimeInventoryCheckpoint | undefined> {
     const [row] = await this.database

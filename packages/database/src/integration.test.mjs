@@ -946,6 +946,31 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(runtimeInventoryCheckpoints)).toHaveLength(1)
   })
 
+  test('scans durable inventory with bounded cursor pages after repository recreation', async () => {
+    await isolated.migrate()
+    const repository = new PostgresRuntimeInventoryCheckpointRepository(isolated.application)
+    const records = [3, 1, 2].map((index) => ({
+      runtimeNodeRefId: `rnr_01ZRZ3NDEKTSV4RRFFQ69G5FA${index}`,
+      workspaceId: 'wsp_01ZRZ3NDEKTSV4RRFFQ69G5FAV',
+      snapshotVersion: 1,
+      snapshotDigest: `sha256:${'b'.repeat(64)}`,
+      observedAt: '2026-09-08T10:00:00.000Z',
+      activeRuntimeRefs: [],
+      revision: 1,
+    }))
+    for (const record of records)
+      expect(await repository.compareAndSet(undefined, record)).toBe(true)
+    const first = await repository.scan({ afterNodeId: 'rnr_01ZRZ3NDEKTSV4RRFFQ69G5FA0', limit: 2 })
+    expect(first).toEqual([records[1], records[2]])
+    const restarted = new PostgresRuntimeInventoryCheckpointRepository(isolated.application)
+    const last = await restarted.scan({ afterNodeId: first[1].runtimeNodeRefId, limit: 2 })
+    expect(last).toEqual([records[0]])
+    expect(await restarted.scan({ afterNodeId: last[0].runtimeNodeRefId, limit: 2 })).toEqual([])
+    for (const input of [{ limit: 0 }, { limit: 129 }, { limit: 1, afterNodeId: 'bad' }]) {
+      await expect(restarted.scan(input)).rejects.toThrow()
+    }
+  })
+
   test('persists delegation lineage across service restart with compare-and-set', async () => {
     await isolated.migrate()
     const repository = new PostgresDelegationRepository(isolated.application)

@@ -19,6 +19,19 @@ export const RuntimeInventoryCheckpointSchema = z
 
 export type RuntimeInventoryCheckpoint = z.output<typeof RuntimeInventoryCheckpointSchema>
 
+export const RuntimeInventoryScanSchema = z
+  .object({
+    afterNodeId: IdentifierSchemas.runtimeNodeRefId.optional(),
+    limit: z.number().int().min(1).max(128),
+  })
+  .strict()
+export type RuntimeInventoryScan = z.output<typeof RuntimeInventoryScanSchema>
+
+/** Internal worker scan across workspaces; not an end-user discovery operation. */
+export interface RuntimeInventoryCheckpointScanner {
+  scan(input: RuntimeInventoryScan): Promise<readonly RuntimeInventoryCheckpoint[]>
+}
+
 export interface RuntimeInventoryCheckpointRepository {
   get(runtimeNodeRefId: string): Promise<RuntimeInventoryCheckpoint | undefined>
   compareAndSet(
@@ -27,8 +40,25 @@ export interface RuntimeInventoryCheckpointRepository {
   ): Promise<boolean>
 }
 
-export class InMemoryRuntimeInventoryCheckpointRepository implements RuntimeInventoryCheckpointRepository {
+export class InMemoryRuntimeInventoryCheckpointRepository
+  implements RuntimeInventoryCheckpointRepository, RuntimeInventoryCheckpointScanner
+{
   readonly #checkpoints = new Map<string, RuntimeInventoryCheckpoint>()
+
+  async scan(input: RuntimeInventoryScan): Promise<readonly RuntimeInventoryCheckpoint[]> {
+    const { afterNodeId, limit } = RuntimeInventoryScanSchema.parse(input)
+    return [...this.#checkpoints.values()]
+      .filter((record) => afterNodeId === undefined || record.runtimeNodeRefId > afterNodeId)
+      .sort((left, right) =>
+        left.runtimeNodeRefId < right.runtimeNodeRefId
+          ? -1
+          : left.runtimeNodeRefId > right.runtimeNodeRefId
+            ? 1
+            : 0
+      )
+      .slice(0, limit)
+      .map((record) => structuredClone(record))
+  }
 
   async get(runtimeNodeRefId: string): Promise<RuntimeInventoryCheckpoint | undefined> {
     const checkpoint = this.#checkpoints.get(runtimeNodeRefId)

@@ -1,5 +1,23 @@
 # M11 production Runtime Gateway composition gap
 
+## Durable inventory scan prerequisite
+
+RuntimeInventoryCheckpointScanner now provides an internal keyset scan by node
+identity, with an exclusive cursor and a validated page limit of 1–128. The
+PostgreSQL implementation bounds the SQL result itself and does not depend on
+live channels or nonempty runtime references. A matching in-memory implementation
+supports deterministic worker tests. SQLite does not yet implement this scan.
+
+Tests cover stable ordering, page continuation after repository recreation,
+empty final page, invalid bounds/cursors and mutation isolation for the fixture.
+The PostgreSQL case uses actual stored checkpoints with empty runtime lists;
+it is not a transport disconnect/restart certification. This enables subsequent
+bounded refresh work but does not schedule it or update health/discovery yet.
+A worker must finish and restart scan cycles so records inserted behind a cursor
+are revisited, and preserve workspace ownership from each checkpoint. The scan
+is deliberately not a public discovery operation or an authorization bypass for
+end-user APIs.
+
 ## Server lifecycle scheduling follow-up
 
 RuntimeGatewayWebSocketServer now schedules lifecycle sweeps after startup with
