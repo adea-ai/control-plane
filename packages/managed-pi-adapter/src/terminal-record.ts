@@ -92,9 +92,46 @@ export async function readTerminalEvents(
 
 async function readRecord(dataDirectory: string, input: RuntimeExecutionHandle) {
   const handle = RuntimeExecutionHandleSchema.parse(input)
+  const record = await readAttemptRecord(dataDirectory, handle.attemptId)
+  if (record.handle.handleId !== handle.handleId || record.handle.startedAt !== handle.startedAt)
+    throw uncertain()
+  return record
+}
+
+export async function recoverTerminalHandle(
+  dataDirectory: string,
+  attemptId: string,
+  commandDigest: string
+): Promise<RuntimeExecutionHandle> {
+  RuntimeExecutionHandleSchema.shape.attemptId.parse(attemptId)
+  const file = await open(
+    join(dataDirectory, 'admissions', `${attemptId}.json`),
+    constants.O_RDONLY | constants.O_NOFOLLOW
+  )
+  try {
+    const metadata = await file.stat()
+    if (!metadata.isFile() || metadata.size > 256) throw uncertain()
+    const admission = z
+      .object({ schemaVersion: z.literal(1), commandDigest: z.string().regex(/^[a-f0-9]{64}$/) })
+      .strict()
+      .parse(JSON.parse(await file.readFile('utf8')))
+    if (admission.commandDigest !== commandDigest)
+      throw new RuntimeAdapterError({
+        code: 'PI_START_IDEMPOTENCY_CONFLICT',
+        classification: 'conflict',
+        message: 'PI_START_IDEMPOTENCY_CONFLICT',
+        retryable: false,
+      })
+  } finally {
+    await file.close()
+  }
+  return (await readAttemptRecord(dataDirectory, attemptId)).handle
+}
+
+async function readAttemptRecord(dataDirectory: string, attemptId: string) {
   try {
     const file = await open(
-      join(dataDirectory, 'terminal-results', `${handle.attemptId}.json`),
+      join(dataDirectory, 'terminal-results', `${attemptId}.json`),
       constants.O_RDONLY | constants.O_NOFOLLOW
     )
     try {
@@ -102,9 +139,8 @@ async function readRecord(dataDirectory: string, input: RuntimeExecutionHandle) 
       if (!metadata.isFile() || metadata.size > MAX_RECORD_BYTES) throw uncertain()
       const record = recordSchema().parse(JSON.parse(await file.readFile('utf8')))
       if (
-        record.handle.handleId !== handle.handleId ||
-        record.handle.attemptId !== handle.attemptId ||
-        record.handle.startedAt !== handle.startedAt
+        record.handle.handleId !== `managed-pi:${attemptId}` ||
+        record.handle.attemptId !== attemptId
       )
         throw uncertain()
       return record

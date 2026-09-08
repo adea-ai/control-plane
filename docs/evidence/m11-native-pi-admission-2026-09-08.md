@@ -143,3 +143,22 @@ the original events above that cursor. The report emitted
 `eventRecoveryAfterCleanup: exact-history-and-cursor-filtering`; total model
 requests remained three and cleanup completed. This establishes terminal event
 recovery for the pinned runtime, not live in-flight reattachment.
+
+## Completed-start replay after client recreation
+
+A recreated client's `start` now recovers the original handle only when the
+bounded, no-follow admission record contains the exact canonical command digest
+and a valid terminal snapshot exists for that attempt. A changed command produces
+an idempotency conflict. Missing, malformed, or incomplete evidence retains the
+unknown/non-retryable admission refusal; no inputs are resolved and no process is
+launched during recovery. Cleanup of a recovered terminal handle validates the
+snapshot without removing its admission, result, or event evidence.
+
+The process-backed test covers eight independent concurrent terminal replays,
+changed-command rejection, and retained recovery after repeated cleanup. The
+published Pi 0.84.2 runner also passed on Node 24.18.0 / Bun 1.4.0, reporting
+`clientRecreationAfterCleanup: original-terminal-handle-no-new-request`, exactly
+three fixture model requests, recovered output/usage/events/cancellation, and
+cleanup complete. Earlier reconciliation-required reports remain historical
+evidence of the prior implementation, not current completed-start behavior.
+In-flight reattachment and abrupt host-loss acceptance remain open.

@@ -198,6 +198,18 @@ describe('ManagedPiProcessClient', () => {
         state: 'succeeded',
         result: nativeStatus.result,
       })
+      expect(await recreated.start(nativeCommand)).toEqual(recoveredHandle)
+      const parallelReplays = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          new ManagedPiProcessClient(clientOptions).start(nativeCommand)
+        )
+      )
+      expect(parallelReplays).toEqual(Array.from({ length: 8 }, () => recoveredHandle))
+      await recreated.cleanup(recoveredHandle)
+      expect((await recreated.status(recoveredHandle)).result).toEqual(nativeStatus.result)
+      await expect(new ManagedPiProcessClient(clientOptions).start(changed)).rejects.toThrow(
+        'PI_START_IDEMPOTENCY_CONFLICT'
+      )
       const recoveredEvents = []
       for await (const event of recreated.progress(recoveredHandle)) recoveredEvents.push(event)
       expect(recoveredEvents).toEqual(nativeEvents)

@@ -240,11 +240,7 @@ try {
   await adapter.cleanup(handle)
   handles.splice(handles.indexOf(handle), 1)
   const recreated = new ManagedPiProcessClient(clientOptions)
-  await assert.rejects(recreated.start(nativeCommand), {
-    code: 'PI_START_RECONCILIATION_REQUIRED',
-    classification: 'unknown',
-    retryable: false,
-  })
+  assert.deepEqual(await recreated.start(nativeCommand), handle)
   const recovered = await recreated.reconcile(handle)
   assert.equal(recovered.state, 'succeeded')
   assert.deepEqual(recovered.result.output, status.result.output)
@@ -276,7 +272,7 @@ try {
     duplicateStart: 'same-handle-one-request',
     concurrentNativeStarts: 8,
     changedNativeCommand: 'rejected',
-    clientRecreationAfterCleanup: 'reconciliation-required-no-new-request',
+    clientRecreationAfterCleanup: 'original-terminal-handle-no-new-request',
     terminalRecoveryAfterCleanup: ['succeeded-with-original-output-and-usage', 'cancelled'],
     eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {

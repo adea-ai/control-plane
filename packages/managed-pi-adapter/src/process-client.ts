@@ -14,7 +14,12 @@ import {
   type ManagedPiClient,
   type ManagedPiEvent,
 } from './index.js'
-import { persistTerminalRecord, readTerminalRecord, readTerminalEvents } from './terminal-record.js'
+import {
+  persistTerminalRecord,
+  readTerminalRecord,
+  readTerminalEvents,
+  recoverTerminalHandle,
+} from './terminal-record.js'
 
 const DRIVER_VERSION = '1.1.0'
 const PROTOCOL_VERSION = '1.0.0'
@@ -160,7 +165,29 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
     fingerprint: string
   ): Promise<RuntimeExecutionHandle> {
-    await this.#reserveAdmission(handle, fingerprint)
+    try {
+      await this.#reserveAdmission(handle, fingerprint)
+    } catch (error) {
+      if (
+        !(error instanceof RuntimeAdapterError) ||
+        error.code !== 'PI_START_RECONCILIATION_REQUIRED'
+      )
+        throw error
+      try {
+        return await recoverTerminalHandle(
+          this.#dataDirectory,
+          handle.attemptId,
+          createHash('sha256').update(fingerprint).digest('hex')
+        )
+      } catch (recoveryError) {
+        if (
+          recoveryError instanceof RuntimeAdapterError &&
+          recoveryError.code === 'PI_START_IDEMPOTENCY_CONFLICT'
+        )
+          throw recoveryError
+        throw error
+      }
+    }
     const invocation = await this.#inputResolver.resolve(configuration)
     const directory = join(this.#dataDirectory, handle.attemptId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -329,6 +356,11 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async cleanup(handleInput: RuntimeExecutionHandle): Promise<void> {
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      await readTerminalRecord(this.#dataDirectory, handle)
+      return
+    }
     const execution = this.#require(handleInput)
     await execution.rpc.stop()
     try {
