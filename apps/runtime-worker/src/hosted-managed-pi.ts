@@ -533,6 +533,10 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
     }
   >()
   readonly #launches: HostedManagedPiLaunchRequest[] = []
+  readonly #pendingLaunches = new Map<
+    string,
+    { readonly fingerprint: string; readonly result: Promise<RuntimeExecutionHandle> }
+  >()
   readonly #effects = new Map<string, number>()
   readonly #cleaned = new Set<string>()
   #health: HostedRuntimeHostInspection['health'] = 'healthy'
@@ -582,6 +586,7 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
   }
 
   async getLaunch(idempotencyKey: string) {
+    await this.#pendingLaunches.get(idempotencyKey)?.result
     const receipt = this.#launchByIdempotencyKey.get(idempotencyKey)
     return receipt
       ? structuredClone({ request: receipt.request, handle: receipt.handle })
@@ -592,6 +597,18 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
     if (this.#health === 'unavailable') throw unavailableHost()
     const request = HostedManagedPiLaunchRequestSchema.parse(requestInput)
     const fingerprint = stable(request)
+    const pending = this.#pendingLaunches.get(request.idempotencyKey)
+    if (pending) {
+      if (pending.fingerprint !== fingerprint) {
+        throw new RuntimeAdapterError({
+          code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+          classification: 'conflict',
+          message: 'Hosted managed Pi launch idempotency key was reused',
+          retryable: false,
+        })
+      }
+      return structuredClone(await pending.result)
+    }
     const replay = this.#launchByIdempotencyKey.get(request.idempotencyKey)
     if (replay) {
       if (replay.fingerprint !== fingerprint) {
@@ -604,6 +621,15 @@ export class ReferenceRuntimeHostProvider implements RuntimeHostProvider {
       }
       return structuredClone(replay.handle)
     }
+    const result = this.#admit(request, fingerprint)
+    this.#pendingLaunches.set(request.idempotencyKey, { fingerprint, result })
+    // Keep rejected admissions fenced: a thrown allocation is not proof of no effect.
+    const handle = await result
+    this.#pendingLaunches.delete(request.idempotencyKey)
+    return structuredClone(handle)
+  }
+
+  async #admit(request: HostedManagedPiLaunchRequest, fingerprint: string) {
     const handle = RuntimeExecutionHandleSchema.parse({
       handleId: `hosted-managed-pi:${request.attemptId}`,
       attemptId: request.attemptId,

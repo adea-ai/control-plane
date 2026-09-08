@@ -106,6 +106,52 @@ function fixture(scenario = 'complete') {
 }
 
 describe('hosted managed Pi runtime worker', () => {
+  test('coalesces simultaneous first-launch retries into one admitted execution', async () => {
+    const { host, client } = fixture('running')
+    const command = {
+      attemptId: ids.attemptId,
+      idempotencyKey: 'hosted-pi:concurrent-first-launch',
+      configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+    }
+    const handles = await Promise.all(Array.from({ length: 8 }, () => client.start(command)))
+    expect(handles.every((handle) => handle.handleId === handles[0].handleId)).toBe(true)
+    expect(host.launches()).toHaveLength(1)
+    expect(host.effectCount(ids.attemptId)).toBe(1)
+  })
+
+  test('retains a failed admission fence and rejects conflicting launch identity', async () => {
+    const source = fixture('running')
+    await source.client.start({
+      attemptId: ids.attemptId,
+      idempotencyKey: 'hosted-pi:uncertain-first-launch',
+      configuration: translateExecutionPlanToManagedPi(plan(), '1.0.0'),
+    })
+    const request = source.host.launches()[0]
+    let persistenceCalls = 0
+    const host = new ReferenceRuntimeHostProvider({
+      now: () => now,
+      artifactStore: {
+        persist: async () => {
+          persistenceCalls += 1
+          throw new Error('TEST_ALLOCATION_UNCERTAIN')
+        },
+      },
+    })
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => host.launch(request)))
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(persistenceCalls).toBe(1)
+    await expect(host.getLaunch(request.idempotencyKey)).rejects.toThrow(
+      'TEST_ALLOCATION_UNCERTAIN'
+    )
+    await expect(host.launch(request)).rejects.toThrow('TEST_ALLOCATION_UNCERTAIN')
+    await expect(
+      host.launch({ ...request, maximumDurationMs: request.maximumDurationMs + 1 })
+    ).rejects.toMatchObject({
+      code: 'HOSTED_PI_IDEMPOTENCY_CONFLICT',
+    })
+    expect(persistenceCalls).toBe(1)
+  })
+
   test('replays an admitted launch after client restart and clock advance without renewing its deadline', async () => {
     const { host } = fixture('running')
     let currentTime = now

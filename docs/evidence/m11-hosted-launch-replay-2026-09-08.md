@@ -23,3 +23,22 @@ coordinate receipt creation with native launch admission. The reference provider
 is in-memory; these tests prove client reconstruction against a retained host,
 not host-process recovery, concurrent first admission, native sandbox behavior,
 or full M11.3 acceptance. Those gates remain open.
+
+## Concurrent reference admission follow-up
+
+Eight simultaneous identical first-launch retries initially recorded eight
+launches. The reference provider now reserves one in-flight admission per key
+before awaiting execution creation. Matching requests await the same result;
+conflicting request fingerprints fail closed. Receipt reads wait for in-flight
+admission rather than reporting it absent. Rejected admissions remain fenced:
+neither a subsequent launch nor a receipt lookup restarts uncertain allocation.
+
+The focused suite passes 13 tests / 51 assertions. Fault injection throws during
+Artifact persistence: eight callers share one persistence attempt, later retries
+retain the error, and changed launch identity conflicts. These are in-process
+reference-provider tests, not a durable native admission proof. In-flight launch
+requests still require identical fingerprints, including derived deadlines;
+simultaneous client calls with different clocks may conflict rather than replay.
+Production admission must resolve that distinction with an atomic, persisted
+first-admission identity and deadline, and provide explicit reconciliation for
+uncertain allocation. The in-memory failure fence is not a restart guarantee.
