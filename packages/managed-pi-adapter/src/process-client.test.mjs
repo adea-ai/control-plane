@@ -6,11 +6,39 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, test } from 'bun:test'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
-import { ManagedPiAdapter, ManagedPiDriver } from './index.ts'
+import { ManagedPiAdapter, ManagedPiDriver, translateExecutionPlanToManagedPi } from './index.ts'
 import { ManagedPiProcessClient } from './process-client.ts'
 import { writeManagedPiRpcFixture } from './test-support/managed-pi-rpc-fixture.mjs'
 
 describe('ManagedPiProcessClient', () => {
+  test('coalesces concurrent input resolution and retains rejected admission identity', async () => {
+    let resolutions = 0
+    const client = new ManagedPiProcessClient({
+      executablePath: '/must-not-be-launched',
+      dataDirectory: '/tmp/m11-pi-admission-must-not-be-created',
+      inputResolver: {
+        resolve: async () => {
+          resolutions += 1
+          await delay(5)
+          throw new Error('TEST_INPUT_RESOLUTION_FAILED')
+        },
+      },
+    })
+    const command = {
+      attemptId: `att_${'1'.repeat(26)}`,
+      idempotencyKey: 'native-pi:admission',
+      configuration: translateExecutionPlanToManagedPi(createExecutionPlanTestFixture(), '1.2.0'),
+    }
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => client.start(command)))
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(resolutions).toBe(1)
+    await expect(client.start(command)).rejects.toThrow('TEST_INPUT_RESOLUTION_FAILED')
+    expect(resolutions).toBe(1)
+    await expect(client.start({ ...command, idempotencyKey: 'native-pi:changed' })).rejects.toThrow(
+      'PI_START_IDEMPOTENCY_CONFLICT'
+    )
+  })
+
   test('executes through strict Pi RPC with ambient authority disabled', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-rpc-'))
     const executablePath = join(directory, 'pi-fixture.mjs')
@@ -54,6 +82,19 @@ describe('ManagedPiProcessClient', () => {
         metadata: { harnessVersion: '0.84.2', transportKind: 'direct-local' },
         capabilityEvaluation: { eligible: true },
       })
+      const nativeCommand = {
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: 'process-client:start',
+        configuration: translateExecutionPlanToManagedPi(plan, '1.2.0'),
+      }
+      const admitted = await Promise.all(
+        Array.from({ length: 8 }, () => client.start(nativeCommand))
+      )
+      handle = admitted[0]
+      expect(admitted.every((entry) => entry.handleId === handle.handleId)).toBe(true)
+      const changed = structuredClone(nativeCommand)
+      changed.configuration.limits.duration.maximumMs += 1
+      await expect(client.start(changed)).rejects.toThrow('PI_START_IDEMPOTENCY_CONFLICT')
       handle = await adapter.start({
         attemptId: 'att_01JABCDEF0123456789ABCDEFG',
         idempotencyKey: 'process-client:start',

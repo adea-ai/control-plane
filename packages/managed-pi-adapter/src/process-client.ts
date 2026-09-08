@@ -61,6 +61,10 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   readonly #environment: Readonly<Record<string, string>>
   readonly #executablePath: string
   readonly #executions = new Map<string, ProcessExecution>()
+  readonly #admissions = new Map<
+    string,
+    { readonly fingerprint: string; readonly result: Promise<RuntimeExecutionHandle> }
+  >()
   readonly #inputResolver: ManagedPiProcessInputResolver
   readonly #now: () => Date
   readonly #rpcTimeoutMs: number
@@ -119,11 +123,40 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       attemptId: commandInput.attemptId,
       startedAt: this.#now().toISOString(),
     })
-    const existing = this.#executions.get(handle.handleId)
-    if (existing !== undefined) return structuredClone(existing.handle)
+    if (
+      typeof commandInput.idempotencyKey !== 'string' ||
+      commandInput.idempotencyKey.length < 1 ||
+      commandInput.idempotencyKey.length > 256
+    )
+      throw new Error('PI_START_INVALID_IDEMPOTENCY_KEY')
+    const fingerprint = JSON.stringify(
+      { idempotencyKey: commandInput.idempotencyKey, configuration },
+      (_key, value: unknown) => {
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          return Object.fromEntries(
+            Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+          )
+        }
+        return value
+      }
+    )
+    const admitted = this.#admissions.get(handle.handleId)
+    if (admitted) {
+      if (admitted.fingerprint !== fingerprint) throw new Error('PI_START_IDEMPOTENCY_CONFLICT')
+      return structuredClone(await admitted.result)
+    }
+    const result = this.#startProcess(handle, configuration)
+    // Retain rejected admissions as well: failure does not establish absence of native effects.
+    this.#admissions.set(handle.handleId, { fingerprint, result })
+    return structuredClone(await result)
+  }
 
+  async #startProcess(
+    handle: RuntimeExecutionHandle,
+    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>
+  ): Promise<RuntimeExecutionHandle> {
     const invocation = await this.#inputResolver.resolve(configuration)
-    const directory = join(this.#dataDirectory, commandInput.attemptId)
+    const directory = join(this.#dataDirectory, handle.attemptId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const systemPromptPath = join(directory, 'system-prompt.md')
     await writeFile(systemPromptPath, invocation.systemPrompt, { encoding: 'utf8', mode: 0o600 })
