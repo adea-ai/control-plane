@@ -613,45 +613,104 @@ describe('M11 standalone execution composition', () => {
     }
   }, 30000)
 
-  test('runs the packaged managed Pi RPC client through Local Restate', async () => {
-    const realExecutable = process.env.M11_REAL_PI_EXECUTABLE
-    const realAgentDirectory = process.env.M11_REAL_PI_AGENT_DIRECTORY
-    if (Boolean(realExecutable) !== Boolean(realAgentDirectory))
-      throw new Error('M11_REAL_PI_CONFIGURATION_INCOMPLETE')
-    const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-pi-rpc-'))
-    const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
-    if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
-    const local = new LocalControlPlaneComposition({
-      dataDirectory: directory,
-      runtimeFactory: (repositories) =>
-        createLocalManagedPiRuntime(repositories, {
-          executablePath,
-          provider: realExecutable ? 'fixture' : 'fixture-provider',
-          model: realExecutable ? 'fixture' : 'fixture-model',
-          modelAlias: 'reasoning.standard',
-          modelCapabilities: ['tool_calling', 'structured_output'],
-          providerClass: 'managed',
-          dataResidency: 'us',
-          environment: {
-            PATH: process.env.PATH ?? '/usr/bin:/bin',
-            ...(realAgentDirectory ? { PI_CODING_AGENT_DIR: realAgentDirectory } : {}),
+  test.each(['complete', 'cancel'])(
+    'runs the packaged managed Pi RPC client through Local Restate (%s)',
+    async (mode) => {
+      const realExecutable = process.env.M11_REAL_PI_EXECUTABLE
+      const realAgentDirectory = process.env.M11_REAL_PI_AGENT_DIRECTORY
+      if (Boolean(realExecutable) !== Boolean(realAgentDirectory))
+        throw new Error('M11_REAL_PI_CONFIGURATION_INCOMPLETE')
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-pi-rpc-'))
+      const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
+      const promptRecord = join(directory, 'prompt-record.json')
+      if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
+      const local = new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        runtimeFactory: (repositories) => {
+          const runtime = createLocalManagedPiRuntime(repositories, {
+            executablePath,
+            provider: realExecutable ? 'fixture' : 'fixture-provider',
+            model: realExecutable ? 'fixture' : 'fixture-model',
+            modelAlias: 'reasoning.standard',
+            modelCapabilities: ['tool_calling', 'structured_output'],
+            providerClass: 'managed',
+            dataResidency: 'us',
+            environment: {
+              PATH: process.env.PATH ?? '/usr/bin:/bin',
+              ...(realAgentDirectory ? { PI_CODING_AGENT_DIR: realAgentDirectory } : {}),
+              ...(!realExecutable && mode === 'cancel'
+                ? { MOCK_MODE: 'hold', MOCK_RECORD_PATH: promptRecord }
+                : {}),
+            },
+          })
+          if (realExecutable && mode === 'cancel') {
+            const cleanup = runtime.cleanup.bind(runtime)
+            runtime.cleanup = async (handle) => {
+              try {
+                const response = await fetch(process.env.M11_REAL_PI_CANCELLATION_READY_URL, {
+                  signal: AbortSignal.timeout(1000),
+                })
+                expect((await response.json()).closed).toBe(true)
+              } finally {
+                await cleanup(handle)
+              }
+            }
+          }
+          return runtime
+        },
+        workflowEndpointPort: 19083,
+      })
+      const plan = createExecutionPlanTestFixture({
+        profileCapabilityRequirements: ['stream.output'],
+        skillRequiredCapabilities: [],
+      })
+      let application
+      try {
+        await local.start()
+        const authentication = await createPrivateApiAuthentication(directory)
+        const credential = (await readFile(authentication.credentialFile, 'utf8')).trim()
+        const metadata = {
+          serviceName: 'control-api',
+          version: 'test',
+          commitSha: 'test',
+          environment: 'test',
+          instanceId: 'native-pi-cancel',
+        }
+        application = await createControlApiApplication({
+          metadata,
+          logger: { write: () => undefined },
+          health: () => ({ status: 'ok', metadata }),
+          readiness: () => ({ status: 'ready', metadata }),
+          serviceAuthenticator: authentication.authenticator,
+          executionAcceptanceService: local.executionAcceptanceService,
+          executionCancellationService: local.executionCancellationService,
+        })
+        await application.listen(0, '127.0.0.1')
+        const address = application.getHttpServer().address()
+        let loseCancellationAck = true
+        const sdk = new ControlPlaneClient({
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          credential,
+          fetch: async (url, init) => {
+            const response = await fetch(url, init)
+            if (
+              new URL(url).pathname === '/v1/executions/cancel' &&
+              response.ok &&
+              loseCancellationAck
+            ) {
+              loseCancellationAck = false
+              await response.arrayBuffer()
+              throw new Error('M11_LOST_CANCELLATION_ACK')
+            }
+            return response
           },
-        }),
-      workflowEndpointPort: 19083,
-    })
-    const plan = createExecutionPlanTestFixture({
-      profileCapabilityRequirements: ['stream.output'],
-      skillRequiredCapabilities: [],
-    })
-    try {
-      await local.start()
-      await local.catalog.insertAgentProfileVersion(managedPiProfileVersion())
-      await local.catalog.insertSkillVersion(managedPiSkillVersion())
-      await local.contextPackages.put(contextPackageSerializationFixtures.futurePi)
-      await local.executionPlans.put(plan)
-      const issuedAt = new Date().toISOString()
-      const response = await local.executionAcceptanceService.accept(
-        {
+        })
+        await local.catalog.insertAgentProfileVersion(managedPiProfileVersion())
+        await local.catalog.insertSkillVersion(managedPiSkillVersion())
+        await local.contextPackages.put(contextPackageSerializationFixtures.futurePi)
+        await local.executionPlans.put(plan)
+        const issuedAt = new Date().toISOString()
+        const response = await sdk.acceptExecution({
           ...ControlApiFixtures.executionAcceptance.request,
           requestId: plan.correlation.requestId,
           workspaceId: plan.correlation.workspaceId,
@@ -668,36 +727,62 @@ describe('M11 standalone execution composition', () => {
             deadlineAt: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
             retentionExpiresAt: new Date(Date.parse(issuedAt) + 30 * 86_400_000).toISOString(),
           },
-        },
-        'svc_m11-managed-pi-rpc'
-      )
-      const execution = await waitForTerminalExecution(local, response.data.executionId)
-      {
-        const attached = await fetch(
-          `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
-          { signal: AbortSignal.timeout(5000) }
+        })
+        if (mode === 'cancel') {
+          await waitForNativePiPrompt(realExecutable, promptRecord)
+          const command = {
+            ...ControlApiFixtures.executionAcceptance.request,
+            commandId: 'cmd_01JABCDEF0123456789ABCDEFH',
+            operation: 'execution.cancel',
+            issuedAt: new Date().toISOString(),
+            payload: { executionId: response.data.executionId },
+          }
+          await expect(sdk.cancelExecution(command)).rejects.toThrow('M11_LOST_CANCELLATION_ACK')
+          const replay = await sdk.cancelExecution({
+            ...command,
+            commandId: 'cmd_01JABCDEF0123456789ABCDEFJ',
+          })
+          expect(replay.data).toMatchObject({
+            commandId: command.commandId,
+            replayed: true,
+            status: 'accepted',
+          })
+        }
+        const execution = await waitForTerminalExecution(local, response.data.executionId)
+        {
+          const attached = await fetch(
+            `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+            { signal: AbortSignal.timeout(5000) }
+          )
+          expect(attached.ok).toBe(true)
+          expect((await attached.json()).status).toBe(mode === 'cancel' ? 'cancelled' : 'completed')
+        }
+        expect(await local.executions.listAttempts(execution.executionId)).toHaveLength(1)
+        if (mode === 'cancel') {
+          expect(execution.state).toBe('cancelled')
+          expect(execution.terminalResultRef).toBeUndefined()
+          return
+        }
+        expect(execution).toMatchObject({
+          state: 'completed',
+          terminalResultRef: `art_${response.data.executionId.slice(4)}`,
+        })
+        const result = await local.objectStore.get(
+          `executions/${execution.executionId}/attempts/${execution.latestAttemptId}/result.json`
         )
-        expect(attached.ok).toBe(true)
-        expect((await attached.json()).status).toBe('completed')
+        expect(JSON.parse(new TextDecoder().decode(result.body))).toMatchObject({
+          outcome: 'completed',
+          output: { text: realExecutable ? 'verified real Pi' : 'fixture result' },
+          usage: { inputTokens: 11, outputTokens: 3 },
+        })
+      } finally {
+        await application?.close()
+        await local.close()
+        await rm(directory, { recursive: true, force: true })
       }
-      expect(execution).toMatchObject({
-        state: 'completed',
-        terminalResultRef: `art_${response.data.executionId.slice(4)}`,
-      })
-      expect(await local.executions.listAttempts(execution.executionId)).toHaveLength(1)
-      const result = await local.objectStore.get(
-        `executions/${execution.executionId}/attempts/${execution.latestAttemptId}/result.json`
-      )
-      expect(JSON.parse(new TextDecoder().decode(result.body))).toMatchObject({
-        outcome: 'completed',
-        output: { text: realExecutable ? 'verified real Pi' : 'fixture result' },
-        usage: { inputTokens: 11, outputTokens: 3 },
-      })
-    } finally {
-      await local.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  }, 60_000)
+    },
+    60_000
+  )
 
   test('persists signed live RuntimeNode inventory through the gateway after restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-discovery-'))
@@ -816,6 +901,29 @@ describe('M11 standalone execution composition', () => {
     }
   })
 })
+
+async function waitForNativePiPrompt(realExecutable, promptRecord) {
+  const deadline = Date.now() + 15000
+  if (realExecutable && !process.env.M11_REAL_PI_CANCELLATION_READY_URL)
+    throw new Error('M11_REAL_PI_CANCELLATION_READY_URL_REQUIRED')
+  while (Date.now() < deadline) {
+    if (realExecutable) {
+      const response = await fetch(process.env.M11_REAL_PI_CANCELLATION_READY_URL, {
+        signal: AbortSignal.timeout(1000),
+      })
+      if ((await response.json()).ready === true) return
+    } else {
+      try {
+        await readFile(promptRecord)
+        return
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+    await delay(25)
+  }
+  throw new Error('M11_NATIVE_PI_PROMPT_NOT_STARTED')
+}
 
 async function waitForTerminalExecution(composition, executionId) {
   const deadline = Date.now() + 15_000

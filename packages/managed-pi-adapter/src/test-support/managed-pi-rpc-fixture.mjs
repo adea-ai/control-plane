@@ -48,6 +48,7 @@ function handle(command) {
       }))
     }
     send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    if (process.env.MOCK_MODE === 'hold') return
     if (process.env.MOCK_MODE === 'crash') {
       setTimeout(() => process.exit(17), 5)
       return
