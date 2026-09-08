@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.2.2...acp-adapter-v1.3.0) (2026-09-08)
+
+
+### Features
+
+* **acp:** add bounded stdio process client ([#423](https://github.com/adea-ai/control-plane/issues/423)) ([b090894](https://github.com/adea-ai/control-plane/commit/b0908948aaf21606fb361ac19dfde3ebe44a4b71))
+
+
+### Bug Fixes
+
+* **acp:** preserve v1 negotiation and native permission IDs ([#422](https://github.com/adea-ai/control-plane/issues/422)) ([bf93543](https://github.com/adea-ai/control-plane/commit/bf93543c0927c87af01abefbeeaeef48df8e6953))
+
 ## [1.2.2](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.2.1...acp-adapter-v1.2.2) (2026-09-07)
 
 

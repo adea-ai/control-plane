@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.5...workspace-v1.9.0) (2026-09-08)
+
+
+### Features
+
+* **acp:** add bounded stdio process client ([#423](https://github.com/adea-ai/control-plane/issues/423)) ([b090894](https://github.com/adea-ai/control-plane/commit/b0908948aaf21606fb361ac19dfde3ebe44a4b71))
+* **m11:** add verified SQLite forward migration history ([#414](https://github.com/adea-ai/control-plane/issues/414)) ([293ad41](https://github.com/adea-ai/control-plane/commit/293ad418469ee356f7dbe4523c8bd6896f958f4f))
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+* **packages:** publish six stable packages under [@adea-ai](https://github.com/adea-ai) on npm ([#398](https://github.com/adea-ai/control-plane/issues/398)) ([973a8df](https://github.com/adea-ai/control-plane/commit/973a8df4eb4957f1b9ffa92760aff6584cc6605d))
+
+
+### Bug Fixes
+
+* **acp:** preserve v1 negotiation and native permission IDs ([#422](https://github.com/adea-ai/control-plane/issues/422)) ([bf93543](https://github.com/adea-ai/control-plane/commit/bf93543c0927c87af01abefbeeaeef48df8e6953))
+* **ci:** pin code-foundry callers to the adopted v1.4.1 runtime ([#404](https://github.com/adea-ai/control-plane/issues/404)) ([301aa7a](https://github.com/adea-ai/control-plane/commit/301aa7a650fcdaf19b5b3a3a3127b74d8245524c))
+* **m11:** clear retained Railway sources and verify staging standby ([#417](https://github.com/adea-ai/control-plane/issues/417)) ([a91315e](https://github.com/adea-ai/control-plane/commit/a91315e6cae50704dbf8dc2faec178c269996237))
+* **m11:** guard Railway standby source-disconnection scope ([#416](https://github.com/adea-ai/control-plane/issues/416)) ([94b1e74](https://github.com/adea-ai/control-plane/commit/94b1e7487838210c6a0e59e390e13447182123b4))
+* **m11:** preserve SQLite state on rejected migrations and record cloud evidence ([#413](https://github.com/adea-ai/control-plane/issues/413)) ([794e065](https://github.com/adea-ai/control-plane/commit/794e065a8db20af4db25c7f07ef42f67e7129385))
+* **m11:** retain direct-runtime dispatch intent across restart ([#420](https://github.com/adea-ai/control-plane/issues/420)) ([8b85ef7](https://github.com/adea-ai/control-plane/commit/8b85ef7a2231405ec1c9aa4ffa16b0862e0f3044))
+* **operations:** guard Railway standby across environments ([94b1e74](https://github.com/adea-ai/control-plane/commit/94b1e7487838210c6a0e59e390e13447182123b4))
+* **publish:** import readdir used by the workspace manifest scan ([#403](https://github.com/adea-ai/control-plane/issues/403)) ([422b83e](https://github.com/adea-ai/control-plane/commit/422b83ea47bfcc87d976f5f495e075e96876e206))
+* **publish:** rewrite workspace specifiers in staged dist and republish SDKs ([6f96903](https://github.com/adea-ai/control-plane/commit/6f96903e65d2b721eb31433742a0e5797ef42d24))
+* **publish:** rewrite workspace specifiers in staged dist; republish SDKs ([#402](https://github.com/adea-ai/control-plane/issues/402)) ([6f96903](https://github.com/adea-ai/control-plane/commit/6f96903e65d2b721eb31433742a0e5797ef42d24))
+
+
+### Tests
+
+* **agents:** validate milestone audit skill routing ([#421](https://github.com/adea-ai/control-plane/issues/421)) ([4d06dad](https://github.com/adea-ai/control-plane/commit/4d06dadf7befb3ac6898c1104a9fbd6d3c2f4142))
+* **m11:** certify Local checkpoint restoration of suspended work ([#415](https://github.com/adea-ai/control-plane/issues/415)) ([48d8411](https://github.com/adea-ai/control-plane/commit/48d8411b6a11445739f9f6dfb75a288de21f4c27))
+* **m11:** certify pinned real Pi process transport ([#418](https://github.com/adea-ai/control-plane/issues/418)) ([42fff8b](https://github.com/adea-ai/control-plane/commit/42fff8b07d08b959e917208bf1e1d760eb43994c))
+* **m11:** recover suspended Local workflow from checkpoint ([48d8411](https://github.com/adea-ai/control-plane/commit/48d8411b6a11445739f9f6dfb75a288de21f4c27))
+
+
+### Maintenance
+
+* **ci:** upgrade Code Foundry to v1.9.11 ([#425](https://github.com/adea-ai/control-plane/issues/425)) ([2029fb1](https://github.com/adea-ai/control-plane/commit/2029fb1ad618257a8224d42fa792c38b555c2f53))
+* **code-foundry:** upgrade to v1.4.1 ([#391](https://github.com/adea-ai/control-plane/issues/391)) ([f8da7f0](https://github.com/adea-ai/control-plane/commit/f8da7f082f7fcc14a06f1690bdb3fa190a9120ff))
+* **code-foundry:** upgrade to v1.5.0 ([#411](https://github.com/adea-ai/control-plane/issues/411)) ([a3081b4](https://github.com/adea-ai/control-plane/commit/a3081b4dd191e337493939cebfde2c16d34ec6a1))
+
 ## [1.8.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.4...workspace-v1.8.5) (2026-09-07)
 
 

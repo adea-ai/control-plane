@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/profile-portability",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "bin": {
     "control-plane-portability": "./dist/cli.js"

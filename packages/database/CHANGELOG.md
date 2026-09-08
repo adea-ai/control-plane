@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/database-v1.7.3...database-v1.8.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+
 ## [1.7.3](https://github.com/adea-ai/control-plane/compare/database-v1.7.2...database-v1.7.3) (2026-09-07)
 
 

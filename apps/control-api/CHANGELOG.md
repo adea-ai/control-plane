@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.3.2...control-api-v1.4.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+* **packages:** publish six stable packages under [@adea-ai](https://github.com/adea-ai) on npm ([#398](https://github.com/adea-ai/control-plane/issues/398)) ([973a8df](https://github.com/adea-ai/control-plane/commit/973a8df4eb4957f1b9ffa92760aff6584cc6605d))
+
+
+### Bug Fixes
+
+* **m11:** clear retained Railway sources and verify staging standby ([#417](https://github.com/adea-ai/control-plane/issues/417)) ([a91315e](https://github.com/adea-ai/control-plane/commit/a91315e6cae50704dbf8dc2faec178c269996237))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.3.1...control-api-v1.3.2) (2026-09-07)
 
 

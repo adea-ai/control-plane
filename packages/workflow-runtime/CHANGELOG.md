@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.1.2...workflow-runtime-v1.2.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+
 ## [1.1.2](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.1.1...workflow-runtime-v1.1.2) (2026-09-07)
 
 

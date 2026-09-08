@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.1.2...local-control-plane-v1.2.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+
+
+### Bug Fixes
+
+* **m11:** retain direct-runtime dispatch intent across restart ([#420](https://github.com/adea-ai/control-plane/issues/420)) ([8b85ef7](https://github.com/adea-ai/control-plane/commit/8b85ef7a2231405ec1c9aa4ffa16b0862e0f3044))
+
 ## [1.1.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.1.1...local-control-plane-v1.1.2) (2026-09-07)
 
 
