@@ -78,3 +78,4 @@ export {
   reconciliationCheckpointState,
   reconciliationReason,
 } from './reconciliation.js'
+export { interactionCommands } from './interaction-commands.js'

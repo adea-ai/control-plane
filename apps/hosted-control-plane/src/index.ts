@@ -46,6 +46,7 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
       const authentication = await createPrivateApiAuthentication(composition.dataDirectory)
       const application = await createControlApiApplication({
         executionAcceptanceService: composition.executionAcceptanceService,
+        interactionCommandService: composition.interactionCommandService,
         executionValidationService: composition.executionValidationService,
         profileResolutionService: composition.profileResolutionService,
         projectStateResolutionService: composition.projectStateResolutionService,

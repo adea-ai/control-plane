@@ -8,6 +8,8 @@ import {
   createPostgresConnection,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
+  PostgresInteractionRepository,
+  PostgresInteractionCommandRepository,
   PostgresContextPackageRepository,
   PostgresContextAuthoringCommandRepository,
   PostgresExecutionPlanRepository,
@@ -16,7 +18,11 @@ import {
   PostgresRuntimeDiscoveryRepository,
   type PostgresConnection,
 } from '@control-plane/database'
-import { CommandInboxService } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  DurableInteractionCommandService,
+  DurableInteractionDeliveryService,
+} from '@control-plane/domain'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import {
   ConfiguredCredentialRevocationChecker,
@@ -45,6 +51,7 @@ const executionPlanCompilerVersion = '1.0.0'
 export type PostgresConnectionFactory = typeof createPostgresConnection
 
 export interface ManagedCloudControlApiComposition {
+  readonly interactionCommandService: DurableInteractionCommandService
   readonly connection: PostgresConnection
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly executionValidationService: DurableExecutionValidationService
@@ -110,6 +117,14 @@ export function createManagedCloudControlApiComposition(
 
   return {
     connection,
+    interactionCommandService: new DurableInteractionCommandService(
+      new PostgresInteractionCommandRepository(connection.database),
+      new DurableInteractionDeliveryService(
+        new PostgresInteractionRepository(connection.database),
+        new PostgresCommandAcceptanceRepository(connection.database),
+        new RestateExecutionWorkflowDispatcher({ ingressUrl: configuration.restate.ingressUrl })
+      )
+    ),
     executionAcceptanceService: new DurableExecutionAcceptanceService({
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(connection.database),

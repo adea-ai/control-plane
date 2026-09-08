@@ -86,6 +86,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.executionValidationService ?? cloudComposition?.executionValidationService
       const executionAcceptanceService =
         options.executionAcceptanceService ?? cloudComposition?.executionAcceptanceService
+      const interactionCommandService =
+        options.interactionCommandService ?? cloudComposition?.interactionCommandService
       const serviceAuthenticator =
         options.serviceAuthenticator ?? cloudComposition?.serviceAuthenticator
       const profileResolutionService =
@@ -101,9 +103,7 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       const marketplaceInstallationService =
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
-        ...(options.interactionCommandService === undefined
-          ? {}
-          : { interactionCommandService: options.interactionCommandService }),
+        ...(interactionCommandService === undefined ? {} : { interactionCommandService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),
         ...(executionValidationService === undefined ? {} : { executionValidationService }),
         health,

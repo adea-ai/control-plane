@@ -1321,7 +1321,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:faacfe22c5b7fad2f7bc2c38e2b29ce138b47286210f205f673cda218423737c"
+      "sourceDigest": "sha256:b6cbcfc66acd4a48466cb2142449d0348a7476ac3b300155a510e4979eafaa37"
     },
     {
       "id": "hosted-server",
@@ -1360,7 +1360,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:e54804d5feb87337dbff7477de05ca4f2f1a3469b559f74a95a92afb3c509e2d"
+      "sourceDigest": "sha256:49de0352f2f918b84e1844894d04b617a6ae5ef41a829e079371fe0b0b918644"
     },
     {
       "id": "hosted-simple",
