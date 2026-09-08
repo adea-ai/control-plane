@@ -5,6 +5,7 @@ import type {
   RuntimeExecutionStatus,
   RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
+import { RuntimeExecutionStatusSchema } from '@control-plane/runtime-sdk'
 import type {
   WorkflowInteractionValue,
   WorkflowRuntimeOutcome,
@@ -80,6 +81,27 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     })
     if ('result' in admission) return admission.result as WorkflowRuntimeOutcome
     if (!admission.claimed) {
+      const handle = await this.#handle(input.executionId, input.attemptId, false)
+      if (handle !== undefined) {
+        let recovered: RuntimeExecutionStatus | undefined
+        try {
+          recovered = RuntimeExecutionStatusSchema.parse(await this.runtime.reconcile(handle))
+        } catch {
+          // Missing native state is ambiguous, not permission to restart work.
+        }
+        if (
+          recovered !== undefined &&
+          recovered.handle.handleId === handle.handleId &&
+          recovered.handle.attemptId === handle.attemptId &&
+          recovered.handle.startedAt === handle.startedAt &&
+          ['completed', 'failed', 'cancelled', 'timed_out'].includes(recovered.state)
+        ) {
+          const status = recovered
+          return this.#effect(input.effectKey, () =>
+            this.#outcome(input.executionId, input.attemptId, status)
+          )
+        }
+      }
       // Do not cache this observation over a concurrent owner's eventual result.
       // The retained intent requires reconciliation before an operator retries.
       return {

@@ -147,3 +147,101 @@ test('coalesces concurrent local dispatches and replays a completed durable outc
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test.each(['completed', 'running', 'wrong-handle'])(
+  'reconciles %s native state after artifact persistence failed without relaunch',
+  async (recoveryState) => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-terminal-recovery-'))
+    const persistence = new SqlitePersistenceProvider({
+      path: join(directory, 'state.sqlite'),
+      profile: 'local',
+    })
+    const objects = new FilesystemObjectStore({
+      rootDirectory: join(directory, 'artifacts'),
+      maxObjectBytes: 1024,
+    })
+    let starts = 0
+    let reconciliations = 0
+    const handle = {
+      handleId: 'native:terminal',
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      startedAt: '2026-09-08T00:00:00.000Z',
+    }
+    const status = {
+      handle,
+      state: 'completed',
+      observedAt: handle.startedAt,
+      result: {
+        outcome: 'completed',
+        output: { retained: true },
+        usage: { inputTokens: 2, outputTokens: 3, durationMs: 4 },
+        artifacts: [],
+      },
+    }
+    const runtime = {
+      transportKind: 'direct-local',
+      async start() {
+        starts += 1
+        return handle
+      },
+      async *progress() {},
+      async status() {
+        return status
+      },
+      async reconcile(value) {
+        expect(value).toEqual(handle)
+        reconciliations += 1
+        if (recoveryState === 'running')
+          return { handle, state: 'running', observedAt: handle.startedAt }
+        if (recoveryState === 'wrong-handle')
+          return { ...status, handle: { ...handle, handleId: 'native:other' } }
+        return status
+      },
+    }
+    const input = {
+      executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+      attemptId: handle.attemptId,
+      executionPlan: createExecutionPlanTestFixture(),
+      effectKey: 'terminal:dispatch',
+    }
+    try {
+      await persistence.migrate()
+      const first = new DirectRuntimeActivityPort(
+        persistence,
+        {
+          async put() {
+            throw new Error('ARTIFACT_STORAGE_UNAVAILABLE')
+          },
+        },
+        runtime
+      )
+      await expect(first.dispatch(input)).rejects.toThrow('ARTIFACT_STORAGE_UNAVAILABLE')
+      const recovered = new DirectRuntimeActivityPort(persistence, objects, runtime)
+      const result = await recovered.dispatch(input)
+      if (recoveryState !== 'completed') {
+        expect(result).toMatchObject({
+          failureCode: 'LOCAL_RUNTIME_DISPATCH_AMBIGUOUS',
+          retryable: false,
+        })
+        expect(starts).toBe(1)
+        expect(reconciliations).toBe(1)
+        await expect(
+          objects.get(`executions/${input.executionId}/attempts/${input.attemptId}/result.json`)
+        ).rejects.toThrow()
+        return
+      }
+      expect(result).toMatchObject({ outcome: 'completed' })
+      expect(starts).toBe(1)
+      expect(reconciliations).toBe(1)
+      const stored = await objects.get(
+        `executions/${input.executionId}/attempts/${input.attemptId}/result.json`
+      )
+      expect(JSON.parse(new TextDecoder().decode(stored.body))).toEqual(status.result)
+      expect(await recovered.dispatch(input)).toEqual(result)
+      expect(reconciliations).toBe(1)
+    } finally {
+      await persistence.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)

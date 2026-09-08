@@ -221,10 +221,13 @@ Local uses all-in-one Control Plane + SQLite + single-node Restate + filesystem 
 ### Ambiguous direct-runtime dispatch
 
 Local commits a dispatch intent in the existing SQLite `workflow-effects` namespace
-before calling a direct runtime. A completed outcome replays normally. An intent
-without a completed outcome, or an existing handle for that attempt, returns
-`LOCAL_RUNTIME_DISPATCH_AMBIGUOUS` with `retryable: false` instead of launching the
-attempt again. Concurrent callers in the same composition share one pending call.
+before calling a direct runtime. A completed outcome replays normally. For a saved
+handle, Local asks the runtime to reconcile its status without starting new work.
+A schema-valid terminal status matching the exact saved handle can recover the
+outcome and its Artifact. Missing native state, nonterminal status, a mismatched
+handle, or an intent without a handle returns `LOCAL_RUNTIME_DISPATCH_AMBIGUOUS`
+with `retryable: false` instead of launching the attempt again. Concurrent callers
+in the same composition share one pending call.
 
 This diagnostic does **not** prove that the native runtime stopped or never began.
 Preserve the SQLite database, Restate journal, native runtime state, and correlated
