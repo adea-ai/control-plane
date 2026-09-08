@@ -21,6 +21,32 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('shares one deeply immutable inventory snapshot across normalizers', async () => {
+    const inputs = []
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          inputs.push(input)
+          return new DefaultRuntimeInventoryNormalizer().normalize(input)
+        },
+      },
+    })
+    const frame = inventory(1, [driver(runtimeA), driver(runtimeB)])
+    await fixture.service.ingest(frame, source())
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].inventory).toBe(inputs[1].inventory)
+    expect(inputs[0].driver).toBe(inputs[0].inventory.runtimeDrivers[0])
+    for (const input of inputs) {
+      expect(Object.isFrozen(input.inventory)).toBe(true)
+      expect(Object.isFrozen(input.inventory.runtimeDrivers)).toBe(true)
+      expect(Object.isFrozen(input.driver)).toBe(true)
+      expect(Object.isFrozen(input.driver.protocolVersion)).toBe(true)
+      expect(Object.isFrozen(input.driver.capabilities)).toBe(true)
+    }
+    expect(Object.isFrozen(frame)).toBe(false)
+    expect(Object.isFrozen(frame.runtimeDrivers[0])).toBe(false)
+  })
+
   test('normalizer input mutation cannot rewrite the validated envelope', async () => {
     let transactions = 0
     const fixture = createFixture({
@@ -39,7 +65,7 @@ describe('Runtime Gateway inventory ingestion', () => {
     })
     const frame = inventory(1, [driver(runtimeA)])
     await expect(fixture.service.ingest(frame, source())).rejects.toThrow(
-      'INVENTORY_CORRELATION_MISMATCH'
+      'INVENTORY_NORMALIZATION_FAILED'
     )
     expect(frame.nodeId).toBe(nodeId)
     expect(transactions).toBe(0)

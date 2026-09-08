@@ -32,6 +32,7 @@ export interface NormalizedRuntimeInventoryEntry {
 }
 
 export interface RuntimeInventoryNormalizer {
+  /** Inputs are deeply frozen and shared across this inventory's normalizations. */
   normalize(input: {
     readonly driver: InventoryDriver
     readonly inventory: GatewayInventoryEnvelope
@@ -368,12 +369,13 @@ export class RuntimeInventoryIngestionService {
     inventory: GatewayInventoryEnvelope,
     nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked'
   ): Promise<PreparedInventory> {
+    // The schema parser owns this JSON tree; sharing it avoids one full-envelope
+    // clone per driver without permitting a normalizer to rewrite another input.
+    freezeInventoryInput(inventory)
     const normalized = await Promise.all(
       inventory.runtimeDrivers.map(async (driver) => {
         try {
-          const entry = await this.#normalizer.normalize(
-            structuredClone({ driver, inventory, nodeStatus })
-          )
+          const entry = await this.#normalizer.normalize({ driver, inventory, nodeStatus })
           return { driver, entry: this.#validateCorrelation(entry, driver, inventory, nodeStatus) }
         } catch (error) {
           if (error instanceof RuntimeInventoryIngestionError) throw error
@@ -484,6 +486,12 @@ export class RuntimeInventoryIngestionService {
     this.#metrics.increment('runtime_gateway.inventory_ignored', { outcome })
     return { outcome, snapshotVersion, updated: [], disappeared: [] }
   }
+}
+
+function freezeInventoryInput(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeInventoryInput(child)
+  Object.freeze(value)
 }
 
 function publicNodeStatus(

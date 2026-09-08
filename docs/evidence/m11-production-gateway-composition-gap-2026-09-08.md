@@ -9,11 +9,16 @@ checkpoint/version/delta-base checks remain inside the transaction, so a snapsho
 that became stale during preparation is ignored against current durable state.
 The nontransactional fixture path retains its existing checkpoint-first behavior.
 
-Normalizer inputs are structured clones, preventing a plugin from mutating the
-validated envelope used for correlation and transaction scope. Focused tests
+Normalizer inputs share one deeply frozen schema-parsed envelope, preventing a
+plugin from mutating correlation or transaction scope without cloning the entire
+inventory once per driver. The caller's original input remains unfrozen. A
+regression test checks shared identity, nested object/array freezing and caller
+isolation; it failed against the previous per-driver cloning implementation.
+This removes the copy multiplier, not arbitrary plugin allocations, concurrent
+request growth or normalization deadlines. Focused tests
 hold normalization and verify no transaction entry, advance the checkpoint while
 preparation is held, then verify stale rejection with one normalization call.
-A mutation test rejects mismatched normalized identity before transaction entry.
+A mutation test rejects attempted input mutation before transaction entry.
 This removes normalizer waits from the database-lock interval; it is not an
 end-to-end deadline or proof of bounded history/database operations. Metrics-before-
 commit handling and the broader snapshot concurrency matrix remain open.
@@ -38,7 +43,7 @@ before transaction entry. These are bounded standalone cases, not the complete
 concurrent full/delta snapshot acceptance matrix.
 
 The optional nontransactional fixture path still exists. Production factories
-must inject the durable composition. Normalization currently runs inside the
+must inject the durable composition. Normalization runs before the
 transaction and must not perform external effects; transaction duration, bounded
 history scanning, metrics emitted before commit, source-generation changes during
 work, and full-profile/concurrent snapshot verification remain open gates.
