@@ -243,3 +243,19 @@ and tests passed, followed by focused Cloud and Hosted composition checks. No li
 Neon or deployment mutation was performed. Public cancellation through PostgreSQL
 with real Restate/native runtime, terminal races, retention and all-profile
 convergence still require acceptance evidence.
+
+## Cloud cancellation HTTP lost-ACK recovery
+
+The Cloud integration now uses signed Ed25519 credentials, real TCP HTTP, the
+production composition and PostgreSQL cancellation receipts. Its downstream
+fixture reads the first cancellation signal and destroys the connection before
+acknowledgement. HTTP returns a safe 503 and leaves the receipt unconfirmed. After
+closing the API and database connection, a reconstructed composition accepts a
+retry with the original command identity and identical downstream path, key, and
+empty body. A confirmed replay emits no additional signal. Invalid credentials,
+cross-project access, and malformed payloads cannot add a signal.
+
+The complete integration command passed, including all three Cloud HTTP tests and
+database outage/restart/restore drills. Formatting and focused lint passed. The
+downstream acknowledgement is scripted; this does not certify real Restate or
+remote native cancellation, live deployment, or aggregate usage settlement.

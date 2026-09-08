@@ -19,6 +19,7 @@ import {
   PostgresExecutionRepository,
   PostgresInteractionRepository,
   PostgresInteractionCommandRepository,
+  PostgresExecutionCancellationRepository,
   executionPlans,
   executionValidationCommands,
 } from '@control-plane/database'
@@ -204,6 +205,153 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       expect(
         (await send(second, { ...retry, payload: { ...retry.payload, action: 'deny' } })).status
       ).toBe(409)
+      expect(signals).toHaveLength(2)
+    } finally {
+      ingress.closeAllConnections()
+      await new Promise((resolve) => ingress.close(resolve))
+    }
+  }
+)
+
+test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
+  'cloud cancellation HTTP replay preserves the command identity after a lost signal ACK and API restart',
+  async () => {
+    const signals = []
+    const ingress = createServer(async (request, response) => {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      signals.push({
+        url: request.url,
+        key: request.headers['idempotency-key'],
+        body: JSON.parse(Buffer.concat(chunks).toString()),
+      })
+      if (signals.length === 1) return response.destroy()
+      response.writeHead(202, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          invocationId: 'inv_1bSDgN8dDIPn8wdBx7D4EiU4SaNtmauLF9',
+          status: 'PreviouslyAccepted',
+        })
+      )
+    })
+    await new Promise((resolve) => ingress.listen(0, '127.0.0.1', resolve))
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      operation: 'execution.cancel',
+      payload: { executionId: 'exe_01JABCDEF0123456789ABCDEFH' },
+    }
+    const now = new Date().toISOString()
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+    const url = new URL(process.env.DATABASE_URL)
+    url.pathname = `/${database.name}`
+    const configuration = {
+      service: 'control-api',
+      database: { role: 'application', url: url.toString() },
+      serviceAuthentication: {
+        audience: 'control-plane',
+        issuer: 'https://interaction.test',
+        trustedKeys: [
+          { keyId: 'interaction-key', publicKey: publicKey.export({ format: 'jwk' }).x },
+        ],
+        revokedCredentialIds: [],
+      },
+      restate: { role: 'caller', ingressUrl: `http://127.0.0.1:${ingress.address().port}` },
+    }
+    const claims = {
+      audience: 'control-plane',
+      issuer: 'https://interaction.test',
+      credentialId: 'interaction-credential',
+      credentialKind: 'service',
+      keyId: 'interaction-key',
+      principalId: request.caller.servicePrincipalId,
+      workspaceIds: [request.workspaceId],
+      projectIds: [request.projectId],
+      scopes: ['execution:cancel'],
+      issuedAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    }
+    const signingInput = `${Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: claims.keyId, typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}`
+    const token = `${signingInput}.${sign(null, Buffer.from(signingInput), privateKey).toString('base64url')}`
+    async function open() {
+      const composition = createManagedCloudControlApiComposition(configuration, { write() {} })
+      compositions.push(composition)
+      const metadata = {
+        serviceName: 'control-api',
+        version: 'test',
+        commitSha: 'test',
+        environment: 'test',
+        instanceId: 'interaction',
+      }
+      const app = await createControlApiApplication({
+        ...composition,
+        metadata,
+        logger: { write() {} },
+        health: () => ({ status: 'ok', metadata }),
+        readiness: () => ({ status: 'ready', metadata }),
+      })
+      applications.push(app)
+      await app.listen(0, '127.0.0.1')
+      return { app, composition, baseUrl: `http://127.0.0.1:${app.getHttpServer().address().port}` }
+    }
+    const send = (host, payload, credential = token) =>
+      fetch(`${host.baseUrl}/v1/executions/cancel`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    try {
+      await new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(database.application),
+        executionIdFactory: () => request.payload.executionId,
+        executionPlanValidator: { validate: async () => true },
+      }).acceptExecution({
+        callerPrincipalId: request.caller.servicePrincipalId,
+        operation: 'execution.accept',
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFB',
+        requestId: request.requestId,
+        idempotencyKey: 'cancellation-seed',
+        payloadHash: 'c'.repeat(64),
+        correlation: {
+          workspaceId: request.workspaceId,
+          projectId: request.projectId,
+          taskId: 'tsk_01JABCDEF0123456789ABCDEFG',
+          agentId: 'agt_01JABCDEF0123456789ABCDEFG',
+        },
+        executionPlan: ControlApiFixtures.executionAcceptance.request.payload.executionPlan,
+        receivedAt: now,
+        retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      })
+      const first = await open()
+      expect((await send(first, request, 'invalid')).status).toBe(401)
+      expect(
+        (await send(first, { ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })).status
+      ).toBe(403)
+      expect(signals).toHaveLength(0)
+      expect((await send(first, request)).status).toBe(503)
+      const receipts = new PostgresExecutionCancellationRepository(database.application)
+      expect((await receipts.get(request)).acceptedAt).toBeUndefined()
+      await first.app.close()
+      await first.composition.connection.close()
+      const second = await open()
+      const retry = { ...request, commandId: 'cmd_01JABCDEF0123456789ABCDEFH' }
+      const result = await send(second, retry)
+      expect(result.status).toBe(202)
+      expect((await result.json()).data).toMatchObject({
+        commandId: request.commandId,
+        replayed: true,
+      })
+      expect(signals).toHaveLength(2)
+      expect(signals[1]).toEqual(signals[0])
+      expect(signals[0].url).toBe(
+        `/execution-lifecycle/${request.payload.executionId}/cancelExecution/send`
+      )
+      expect(signals[0].key).toBe(`${request.payload.executionId}:${request.commandId}`)
+      expect((await receipts.get(request)).acceptedAt).toBeString()
+      expect(signals[0].body).toEqual({})
+      expect((await send(second, retry)).status).toBe(202)
+      expect(signals).toHaveLength(2)
+      expect(
+        (await send(second, { ...retry, payload: { ...retry.payload, action: 'deny' } })).status
+      ).toBe(400)
       expect(signals).toHaveLength(2)
     } finally {
       ingress.closeAllConnections()
