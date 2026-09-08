@@ -64,6 +64,50 @@ function fixture(options = {}) {
 }
 
 describe('ACP RuntimeAdapter', () => {
+  test.each(['resolved', 'failure', 'oversized', 'timeout'])(
+    'resolves task content before native session creation: %s',
+    async (mode) => {
+      const transport = new ReferenceAcpTransport({ now: () => now })
+      let signal
+      const driver = new AcpDriver({
+        transport,
+        adapterVersion: '1.0.0',
+        externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
+        interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+        requestTimeoutMs: 20,
+        resolvePrompt: async (request, abort) => {
+          signal = abort
+          expect(transport.calls().some(({ method }) => method === 'session/new')).toBe(false)
+          expect(request.attemptId).toBe(attemptId)
+          if (mode === 'failure') throw new Error('PRIVATE_RESOLVER_DETAIL')
+          if (mode === 'oversized') return 'x'.repeat(262_145)
+          if (mode === 'timeout') await delay(50)
+          return `Actual task for ${attemptId}: inspect the authorized evidence.`
+        },
+      })
+      const request = { attemptId, idempotencyKey: 'resolved-task', executionPlan: plan() }
+      if (mode === 'resolved') {
+        await driver.start(request)
+        const prompt = transport.calls().find(({ method }) => method === 'session/prompt')
+        expect(prompt.params.prompt[0].text).toContain('inspect the authorized evidence')
+        await driver.start(request)
+        expect(transport.calls().filter(({ method }) => method === 'session/prompt')).toHaveLength(
+          1
+        )
+      } else {
+        await expect(driver.start(request)).rejects.toMatchObject({
+          code: mode === 'oversized' ? 'ACP_PROMPT_INVALID' : 'ACP_PROMPT_RESOLUTION_FAILED',
+        })
+        if (mode === 'timeout') {
+          expect(signal.aborted).toBe(true)
+          await delay(60)
+        }
+        expect(transport.calls().some(({ method }) => method === 'session/new')).toBe(false)
+        expect(JSON.stringify(transport.calls())).not.toContain('PRIVATE_RESOLVER_DETAIL')
+      }
+    }
+  )
+
   test.each(['permission', 'input'])(
     'binds %s responses to the owning execution before dispatch',
     async (kind) => {

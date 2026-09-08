@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test'
 import { DirectLocalRuntimeTransport, TransportedRuntimeAdapter } from '@control-plane/runtime-sdk'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqlitePersistenceProvider,
   SqliteInteractionRepository,
@@ -20,6 +21,7 @@ import {
   resolveLocalApiHost,
   resolveLocalRuntimeOptions,
   createLocalAcpRuntime,
+  createRepositoryAcpTaskPromptResolver,
 } from './index.ts'
 
 describe('Local Control Plane composition', () => {
@@ -602,7 +604,7 @@ describe('Local Control Plane composition', () => {
         endpointFactory: {
           create: async () => ({ run: async () => undefined, shutdown: async () => undefined }),
         },
-        runtimeTransport:
+        runtimeFactory: ({ contextPackages }) =>
           runtimeKind === 'native-wire'
             ? createLocalAcpRuntime({
                 executablePath: process.execPath,
@@ -610,6 +612,7 @@ describe('Local Control Plane composition', () => {
                 environment: {},
                 externalSessionId: () => 'ses_01ARZ3NDEKTSV4RRFFQ69G5FAV',
                 interactionId: () => 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+                resolvePrompt: createRepositoryAcpTaskPromptResolver(contextPackages),
                 args: [
                   '-e',
                   `
@@ -623,6 +626,7 @@ describe('Local Control Plane composition', () => {
               else if(m.method==='session/new')reply(m.id,{sessionId:'native-local'});
               else if(m.method==='session/prompt'){
                 if(++prompts!==1)throw Error('duplicate prompt');
+                if(!m.params.prompt[0].text.includes(${JSON.stringify(contextPackageSerializationFixtures.futurePi.objective)}))throw Error('missing objective');
                 reply(m.id,{stopReason:'end_turn',usage:{inputTokens:11,outputTokens:3}});
               }
               else if(m.method==='session/close')reply(m.id,{});
@@ -669,6 +673,7 @@ describe('Local Control Plane composition', () => {
             capabilityEvaluation: { eligible: true },
           })
         }
+        await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
         await composition.executionPlans.put(plan)
         const accepted = await composition.commands.acceptExecution({
           callerPrincipalId: 'svc_agent-hq',

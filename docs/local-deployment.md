@@ -55,6 +55,21 @@ concrete supported ACP launcher is selected. A remote-gateway adapter is rejecte
 runtime deliberately leaves execution acceptance unavailable rather than selecting a fixture or
 silently routing to Cloud.
 
+`createLocalAcpRuntime` requires an explicit `resolvePrompt` function. The repository helper
+`createRepositoryAcpTaskPromptResolver(contextPackages)` resolves and verifies the exact
+ExecutionPlan/ContextPackage digests, schema/compiler pin and workspace/project scope, then sends
+the objective, bounded context, success criteria and output contract as task data. It preserves
+native harness instructions and authority; identifiers alone are not an executable task. The
+driver resolves this input before creating a native session, applies its request deadline, and
+rejects empty or greater-than-256-KiB UTF-8 prompts. Failed or timed-out resolution cannot later
+launch a session. Resolvers must be read-only and honor the supplied AbortSignal.
+
+This task-data resolver does not materialize profile/Skill instructions, configure or certify the
+native model route, install/authenticate a harness, grant filesystem/tool authority, or solve
+native aggregate usage and restart recovery. Those remain separate acceptance gates. The generic
+driver retains its reference-only metadata prompt for compatibility; the concrete Local factory
+does not silently select that fallback.
+
 Runtime interactions use the same durable workflow signal as other profiles. Input responses carry
 the bounded structured value validated by the interaction domain and are translated to the direct
 driver only after the workflow resumes. Approval, denial, cancellation, and input effects retain

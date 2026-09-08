@@ -325,6 +325,11 @@ export interface AcpDriverOptions {
   readonly adapterVersion: string
   readonly externalSessionId: (nativeSessionId: string) => string
   readonly interactionId: (nativeRequestId: number) => string
+  /** Resolve authorized task content before creating a native session. No external effects. */
+  readonly resolvePrompt?: (
+    request: ReturnType<typeof RuntimeStartRequestSchema.parse>,
+    signal: AbortSignal
+  ) => Promise<string>
   readonly now?: () => Date
   readonly protocolVersion?: number
   readonly requestTimeoutMs?: number
@@ -346,6 +351,7 @@ export class AcpDriver implements RuntimeAdapter {
   readonly #adapterVersion: string
   readonly #externalSessionId: (nativeSessionId: string) => string
   readonly #interactionId: (nativeRequestId: number) => string
+  readonly #resolvePrompt: AcpDriverOptions['resolvePrompt']
   readonly #now: () => Date
   readonly #protocolVersion: number
   readonly #requestTimeoutMs: number
@@ -406,6 +412,7 @@ export class AcpDriver implements RuntimeAdapter {
     this.#adapterVersion = SemanticVersionSchema.parse(options.adapterVersion)
     this.#externalSessionId = options.externalSessionId
     this.#interactionId = options.interactionId
+    this.#resolvePrompt = options.resolvePrompt
     this.#now = options.now ?? (() => new Date())
     this.#protocolVersion = options.protocolVersion ?? 2
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000
@@ -524,6 +531,16 @@ export class AcpDriver implements RuntimeAdapter {
     if (inspection.health === 'unavailable' || !inspection.capabilityEvaluation?.eligible) {
       fail('ACP_RUNTIME_INELIGIBLE', 'unsupported', false)
     }
+    const resolvePrompt = this.#resolvePrompt
+    const prompt = resolvePrompt
+      ? await withTimeout(
+          this.#requestTimeoutMs,
+          (signal) => resolvePrompt(structuredClone(request), signal),
+          () => new Error('ACP_PROMPT_RESOLUTION_TIMEOUT')
+        ).catch(() => fail('ACP_PROMPT_RESOLUTION_FAILED', 'validation', false))
+      : acpPrompt(request.attemptId, request.executionPlan)
+    if (typeof prompt !== 'string' || prompt.length === 0 || Buffer.byteLength(prompt) > 262_144)
+      fail('ACP_PROMPT_INVALID', 'validation', false)
     const nativeSessionId = await this.#createNativeSession(request.attemptId)
     let externalSessionId: string | undefined
     let handle: RuntimeExecutionHandle | undefined
@@ -537,7 +554,7 @@ export class AcpDriver implements RuntimeAdapter {
       })
       await this.#request('session/prompt', {
         sessionId: nativeSessionId,
-        prompt: [{ type: 'text', text: acpPrompt(request.attemptId, request.executionPlan) }],
+        prompt: [{ type: 'text', text: prompt }],
       })
       this.#nativeByExternalSession.set(externalSessionId, nativeSessionId)
       this.#executions.set(handle.handleId, { handle, nativeSessionId })
