@@ -65,7 +65,7 @@ const composition = new LocalControlPlaneComposition({
     }),
   workflowEndpointPort: Number(process.env.M11_WORKFLOW_PORT ?? 19083),
 })
-let application, sdk, responseCommand
+let application, sdk, responseCommand, cancellationCommand
 const responseCommands = []
 try {
   await composition.start()
@@ -76,7 +76,7 @@ try {
     skillRequiredCapabilities: [],
   })
   await composition.executionPlans.put(plan)
-  if (permission) {
+  if (permission || cancel) {
     const authentication = await createPrivateApiAuthentication(directory)
     const credential = (await readFile(authentication.credentialFile, 'utf8')).trim()
     const metadata = {
@@ -94,6 +94,7 @@ try {
       serviceAuthenticator: authentication.authenticator,
       executionAcceptanceService: composition.executionAcceptanceService,
       interactionCommandService: composition.interactionCommandService,
+      executionCancellationService: composition.executionCancellationService,
     })
     await application.listen(0, '127.0.0.1')
     sdk = new ControlPlaneClient({
@@ -205,16 +206,15 @@ try {
     assert.equal(calls, baselineCalls + 1)
     assert.equal(modelState().activeRequests, 1, 'NATIVE_MODEL_REQUEST_NOT_PENDING')
     cancellationStartedAt = Date.now()
-    const cancellation = await fetch(
-      `http://127.0.0.1:8080/execution-lifecycle/${accepted.data.executionId}/cancelExecution`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(15000),
-      }
-    )
-    assert.equal(cancellation.ok, true)
+    cancellationCommand = {
+      ...request,
+      operation: 'execution.cancel',
+      idempotencyKey: 'native-acp-cancellation-probe',
+      payload: { executionId: accepted.data.executionId },
+    }
+    const cancellation = await sdk.cancelExecution(cancellationCommand)
+    assert.equal(cancellation.data.status, 'accepted')
+    assert.equal(cancellation.data.replayed, false)
   }
   let execution
   const deadline = Date.now() + 45000
@@ -292,10 +292,17 @@ try {
           }
         : {}),
       ...(cancellationElapsedMs === undefined ? {} : { cancellationElapsedMs }),
-      ...(cancel ? { nativeModelConnectionClosed: true } : {}),
+      ...(cancel ? { nativeModelConnectionClosed: true, publicSdk: true } : {}),
     })
   )
   if (cancel) {
+    assert.equal(modelCalls(), baselineCalls + 1)
+    const cancellationReplay = await sdk.cancelExecution({
+      ...cancellationCommand,
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFH',
+    })
+    assert.equal(cancellationReplay.data.replayed, true)
+    assert.equal(cancellationReplay.data.commandId, cancellationCommand.commandId)
     assert.equal(modelCalls(), baselineCalls + 1)
     assert.ok(cancellationElapsedMs < 5000, 'CANCELLATION_WAITED_FOR_NATIVE_PROMPT_TIMEOUT')
   }

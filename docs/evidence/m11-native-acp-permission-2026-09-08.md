@@ -117,3 +117,20 @@ run stopped before execution on a port collision; the successful run used 19085.
 This is Local direct ACP evidence with a deterministic model fixture. It does not
 certify public API cancellation, remote gateway cancellation, live-provider billing,
 native process restart, or all-profile convergence.
+
+## Public SDK cancellation
+
+The updated probe passed on 2026-09-08 from candidate `d3e2015` plus the fixture
+changes in this commit. Both acceptance and cancellation used the authenticated
+public SDK/HTTP route; cancellation no longer called the internal Restate handler
+directly. Local cancellation receipts and the production dispatcher delivered the
+signal to real Restate and the pinned native ACP process. Observed settlement was
+69 ms. The held model connection closed, SQLite and workflow attach reported
+cancelled, and acceptance replay retained one attempt. Replaying cancellation with
+a different command ID returned the original ID and `replayed: true`, without
+another model request.
+
+The container retained the previously documented isolation and exact package
+versions. Formatting and fixture lint passed. This closes the narrow Local public
+native cancellation path; Cloud/remote transport parity, paid-provider behavior,
+process-restart recovery, usage settlement, and all-profile convergence remain open.

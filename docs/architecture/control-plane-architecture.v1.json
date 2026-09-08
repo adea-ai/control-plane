@@ -904,7 +904,7 @@
         "delivery": "first-command idempotency key and strict signal acceptance",
         "cleanup": "existing execution lifecycle cleanup after cancellation confirmation"
       },
-      "assessment": "Local wiring, scoped HTTP controller and SDK are tested separately; all-profile native end-to-end cancellation is not certified.",
+      "assessment": "Local public SDK cancellation is verified through SQLite, real Restate and pinned native ACP with held model connection closure; all-profile cancellation is not certified.",
       "evidence": [
         {
           "kind": "test",
@@ -923,7 +923,7 @@
         "issue": 188,
         "severity": "high",
         "owner": "execution-control",
-        "disposition": "Verify public native cancellation end to end; add PostgreSQL/Cloud wiring, relay support, retention and terminal-race reconciliation."
+        "disposition": "Add PostgreSQL/Cloud wiring and remote native certification, relay support, retention and terminal-race reconciliation."
       },
       "inOpenApi": true,
       "openApiOperationId": "execution.cancel",
