@@ -5,6 +5,25 @@ import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.js'
 
 describe('durable remote workflow runtime', () => {
+  test.each([
+    { outcome: 'failed', failureCode: 'REMOTE_RUNTIME_COMMAND_EXPIRED', retryable: true },
+    { outcome: 'failed', failureCode: 'REMOTE_RUNTIME_COMMAND_FAILED', retryable: false },
+    { outcome: 'awaiting_input', interactionId: 'int_01JABCDEF0123456789ABCDEFG' },
+    { outcome: 'completed', resultReference: 'art_01JABCDEF0123456789ABCDEFG' },
+  ])('does not confirm cancellation from $outcome', async (outcome) => {
+    const commands = new InMemoryRuntimeCommandRepository()
+    const runtime = fixture(commands, { wait: async () => outcome })
+    await expect(
+      runtime.cancel({
+        executionId: golden.command.executionId,
+        attemptId: golden.command.attemptId,
+        effectKey: 'workflow:cancel:unconfirmed',
+        reason: 'user_request',
+      })
+    ).rejects.toThrow('REMOTE_RUNTIME_CANCELLATION_UNCONFIRMED')
+    expect(await commands.get(golden.command.commandId)).toMatchObject({ status: 'queued' })
+  })
+
   test('replay retains the first command lease when the factory clock advances', async () => {
     const commands = new InMemoryRuntimeCommandRepository()
     let invocation = 0

@@ -136,7 +136,7 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
       })
     )
     if (command.operation !== 'runtime.cancel') throw new Error('REMOTE_RUNTIME_OPERATION_INVALID')
-    await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
+    const outcome = await this.#enqueueAndWait(command, attempt, command.workspaceId, (issuedAt) =>
       this.#factory.createCancel({
         executionId: input.executionId,
         attempt,
@@ -145,6 +145,11 @@ export class DurableRemoteWorkflowRuntime implements WorkflowRuntimeActivityPort
         issuedAt,
       })
     )
+    // Returning normally authorizes the workflow to persist cancellation.
+    // Neither delivery failure nor a competing terminal outcome confirms it.
+    if (outcome.outcome !== 'cancelled') {
+      throw new Error('REMOTE_RUNTIME_CANCELLATION_UNCONFIRMED')
+    }
   }
 
   async cleanup(): Promise<void> {}

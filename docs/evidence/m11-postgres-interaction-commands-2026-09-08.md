@@ -125,3 +125,15 @@ retain the acknowledged record without another socket command. The node and
 cancellation waiter remain scripted, and this scenario deliberately follows
 execution completion. It proves transport and immutable replay, not cancellation
 of active native work or a public cancellation API.
+
+## Cancellation confirmation is required
+
+The remote runtime previously discarded the outcome returned by its cancellation
+waiter. Since a normal return authorizes the workflow to persist cancellation,
+expired or failed delivery could incorrectly appear successful. Four regressions
+failed before the fix: expired command, failed command, pending input, and
+competing completion. The runtime now rejects each with
+`REMOTE_RUNTIME_CANCELLATION_UNCONFIRMED`; only a cancelled outcome permits a
+normal return. All 10 focused remote-runtime tests pass. This fail-closed boundary
+does not implement reconciliation for competing terminal state or expired delivery;
+those remain required before full cancellation convergence can be certified.
