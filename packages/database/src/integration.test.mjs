@@ -1796,7 +1796,19 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const inventoryScope = {
       workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
       runtimeNodeRefId: removal.runtimeNodeRefId,
+      channel: {
+        nodeId: removal.runtimeNodeRefId,
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        gatewayInstanceId: 'inventory-gateway',
+        connectionId: 'inventory-connection',
+        channelGeneration: 1,
+        protocolVersion: { major: 1, minor: 6 },
+        connectedAt: '2026-08-24T21:00:00.000Z',
+        lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
+      },
     }
+    const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+    expect((await inventoryOwnership.claim(inventoryScope.channel)).accepted).toBe(true)
     const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
     const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
       isolated.application
@@ -1828,7 +1840,8 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
       expect(
         await ports.checkpoints.compareAndSet(undefined, {
-          ...inventoryScope,
+          workspaceId: inventoryScope.workspaceId,
+          runtimeNodeRefId: inventoryScope.runtimeNodeRefId,
           snapshotVersion: 1,
           snapshotDigest: `sha256:${'a'.repeat(64)}`,
           observedAt: projection.observedAt,
@@ -1879,6 +1892,38 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
       })
     ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
+    await unit.run(inventoryScope, async () => {
+      await isolated.application.transaction(async (transaction) => {
+        const lock = await transaction.execute(
+          sql`select pg_try_advisory_xact_lock(hashtextextended(${`runtime-channel:${inventoryScope.runtimeNodeRefId}`}, 0)) as acquired`
+        )
+        expect(lock[0].acquired).toBe(false)
+      })
+    })
+    await expect(
+      unit.run(
+        { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
+        async () => {
+          throw new Error('WRONG_CHANNEL_CALLBACK_REACHED')
+        }
+      )
+    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+    const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
+    expect((await inventoryOwnership.claim(replacement)).accepted).toBe(true)
+    let staleCallback = false
+    await expect(
+      unit.run(inventoryScope, async () => {
+        staleCallback = true
+      })
+    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+    expect(staleCallback).toBe(false)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
+    expect(await inventoryOwnership.release(replacement)).toBe(true)
+    await expect(
+      unit.run({ ...inventoryScope, channel: replacement }, async () => {
+        throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
+      })
+    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
   })
 
   test('persists scoped external session references without native ownership transfer', async () => {

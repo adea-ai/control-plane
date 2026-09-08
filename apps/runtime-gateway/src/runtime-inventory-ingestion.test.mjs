@@ -183,7 +183,7 @@ describe('Runtime Gateway inventory ingestion', () => {
     ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
     expect(scopes).toEqual([])
     expect(await fixture.service.ingest(frame, source())).toMatchObject({ outcome: 'applied' })
-    expect(scopes).toEqual([{ workspaceId, runtimeNodeRefId: nodeId }])
+    expect(scopes).toEqual([{ workspaceId, runtimeNodeRefId: nodeId, channel: source() }])
     expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
     expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
   })

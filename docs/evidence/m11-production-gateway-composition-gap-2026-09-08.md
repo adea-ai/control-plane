@@ -1,5 +1,27 @@
 # M11 production Runtime Gateway composition gap
 
+## Transactional inventory channel fencing
+
+The PostgreSQL inventory unit of work now requires the authenticated channel
+record in addition to workspace/node scope. It validates that scope, acquires
+the same node-keyed advisory lock used by channel claim/heartbeat/release, and
+checks the active durable owner before entering inventory work. Generation,
+gateway, connection, connection start and protocol must match; heartbeat time
+may advance. Ownership remains locked through commit, with the channel lock
+always acquired before the inventory lock.
+
+A real PostgreSQL regression reproduced an old channel entering inventory work
+after replacement. Coverage now checks stale and released owners, wrong
+connection identity, unchanged checkpoint on rejection, and an independent
+transaction's inability to acquire the channel lock during inventory work.
+The gateway passes its authenticated source through the unit-of-work boundary.
+
+This fences transactional inventory against participating channel ownership
+writers, not every command or event operation. It does not establish credential
+revocation atomically with inventory, add a production identity authority, or
+bound transaction duration. Heartbeat/replacement can wait behind ingestion;
+bounded database work and transaction deadlines remain acceptance gates.
+
 ## Commit-aware inventory telemetry
 
 Transactional ingestion buffers its inventory metric emissions until the unit of
@@ -57,8 +79,9 @@ concurrent full/delta snapshot acceptance matrix.
 The optional nontransactional fixture path still exists. Production factories
 must inject the durable composition. Normalization runs before the
 transaction and must not perform external effects; transaction duration, bounded
-history scanning, source-generation changes during
-work, and full-profile/concurrent snapshot verification remain open gates.
+history scanning and full-profile/concurrent snapshot verification remain open
+gates. Inventory source-generation fencing is described above; other operations
+still require their own ownership/authorization audit.
 
 ## Guarded ordinary runtime projection writes
 

@@ -153,7 +153,11 @@ export interface RuntimeInventoryIngestionOptions {
 
 export interface RuntimeInventoryUnitOfWork {
   run<Result>(
-    scope: { workspaceId: string; runtimeNodeRefId: string },
+    scope: {
+      workspaceId: string
+      runtimeNodeRefId: string
+      channel: ActiveRuntimeNodeChannelRecord
+    },
     operation: (
       ports: Pick<
         RuntimeInventoryIngestionOptions,
@@ -259,7 +263,7 @@ export class RuntimeInventoryIngestionService {
           emissions.push(() => this.#metrics.observe(name, value, labels)),
       }
       const result = await this.#unitOfWork.run(
-        { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId },
+        { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId, channel: source },
         (ports) =>
           new RuntimeInventoryIngestionService({
             ...ports,
