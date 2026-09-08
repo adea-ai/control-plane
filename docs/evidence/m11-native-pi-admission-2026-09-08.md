@@ -96,3 +96,22 @@ earlier statement that no completed results can be recovered. Live in-flight
 reattachment, progress-history replay, replaying start after recreation, abrupt
 host-loss/power-loss certification, and real-Pi verification of this terminal
 storage change remain open. This is not full M11.3 recovery acceptance.
+
+The extended published-Pi runner subsequently passed terminal recovery on Pi
+0.84.2 / Node 24.18.0 / Bun 1.4.0. After native cleanup, a fresh client recovered
+the completed output and usage exactly and recovered the cancelled attempt as
+cancelled. The fixture still received exactly three model requests across all
+scenarios. The report records `terminalRecoveryAfterCleanup` as
+`succeeded-with-original-output-and-usage` and `cancelled`, with cleanup complete.
+Thus real-Pi verification of these terminal reads is now established; live
+in-flight reattachment, event-history replay, and abrupt host-loss testing are
+not established by this run.
+
+Validation caveat for this runner update: the first full local suite had three
+E2E failures, including two `EADDRINUSE` errors on port 19080 and a Local Pi
+execution timeout. No listener remained when inspected after the run; the
+original port owner was not captured. The unchanged isolated E2E rerun passed
+104 tests with seed 1104. This is retained as an unresolved transient test
+environment/lifecycle observation, not a proven code fix or a clean first pass.
+The subsequent unchanged full-suite rerun also passed: 990 unit, 104 E2E, and
+67 smoke tests. No unrelated process was stopped to obtain the passing reruns.

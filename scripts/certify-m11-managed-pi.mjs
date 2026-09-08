@@ -237,11 +237,19 @@ try {
   }
   await adapter.cleanup(handle)
   handles.splice(handles.indexOf(handle), 1)
-  await assert.rejects(new ManagedPiProcessClient(clientOptions).start(nativeCommand), {
+  const recreated = new ManagedPiProcessClient(clientOptions)
+  await assert.rejects(recreated.start(nativeCommand), {
     code: 'PI_START_RECONCILIATION_REQUIRED',
     classification: 'unknown',
     retryable: false,
   })
+  const recovered = await recreated.reconcile(handle)
+  assert.equal(recovered.state, 'succeeded')
+  assert.deepEqual(recovered.result.output, status.result.output)
+  assert.deepEqual(recovered.result.usage, status.result.usage)
+  await adapter.cleanup(cancelled)
+  handles.splice(handles.indexOf(cancelled), 1)
+  assert.equal((await recreated.reconcile(cancelled)).state, 'cancelled')
   assert.equal(requests.length, 3, 'A recreated client must not repeat the cleaned native attempt')
   report = {
     schemaVersion: 1,
@@ -258,6 +266,7 @@ try {
     concurrentNativeStarts: 8,
     changedNativeCommand: 'rejected',
     clientRecreationAfterCleanup: 'reconciliation-required-no-new-request',
+    terminalRecoveryAfterCleanup: ['succeeded-with-original-output-and-usage', 'cancelled'],
     localComposition: {
       persistence: 'sqlite',
       workflow: 'real-local-restate',
