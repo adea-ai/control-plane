@@ -44,6 +44,7 @@ import {
   DurableExecutionLifecycleActivities,
 } from '@control-plane/workflow-worker'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
+import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
 import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 
@@ -229,7 +230,8 @@ export class LocalControlPlaneComposition {
             runtime: new DirectRuntimeActivityPort(
               this.persistence,
               this.objectStore,
-              runtimeTransport
+              runtimeTransport,
+              new LocalRuntimeInteractions(this.interactions, this.commandRepository)
             ),
             graph:
               options.graphActivities ??

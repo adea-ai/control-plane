@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { LocalRuntimeInteractions } from './runtime-interactions.js'
 import type { JsonValue, ObjectStore, PersistenceProvider } from '@control-plane/deployment'
 import type {
   RuntimeExecutionHandle,
@@ -31,7 +32,8 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   constructor(
     readonly persistence: PersistenceProvider,
     readonly objectStore: ObjectStore,
-    readonly runtime: RuntimeAdapterWithTransport
+    readonly runtime: RuntimeAdapterWithTransport,
+    readonly interactions?: LocalRuntimeInteractions
   ) {
     if (runtime.transportKind !== 'direct-local') {
       throw new Error('DIRECT_RUNTIME_TRANSPORT_REQUIRED')
@@ -133,6 +135,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       for await (const progress of this.runtime.progress(handle)) {
         const candidate = progress.data['interactionId']
         if (progress.type === 'interaction' && typeof candidate === 'string') {
+          await this.interactions?.record(input.executionId, input.attemptId, progress)
           interactionId = candidate
           break
         }
@@ -153,12 +156,13 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   }): Promise<WorkflowRuntimeOutcome> {
     return this.#effect(input.effectKey, async () => {
       const handle = await this.#handle(input.executionId, input.attemptId, true)
+      await this.interactions?.assertResponse(input)
       let status: RuntimeExecutionStatus
-      if (input.action === 'approve' || input.action === 'deny') {
+      if (input.action === 'approve' || input.action === 'deny' || input.action === 'grant') {
         status = await this.runtime.submitApproval(handle, {
           interactionId: input.interactionId,
           idempotencyKey: input.effectKey,
-          decision: input.action,
+          decision: input.action === 'grant' ? 'approve' : input.action,
         })
       } else if (input.action === 'cancel') {
         status = await this.runtime.cancel(handle, {

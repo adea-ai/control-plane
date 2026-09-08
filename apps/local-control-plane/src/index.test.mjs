@@ -5,7 +5,12 @@ import { describe, expect, test } from 'bun:test'
 import { DirectLocalRuntimeTransport, TransportedRuntimeAdapter } from '@control-plane/runtime-sdk'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import {
+  SqlitePersistenceProvider,
+  SqliteInteractionRepository,
+} from '@control-plane/sqlite-persistence'
+import { InteractionService } from '@control-plane/domain'
+import { LocalRuntimeInteractions } from './runtime-interactions.ts'
 import {
   DirectRuntimeActivityPort,
   LocalApiServer,
@@ -447,10 +452,23 @@ describe('Local Control Plane composition', () => {
       },
       cleanup: async () => undefined,
     }
+    const interactions = new SqliteInteractionRepository(persistence)
     const activities = new DirectRuntimeActivityPort(
       persistence,
       objectStore,
-      new TransportedRuntimeAdapter(new DirectLocalRuntimeTransport(driver), 'test')
+      new TransportedRuntimeAdapter(new DirectLocalRuntimeTransport(driver), 'test'),
+      new LocalRuntimeInteractions(interactions, {
+        getByExecutionId: async () => ({
+          executionId: input.executionId,
+          ...input.executionPlan.correlation,
+          callerPrincipalId: 'svc_owner',
+          retentionExpiresAt: '2099-01-01T00:00:00.000Z',
+        }),
+        getExecution: async () => ({
+          latestAttemptId: input.attemptId,
+          correlation: input.executionPlan.correlation,
+        }),
+      })
     )
     const input = {
       executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -472,6 +490,24 @@ describe('Local Control Plane composition', () => {
       expect(await activities.dispatch(input)).toEqual({
         outcome: 'awaiting_input',
         interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      })
+      const authorizedResponse = {
+        interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        executionId: input.executionId,
+        attemptId: input.attemptId,
+        action: 'input',
+        value: 'continue safely',
+      }
+      await expect(
+        activities.applyInteraction({ ...authorizedResponse, effectKey: 'unconfirmed-response' })
+      ).rejects.toThrow('LOCAL_INTERACTION_RESPONSE_UNCONFIRMED')
+      expect(submitted).toEqual([])
+      await new InteractionService(interactions).respond({
+        ...authorizedResponse,
+        expectedVersion: 1,
+        respondingPrincipalId: 'svc_owner',
+        respondedAt: new Date().toISOString(),
       })
       expect(
         await activities.applyInteraction({

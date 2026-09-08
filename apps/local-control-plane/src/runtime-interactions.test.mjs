@@ -1,0 +1,107 @@
+import { expect, test } from 'bun:test'
+import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
+import { LocalRuntimeInteractions } from './runtime-interactions.ts'
+
+const suffix = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+const executionId = `exe_${suffix}`
+const attemptId = `att_${suffix}`
+const interactionId = `int_${suffix}`
+const command = {
+  executionId,
+  workspaceId: `wsp_${suffix}`,
+  projectId: `prj_${suffix}`,
+  callerPrincipalId: 'svc_owner',
+  retentionExpiresAt: '2099-01-01T00:00:00.000Z',
+}
+const execution = {
+  latestAttemptId: attemptId,
+  correlation: { workspaceId: command.workspaceId, projectId: command.projectId },
+}
+const event = (kind = 'permission') => ({
+  type: 'interaction',
+  data: {
+    interactionId,
+    kind,
+    allowedPrincipalIds: ['svc_attacker'],
+    prompt: 'untrusted runtime text',
+  },
+})
+function setup(overrides = {}) {
+  const repository = new InMemoryInteractionRepository()
+  const bridge = new LocalRuntimeInteractions(repository, {
+    getByExecutionId: async () => command,
+    getExecution: async () => execution,
+    ...overrides,
+  })
+  return { repository, bridge }
+}
+
+test('native interaction ownership comes from accepted command, not runtime data', async () => {
+  const { repository, bridge } = setup()
+  await bridge.record(executionId, attemptId, event())
+  const stored = await repository.get(interactionId)
+  expect(stored).toMatchObject({
+    executionId,
+    attemptId,
+    kind: 'permission',
+    allowedPrincipalIds: ['svc_owner'],
+    allowedActions: ['grant', 'deny', 'cancel'],
+    state: 'pending',
+  })
+  expect(stored.prompt.title).not.toBe('untrusted runtime text')
+  expect(Date.parse(stored.expiresAt) - Date.parse(stored.requestedAt)).toBeLessThanOrEqual(900001)
+  await bridge.record(executionId, attemptId, event())
+  expect(await repository.get(interactionId)).toEqual(stored)
+  await expect(bridge.record(executionId, attemptId, event('input'))).rejects.toThrow(
+    'LOCAL_INTERACTION_ID_CONFLICT'
+  )
+})
+
+test.each([
+  { getByExecutionId: async () => undefined },
+  { getExecution: async () => ({ ...execution, latestAttemptId: `att_${suffix.slice(0, -1)}W` }) },
+  {
+    getExecution: async () => ({
+      ...execution,
+      correlation: { ...execution.correlation, workspaceId: `wsp_${suffix.slice(0, -1)}W` },
+    }),
+  },
+])('missing or mismatched accepted scope cannot create a request %#', async (overrides) => {
+  const { bridge, repository } = setup(overrides)
+  await expect(bridge.record(executionId, attemptId, event())).rejects.toThrow(
+    'LOCAL_INTERACTION_SCOPE_MISSING'
+  )
+  expect(await repository.get(interactionId)).toBeUndefined()
+})
+
+test('runtime response requires the exact durably authorized response', async () => {
+  const { bridge, repository } = setup()
+  await bridge.record(executionId, attemptId, event('input'))
+  const response = {
+    interactionId,
+    executionId,
+    attemptId,
+    responseId: `cmd_${suffix}`,
+    action: 'input',
+    value: { text: 'authorized' },
+  }
+  await expect(bridge.assertResponse(response)).rejects.toThrow(
+    'LOCAL_INTERACTION_RESPONSE_UNCONFIRMED'
+  )
+  await new InteractionService(repository).respond({
+    ...response,
+    expectedVersion: 1,
+    respondingPrincipalId: 'svc_owner',
+    respondedAt: new Date().toISOString(),
+  })
+  await bridge.assertResponse(response)
+  for (const changed of [
+    { action: 'approve' },
+    { value: { text: 'changed' } },
+    { executionId: `exe_${suffix.slice(0, -1)}W` },
+    { responseId: `cmd_${suffix.slice(0, -1)}W` },
+  ])
+    await expect(bridge.assertResponse({ ...response, ...changed })).rejects.toThrow(
+      'LOCAL_INTERACTION_RESPONSE_UNCONFIRMED'
+    )
+})

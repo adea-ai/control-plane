@@ -23,8 +23,17 @@ record store.
 
 ## Remaining production path
 
-- Persist native pending interaction requests with attempt binding, bounded expiry,
-  and authoritative allowed principals; repository availability alone does not do this.
+- Local direct runtime dispatch now persists pending input/approval/permission requests
+  before returning `awaiting_input`. Execution and attempt scope come from the accepted
+  command/execution records, the allowed principal is the accepting service principal,
+  and expiry is bounded by the execution deadline (or 15-minute fallback) and command
+  retention. Runtime-supplied principals and prompt text are not trusted or stored.
+- Local response dispatch now requires the exact durably recorded response ID, action,
+  attempt/execution, and value. A permission `grant` maps to native approval. A focused
+  direct-activity test uses SQLite and proves an unconfirmed response has zero runtime
+  submissions before the domain service records an authorized response.
+- Verify this request/response bridge through real native pending interactions and
+  restart, including terminal cleanup of pending records and user-visible prompt details.
 - Compose the existing domain interaction service with authenticated, workspace-safe
   command handling and durable signal delivery/reconciliation.
 - Implement the production relay control port and public API/SDK operations.
