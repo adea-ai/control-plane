@@ -100,8 +100,8 @@ autoscaling target.
 
 To activate staging for a bounded Cloud test:
 
-1. Confirm the intended `staging` revision, Railway variables, Neon branch/schema, R2 mapping, and
-   retained Restate volume.
+1. Confirm the intended `main` commit for the Railway staging deployment, Railway variables, Neon
+   staging branch/schema, R2 mapping, and retained Restate volume.
 2. Run `railway config plan` while linked to staging and review every change. Run
    `railway config apply` to reconcile the activation profile, reconnect the staging sources, and
    deploy the one-replica topology. A source-only redeploy is acceptable when the project graph is

@@ -3,9 +3,7 @@ name: Create/Delete Branch for Pull Request
 on:
   pull_request:
     types:
-      - opened
-      - reopened
-      - synchronize
+      - ready_for_review
       - closed
 
 permissions: {}
@@ -18,6 +16,7 @@ concurrency:
 jobs:
   setup:
     name: Setup
+    if: github.event.action == 'closed' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -33,7 +32,8 @@ jobs:
     if: >-
       github.event.action == 'opened' ||
       github.event.action == 'reopened' ||
-      github.event.action == 'synchronize'
+      github.event.action == 'synchronize' ||
+      github.event.action == 'ready_for_review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -187,11 +187,15 @@ jobs:
   delete_neon_branch:
     name: Delete Neon Branch
     needs: setup
-    if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Cleanup not requested
+        if: github.event.action != 'closed'
+        run: echo 'Cleanup runs only when the pull request closes.'
+
       - name: Find exact preview branch
+        if: github.event.action == 'closed'
         id: cleanup_branch
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
@@ -254,7 +258,7 @@ jobs:
           CLEANUP
 
       - name: Delete Neon branch
-        if: steps.cleanup_branch.outputs.branch_id != ''
+        if: github.event.action == 'closed' && steps.cleanup_branch.outputs.branch_id != ''
         uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}

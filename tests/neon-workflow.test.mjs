@@ -67,7 +67,9 @@ describe('Neon preview cleanup lookup', () => {
     const result = await findCleanupBranch([{ body: { branches: [] } }])
     expect(result.writes).toEqual([])
     expect(result.requests).toHaveLength(1)
-    expect(workflow).toContain("if: steps.cleanup_branch.outputs.branch_id != ''")
+    expect(workflow).toContain(
+      "if: github.event.action == 'closed' && steps.cleanup_branch.outputs.branch_id != ''"
+    )
     expect(workflow).toContain('branch: ${{ steps.cleanup_branch.outputs.branch_id }}')
   })
 

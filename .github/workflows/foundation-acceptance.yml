@@ -2,8 +2,8 @@ name: Foundation Acceptance
 
 on:
   pull_request:
-    branches: [main, staging]
-    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    types: [ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +16,7 @@ concurrency:
 jobs:
   core:
     name: Core
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -43,6 +44,7 @@ jobs:
 
   containers:
     name: Containers
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -58,7 +60,7 @@ jobs:
   # Stable required check: Foundation Acceptance / Gate
   gate:
     name: Foundation Acceptance / Gate
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     needs: [core, containers]
     runs-on: ubuntu-latest
     timeout-minutes: 5
