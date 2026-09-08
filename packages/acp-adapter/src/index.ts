@@ -99,6 +99,55 @@ const AcpInitializeResultSchema = z
     authMethods: z.array(z.record(z.string(), z.json())).max(32).optional(),
   })
   .passthrough()
+const AcpV1InitializeResultSchema = z
+  .object({
+    protocolVersion: z.literal(1),
+    agentInfo: AcpInfoSchema,
+    agentCapabilities: z
+      .object({
+        loadSession: z.boolean().optional(),
+        sessionCapabilities: z
+          .object({
+            list: z.object({}).passthrough().nullish(),
+            resume: z.object({}).passthrough().nullish(),
+            close: z.object({}).passthrough().nullish(),
+          })
+          .passthrough()
+          .nullish(),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+
+function normalizeV1Initialization(input: unknown): z.output<typeof AcpInitializeResultSchema> {
+  const result = AcpV1InitializeResultSchema.parse(input)
+  const sessions = result.agentCapabilities.sessionCapabilities
+  return AcpInitializeResultSchema.parse({
+    protocolVersion: result.protocolVersion,
+    info: result.agentInfo,
+    capabilities: {
+      session: {},
+      _meta: {
+        controlPlane: {
+          driverVersion: '1.0.0',
+          capabilities: [
+            'execution.cancel',
+            'interaction.approval',
+            'session.create',
+            'stream.events',
+            'stream.output',
+            'tool.call',
+            'session.history',
+            ...(sessions?.list != null ? ['session.list'] : []),
+            ...(sessions?.resume != null ? ['session.resume'] : []),
+            ...(sessions?.close != null ? ['session.close'] : []),
+            ...(result.agentCapabilities.loadSession ? ['session.load'] : []),
+          ],
+        },
+      },
+    },
+  })
+}
 const AcpErrorSchema = z
   .object({
     code: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
@@ -212,6 +261,8 @@ export interface AcpTransportCall {
 }
 
 export interface AcpTransport {
+  // Transport implementations normalize native updates, results, and lifecycle
+  // operations to this interface; initialize retains the selected wire version.
   connectionState(): 'connected' | 'disconnected'
   /** Repeating a create token must return the same native session. */
   createSession(createToken: string, signal?: AbortSignal): Promise<{ readonly sessionId: string }>
@@ -308,7 +359,10 @@ export class AcpDriver implements RuntimeAdapter {
     {
       readonly requestId: number
       readonly kind: 'permission' | 'input'
-      readonly options?: string[]
+      readonly options?: readonly {
+        readonly optionId: string
+        readonly kind: 'allow_once' | 'reject'
+      }[]
     }
   >()
   readonly #nativeByExternalSession = new Map<string, string>()
@@ -557,7 +611,7 @@ export class AcpDriver implements RuntimeAdapter {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
         const desired = request.decision === 'approve' ? 'allow_once' : 'reject'
-        const optionId = interaction.options?.find((option) => option === desired)
+        const optionId = interaction.options?.find((option) => option.kind === desired)?.optionId
         if (!optionId) fail('ACP_PERMISSION_OPTION_UNSUPPORTED', 'unsupported', false)
         await this.#transportCall((signal) =>
           this.#transport.respond(
@@ -809,13 +863,17 @@ export class AcpDriver implements RuntimeAdapter {
 
   async #initializeConnection(): Promise<z.output<typeof AcpInitializeResultSchema>> {
     if (!this.#initialize) {
-      this.#initialize = AcpInitializeResultSchema.parse(
-        await this.#request('initialize', {
-          protocolVersion: this.#protocolVersion,
-          capabilities: {},
-          info: { name: 'control-plane', title: 'Control Plane', version: this.#adapterVersion },
-        })
+      const info = { name: 'control-plane', title: 'Control Plane', version: this.#adapterVersion }
+      const response = await this.#request(
+        'initialize',
+        this.#protocolVersion === 1
+          ? { protocolVersion: 1, clientCapabilities: {}, clientInfo: info }
+          : { protocolVersion: this.#protocolVersion, capabilities: {}, info }
       )
+      this.#initialize =
+        this.#protocolVersion === 1
+          ? normalizeV1Initialization(response)
+          : AcpInitializeResultSchema.parse(response)
     }
     return this.#initialize
   }
@@ -1177,7 +1235,7 @@ export class AcpDriver implements RuntimeAdapter {
       this.#interactions.set(interactionId, {
         requestId: update.requestId,
         kind: 'permission',
-        options: update.options.map(({ kind }) => kind),
+        options: update.options.map(({ kind, optionId }) => ({ kind, optionId })),
       })
       return RuntimeExecutionProgressSchema.parse({
         ...common,
