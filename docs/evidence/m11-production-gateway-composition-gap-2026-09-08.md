@@ -1,5 +1,31 @@
 # M11 production Runtime Gateway composition gap
 
+## Live Neon metadata and skipped preview verification
+
+Read-only revalidation on September 8 resolved the repository's `NEON_PROJECT_ID`
+to the `control-plane` project `muddy-firefly-58711535`. The authenticated Neon
+CLI reports `pg_version: 18`, with separate `production` and `staging` branches.
+This confirms the configured project's major version, not the actual Railway
+connection destination, server patch version, pooled-session behavior or a
+successful execution of the inventory deadline against Neon.
+
+Crucially, the green `Migrate Neon Branch` job for candidate `35e9416` was a
+credential-gated no-op. The job's step results show `Create Neon branch`,
+`Prepare isolated preview database ownership`, and `Verify migrations and
+transactions` all skipped. Repository secret metadata lists
+`NEON_CI_APP_PASSWORD` and `NEON_CI_MIGRATION_PASSWORD`, but not
+`NEON_CI_ADMIN_PASSWORD`. Secret values were not read or printed. The effective
+three-credential gate was unsatisfied; a successful job conclusion is not Neon
+migration or transaction acceptance evidence.
+
+Evidence: [exact job and skipped steps](https://github.com/adea-ai/control-plane/actions/runs/34243104995/job/102118094553).
+No branch, role, credential, database setting or local environment file was
+changed during this check. Provisioning and validating the scoped preview-admin
+credential, then executing the actual preview matrix, remains required. Prior
+summaries calling this green job a Neon migration pass are superseded by this
+step-level verification. Local PostgreSQL integration/recovery evidence remains
+valid and separate.
+
 ## Inventory deadline with patched driver recovery
 
 The inventory unit of work now sets transaction-local `transaction_timeout`
