@@ -98,6 +98,7 @@ export * from './authentication.js'
 export * from './local-api-composition.js'
 export * from './direct-runtime-activities.js'
 export * from './managed-pi-runtime.js'
+export * from './acp-runtime.js'
 
 export function resolveLocalRuntimeOptions(
   environment: Readonly<Record<string, string | undefined>>

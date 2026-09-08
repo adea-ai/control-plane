@@ -17,6 +17,57 @@ import {
 } from './index.ts'
 
 describe('Local Control Plane composition', () => {
+  test.each(['none', 'runtime', 'endpoint', 'workflow', 'relay'])(
+    'owns runtime process lifecycle across %s startup failure',
+    async (failure) => {
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-runtime-lifecycle-'))
+      const calls = []
+      const start = async (component) => {
+        calls.push(`${component}:start`)
+        if (failure === component) throw new Error(`failed:${component}`)
+      }
+      const composition = new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        runtimeTransport: {
+          transportKind: 'direct-local',
+          open: () => start('runtime'),
+          close: async () => calls.push('runtime:stop'),
+        },
+        workflowRuntime: {
+          profile: 'local',
+          start: () => start('workflow'),
+          stop: async () => calls.push('workflow:stop'),
+        },
+        endpointFactory: {
+          create: async () => ({
+            run: () => start('endpoint'),
+            shutdown: async () => calls.push('endpoint:stop'),
+          }),
+        },
+        remoteControlFactory: () => ({
+          start: () => start('relay'),
+          stop: async () => calls.push('relay:stop'),
+        }),
+      })
+      try {
+        if (failure === 'none') await composition.start()
+        else await expect(composition.start()).rejects.toThrow(`failed:${failure}`)
+        await composition.close()
+        await composition.close()
+        expect(calls[0]).toBe('runtime:start')
+        expect(calls.at(-1)).toBe('runtime:stop')
+        expect(calls.filter((call) => call === 'runtime:stop')).toHaveLength(1)
+        if (failure !== 'runtime') {
+          expect(calls.indexOf('endpoint:stop')).toBeLessThan(calls.indexOf('runtime:stop'))
+        }
+      } finally {
+        await composition.close()
+        composition.persistence.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('packages managed Pi only from explicit non-secret launcher configuration', () => {
     expect(resolveLocalRuntimeOptions({})).toEqual({})
     expect(() => resolveLocalRuntimeOptions({ CONTROL_PLANE_LOCAL_RUNTIME: 'managed-pi' })).toThrow(

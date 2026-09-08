@@ -15,6 +15,7 @@
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
+    "@control-plane/acp-adapter": "workspace:*",
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/config": "workspace:*",
     "@control-plane/context": "workspace:*",

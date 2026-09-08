@@ -318,6 +318,7 @@
       "browser": false,
       "exports": [],
       "workspaceDependencies": [
+        "@control-plane/acp-adapter",
         "@control-plane/bootstrap",
         "@control-plane/config",
         "@control-plane/context",
@@ -1359,7 +1360,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
+      "sourceDigest": "sha256:ce69929b25b0fd9a8df979a29a8e56c3f90cf6c4b2d5f53a6afd57fc6125f1d3"
     },
     {
       "id": "local",
@@ -1398,7 +1399,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:0f955a33e0ef4a16a2a4f9be4bed6c2ee9cd896407ebe28b76d7737fd05dad6d"
+      "sourceDigest": "sha256:ce69929b25b0fd9a8df979a29a8e56c3f90cf6c4b2d5f53a6afd57fc6125f1d3"
     }
   ],
   "ownership": [

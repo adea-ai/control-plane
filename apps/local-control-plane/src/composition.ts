@@ -67,6 +67,12 @@ export interface LocalComponentManifest {
   }
 }
 
+/** Optional process lifecycle owned by the Local composition, not by individual attempts. */
+export interface LocalRuntimeTransport extends RuntimeAdapterWithTransport {
+  open?(): Promise<void>
+  close?(): Promise<void>
+}
+
 export interface LocalControlPlaneCompositionOptions {
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
@@ -80,12 +86,12 @@ export interface LocalControlPlaneCompositionOptions {
   readonly graphActivitiesFactory?: (input: {
     readonly persistence: SqlitePersistenceProvider
   }) => GraphSegmentActivityPort
-  readonly runtimeTransport?: RuntimeAdapterWithTransport
+  readonly runtimeTransport?: LocalRuntimeTransport
   readonly runtimeFactory?: (input: {
     readonly catalog: LocalControlApiComposition['catalog']
     readonly contextPackages: LocalControlApiComposition['contextPackages']
     readonly dataDirectory: string
-  }) => RuntimeAdapterWithTransport
+  }) => LocalRuntimeTransport
   readonly secrets?: SecretsProvider
   readonly remoteControl?: RemoteControlHostAdapter<unknown>
   readonly remoteControlFactory?: (
@@ -102,7 +108,7 @@ export class LocalControlPlaneComposition {
   readonly objectStore: ObjectStore
   readonly workflow: WorkflowRuntime
   readonly secrets: SecretsProvider
-  readonly runtimeTransport: RuntimeAdapterWithTransport | undefined
+  readonly runtimeTransport: LocalRuntimeTransport | undefined
   readonly remoteControl: RemoteControlHostAdapter<unknown> | undefined
   readonly executionAcceptanceService: ExecutionAcceptanceService
   readonly executionValidationService: LocalControlApiComposition['executionValidationService']
@@ -264,15 +270,19 @@ export class LocalControlPlaneComposition {
     if (this.#started) throw new Error('LOCAL_CONTROL_PLANE_ALREADY_STARTED')
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
     await this.persistence.migrate()
-    this.#endpoint = await this.#endpointFactory.create()
-    await this.#endpoint.run()
     try {
+      await this.runtimeTransport?.open?.()
+      this.#endpoint = await this.#endpointFactory.create()
+      await this.#endpoint.run()
       await this.workflow.start()
       await this.remoteControl?.start()
     } catch (error) {
-      await this.remoteControl?.stop()
+      await Promise.resolve()
+        .then(() => this.remoteControl?.stop())
+        .catch(() => undefined)
       await this.workflow.stop().catch(() => undefined)
-      await this.#endpoint.shutdown().catch(() => undefined)
+      await this.#endpoint?.shutdown().catch(() => undefined)
+      await this.runtimeTransport?.close?.().catch(() => undefined)
       this.#endpoint = undefined
       throw error
     }
@@ -312,15 +322,22 @@ export class LocalControlPlaneComposition {
   async close(): Promise<void> {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
-    await this.remoteControl?.stop()
-    await this.workflow.stop().catch(() => undefined)
-    await this.#endpoint?.shutdown().catch(() => undefined)
-    this.#endpoint = undefined
-    await this.secrets.close()
-    await this.objectStore.close()
-    this.persistence.close()
-    this.coordination.close()
-    this.observability.close()
+    try {
+      await this.remoteControl?.stop()
+    } finally {
+      await this.workflow.stop().catch(() => undefined)
+      await this.#endpoint?.shutdown().catch(() => undefined)
+      this.#endpoint = undefined
+      try {
+        await this.runtimeTransport?.close?.()
+      } finally {
+        await this.secrets.close()
+        await this.objectStore.close()
+        this.persistence.close()
+        this.coordination.close()
+        this.observability.close()
+      }
+    }
   }
 }
 

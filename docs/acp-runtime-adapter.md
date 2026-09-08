@@ -77,3 +77,16 @@ executing a second native side effect.
 The package includes a deterministic ACP transport covering negotiation, execution, permission,
 cancellation, disconnect, timeout, native-session opacity, and the shared RuntimeAdapter conformance
 suite. The transport is test evidence and a driver fixture, not a production process launcher.
+
+## Explicit Local process composition
+
+The Local package exports `createLocalAcpRuntime(options)` for programmatic
+`runtimeFactory` configuration. It uses the native v1 process transport and requires
+an absolute executable path, explicit working directory and child environment,
+and caller-owned opaque session/interaction ID mappings. It does not install,
+authenticate, or configure the native harness. The CLI runtime default is unchanged.
+
+Local composition opens lifecycle-aware runtime adapters before its workflow
+endpoint and closes them after the endpoint stops, including startup rollback.
+Adapters without lifecycle hooks retain their existing behavior. This wiring does
+not establish process-restart recovery or complete Milestone 11 acceptance.
