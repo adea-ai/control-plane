@@ -252,3 +252,26 @@ promotion. Required follow-up includes durable ambiguous-create reconciliation,
 retained-result limits, remaining native session lifecycle
 operations, and full real-agent validation. Cache/thought usage is retained in
 the raw result; final accounting semantics still need explicit verification.
+
+# Real native Local composition probe
+
+On 2026-09-08, the same pinned ACP 1.7.0 / Codex 0.148.0 packages and Node
+image described above completed through `createLocalAcpRuntime` owned by
+`LocalControlPlaneComposition`. The retained
+[Local probe](fixtures/m11-acp-local-probe-2026-09-08.mjs) checks container owner,
+no mounts, and disconnected networking. The native harness's own
+`DEFAULT_AUTH_REQUEST` selects the credential-free loopback Responses fixture;
+the adapter does not add an authentication API or change host authentication.
+
+Observed result: completed; persisted input/output usage 11/3; measured fixture
+turn duration 44 ms. A new direct activity instance replayed the SQLite outcome
+unchanged. The model fixture reported exactly one request. Native session cleanup
+succeeded, and after Local shutdown the container process table contained only
+its keepalive and model fixture, with no ACP/Codex process. The disposable container
+was stopped and removed; its model fixture was removed with it.
+
+Scope limit: this probe stubs the workflow host and dispatches through the direct
+activity port. It does not certify real Restate together with ACP, published-input
+acceptance, native tools/MCP, live model quality, approvals, cancellation, host
+restart, or full M11.3. Its runtime requirement set is empty and does not claim
+filesystem capabilities. The 44 ms observation is not a performance benchmark.
