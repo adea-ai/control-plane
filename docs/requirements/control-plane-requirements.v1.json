@@ -1235,6 +1235,351 @@
       }
     },
     {
+      "id": "CP-CONS-018",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider failure defaults (section 15.1)",
+      "requirement": "Preferred provider policy defaults to continue_without, required defaults to fail, and await_input requires explicit pinned policy.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-019",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider discovery authority (section 15.1)",
+      "requirement": "Provider discovery or installation alone never authorizes retrieval.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-020",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Deterministic provider selection (section 15.1)",
+      "requirement": "Provider selection follows the pinned policy deterministically and is not delegated to an LLM.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-021",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider read envelope (section 15.1)",
+      "requirement": "Every provider read carries stable request/correlation identity, workspace and mapped scope, contract version, capability requirements, budget, deadline and policy snapshot.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-022",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider authority invalidation (section 15.1)",
+      "requirement": "Provider removal, replacement or revocation invalidates affected future retrieval and write authority without implicitly deleting provider-owned data.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-023",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider substitution contract (sections 15.1 and 18)",
+      "requirement": "Cortana, another conforming provider and no provider preserve the same Task and Execution contracts; replacement changes only adapter/configuration and contribution metadata.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-024",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Terminal disagreement precedence (section 8)",
+      "requirement": "Record terminal-state disagreement as an incident and resolve it in favor of the authoritative Control Plane execution result unless an explicit administrative override exists.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-025",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Reconciliation job safety (section 8)",
+      "requirement": "Reconciliation jobs are idempotent, rate limited, observable and safe to rerun.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "durable-execution",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-026",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider proposal reconciliation (section 8)",
+      "requirement": "Reconcile non-terminal MemoryWriteProposals against authoritative provider status where supported; do not promote proposals to canonical memory or reconstruct missing provider evidence without authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-027",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Contribution recovery policy (section 8)",
+      "requirement": "After recovery rebuild or reject read-only ContextContributions under pinned freshness/revision policy rather than treating them as durable provider-side effects.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-028",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider error taxonomy (section 16)",
+      "requirement": "Provider errors distinguish unavailable, unauthorized, incompatible contract, revoked mapping, stale contribution, degraded response, malformed response, over-budget response, required-provider failure and provider-write reconciliation, with source layer, category, retryability, safe message, remediation and correlation identifiers.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-029",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Provider rejection and omission (section 16)",
+      "requirement": "Permanently reject provider contract, scope, digest or authorization failures rather than retrying; omit a preferred provider only if pinned policy permits and never silently degrade a required provider to none.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "context-provider",
+      "lane": "integration",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-030",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Execution trace continuity (section 17)",
+      "requirement": "Preserve request correlation through Control Plane inbox, provider selection/read/validation/contribution, ContextPackage/ExecutionPlan, Execution/Attempt, Restate, optional graph, direct or remote runtime commands and normalized events; correlate provider write/reconciliation separately and expose references for external consumer continuation.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-031",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Consistency diagnostics (section 17)",
+      "requirement": "Measure Control Plane inbox duplicates, payload conflicts, provider selection/omission/degradation, contribution freshness/rebuild/rejection, provider latency/error/timeout/scope denial, memory-write approval/denial/expiry/duplicate/reconciliation, reconciliation repairs, sequence gaps and dead letters.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
+      "id": "CP-CONS-032",
+      "sourceId": "execution-consistency-spec",
+      "heading": "Content-safe consistency telemetry (section 17)",
+      "requirement": "Exclude secrets, reusable provider credentials, private or synchronized content and keys, HPKE plaintext/private keys, unrestricted contributions, native memory values, private paths, sensitive context and Artifact bytes from logs; relay telemetry may expose bounded ciphertext size/key ID/expiry metadata only.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "observability",
+      "lane": "recovery/chaos",
+      "issueRefs": [186, 188, 194, 195],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "observability",
+        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+      }
+    },
+    {
       "id": "CP-RNODE-001",
       "sourceId": "runtime-node-spec",
       "heading": "Ownership Model",
@@ -5297,6 +5642,66 @@
     },
     {
       "id": "CP-CONS-017",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-018",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-019",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-020",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-021",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-022",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-023",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-024",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-025",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-026",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-027",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-028",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-029",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-030",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-031",
+      "sourceId": "execution-consistency-spec"
+    },
+    {
+      "id": "CP-CONS-032",
       "sourceId": "execution-consistency-spec"
     },
     {
