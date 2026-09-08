@@ -14,6 +14,8 @@ These 15 additions are accepted source obligations with implementation classific
 
 ## Required verification
 
+[The section 18 acceptance map](./execution-consistency-acceptance-map.md) now records all 15 baseline scenarios, ledger references where extracted, ownership boundaries, inspected test starting points and missing proof. All scenarios remain unverified at their full scope; mapping a scenario is not acceptance evidence.
+
 For each new entry, identify the authoritative implementation and test its exact invariant against a frozen candidate in Managed Cloud, Local, Hosted Simple and Hosted Server. Include crash-after-commit, reply loss, duplicate/conflicting delivery, concurrent writes, cancellation races, stale/revoked context and ambiguous external effects where relevant. Retention requires persisted policy and boundary evidence, not a passing immediate replay. Cache identity requires mutations of every named identity dimension. Historical issue closure and passing source-ledger validation do not prove these behaviors.
 
 No deployment, permission, production identity or external product changes are authorized by source recovery.
