@@ -26,13 +26,20 @@ and `agentclientprotocol/codex-acp` v1.7.0 source commit
 
 ## Validation and limits
 
+A subsequent transport-boundary review found that permission normalization kept
+only each option's semantic kind, dropping its native `optionId`. Both approve
+and deny probes with opaque IDs failed before the correction: the response used
+the kind instead of the advertised ID. The driver now retains both values,
+selects by kind, and returns the native ID unchanged. This correction applies to
+both protocol configurations through the shared normalized transport interface.
+
 The new initialization suite checks request fields, normalized metadata,
 advertised/absent/null/malformed optional capabilities, version mismatch, and
 the replay/load conjunction. Existing v2 adapter, external-session, and gateway
 tests remain part of the package suite.
 
-Verification: `bun test src` from `packages/acp-adapter` passed 51 tests and
-179 assertions. Root lint, type-check, format-check, build, and test sequence
+Verification: `bun test src` from `packages/acp-adapter` passed 53 tests and
+181 assertions after the permission-ID correction. Root lint, type-check, format-check, build, and test sequence
 passed; the E2E group passed 101 tests and 571 assertions. Lint retains existing
 warnings. The initial root-level package test filter matched no files; the
 regression was then correctly run from the package directory before fixing it.

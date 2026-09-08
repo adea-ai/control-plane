@@ -64,6 +64,51 @@ function fixture(options = {}) {
 }
 
 describe('ACP RuntimeAdapter', () => {
+  test.each(['approve', 'deny'])(
+    'preserves opaque native permission option IDs for %s',
+    async (decision) => {
+      const { adapter, transport } = fixture({ scenario: 'running' })
+      const originalUpdates = transport.updates.bind(transport)
+      transport.updates = async function* (...args) {
+        for await (const update of originalUpdates(...args)) {
+          yield update.sessionUpdate === 'request_permission'
+            ? {
+                ...update,
+                options: update.options.map((option) => ({
+                  ...option,
+                  optionId: `opaque-${option.kind}-42`,
+                })),
+              }
+            : update
+        }
+      }
+      const handle = await adapter.start({
+        attemptId,
+        idempotencyKey: `opaque:${decision}`,
+        executionPlan: plan(),
+      })
+      for await (const event of adapter.progress(handle)) {
+        if (event.type === 'interaction') break
+      }
+      await adapter.submitApproval(handle, {
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: `opaque-response:${decision}`,
+        decision,
+      })
+      expect(transport.responses()).toEqual([
+        {
+          requestId: 40,
+          result: {
+            outcome: {
+              outcome: 'selected',
+              optionId: `opaque-${decision === 'approve' ? 'allow_once' : 'reject'}-42`,
+            },
+          },
+        },
+      ])
+    }
+  )
+
   test('negotiates ACP v2 capabilities without fabricating optional behavior', async () => {
     const { adapter, transport } = fixture()
     const inspection = await adapter.inspect([

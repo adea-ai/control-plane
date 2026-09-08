@@ -359,7 +359,10 @@ export class AcpDriver implements RuntimeAdapter {
     {
       readonly requestId: number
       readonly kind: 'permission' | 'input'
-      readonly options?: string[]
+      readonly options?: readonly {
+        readonly optionId: string
+        readonly kind: 'allow_once' | 'reject'
+      }[]
     }
   >()
   readonly #nativeByExternalSession = new Map<string, string>()
@@ -608,7 +611,7 @@ export class AcpDriver implements RuntimeAdapter {
           fail('ACP_INTERACTION_MISSING', 'validation', false)
         }
         const desired = request.decision === 'approve' ? 'allow_once' : 'reject'
-        const optionId = interaction.options?.find((option) => option === desired)
+        const optionId = interaction.options?.find((option) => option.kind === desired)?.optionId
         if (!optionId) fail('ACP_PERMISSION_OPTION_UNSUPPORTED', 'unsupported', false)
         await this.#transportCall((signal) =>
           this.#transport.respond(
@@ -1232,7 +1235,7 @@ export class AcpDriver implements RuntimeAdapter {
       this.#interactions.set(interactionId, {
         requestId: update.requestId,
         kind: 'permission',
-        options: update.options.map(({ kind }) => kind),
+        options: update.options.map(({ kind, optionId }) => ({ kind, optionId })),
       })
       return RuntimeExecutionProgressSchema.parse({
         ...common,
