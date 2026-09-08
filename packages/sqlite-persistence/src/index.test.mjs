@@ -27,6 +27,39 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('scans bounded namespace pages by exclusive storage ID across reopen', async () => {
+    const { instance } = await provider()
+    for (const id of ['c', 'a', 'b']) {
+      await instance.transaction((tx) => tx.put({ namespace: 'scan', id, value: { id } }))
+    }
+    await instance.transaction((tx) => tx.put({ namespace: 'other', id: 'bb', value: null }))
+    const first = await instance.transaction((tx) => tx.scan('scan', { limit: 2 }))
+    expect(first.map((row) => row.id)).toEqual(['a', 'b'])
+    instance.close()
+    await instance.migrate()
+    const second = await instance.transaction((tx) =>
+      tx.scan('scan', { limit: 2, afterId: first.at(-1).id })
+    )
+    expect(second.map((row) => row.id)).toEqual(['c'])
+    expect(await instance.transaction((tx) => tx.scan('scan', { limit: 2, afterId: 'c' }))).toEqual(
+      []
+    )
+    expect(await instance.transaction((tx) => tx.scan('missing', { limit: 1 }))).toEqual([])
+    for (const limit of [0, -1, 1.5, 129, NaN, Infinity]) {
+      await expect(instance.transaction((tx) => tx.scan('scan', { limit }))).rejects.toMatchObject({
+        code: 'SQLITE_INVALID_RECORD',
+      })
+    }
+    for (const afterId of ['', '\u0000', 'x'.repeat(513)]) {
+      await expect(
+        instance.transaction((tx) => tx.scan('scan', { limit: 1, afterId }))
+      ).rejects.toMatchObject({ code: 'SQLITE_INVALID_RECORD' })
+    }
+    await expect(
+      instance.transaction((tx) => tx.scan('INVALID', { limit: 1 }))
+    ).rejects.toMatchObject({ code: 'SQLITE_INVALID_RECORD' })
+  })
+
   test('adopts a legacy file and retains its migration history through backup and reopen', async () => {
     const { directory, instance } = await provider()
     await instance.transaction((transaction) =>

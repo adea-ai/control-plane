@@ -1,5 +1,22 @@
 # M11 production Runtime Gateway composition gap
 
+## Bounded SQLite storage scan prerequisite
+
+PersistenceTransaction now exposes an exclusive storage-ID scan with a validated
+page limit of 1 through 128. SQLite applies namespace equality, optional ID lower
+bound, ID ordering and LIMIT in SQL against the existing namespace/ID primary
+key. It does not load a namespace and slice the result in application memory.
+Existing list ordering and behavior are unchanged. The file-backed test covers
+out-of-order insertion, namespace isolation, page continuation after reopen,
+empty pages and invalid limits/cursors.
+
+This is a storage primitive, not RuntimeInventoryCheckpointScanner parity:
+SQLite durability records currently hash domain identifiers into their storage
+keys. A storage cursor cannot be substituted for the runtime scanner's node-ID
+cursor. The compatible domain-index/migration design and SQLite runtime registry
+remain outstanding, as does production composition. Pages are not a durable
+snapshot across transactions; callers must account for concurrent changes.
+
 ## SQLite projection prerequisite parity
 
 SqliteRuntimeDiscoveryRepository now exposes the same conditional runtime

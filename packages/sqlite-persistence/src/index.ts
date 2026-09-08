@@ -8,10 +8,11 @@ import type {
   PersistenceBackup,
   PersistenceProvider,
   PersistenceRecord,
+  PersistenceScan,
   PersistenceTransaction,
   PersistenceWrite,
 } from '@control-plane/deployment'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, gt } from 'drizzle-orm'
 import {
   drizzle,
   type AsyncRemoteCallback,
@@ -344,6 +345,26 @@ class SqliteRecordTransaction implements PersistenceTransaction {
       .from(records)
       .where(eq(records.namespace, namespace))
       .orderBy(records.updatedAt, records.id)
+    return result.map(decodeRecord)
+  }
+
+  async scan(namespace: string, options: PersistenceScan): Promise<readonly PersistenceRecord[]> {
+    validName(namespace)
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 128) {
+      throw new SqlitePersistenceError('SQLITE_INVALID_RECORD')
+    }
+    if (options.afterId !== undefined) validIdentity(namespace, options.afterId)
+    const result = await this.database
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.namespace, namespace),
+          options.afterId === undefined ? undefined : gt(records.id, options.afterId)
+        )
+      )
+      .orderBy(records.id)
+      .limit(options.limit)
     return result.map(decodeRecord)
   }
 }
