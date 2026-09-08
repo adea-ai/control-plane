@@ -75,7 +75,13 @@ the exact profile and Skill version identities, revisions, digests, schema versi
 states using the same validation as managed Pi. Validated profile/Skill instructions are included
 as structured task inputs, without adding Pi-only restrictions or replacing native harness-owned
 instructions. The context-only injection seam remains available for existing callers. This shared
-materialization does not yet enable a standalone ACP launcher or validate its native model route.
+materialization does not yet enable a standalone ACP launcher.
+
+The resolver also accepts a `LocalRuntimeModelRoute`. When supplied, the route's declared logical
+alias, provider, provider class, residency and capabilities must satisfy the ExecutionPlan before
+task data is read. Managed Pi uses the same policy checks. This validates declarations only: an ACP
+launcher must separately enforce the selected native model/provider. The legacy context-only
+injection seam does not infer a route or certify native configuration.
 
 Runtime interactions use the same durable workflow signal as other profiles. Input responses carry
 the bounded structured value validated by the interaction domain and are translated to the direct

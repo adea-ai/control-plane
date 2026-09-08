@@ -12,6 +12,7 @@ import {
 } from '@control-plane/context'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { LocalRuntimeTransport } from './composition.js'
+import type { LocalRuntimeModelRoute } from './runtime-model-route.js'
 import {
   resolvePublishedRuntimeInputs,
   type LocalRuntimeCatalog,
@@ -49,11 +50,13 @@ export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRun
 /** Materialize pinned inputs; native harness instructions and configuration stay native-owned. */
 export function createRepositoryAcpTaskPromptResolver(
   repository: Pick<ContextPackageRepository, 'get'>,
-  catalog?: LocalRuntimeCatalog
+  catalog?: LocalRuntimeCatalog,
+  modelRoute?: LocalRuntimeModelRoute
 ): NonNullable<AcpDriverOptions['resolvePrompt']> {
   return async (request, signal) => {
     signal.throwIfAborted()
     const plan = assertExecutionPlanIntegrity(request.executionPlan)
+    modelRoute?.assertEligible(plan.constraints.models)
     const value = await repository.get(plan.contextPackage)
     signal.throwIfAborted()
     if (value === undefined) throw new Error('ACP_CONTEXT_PIN_UNRESOLVED')
