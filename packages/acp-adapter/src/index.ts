@@ -2158,3 +2158,4 @@ function stable(value: unknown): string {
 }
 
 export * from './gateway.js'
+export * from './stdio-client.js'
