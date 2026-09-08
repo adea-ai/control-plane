@@ -226,3 +226,20 @@ tests pass six cases (25 assertions). These use controlled service/network
 responses. The new architecture operation is explicitly partially verified:
 native execution through this public route, PostgreSQL/Cloud wiring, relay,
 retention, and terminal-race reconciliation remain open.
+
+## PostgreSQL cancellation receipts and server wiring
+
+Migration `0035_execution_cancellations.sql` adds the dedicated cancellation table
+and workspace/project index. The repository validates stored scope and uses
+transaction-scoped advisory locking for first-request reservation and immutable
+acknowledgement updates. The PostgreSQL regression verifies a concurrent winner,
+repository reconstruction, first ACK preservation, and scope separation. Managed
+Cloud and Hosted Server now supply this service to the HTTP composition, with
+explicit construction assertions. Local continues using SQLite.
+
+The full integration command passed, including migration, remote transport drill,
+database outage, restart, and backup/restore. Workspace lint, types, formatting,
+and tests passed, followed by focused Cloud and Hosted composition checks. No live
+Neon or deployment mutation was performed. Public cancellation through PostgreSQL
+with real Restate/native runtime, terminal races, retention and all-profile
+convergence still require acceptance evidence.

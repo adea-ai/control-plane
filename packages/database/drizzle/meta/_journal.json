@@ -246,6 +246,13 @@
       "when": 1788848018959,
       "tag": "0034_interaction_commands",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788852087592,
+      "tag": "0035_execution_cancellations",
+      "breakpoints": true
     }
   ]
 }

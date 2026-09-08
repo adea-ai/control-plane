@@ -47,6 +47,7 @@ import { PostgresExecutionValidationCommandRepository } from './validation-comma
 import { PostgresEvaluationRepository } from './evaluation-repository.ts'
 import { PostgresInteractionRepository } from './interaction-repository.ts'
 import { PostgresInteractionCommandRepository } from './interaction-command-repository.ts'
+import { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.ts'
 import { PostgresMemoryWriteProposalRepository } from './memory-write-proposal-repository.ts'
 import {
   PostgresProjectStateRepository,
@@ -1714,6 +1715,48 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(results[0].receipt).toEqual(results[1].receipt)
     const winner = results[0].receipt
     const restarted = new PostgresInteractionCommandRepository(isolated.application)
+    expect(await restarted.get(request)).toEqual(winner)
+    const accepted = await restarted.markAccepted(request, '2026-09-08T00:01:00.000Z')
+    expect(accepted).toEqual({ ...winner, acceptedAt: '2026-09-08T00:01:00.000Z' })
+    expect(await repository.markAccepted(request, '2026-09-08T00:02:00.000Z')).toEqual(accepted)
+    expect(await repository.reserve({ request: alternative })).toEqual({
+      receipt: accepted,
+      inserted: false,
+    })
+    expect(
+      await repository.get({ ...request, caller: { servicePrincipalId: 'svc_other' } })
+    ).toBeUndefined()
+    expect(
+      await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
+    ).toBeUndefined()
+  })
+
+  test('execution cancellation receipts retain one concurrent winner and first confirmed acknowledgement', async () => {
+    await isolated.migrate()
+    const repository = new PostgresExecutionCancellationRepository(isolated.application)
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      operation: 'execution.cancel',
+      payload: { executionId: 'exe_01JABCDEF0123456789ABCDEFG' },
+    }
+    const alternative = { ...request, commandId: 'cmd_01JABCDEF0123456789ABCDEFH' }
+    expect(await repository.get(request)).toBeUndefined()
+    await expect(repository.markAccepted(request, '2026-09-08T00:00:00.000Z')).rejects.toThrow(
+      'EXECUTION_CANCELLATION_MISSING'
+    )
+    await expect(
+      repository.reserve({ request, acceptedAt: '2026-09-08T00:00:00.000Z' })
+    ).rejects.toThrow('EXECUTION_CANCELLATION_PRECONFIRMED')
+    const results = await Promise.all([
+      repository.reserve({ request }),
+      new PostgresExecutionCancellationRepository(isolated.application).reserve({
+        request: alternative,
+      }),
+    ])
+    expect(results.filter((result) => result.inserted)).toHaveLength(1)
+    expect(results[0].receipt).toEqual(results[1].receipt)
+    const winner = results[0].receipt
+    const restarted = new PostgresExecutionCancellationRepository(isolated.application)
     expect(await restarted.get(request)).toEqual(winner)
     const accepted = await restarted.markAccepted(request, '2026-09-08T00:01:00.000Z')
     expect(accepted).toEqual({ ...winner, acceptedAt: '2026-09-08T00:01:00.000Z' })

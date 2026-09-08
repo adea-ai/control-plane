@@ -25,6 +25,7 @@ import {
   PostgresExecutionRepository,
   PostgresInteractionRepository,
   PostgresInteractionCommandRepository,
+  PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
   PostgresRuntimeCommandRepository,
   PostgresRuntimeDiscoveryRepository,
@@ -46,6 +47,7 @@ import {
   CommandInboxService,
   ExecutionLifecycleService,
   DurableInteractionCommandService,
+  DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
 } from '@control-plane/domain'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
@@ -131,6 +133,7 @@ export class HostedServerControlPlaneComposition {
   readonly discovery: StaticServiceDiscovery
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly interactionCommandService: DurableInteractionCommandService
+  readonly executionCancellationService: DurableExecutionCancellationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
@@ -233,6 +236,11 @@ export class HostedServerControlPlaneComposition {
         new PostgresCommandAcceptanceRepository(this.connection.database),
         new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
       )
+    )
+    this.executionCancellationService = new DurableExecutionCancellationService(
+      new PostgresExecutionCancellationRepository(this.connection.database),
+      new PostgresCommandAcceptanceRepository(this.connection.database),
+      new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
     )
     this.runtimeActivityPort =
       options.runtimeActivityPort ??

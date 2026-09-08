@@ -899,7 +899,7 @@
       "trace": {
         "auth": "execution:cancel scope plus accepting principal and workspace/project ownership",
         "service": "ExecutionCancellationController -> DurableExecutionCancellationService",
-        "persistence": "SQLite immutable cancellation receipts",
+        "persistence": "SQLite and PostgreSQL immutable cancellation receipts",
         "execution": "Restate cancelExecution shared handler",
         "delivery": "first-command idempotency key and strict signal acceptance",
         "cleanup": "existing execution lifecycle cleanup after cancellation confirmation"
@@ -923,7 +923,7 @@
         "issue": 188,
         "severity": "high",
         "owner": "execution-control",
-        "disposition": "Add PostgreSQL/Cloud wiring and remote native certification, relay support, retention and terminal-race reconciliation."
+        "disposition": "Verify PostgreSQL public cancellation with real Restate and remote native execution; complete relay support, retention and terminal-race reconciliation."
       },
       "inOpenApi": true,
       "openApiOperationId": "execution.cancel",
@@ -1364,7 +1364,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:b6cbcfc66acd4a48466cb2142449d0348a7476ac3b300155a510e4979eafaa37"
+      "sourceDigest": "sha256:431f71392778e97b611731a1f84e8661e7ffb2c1bb5b5ae7bcb3531a90d58c61"
     },
     {
       "id": "hosted-server",
@@ -1403,7 +1403,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:49de0352f2f918b84e1844894d04b617a6ae5ef41a829e079371fe0b0b918644"
+      "sourceDigest": "sha256:2601db420518094bc7ff7d267c72354441a65b7f8c826fe0ec4a0403068ed205"
     },
     {
       "id": "hosted-simple",

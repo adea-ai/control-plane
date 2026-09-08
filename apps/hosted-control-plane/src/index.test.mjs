@@ -2,7 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { DurableInteractionCommandService } from '@control-plane/domain'
+import {
+  DurableInteractionCommandService,
+  DurableExecutionCancellationService,
+} from '@control-plane/domain'
 import {
   DurableRemoteWorkflowRuntime,
   RuntimeDiscoveryAttemptRouter,
@@ -124,6 +127,9 @@ describe('Hosted server composition', () => {
       )
       expect(composition.runtimeActivityPort).toBeInstanceOf(DurableRemoteWorkflowRuntime)
       expect(composition.interactionCommandService).toBeInstanceOf(DurableInteractionCommandService)
+      expect(composition.executionCancellationService).toBeInstanceOf(
+        DurableExecutionCancellationService
+      )
       expect(composition.runtimeAttemptRouter).toBeInstanceOf(RuntimeDiscoveryAttemptRouter)
       expect(calls).toEqual([
         'database:check',

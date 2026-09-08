@@ -7,6 +7,7 @@ import { ControlApiFixtures, ErrorResponseEnvelopeSchema } from '@control-plane/
 import {
   CommandInboxService,
   DurableInteractionCommandService,
+  DurableExecutionCancellationService,
   InMemoryCommandAcceptanceRepository,
   executionConstraintFixtures,
 } from '@control-plane/domain'
@@ -1374,6 +1375,9 @@ describe('Control API', () => {
     expect(composition.executionValidationService).toBeInstanceOf(DurableExecutionValidationService)
     expect(composition.executionAcceptanceService).toBeInstanceOf(DurableExecutionAcceptanceService)
     expect(composition.interactionCommandService).toBeInstanceOf(DurableInteractionCommandService)
+    expect(composition.executionCancellationService).toBeInstanceOf(
+      DurableExecutionCancellationService
+    )
     expect(composition.serviceAuthenticator).toBeInstanceOf(PolicyServiceAuthenticator)
   })
 })

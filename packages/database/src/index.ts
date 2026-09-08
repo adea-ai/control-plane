@@ -111,3 +111,4 @@ export {
 export { withDomainTransaction } from './transaction.js'
 export type { DomainTransaction } from './transaction.js'
 export { PostgresInteractionCommandRepository } from './interaction-command-repository.js'
+export { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.js'
