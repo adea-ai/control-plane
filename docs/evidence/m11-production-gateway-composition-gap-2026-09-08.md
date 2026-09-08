@@ -1,0 +1,42 @@
+# M11 production Runtime Gateway composition gap
+
+Inspected candidate: `be6fc08f6be872fe346de00e0d822d1c439d30a6`.
+Status: high-severity implementation and acceptance gap under #188/#194;
+requirements/wiring reconciliation under #186/#187. Not a permissions failure
+or a validated exploit finding.
+
+## Dependency inventory
+
+| Boundary                   | Current reachable evidence                                                                                                                                                                                                                        | Required production work                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Executable                 | `apps/runtime-gateway/package.json` starts `src/start.ts`; it calls `start()` with no server. `src/index.ts` rejects missing server outside local environments.                                                                                   | Build and wire the validated composition before readiness; preserve refusal on missing dependencies.                                                                                                                                     |
+| Identity                   | `packages/runtime-gateway-protocol/src/authentication.ts` declares verification, revocation lookup and revocation subscription. The authenticator consumes this port; no concrete production validator was found in the TypeScript source search. | Resolve the accepted issuer/proof-validation and revocation boundary, configure its trust inputs explicitly, and test expiry, wrong scope, replay and revocation during a live channel. Do not promote synthetic identity to production. |
+| Channel ownership          | `apps/runtime-gateway/src/websocket-coordination.ts` contains the coordination interface and an in-memory implementation.                                                                                                                         | Durable generation fencing and cross-instance replacement delivery, with restart, competing claims, stale heartbeat/release and workspace isolation tests.                                                                               |
+| Persistence                | PostgreSQL runtime connection, inventory checkpoint, discovery projection, command and event-effect implementations exist under `packages/database/src`.                                                                                          | Compose these using the application database role; prove coherent updates/recovery instead of assuming separately durable writes are atomic.                                                                                             |
+| Inventory and freshness    | RuntimeInventoryIngestionService is constructed by tests. No production caller of health refresh or disappearance expiry was found.                                                                                                               | Wire message routing plus bounded scheduling and discovery updates; verify shorter TTL, exact expiry, restart and reconnect against durable state.                                                                                       |
+| Reachability and telemetry | The coordination module provides recording publishers/metrics used by fixtures.                                                                                                                                                                   | Connect bounded production telemetry and authoritative reachability publication with redaction, failure behavior and shutdown tests.                                                                                                     |
+
+`scripts/run-cloud-remote-drill.mjs` constructs a real WebSocket server and
+PostgreSQL command/event services, but uses synthetic identity, in-memory
+coordination and recording telemetry. Its inventory handler explicitly throws
+`UNEXPECTED_INVENTORY`. It cannot prove production startup, durable channel
+ownership or inventory ingestion/freshness, regardless of a passing drill.
+
+## Implementation order and release gate
+
+1. Establish the identity-validation integration contract without changing the
+   owning identity authority or reusing fixture keys/credentials.
+2. Implement durable channel coordination and replacement notification with
+   explicit concurrency and restart semantics.
+3. Compose the existing durable repositories, real message handlers and
+   operational sinks; add bounded health/disappearance refresh and cleanup.
+4. Wire configuration through the executable, including dependency readiness
+   and graceful drain. Test the actual executable, not only injected `start`.
+5. Run the pinned Railway/Neon/Restate candidate with real authenticated native
+   runtime traffic and the #188 fault matrix. Keep native execution-host work
+   in `m11-native-remote-host-gap-2026-09-08.md` as a separate prerequisite.
+
+These are prerequisites, not completed checklist items. The existing startup
+tests establish fail-closed missing composition and injected lifecycle only.
+No production configuration, identity authority or service was modified during
+this inspection. No workers or servers were started.
