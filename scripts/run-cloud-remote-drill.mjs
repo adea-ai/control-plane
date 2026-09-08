@@ -8,7 +8,7 @@ import {
   composeProviderContextPackage,
   contextPackageSerializationFixtures,
 } from '../packages/context/src/index.ts'
-import { ExecutionLifecycleService } from '../packages/domain/src/index.ts'
+import { ExecutionLifecycleService, InteractionService } from '../packages/domain/src/index.ts'
 import { RuntimeConnectionRegistry } from '../packages/runtime-sdk/src/index.ts'
 import {
   PostgresContextPackageRepository,
@@ -50,7 +50,7 @@ import { GatewayProtocolManifest } from '../packages/runtime-gateway-protocol/sr
 const database = await createIsolatedPostgres({ migrate: true })
 const directory = await mkdtemp(join(tmpdir(), 'cloud-remote-drill-'))
 const store = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 65536 })
-let server, native, socket, authenticator, dispatch
+let server, native, socket, authenticator, dispatch, approval
 try {
   const now = new Date().toISOString()
   const deadlineAt = new Date(Date.now() + 15000).toISOString()
@@ -79,6 +79,7 @@ try {
     status: 'connected',
     health: 'healthy',
     capabilities: [
+      { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
     ],
@@ -106,8 +107,9 @@ try {
     connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
     freshness: { state: 'fresh', observedAt: now, expiresAt: deadlineAt },
     versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1', protocol: '1.5.0' },
-    capabilities: ['filesystem.read', 'stream.output'],
+    capabilities: ['filesystem.read', 'stream.output', 'interaction.approval'],
     capabilityDetails: [
+      { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
     ],
@@ -296,6 +298,77 @@ try {
     async () => (await commands.get(command.commandId)).status === 'acknowledged',
     'command-ack'
   )
+  // Seed an authorized response to exercise the real remote command and socket
+  // boundary. The fixture node does not originate a native permission request.
+  const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
+  const responseId = 'cmd_01JABCDEF0123456789ABCDEFH'
+  const interactionService = new InteractionService(
+    new PostgresInteractionRepository(database.application)
+  )
+  await interactionService.request({
+    interactionId,
+    executionId,
+    attemptId,
+    kind: 'permission',
+    prompt: { title: 'Approve isolated fixture' },
+    allowedActions: ['grant', 'deny'],
+    allowedPrincipalIds: ['svc_drill'],
+    requestedAt: now,
+    expiresAt: deadlineAt,
+  })
+  await interactionService.respond({
+    interactionId,
+    executionId,
+    attemptId,
+    responseId,
+    action: 'grant',
+    respondingPrincipalId: 'svc_drill',
+    expectedVersion: 1,
+    respondedAt: new Date().toISOString(),
+  })
+  const approvalInput = {
+    executionId,
+    attemptId,
+    interactionId,
+    responseId,
+    action: 'grant',
+    effectKey: 'remote-drill:approval',
+  }
+  approval = composition.runtime.applyInteraction(approvalInput)
+  let approvalError
+  approval.catch((error) => {
+    approvalError = error
+  })
+  let approvalRecord
+  await until(async () => {
+    if (approvalError) throw approvalError
+    approvalRecord = (await commands.listDispatchable(nodeId, new Date().toISOString(), 10)).find(
+      (record) => record.commandId !== command.commandId
+    )
+    return approvalRecord !== undefined
+  }, 'approval-queued')
+  await delivery.deliver(approvalRecord.commandId, { channelGeneration: 1, sequence: 2 })
+  await until(() => received.length === 3, 'approval-delivery')
+  const approvalCommand = received[2]
+  strictEqual(approvalCommand.operation, 'runtime.approval')
+  deepStrictEqual(approvalCommand.payload.parameters, {
+    handleId: `managed-pi:${attemptId}`,
+    interactionId,
+    decision: 'approve',
+  })
+  socket.send(
+    JSON.stringify({
+      ...golden.ack,
+      commandId: approvalCommand.commandId,
+      payloadHash: approvalCommand.payloadHash,
+      sentAt: new Date().toISOString(),
+      sequence: approvalCommand.sequence,
+    })
+  )
+  await until(
+    async () => (await commands.get(approvalCommand.commandId)).status === 'acknowledged',
+    'approval-ack'
+  )
   const bridge = new HostedManagedPiTerminalBridge({
     artifactStore: new ObjectStoreHostedArtifactStore(store),
   })
@@ -321,6 +394,11 @@ try {
     return (await executions.getExecution(executionId)).state === 'completed'
   }, 'terminal-execution')
   const outcome = await dispatch
+  deepStrictEqual(await approval, outcome)
+  const retainedApproval = await commands.get(approvalCommand.commandId)
+  deepStrictEqual(await composition.runtime.applyInteraction(approvalInput), outcome)
+  deepStrictEqual(await commands.get(approvalCommand.commandId), retainedApproval)
+  strictEqual(received.length, 3)
   strictEqual(outcome.outcome, 'completed')
   strictEqual(outcome.resultReference, result.result.artifact.artifactId)
   await until(
@@ -387,7 +465,7 @@ try {
   for (const record of cancellationRecords) deepStrictEqual(record, cancellationRecords[0])
   deepStrictEqual(await commands.get(cancellationRecords[0].commandId), cancellationRecords[0])
   console.log(
-    'Cloud remote drill passed: PostgreSQL dispatch, signed WebSocket ACK/result, Artifact-backed terminal state, immutable dispatch replay and persistence-only cancellation replay. Scripted node and cancellation waiter; cancellation transport, usage settlement and live provider execution remain unverified.'
+    'Cloud remote drill passed: PostgreSQL dispatch and approval, signed WebSocket command/approval ACK and result, Artifact-backed terminal state, immutable dispatch/approval replay and persistence-only cancellation replay. Approval response is seeded; node and cancellation waiter are scripted. Native permission origination, cancellation transport, usage settlement and live provider execution remain unverified.'
   )
 } finally {
   socket?.close()
@@ -395,6 +473,7 @@ try {
   await native?.stop(true)
   authenticator?.close()
   await dispatch?.catch(() => {})
+  await approval?.catch(() => {})
   await store.close()
   await database.dispose()
   await rm(directory, { recursive: true, force: true })

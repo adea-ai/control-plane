@@ -59,3 +59,23 @@ before the outcome waiter is invoked again. This uses an in-memory command
 repository and a scripted outcome waiter; it proves command construction/replay,
 not WebSocket delivery or runtime completion. The retries are before the attempt
 deadline. Post-deadline reconciliation remains a separate acceptance case.
+
+## PostgreSQL and authenticated WebSocket approval drill
+
+`bun run test:integration` passed with this extension on 2026-09-08, including
+the PostgreSQL connection-loss, restart, and backup/restore drills.
+
+`scripts/run-cloud-remote-drill.mjs` now seeds an authorized permission response,
+uses the production remote command factory and PostgreSQL command repository to
+queue `runtime.approval`, and delivers it through the authenticated gateway
+WebSocket. The scripted node checks the command's handle, interaction ID, and
+`approve` decision, then sends an acknowledgement. The drill waits for the
+durable acknowledged state before submitting its scripted execution result.
+Approval replay must retain the same command record and not add another received
+socket command. The fixture explicitly advertises `interaction.approval`.
+
+This extends transport evidence, not native-provider certification: the
+permission response is seeded instead of originating from a native runtime,
+the node and terminal result are scripted, and Restate is not exercised by this
+drill. The authenticated public API, Restate workflow, gateway, and a real
+runtime still need to be proven together for full managed-cloud acceptance.
