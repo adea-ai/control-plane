@@ -72,3 +72,27 @@ composition. The report emitted
 `clientRecreationAfterCleanup: reconciliation-required-no-new-request` and
 `cleanup: completed`. This proves retained refusal after ordinary process cleanup
 and client recreation, not abrupt host loss or restoration of the old result.
+
+## Terminal-result recovery implementation
+
+The client now stores validated terminal snapshots under
+`terminal-results/<attemptId>.json`, separately from disposable prompt/process
+directories. Snapshots contain the exact handle and terminal status, including
+completed output and usage, or a normalized failure/cancellation. Files use 0600
+permissions, an 8 MiB bound, a synced temporary file, atomic rename, and directory
+sync before status/progress consumers observe a terminal outcome. Cleanup keeps
+the snapshot and admission fence while removing temporary prompt material.
+
+Fresh-client status/reconciliation validates the persisted record and exact
+handle identity, refusing missing, malformed, oversized, symlinked, nonterminal,
+or mismatched records as unknown/non-retryable reconciliation work. Late native
+events cannot mutate settled results. A persistence failure does not publish a
+completed outcome; cleanup still stops the child and removes prompt material.
+
+The process-backed suite passes 8 tests / 42 assertions, including recovered
+success, cancellation, and runtime failure after cleanup, damaged records,
+mismatched handle timestamps, and blocked terminal storage. This supersedes the
+earlier statement that no completed results can be recovered. Live in-flight
+reattachment, progress-history replay, replaying start after recreation, abrupt
+host-loss/power-loss certification, and real-Pi verification of this terminal
+storage change remain open. This is not full M11.3 recovery acceptance.

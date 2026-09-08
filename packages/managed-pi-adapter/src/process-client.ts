@@ -14,6 +14,7 @@ import {
   type ManagedPiClient,
   type ManagedPiEvent,
 } from './index.js'
+import { persistTerminalRecord, readTerminalRecord } from './terminal-record.js'
 
 const DRIVER_VERSION = '1.1.0'
 const PROTOCOL_VERSION = '1.0.0'
@@ -56,6 +57,7 @@ interface ProcessExecution {
   outputTokens: number
   durationMs: number
   error?: Error
+  persistence?: Promise<void>
 }
 
 export class ManagedPiProcessClient implements ManagedPiClient {
@@ -265,7 +267,9 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     const execution = this.#require(handleInput)
     let cursor = afterSequence
     while (true) {
+      if (execution.persistence) await execution.persistence
       for (const event of execution.events) {
+        if (execution.persistence) await execution.persistence
         if (event.sequence <= cursor) continue
         cursor = event.sequence
         yield event
@@ -294,17 +298,21 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       if (execution.state !== 'running') return this.#status(execution)
       execution.state = 'cancelled'
       execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
+      this.#persist(execution)
       appendEvent(execution, { kind: 'status', state: 'cancelled' }, this.#now())
     }
     return this.#status(execution)
   }
 
   async status(handleInput: RuntimeExecutionHandle) {
-    return this.#status(this.#require(handleInput))
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    const execution = this.#executions.get(handle.handleId)
+    if (!execution) return readTerminalRecord(this.#dataDirectory, handle)
+    return this.#status(this.#require(handle))
   }
 
   async reconcile(handleInput: RuntimeExecutionHandle) {
-    return this.#status(this.#require(handleInput))
+    return this.status(handleInput)
   }
 
   async session(): Promise<never> {
@@ -314,11 +322,16 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   async cleanup(handleInput: RuntimeExecutionHandle): Promise<void> {
     const execution = this.#require(handleInput)
     await execution.rpc.stop()
-    await rm(execution.directory, { recursive: true, force: true })
-    this.#executions.delete(execution.handle.handleId)
+    try {
+      if (execution.persistence) await execution.persistence
+    } finally {
+      await rm(execution.directory, { recursive: true, force: true })
+      this.#executions.delete(execution.handle.handleId)
+    }
   }
 
   #observe(execution: ProcessExecution, event: Record<string, unknown>): void {
+    if (execution.state !== 'running') return
     if (event['type'] === 'message_update') {
       const update = asRecord(event['assistantMessageEvent'])
       const usage = asRecord(event['usage'])
@@ -370,9 +383,11 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
       if (execution.error !== undefined) {
         execution.state = 'errored'
+        this.#persist(execution)
         appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
       } else {
         execution.state = 'succeeded'
+        this.#persist(execution)
         appendEvent(
           execution,
           {
@@ -395,10 +410,26 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     execution.error = error
     execution.state = 'errored'
     execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
+    this.#persist(execution)
     appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
   }
 
-  #status(execution: ProcessExecution) {
+  #persist(execution: ProcessExecution): void {
+    execution.persistence = persistTerminalRecord(
+      this.#dataDirectory,
+      execution.handle,
+      this.#snapshot(execution)
+    )
+    // Consumers await this same rejection; avoid an unhandled rejection before they poll.
+    void execution.persistence.catch(() => undefined)
+  }
+
+  async #status(execution: ProcessExecution) {
+    if (execution.persistence) await execution.persistence
+    return this.#snapshot(execution)
+  }
+
+  #snapshot(execution: ProcessExecution) {
     const observedAt = this.#now().toISOString()
     if (execution.state === 'succeeded') {
       return {

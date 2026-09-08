@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -85,7 +85,7 @@ describe('ManagedPiProcessClient', () => {
     const executablePath = join(directory, 'pi-fixture.mjs')
     const recordPath = join(directory, 'record.json')
     await writeManagedPiRpcFixture(executablePath)
-    const client = new ManagedPiProcessClient({
+    const clientOptions = {
       executablePath,
       dataDirectory: join(directory, 'executions'),
       environment: {
@@ -100,7 +100,8 @@ describe('ManagedPiProcessClient', () => {
           model: 'fixture-model',
         }),
       },
-    })
+    }
+    const client = new ManagedPiProcessClient(clientOptions)
     const adapter = new ManagedPiAdapter({
       transport: new DirectLocalRuntimeTransport(
         new ManagedPiDriver({
@@ -185,9 +186,64 @@ describe('ManagedPiProcessClient', () => {
       })
       expect(record.prompt).toBe('bounded task context')
       expect(record.systemPrompt).toBe('immutable system instruction')
+      const nativeStatus = await client.status(handle)
+      await adapter.cleanup(handle)
+      const recoveredHandle = handle
+      handle = undefined
+      const recreated = new ManagedPiProcessClient(clientOptions)
+      const recovered = await recreated.reconcile(recoveredHandle)
+      expect(recovered).toMatchObject({
+        state: 'succeeded',
+        result: nativeStatus.result,
+      })
+      await expect(
+        recreated.reconcile({ ...recoveredHandle, startedAt: '2026-01-01T00:00:00.000Z' })
+      ).rejects.toMatchObject({ code: 'PI_TERMINAL_RECONCILIATION_REQUIRED' })
+      await writeFile(
+        join(directory, 'executions', 'terminal-results', `${recoveredHandle.attemptId}.json`),
+        '{'
+      )
+      await expect(recreated.status(recoveredHandle)).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
+        classification: 'unknown',
+        retryable: false,
+      })
     } finally {
       if (handle !== undefined) await adapter.cleanup(handle).catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('does not publish completed status when terminal storage fails', async () => {
+    const fixture = await processAdapterFixture('complete')
+    let handle
+    const events = []
+    try {
+      await mkdir(join(fixture.directory, 'executions'), { recursive: true })
+      await writeFile(join(fixture.directory, 'executions', 'terminal-results'), 'blocked')
+      handle = await fixture.adapter.start({
+        attemptId: `att_${'3'.repeat(26)}`,
+        idempotencyKey: 'process-client:terminal-write-failure',
+        executionPlan: fixture.plan,
+      })
+      await expect(
+        (async () => {
+          for await (const event of fixture.adapter.progress(handle)) events.push(event)
+        })()
+      ).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
+        classification: 'unknown',
+        retryable: false,
+      })
+      expect(
+        events.some((event) => event.type === 'status' && event.data.state === 'completed')
+      ).toBe(false)
+      await expect(fixture.adapter.status(handle)).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
+      })
+    } finally {
+      if (handle) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
     }
   })
 
@@ -225,6 +281,12 @@ describe('ManagedPiProcessClient', () => {
           retryable: false,
         },
       })
+      await fixture.adapter.cleanup(handle)
+      expect(await fixture.recreate().reconcile(handle)).toMatchObject({
+        state: 'errored',
+        error: { code: 'PI_RUNTIME_ERROR', retryable: false },
+      })
+      handle = undefined
     } finally {
       if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
       await fixture.cleanup()
@@ -269,6 +331,9 @@ describe('ManagedPiProcessClient', () => {
       expect(status.state).toBe('cancelled')
       await delay(30)
       expect((await fixture.adapter.status(handle)).state).toBe('cancelled')
+      await fixture.adapter.cleanup(handle)
+      expect((await fixture.recreate().reconcile(handle)).state).toBe('cancelled')
+      handle = undefined
     } finally {
       if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
       await fixture.cleanup()
@@ -297,7 +362,7 @@ async function processAdapterFixture(mode) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-rpc-case-'))
   const executablePath = join(directory, 'pi-fixture.mjs')
   await writeManagedPiRpcFixture(executablePath)
-  const client = new ManagedPiProcessClient({
+  const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
     environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_MODE: mode },
@@ -309,7 +374,8 @@ async function processAdapterFixture(mode) {
         model: 'fixture-model',
       }),
     },
-  })
+  }
+  const client = new ManagedPiProcessClient(clientOptions)
   const adapter = new ManagedPiAdapter({
     transport: new DirectLocalRuntimeTransport(
       new ManagedPiDriver({
@@ -322,6 +388,7 @@ async function processAdapterFixture(mode) {
   })
   return {
     adapter,
+    recreate: () => new ManagedPiProcessClient(clientOptions),
     directory,
     plan: createExecutionPlanTestFixture({
       profileCapabilityRequirements: ['stream.output'],
