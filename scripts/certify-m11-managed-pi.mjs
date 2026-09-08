@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createExecutionPlanTestFixture } from '../packages/execution-plan/src/testing.ts'
-import { ManagedPiAdapter, ManagedPiDriver } from '../packages/managed-pi-adapter/src/index.ts'
+import {
+  ManagedPiAdapter,
+  ManagedPiDriver,
+  translateExecutionPlanToManagedPi,
+} from '../packages/managed-pi-adapter/src/index.ts'
 import { ManagedPiProcessClient } from '../packages/managed-pi-adapter/src/process-client.ts'
 import { DirectLocalRuntimeTransport } from '../packages/runtime-sdk/src/index.ts'
 
@@ -158,8 +162,18 @@ try {
     idempotencyKey: 'real-pi-certification',
     executionPlan: plan,
   }
-  const handle = await adapter.start(command)
+  const nativeCommand = {
+    attemptId: command.attemptId,
+    idempotencyKey: command.idempotencyKey,
+    configuration: translateExecutionPlanToManagedPi(plan, '1.2.0'),
+  }
+  const admitted = await Promise.all(Array.from({ length: 8 }, () => client.start(nativeCommand)))
+  const handle = admitted[0]
   handles.push(handle)
+  for (const entry of admitted) assert.deepEqual(entry, handle)
+  const changed = structuredClone(nativeCommand)
+  changed.configuration.limits.duration.maximumMs += 1
+  await assert.rejects(client.start(changed), /PI_START_IDEMPOTENCY_CONFLICT/)
   assert.deepEqual(await adapter.start(command), handle)
   const events = []
   await bounded(
@@ -232,6 +246,8 @@ try {
     completed: true,
     cancellation: true,
     duplicateStart: 'same-handle-one-request',
+    concurrentNativeStarts: 8,
+    changedNativeCommand: 'rejected',
     localComposition: {
       persistence: 'sqlite',
       workflow: 'real-local-restate',

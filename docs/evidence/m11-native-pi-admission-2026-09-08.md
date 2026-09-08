@@ -23,3 +23,18 @@ Admission receipts remain in memory. Client/process restart, explicit uncertain
 allocation reconciliation, persistent receipt retention, real tool/approval
 support, and native sandbox isolation remain separate acceptance gates. This
 change does not enable Pi orchestration or relax disabled native tools/context.
+
+## Published runtime verification
+
+The extended `scripts/certify-m11-managed-pi.mjs` passed against a disposable
+installation of published Pi **0.84.2**, Node **24.18.0**, and Bun **1.4.0**.
+Eight concurrent calls entered the native process client and returned one handle;
+the completed prompt reached the deterministic loopback model endpoint exactly
+once. A changed configuration was rejected. Adapter replay, native cancellation,
+and the real Local SQLite/Restate composition also passed, with exactly three
+model requests across the complete runner and 11/3 input/output tokens on the
+completed calls. The global runtime installation was not modified.
+
+The runner emitted `cleanup: completed`. This strengthens the admission evidence
+from a wire fixture to the published Pi executable; it does not change the
+explicit tool, approval, sandbox, real-provider-quality, or restart limitations.
