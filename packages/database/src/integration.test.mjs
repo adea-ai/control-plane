@@ -1528,7 +1528,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         return acceptRuntimeHealthFixture(isolated.application, event)
       },
     }
-    const dispatcher = new PostgresRuntimeHealthEventDispatcher(isolated.application, transport)
+    let deliveryNow = Date.now()
+    const deliveryClock = () => new Date(deliveryNow)
+    const dispatcher = new PostgresRuntimeHealthEventDispatcher(
+      isolated.application,
+      transport,
+      deliveryClock
+    )
     const firstDispatch = dispatcher.dispatchBatch(1)
     expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
     expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
@@ -1540,10 +1546,27 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
     const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
       isolated.application,
-      transport
+      transport,
+      deliveryClock
     )
+    expect((await readPending()).filter((row) => row.status === 'failed')[0].nextAttemptAt).toEqual(
+      new Date(deliveryNow + 1_000)
+    )
+    // The other pending event remains eligible, but the failed event is not due yet.
     expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 2,
+      delivered: 1,
+      failed: 0,
+      conflicts: 0,
+    })
+    deliveryNow += 999
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 0,
+      failed: 0,
+      conflicts: 0,
+    })
+    deliveryNow += 1
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 1,
       failed: 0,
       conflicts: 0,
     })
@@ -1597,17 +1620,28 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
           return new Promise(() => {})
         },
       },
-      () => new Date(),
+      deliveryClock,
       10
     )
     expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
     expect(deliverySignal.aborted).toBe(true)
-    const wrongAck = new PostgresRuntimeHealthEventDispatcher(isolated.application, {
-      async deliver() {
-        return { acceptedDeliveryKey: 'wrong-key' }
+    deliveryNow += 1_000
+    const wrongAck = new PostgresRuntimeHealthEventDispatcher(
+      isolated.application,
+      {
+        async deliver() {
+          return { acceptedDeliveryKey: 'wrong-key' }
+        },
       },
-    })
+      deliveryClock
+    )
     expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+      delivered: 0,
+      failed: 0,
+      conflicts: 0,
+    })
+    deliveryNow += 2_000
     expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
       delivered: 1,
       failed: 0,
@@ -1615,6 +1649,78 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
     expect(await readApplied()).toHaveLength(3)
     expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+    await isolated.application.insert(outboxEvents).values({
+      aggregateType: 'runtime_connection',
+      aggregateId: runtimeConnectionId,
+      eventType: 'runtime.availability_changed',
+      payload: envelopes[0].change,
+    })
+    const exhausted = new PostgresRuntimeHealthEventDispatcher(
+      isolated.application,
+      {
+        async deliver() {
+          throw new Error('OFFLINE')
+        },
+      },
+      deliveryClock,
+      10_000,
+      { maximumAttempts: 2 }
+    )
+    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    deliveryNow += 1_000
+    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    const quarantined = (await readPending()).filter((row) => row.quarantinedAt !== null)
+    expect(quarantined).toHaveLength(1)
+    expect(quarantined[0]).toMatchObject({
+      status: 'failed',
+      attempts: 2,
+      nextAttemptAt: null,
+      quarantinedAt: new Date(deliveryNow),
+    })
+    deliveryNow += 86_400_000
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 0,
+      failed: 0,
+      conflicts: 0,
+    })
+    const deliveryCount = deliveries.length
+    await isolated.application.insert(outboxEvents).values([
+      {
+        aggregateType: 'runtime_connection',
+        aggregateId: runtimeConnectionId,
+        eventType: 'runtime.availability_changed',
+        payload: {},
+      },
+      {
+        aggregateType: 'runtime_connection',
+        aggregateId: 'wrong-runtime',
+        eventType: 'runtime.availability_changed',
+        payload: envelopes[0].change,
+      },
+    ])
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 0,
+      failed: 2,
+      conflicts: 0,
+    })
+    expect(deliveries).toHaveLength(deliveryCount)
+    for (const retry of [
+      { baseDelayMs: 0 },
+      { baseDelayMs: 60_001 },
+      { maximumAttempts: 0 },
+      { maximumAttempts: 101 },
+      { maximumAttempts: 1.5 },
+    ])
+      expect(
+        () =>
+          new PostgresRuntimeHealthEventDispatcher(
+            isolated.application,
+            transport,
+            deliveryClock,
+            10_000,
+            retry
+          )
+      ).toThrow('INVALID_RUNTIME_HEALTH_RETRY_POLICY')
     for (const timeout of [0, -1, 1.5, 60_001])
       expect(
         () =>

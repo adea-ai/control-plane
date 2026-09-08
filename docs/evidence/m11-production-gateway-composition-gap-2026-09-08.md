@@ -1,5 +1,23 @@
 # M11 production Runtime Gateway composition gap
 
+## Durable retry and quarantine policy
+
+Migration 0038 adds nullable next-attempt and quarantine timestamps plus a retry
+index to the shared outbox. Existing rows remain readable and immediately due.
+The health dispatcher filters due, nonquarantined rows in SQL. Failed deliveries
+persist exponential delays from a default 1000 ms base, capped at 60000 ms;
+the default maximum is five attempts. Configured base delay is 1–60000 ms and
+attempt limit is 1–100. Retry deadlines survive dispatcher recreation.
+
+Invalid payloads or aggregate mismatches quarantine without invoking transport;
+exhausted deliveries quarantine rather than retrying indefinitely. Quarantine
+retains the failed row and clears its retry deadline; it neither deletes evidence
+nor silently republishes it. Batch `failed` includes newly quarantined rows.
+No raw exception text is stored. The integration case checks before/exact due
+boundaries, persisted backoff, exhaustion, restart exclusion, malformed payloads,
+scope mismatches and invalid policy bounds. Operator inspection/requeue policy,
+fleet concurrency and independent scheduler wiring remain separate gates.
+
 ## Consumer process-exit conformance
 
 The health-dispatch PostgreSQL case now uses a repository-local consumer fixture
