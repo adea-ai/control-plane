@@ -56,9 +56,20 @@ cancellation. Early-notification and cleanup-deadline regressions failed before
 these fixes. The focused fixture uses a one-second request/cleanup budget and
 four-second turn budget, avoiding a narrow subprocess-start timing assumption.
 
+The concurrent-creation and early-buffer-limit follow-up passes 12 focused tests /
+41 assertions. Reverse-order create replies retain only their own session's early
+updates; duplicate tokens do not issue another create. Both the 4096-message and
+4 MiB early-buffer limits disconnect and retain the rejected token outcome.
+These are wire-fixture checks, not real-agent certification.
+
+CI run `34183431945` initially failed the PostgreSQL disruption drill's 30-second
+readiness check; the log does not retain the failed SQL probe diagnostic. The
+same recovery matrix passed locally with all 22 named scenarios, including
+restart and backup/restore. A failed-job rerun was requested without relaxing
+the readiness deadline. This does not establish the cause of the CI timeout.
+
 This implementation is not exported from the package entrypoint or ready for
-promotion. Required follow-up includes concurrent creation and early-buffer limit
-cases, late/ambiguous create reconciliation, late permission
+promotion. Required follow-up includes late/ambiguous create reconciliation, late permission
 requests after cancellation, retained-result limits, native session lifecycle
 operations, and full real-agent validation. Cache/thought usage is retained in
 the raw result; final accounting semantics still need explicit verification.

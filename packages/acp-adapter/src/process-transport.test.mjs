@@ -5,6 +5,7 @@ import { AcpProcessTransport } from './process-transport.ts'
 const source = `
 let buffer='', creates=0, prompts=0;
 const pending=new Map();
+const creating=[];
 const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
 const reply=(id,result)=>send({jsonrpc:'2.0',id,result});
 const finish=(sessionId,cancelled=false)=>{
@@ -22,6 +23,19 @@ process.stdin.on('data',chunk=>{
   if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:{}});
   if(m.method==='session/new'){
    creates++;
+   if(process.env.SCENARIO==='concurrent'){
+    creating.push({id:m.id,sessionId:'native-'+creates});
+    if(creating.length===2){
+     for(const c of creating)send({jsonrpc:'2.0',method:'session/update',params:{sessionId:c.sessionId,update:{sessionUpdate:'available_commands_update',owner:c.sessionId}}});
+     for(const c of [...creating].reverse())reply(c.id,{sessionId:c.sessionId});
+    }
+    continue;
+   }
+   if(process.env.SCENARIO==='early-count-limit'||process.env.SCENARIO==='early-byte-limit'){
+    const count=process.env.SCENARIO==='early-count-limit'?4097:9;
+    const padding=process.env.SCENARIO==='early-byte-limit'?'x'.repeat(500000):'';
+    for(let j=0;j<count;j++)send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-'+creates,update:{sessionUpdate:'available_commands_update',padding}}});
+   }
    if(process.env.SCENARIO==='early')send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-'+creates,update:{sessionUpdate:'available_commands_update',availableCommands:[]}}});
    if(process.env.SCENARIO!=='lost-create')reply(m.id,{sessionId:'native-'+creates});
   }
@@ -50,6 +64,59 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('concurrent creates retain their own early updates even when replies arrive in reverse order', async () => {
+  const { transport, driver } = fixture('concurrent')
+  try {
+    await transport.open()
+    await driver.inspect()
+    const [first, duplicate, second] = await Promise.all([
+      transport.createSession('first'),
+      transport.createSession('first'),
+      transport.createSession('second'),
+    ])
+    expect(duplicate).toEqual(first)
+    expect(first.sessionId).not.toBe(second.sessionId)
+    for (const { sessionId } of [first, second]) {
+      await transport.request('session/prompt', {
+        sessionId,
+        prompt: [{ type: 'text', text: 'execute' }],
+      })
+      for await (const update of transport.updates(sessionId)) {
+        if (update.sessionUpdate === 'request_permission')
+          await transport.respond(update.requestId, {
+            outcome: { outcome: 'selected', optionId: 'opaque-allow' },
+          })
+      }
+      const result = await transport.snapshot(sessionId)
+      expect(result.state).toBe('completed')
+      expect(
+        result.output.nativeUpdates
+          .filter((u) => u.sessionUpdate === 'available_commands_update')
+          .map((u) => u.owner)
+      ).toEqual([sessionId])
+    }
+    expect(await transport.request('probe', {})).toEqual({ creates: 2, prompts: 2 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test.each(['early-count-limit', 'early-byte-limit'])(
+  'early update buffering fails closed at %s',
+  async (scenario) => {
+    const { transport, driver } = fixture(scenario)
+    try {
+      await transport.open()
+      await driver.inspect()
+      await expect(transport.createSession('bounded')).rejects.toThrow('ACP_PROCESS_PROTOCOL_ERROR')
+      expect(transport.connectionState()).toBe('disconnected')
+      await expect(transport.createSession('bounded')).rejects.toThrow('ACP_PROCESS_PROTOCOL_ERROR')
+    } finally {
+      await transport.close()
+    }
+  }
+)
 function fixture(scenario = 'complete') {
   const transport = new AcpProcessTransport({
     executablePath: process.execPath,
