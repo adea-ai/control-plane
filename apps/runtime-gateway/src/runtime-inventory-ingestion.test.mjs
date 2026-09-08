@@ -21,6 +21,34 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('direct disappearance publication failure is not recovered by inventory replay', async () => {
+    const fixture = createFixture()
+    const initial = await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    const publish = fixture.changes.publish.bind(fixture.changes)
+    let attempts = 0
+    fixture.changes.publish = async (event) => {
+      if (event.diagnostics.includes('RUNTIME_DISAPPEARED')) {
+        attempts++
+        throw new Error('DISAPPEARANCE_PUBLICATION_UNAVAILABLE')
+      }
+      return publish(event)
+    }
+    const removed = inventory(2, [])
+    await expect(fixture.service.ingest(removed, source())).rejects.toThrow(
+      'DISAPPEARANCE_PUBLICATION_UNAVAILABLE'
+    )
+    expect(
+      (await fixture.registry.get(initial.updated[0].runtimeConnectionId)).availabilityState
+    ).toBe('offline')
+    expect((await fixture.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+    await fixture.service.ingest(removed, source())
+    expect((await fixture.checkpoints.get(nodeId)).snapshotVersion).toBe(2)
+    expect(attempts).toBe(1)
+    expect(
+      fixture.changes.events.filter((event) => event.diagnostics.includes('RUNTIME_DISAPPEARED'))
+    ).toHaveLength(0)
+  })
+
   test('maintenance pages disconnected inventory, preserves restrictions and converges without repeated writes', async () => {
     const fixture = createFixture()
     const frame = inventory(1, [driver(runtimeA), driver(runtimeB)])
@@ -478,7 +506,6 @@ function createFixture(options = {}) {
       registry,
       health,
       checkpoints,
-      changes,
       normalizer: options.normalizer ?? normalizer,
       projections,
       metrics,

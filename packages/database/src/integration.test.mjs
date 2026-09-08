@@ -1731,6 +1731,37 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
             timeout
           )
       ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
+    const beforeDisappearance = await registry.get(runtimeConnectionId)
+    const removal = {
+      runtimeConnectionId,
+      runtimeNodeRefId: beforeDisappearance.runtimeNodeRefId,
+      expectedVersion: beforeDisappearance.version,
+      observedAt: '2026-08-24T21:04:00.000Z',
+      expiresAt: '2026-08-24T21:05:00.000Z',
+    }
+    const eventsBeforeRemoval = (await readPending()).length
+    await expect(failing.markDisappeared(removal)).rejects.toThrow('OUTBOX_UNAVAILABLE')
+    expect(await registry.get(runtimeConnectionId)).toEqual(beforeDisappearance)
+    expect(await readPending()).toHaveLength(eventsBeforeRemoval)
+    await expect(
+      restarted.markDisappeared({ ...removal, runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAK' })
+    ).rejects.toThrow('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
+    const disappeared = await restarted.markDisappeared(removal)
+    expect(disappeared).toMatchObject({
+      availabilityState: 'offline',
+      diagnostics: ['RUNTIME_DISAPPEARED'],
+    })
+    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+    const replay = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
+    expect(
+      await replay.markDisappeared({ ...removal, expectedVersion: disappeared.version })
+    ).toEqual(disappeared)
+    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+    expect(
+      (await readPending()).filter((row) =>
+        row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
+      )
+    ).toHaveLength(1)
   })
 
   test('persists scoped external session references without native ownership transfer', async () => {

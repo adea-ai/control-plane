@@ -256,6 +256,47 @@ export class RuntimeHealthIngestionService {
     }
   }
 
+  async markDisappeared(input: unknown): Promise<RuntimeConnection> {
+    const request = z
+      .object({
+        runtimeConnectionId: IdentifierSchemas.runtimeConnectionId,
+        runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId,
+        expectedVersion: z.number().int().positive(),
+        observedAt: RuntimeTimestampSchema,
+        expiresAt: RuntimeTimestampSchema,
+      })
+      .strict()
+      .refine((value) => Date.parse(value.expiresAt) > Date.parse(value.observedAt))
+      .parse(input)
+    const current = await this.#registry.get(request.runtimeConnectionId)
+    if (!current) fail('CONNECTION_MISSING')
+    if (current.runtimeNodeRefId !== request.runtimeNodeRefId)
+      throw new Error('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
+    const connection = await this.#registry.update({
+      runtimeConnectionId: request.runtimeConnectionId,
+      expectedVersion: request.expectedVersion,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+      status: 'unavailable',
+      health: 'unavailable',
+      availabilityState: 'offline',
+      compatibilityState: 'unavailable',
+      diagnostics: ['RUNTIME_DISAPPEARED'],
+    })
+    if (current.availabilityState !== 'offline') {
+      await this.#changes.publish({
+        type: 'runtime.availability_changed',
+        runtimeConnectionId: connection.runtimeConnectionId,
+        nodeStatus: 'online',
+        previousState: current.availabilityState ?? 'unknown',
+        currentState: 'offline',
+        occurredAt: request.observedAt,
+        diagnostics: ['RUNTIME_DISAPPEARED'],
+      })
+    }
+    return connection
+  }
+
   async refresh(input: unknown): Promise<RuntimeHealthIngestionResult> {
     const refresh = z
       .object({

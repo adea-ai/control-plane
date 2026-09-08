@@ -1,5 +1,25 @@
 # M11 production Runtime Gateway composition gap
 
+## Atomic disappearance notification
+
+The direct-publisher characterization reproduces the disappearance gap: the
+connection becomes offline, publication fails with the checkpoint still old,
+and replay advances the checkpoint without a second publication attempt.
+Inventory ingestion now delegates this transition to health.markDisappeared
+instead of maintaining its own update/publish pair. The PostgreSQL health
+composition runs it in the same transaction as the outbox insert. A failed
+insert rolls back the connection change, and a committed transition retains its
+event even if the later inventory checkpoint write fails or is replayed.
+
+The database case verifies outbox failure rollback, node-scope rejection, exactly
+one retained disappearance event and identical replay after service recreation.
+Input validation requires an expiry after observation; registry version,
+observation and revocation guards remain in force. The gateway drill already
+injects this PostgreSQL health composition. The raw SDK service still requires a
+transaction-aware composition; its direct-publisher fixture is not durable proof.
+Whole-inventory atomicity, bounded disappearance history scanning and concurrent
+snapshot/checkpoint convergence remain separate gates.
+
 ## Independent health-delivery worker
 
 RuntimeHealthDeliveryWorker owns a completion-scheduled timer separate from

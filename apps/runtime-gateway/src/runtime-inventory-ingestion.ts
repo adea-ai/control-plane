@@ -10,7 +10,6 @@ import {
   RuntimeHealthReportSchema,
   RuntimeInventoryCheckpointSchema,
   projectRuntimeConnectionDiscovery,
-  type RuntimeAvailabilityChangePublisher,
   type RuntimeConnection,
   type RuntimeConnectionRegistration,
   type RuntimeHealthIngestionService,
@@ -138,9 +137,8 @@ export interface RuntimeDiscoveryProjectionWriter {
 
 export interface RuntimeInventoryIngestionOptions {
   readonly registry: RuntimeConnectionRegistry
-  readonly health: Pick<RuntimeHealthIngestionService, 'ingest'>
+  readonly health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly checkpoints: RuntimeInventoryCheckpointRepository
-  readonly changes: RuntimeAvailabilityChangePublisher
   readonly normalizer: RuntimeInventoryNormalizer
   readonly metrics: GatewayMetrics
   readonly projections: RuntimeDiscoveryProjectionWriter
@@ -171,9 +169,8 @@ export class RuntimeInventoryIngestionError extends Error {
 }
 
 export class RuntimeInventoryIngestionService {
-  readonly #changes: RuntimeAvailabilityChangePublisher
   readonly #checkpoints: RuntimeInventoryCheckpointRepository
-  readonly #health: Pick<RuntimeHealthIngestionService, 'ingest'>
+  readonly #health: Pick<RuntimeHealthIngestionService, 'ingest' | 'markDisappeared'>
   readonly #disappearanceTtlMs: number
   readonly #metrics: GatewayMetrics
   readonly #normalizer: RuntimeInventoryNormalizer
@@ -184,7 +181,6 @@ export class RuntimeInventoryIngestionService {
     this.#registry = options.registry
     this.#health = options.health
     this.#checkpoints = options.checkpoints
-    this.#changes = options.changes
     this.#normalizer = options.normalizer
     this.#projections = options.projections
     this.#metrics = options.metrics
@@ -424,29 +420,14 @@ export class RuntimeInventoryIngestionService {
       ) {
         continue
       }
-      const next = await this.#registry.update({
+      const next = await this.#health.markDisappeared({
         runtimeConnectionId: connection.runtimeConnectionId,
+        runtimeNodeRefId,
         expectedVersion: connection.version,
         observedAt,
-        status: 'unavailable',
-        health: 'unavailable',
-        availabilityState: 'offline',
-        compatibilityState: 'unavailable',
-        diagnostics: ['RUNTIME_DISAPPEARED'],
         expiresAt: new Date(Date.parse(observedAt) + this.#disappearanceTtlMs).toISOString(),
       })
       disappeared.push(next)
-      if (connection.availabilityState !== 'offline') {
-        await this.#changes.publish({
-          type: 'runtime.availability_changed',
-          runtimeConnectionId: next.runtimeConnectionId,
-          nodeStatus: 'online',
-          previousState: connection.availabilityState ?? 'unknown',
-          currentState: 'offline',
-          occurredAt: observedAt,
-          diagnostics: ['RUNTIME_DISAPPEARED'],
-        })
-      }
     }
     return disappeared
   }

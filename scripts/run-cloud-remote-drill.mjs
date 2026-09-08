@@ -9,10 +9,7 @@ import {
   contextPackageSerializationFixtures,
 } from '../packages/context/src/index.ts'
 import { ExecutionLifecycleService, InteractionService } from '../packages/domain/src/index.ts'
-import {
-  RuntimeConnectionRegistry,
-  RecordingRuntimeAvailabilityChangePublisher,
-} from '../packages/runtime-sdk/src/index.ts'
+import { RuntimeConnectionRegistry } from '../packages/runtime-sdk/src/index.ts'
 import {
   PostgresContextPackageRepository,
   PostgresExecutionPlanRepository,
@@ -197,7 +194,6 @@ try {
   const runtimeRegistry = new RuntimeConnectionRegistry(runtimeRepository)
   const checkpoints = new PostgresRuntimeInventoryCheckpointRepository(database.application)
   const projections = new PostgresRuntimeDiscoveryRepository(database.application)
-  const changes = new RecordingRuntimeAvailabilityChangePublisher()
   const health = new PostgresRuntimeHealthIngestionService(database.application, {
     adapterMajor: 1,
     driverMajor: 1,
@@ -211,7 +207,6 @@ try {
     health,
     checkpoints,
     projections,
-    changes,
     metrics,
     normalizer: new DefaultRuntimeInventoryNormalizer(),
   })

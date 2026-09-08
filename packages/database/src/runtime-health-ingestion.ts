@@ -4,6 +4,7 @@ import {
   RuntimeHealthIngestionService,
   type RuntimeHealthIngestionPolicy,
   type RuntimeHealthIngestionResult,
+  type RuntimeConnection,
 } from '@control-plane/runtime-sdk'
 import type { ControlPlaneDatabase } from './connection.js'
 import { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.js'
@@ -24,9 +25,13 @@ export class PostgresRuntimeHealthIngestionService {
     return this.#run((service) => service.refresh(input))
   }
 
-  #run(
-    operation: (service: RuntimeHealthIngestionService) => Promise<RuntimeHealthIngestionResult>
-  ): Promise<RuntimeHealthIngestionResult> {
+  markDisappeared(input: unknown): Promise<RuntimeConnection> {
+    return this.#run((service) => service.markDisappeared(input))
+  }
+
+  #run<Result>(
+    operation: (service: RuntimeHealthIngestionService) => Promise<Result>
+  ): Promise<Result> {
     return this.database.transaction(async (transaction) => {
       const service = new RuntimeHealthIngestionService({
         registry: new RuntimeConnectionRegistry(
