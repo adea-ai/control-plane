@@ -75,6 +75,14 @@ the bounded structured value validated by the interaction domain and are transla
 driver only after the workflow resumes. Approval, denial, cancellation, and input effects retain
 their stable workflow effect key, so replay does not submit a second native action.
 
+Lifecycle cancellation does not commit its effect on a non-terminal or unknown adapter
+acknowledgement. It reconciles the same handle once per activity invocation; if the state remains
+non-terminal or unknown, `RUNTIME_CANCEL_UNCONFIRMED` leaves the effect uncommitted so the durable
+workflow can retry before terminal status publication and cleanup. Retries retain the original
+idempotency key and request timestamp, and reconciliation must match the full handle identity.
+A terminal state confirms the adapter reports no active execution; this boundary check does not
+independently certify native process termination or resolve an unavailable adapter's state.
+
 The data directory is one recovery unit: `control-plane.sqlite` (including any SQLite sidecars),
 `restate/`, `artifacts/`, `secrets/`, and generated private API authentication state. It must remain
 owner-only. Do not back up one of those paths independently while work is admitted.

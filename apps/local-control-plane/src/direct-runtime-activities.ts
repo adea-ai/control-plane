@@ -323,10 +323,28 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     intent: DirectRuntimeCancellationIntent
   ): Promise<void> {
     await this.#effect(intent.effectKey, async () => {
-      await this.runtime.cancel(handle, {
-        idempotencyKey: intent.effectKey,
-        requestedAt: intent.requestedAt,
-      })
+      const validate = (value: RuntimeExecutionStatus): RuntimeExecutionStatus => {
+        const status = RuntimeExecutionStatusSchema.parse(value)
+        if (
+          status.handle.handleId !== handle.handleId ||
+          status.handle.attemptId !== handle.attemptId ||
+          status.handle.startedAt !== handle.startedAt
+        )
+          throw new Error('RUNTIME_CANCEL_HANDLE_MISMATCH')
+        return status
+      }
+      let status = validate(
+        await this.runtime.cancel(handle, {
+          idempotencyKey: intent.effectKey,
+          requestedAt: intent.requestedAt,
+        })
+      )
+      const terminal = (value: RuntimeExecutionStatus) =>
+        ['completed', 'failed', 'cancelled', 'timed_out'].includes(value.state)
+      // An idempotent adapter can retain its initial, non-terminal ACK. Read
+      // current state on each retry instead of committing that ACK as a stop.
+      if (!terminal(status)) status = validate(await this.runtime.reconcile(handle))
+      if (!terminal(status)) throw new Error('RUNTIME_CANCEL_UNCONFIRMED')
       return { cancelled: true, reason: intent.reason }
     })
   }
