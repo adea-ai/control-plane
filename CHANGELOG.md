@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.11.1...workspace-v1.11.2) (2026-09-08)
+
+
+### Tests
+
+* **local:** certify native Pi cancellation through public API ([#432](https://github.com/adea-ai/control-plane/issues/432)) ([225056c](https://github.com/adea-ai/control-plane/commit/225056c3c3f6c450237453b90d61d4cb9ac73a44))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.11.0...workspace-v1.11.1) (2026-09-08)
 
 
