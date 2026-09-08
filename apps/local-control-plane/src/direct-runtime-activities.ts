@@ -5,6 +5,7 @@ import type {
   RuntimeExecutionStatus,
   RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
+import { RuntimeExecutionStatusSchema } from '@control-plane/runtime-sdk'
 import type {
   WorkflowInteractionValue,
   WorkflowRuntimeOutcome,
@@ -25,6 +26,8 @@ interface DirectRuntimeCancellationIntent {
 }
 
 export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
+  readonly #dispatches = new Map<string, Promise<WorkflowRuntimeOutcome>>()
+
   constructor(
     readonly persistence: PersistenceProvider,
     readonly objectStore: ObjectStore,
@@ -38,6 +41,75 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   dispatch(
     input: Parameters<WorkflowRuntimeActivityPort['dispatch']>[0]
   ): Promise<WorkflowRuntimeOutcome> {
+    const pending = this.#dispatches.get(input.effectKey)
+    if (pending !== undefined) return pending
+    const operation = this.#dispatch(input)
+    this.#dispatches.set(input.effectKey, operation)
+    const release = () => this.#dispatches.delete(input.effectKey)
+    void operation.then(release, release)
+    return operation
+  }
+
+  async #dispatch(
+    input: Parameters<WorkflowRuntimeActivityPort['dispatch']>[0]
+  ): Promise<WorkflowRuntimeOutcome> {
+    const resultId = recordId(input.effectKey)
+    const intentId = recordId(`dispatch-intent:${input.effectKey}`)
+    const admission = await this.persistence.transaction(async (transaction) => {
+      const result = await transaction.get(namespaces.effects, resultId)
+      if (result !== undefined) return { result: result.value }
+      const intent = await transaction.get(namespaces.effects, intentId)
+      if (intent !== undefined) return { claimed: false }
+      const previousHandle = await transaction.get(namespaces.handles, recordId(input.executionId))
+      if (
+        (previousHandle?.value as unknown as RuntimeExecutionHandle | undefined)?.attemptId ===
+        input.attemptId
+      )
+        return { claimed: false }
+      // Commit before calling the runtime: a lost ACK or process crash cannot
+      // make replay indistinguishable from a never-dispatched attempt.
+      await transaction.put({
+        namespace: namespaces.effects,
+        id: intentId,
+        value: {
+          kind: 'dispatch-intent',
+          executionId: input.executionId,
+          attemptId: input.attemptId,
+        },
+      })
+      return { claimed: true }
+    })
+    if ('result' in admission) return admission.result as WorkflowRuntimeOutcome
+    if (!admission.claimed) {
+      const handle = await this.#handle(input.executionId, input.attemptId, false)
+      if (handle !== undefined) {
+        let recovered: RuntimeExecutionStatus | undefined
+        try {
+          recovered = RuntimeExecutionStatusSchema.parse(await this.runtime.reconcile(handle))
+        } catch {
+          // Missing native state is ambiguous, not permission to restart work.
+        }
+        if (
+          recovered !== undefined &&
+          recovered.handle.handleId === handle.handleId &&
+          recovered.handle.attemptId === handle.attemptId &&
+          recovered.handle.startedAt === handle.startedAt &&
+          ['completed', 'failed', 'cancelled', 'timed_out'].includes(recovered.state)
+        ) {
+          const status = recovered
+          return this.#effect(input.effectKey, () =>
+            this.#outcome(input.executionId, input.attemptId, status)
+          )
+        }
+      }
+      // Do not cache this observation over a concurrent owner's eventual result.
+      // The retained intent requires reconciliation before an operator retries.
+      return {
+        outcome: 'failed',
+        failureCode: 'LOCAL_RUNTIME_DISPATCH_AMBIGUOUS',
+        retryable: false,
+      }
+    }
     return this.#effect(input.effectKey, async () => {
       const handle = await this.runtime.start({
         attemptId: input.attemptId,

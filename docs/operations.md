@@ -218,6 +218,31 @@ proof of rollback, restart recovery, load, isolation, secret-canary, or cost acc
 
 Local uses all-in-one Control Plane + SQLite + single-node Restate + filesystem storage + direct RuntimeTransport.
 
+### Ambiguous direct-runtime dispatch
+
+Local commits a dispatch intent in the existing SQLite `workflow-effects` namespace
+before calling a direct runtime. A completed outcome replays normally. For a saved
+handle, Local asks the runtime to reconcile its status without starting new work.
+A schema-valid terminal status matching the exact saved handle can recover the
+outcome and its Artifact. Missing native state, nonterminal status, a mismatched
+handle, or an intent without a handle returns `LOCAL_RUNTIME_DISPATCH_AMBIGUOUS`
+with `retryable: false` instead of launching the attempt again. Concurrent callers
+in the same composition share one pending call.
+
+This diagnostic does **not** prove that the native runtime stopped or never began.
+Preserve the SQLite database, Restate journal, native runtime state, and correlated
+execution/attempt IDs. Reconcile native work, Artifacts, and usage before an operator
+authorizes replacement work. Do not clear the intent, delete the runtime handle,
+or automatically retry under a new attempt ID to bypass the ambiguity. Cleanup may
+remain unresolved when the runtime cannot recognize a recovered handle; do not
+report that as successful native process cleanup.
+
+The intent is retained with existing workflow-effect records and contains only
+execution/attempt identifiers, not prompts or credentials. It does not add native
+Pi in-flight reattachment. Drain or reconcile outstanding work before upgrading:
+an older lost-ACK attempt with neither an intent nor a handle cannot be detected
+retroactively by this guard.
+
 SQLite startup checks the stored schema version before running schema DDL. The version check,
 schema creation, and version stamp share one transaction: unsupported versions are rejected, and
 failed schema statements roll back without leaving partially created tables. This is not automatic
