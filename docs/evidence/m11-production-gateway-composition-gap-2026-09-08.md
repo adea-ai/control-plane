@@ -1,5 +1,26 @@
 # M11 production Runtime Gateway composition gap
 
+## Durable ownership prerequisite implementation
+
+The follow-up adds RuntimeChannelOwnershipRepository in runtime-sdk and its
+PostgreSQL implementation with migration `0037_runtime_channel_ownership`.
+Per-node transaction locks serialize claims, heartbeats and releases. A release
+marks the row inactive instead of deleting its generation fence. Claims from a
+different workspace reject; stale generations cannot take ownership, heartbeat
+or release a replacement. Heartbeat updates cannot move time backwards or
+change the admitted channel identity/protocol.
+
+The real PostgreSQL integration test exercises eight concurrent repository
+claims (one winner), replacement, stale heartbeat/release, wrong-workspace
+mutation, monotonic heartbeat, release, repository recreation and generation
+replay. All 29 database tests and the configured integration/remote/drill lanes
+pass. Repository recreation is not a native gateway restart certification;
+the existing database restart/restore drills are not a dedicated channel
+recovery test. Cross-instance replacement notification, gateway wiring and
+production identity validation are still required. No production migration has
+been applied. The inactive fence currently has no deletion policy and must not
+be deleted without preserving replay protection.
+
 Inspected candidate: `be6fc08f6be872fe346de00e0d822d1c439d30a6`.
 Status: high-severity implementation and acceptance gap under #188/#194;
 requirements/wiring reconciliation under #186/#187. Not a permissions failure

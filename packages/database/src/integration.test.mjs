@@ -62,6 +62,7 @@ import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-reposito
 import { PostgresRuntimeCommandRepository } from './runtime-command-repository.ts'
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.ts'
+import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
 import {
   commandInbox,
@@ -864,6 +865,55 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       runtime: { runtimeConnectionId: revoked.runtimeConnectionId },
     })
     expect(await isolated.application.select().from(runtimeConnections)).toHaveLength(1)
+  })
+
+  test('fences channel generations across concurrent claims, release and repository restart', async () => {
+    await isolated.migrate()
+    const repository = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+    const first = {
+      nodeId: 'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: 'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+      gatewayInstanceId: 'gateway-a',
+      connectionId: 'connection-a',
+      channelGeneration: 1,
+      protocolVersion: { major: 1, minor: 6 },
+      connectedAt: '2026-09-08T10:00:00.000Z',
+      lastHeartbeatAt: '2026-09-08T10:00:00.000Z',
+    }
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new PostgresRuntimeChannelOwnershipRepository(isolated.application).claim(first)
+      )
+    )
+    expect(results.filter(({ accepted }) => accepted)).toHaveLength(1)
+    const second = {
+      ...first,
+      channelGeneration: 2,
+      gatewayInstanceId: 'gateway-b',
+      connectionId: 'connection-b',
+    }
+    expect(await repository.claim(second)).toEqual({ accepted: true, previous: first })
+    expect(await repository.heartbeat(first)).toBe(false)
+    expect(await repository.release(first)).toBe(false)
+    expect(
+      await repository.heartbeat({ ...second, workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV' })
+    ).toBe(false)
+    const beat = { ...second, lastHeartbeatAt: '2026-09-08T10:00:15.000Z' }
+    expect(await repository.heartbeat(beat)).toBe(true)
+    expect(await repository.heartbeat(second)).toBe(false)
+    expect(await repository.lookup(first.nodeId)).toEqual(beat)
+    expect(await repository.release(second)).toBe(true)
+    const restarted = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+    expect(await restarted.lookup(first.nodeId)).toBeUndefined()
+    expect(await restarted.claim(second)).toEqual({ accepted: false })
+    await expect(
+      restarted.claim({
+        ...second,
+        channelGeneration: 3,
+        workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV',
+      })
+    ).rejects.toThrow('RUNTIME_CHANNEL_WORKSPACE_MISMATCH')
+    expect(await restarted.claim({ ...second, channelGeneration: 3 })).toEqual({ accepted: true })
   })
 
   test('persists inventory checkpoints across gateway restart with compare-and-set', async () => {
