@@ -70,6 +70,13 @@ Reproduction fixtures are
 Use a fresh marker and model-call counter for each run; never attach host
 credentials or a host workspace to this probe.
 
+The probe now publishes the fixture ContextPackage and supplies the repository-backed
+task resolver required by Local ACP. Its previous constructor failed with
+`ACP_LOCAL_PROMPT_RESOLVER_REQUIRED` after that contract changed. Plan/context
+resolution and runtime construction were rechecked without starting a native harness;
+this maintenance check does not replace a new isolated native run or resolve the
+aggregate usage limitation above.
+
 ## Two sequential native approvals
 
 The `repeated-permission` probe also passed on 2026-09-08 using the same pinned

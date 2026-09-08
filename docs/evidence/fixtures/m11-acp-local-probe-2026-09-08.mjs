@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { ControlPlaneClient } from '@control-plane/sdk'
 import {
   createControlApiApplication,
@@ -14,6 +15,7 @@ import {
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   createLocalAcpRuntime,
+  createRepositoryAcpTaskPromptResolver,
   LocalControlPlaneComposition,
 } from '../../../apps/local-control-plane/src/index.ts'
 
@@ -32,8 +34,9 @@ assert.deepEqual(inspection.NetworkSettings.Networks, {})
 const directory = await mkdtemp(join(tmpdir(), 'control-plane-acp-local-'))
 const composition = new LocalControlPlaneComposition({
   dataDirectory: directory,
-  runtimeFactory: () =>
+  runtimeFactory: ({ contextPackages }) =>
     createLocalAcpRuntime({
+      resolvePrompt: createRepositoryAcpTaskPromptResolver(contextPackages),
       executablePath: docker,
       args: [
         'exec',
@@ -75,6 +78,7 @@ try {
     profileCapabilityRequirements: ['stream.output'],
     skillRequiredCapabilities: [],
   })
+  await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
   await composition.executionPlans.put(plan)
   if (permission || cancel) {
     const authentication = await createPrivateApiAuthentication(directory)
