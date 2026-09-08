@@ -3,8 +3,67 @@ import { InMemoryRuntimeCommandRepository } from '@control-plane/domain'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.js'
+import { PollingRemoteRuntimeOutcomeWaiter } from './remote-runtime-waiter.js'
+import { runExecutionLifecycle } from './execution-workflow.js'
 
 describe('durable remote workflow runtime', () => {
+  test('late durable cancellation confirmation resumes workflow without replacing the expired command', async () => {
+    const commands = new InMemoryRuntimeCommandRepository()
+    let executionState = 'running'
+    const makeRuntime = () =>
+      fixture(
+        commands,
+        new PollingRemoteRuntimeOutcomeWaiter({
+          commands,
+          executions: {
+            getExecution: async () => ({
+              executionId: golden.command.executionId,
+              state: executionState,
+            }),
+          },
+          events: { latestInteraction: async () => undefined },
+          now: () => new Date(Date.parse(golden.command.expiresAt) + 1000),
+        })
+      )
+    const states = []
+    let cleanups = 0
+    const run = () =>
+      runExecutionLifecycle(
+        {
+          executionId: golden.command.executionId,
+          workflowId: 'wfl_01JABCDEF0123456789ABCDEFG',
+          executionPlan: createExecutionPlanTestFixture(),
+        },
+        {
+          ensureAttempt: async () => ({ attemptId: golden.command.attemptId }),
+          persistStatus: async ({ state }) => {
+            states.push(state)
+          },
+          dispatch: async () => ({
+            outcome: 'completed',
+            resultReference: 'art_01JABCDEF0123456789ABCDEFG',
+          }),
+          cancelActive: (input) => makeRuntime().cancel(input),
+          cleanup: async () => {
+            cleanups += 1
+          },
+        },
+        {
+          checkTerminal: async () => ({ cancelled: true }),
+        }
+      )
+    await expect(run()).rejects.toThrow('REMOTE_RUNTIME_CANCELLATION_UNCONFIRMED')
+    expect(states).not.toContain('cancelled')
+    expect(cleanups).toBe(0)
+    const original = await commands.get(golden.command.commandId)
+    expect(original).toMatchObject({ status: 'queued' })
+    executionState = 'cancelled'
+    expect(await run()).toMatchObject({ status: 'cancelled' })
+    expect(states.filter((state) => state === 'cancelled')).toHaveLength(1)
+    expect(cleanups).toBe(1)
+    expect(await commands.get(golden.command.commandId)).toEqual(original)
+  })
+
   test.each([
     { outcome: 'failed', failureCode: 'REMOTE_RUNTIME_COMMAND_EXPIRED', retryable: true },
     { outcome: 'failed', failureCode: 'REMOTE_RUNTIME_COMMAND_FAILED', retryable: false },

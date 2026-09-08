@@ -137,3 +137,14 @@ competing completion. The runtime now rejects each with
 normal return. All 10 focused remote-runtime tests pass. This fail-closed boundary
 does not implement reconciliation for competing terminal state or expired delivery;
 those remain required before full cancellation convergence can be certified.
+
+## Late cancellation confirmation recovery
+
+A combined regression uses the production lifecycle function, durable remote
+runtime, and polling waiter with an in-memory command repository. An expired
+command while execution remains running rejects cancellation without terminal
+status or cleanup. After a controlled repository observation changes to cancelled,
+a reconstructed runtime completes the workflow retry, records cancellation once,
+and runs cleanup once without replacing or renewing the original command. The
+dispatch result and execution observations are controlled; this is not a Restate
+restart, database integration, or native-runtime cancellation certification.
