@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.4.0...local-control-plane-v1.4.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **local:** require terminal confirmation before cancellation commit ([#430](https://github.com/adea-ai/control-plane/issues/430)) ([2cccca2](https://github.com/adea-ai/control-plane/commit/2cccca20413d18b804d3cfb9042e786c7078b693))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.3.0...local-control-plane-v1.4.0) (2026-09-08)
 
 
