@@ -128,7 +128,7 @@ export class InteractionError extends Error {
 const CreateSchema = z
   .object(InteractionRequestSchema.shape)
   .omit({ state: true, version: true, response: true, resolvedAt: true })
-const RespondSchema = z.object({
+export const InteractionResponseInputSchema = z.object({
   interactionId: IdentifierSchemas.interactionId,
   executionId: IdentifierSchemas.executionId,
   attemptId: IdentifierSchemas.attemptId,
@@ -149,7 +149,7 @@ export class InteractionService {
     return request
   }
   async respond(input: unknown) {
-    const parsed = RespondSchema.parse(input)
+    const parsed = InteractionResponseInputSchema.parse(input)
     const current = await this.#get(parsed.interactionId)
     if (current.response) {
       if (sameResponse(current.response, parsed)) return current

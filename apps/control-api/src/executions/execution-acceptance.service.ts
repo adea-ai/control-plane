@@ -15,6 +15,9 @@ import {
 } from '@control-plane/contracts'
 import {
   CommandInboxError,
+  InteractionRequestSchema,
+  type InteractionSignalDispatcher,
+  type InteractionRequest,
   type CommandInboxRecord,
   type CommandInboxService,
 } from '@control-plane/domain'
@@ -189,7 +192,9 @@ export class RestateWorkflowSubmissionError extends Error {
   }
 }
 
-export class RestateExecutionWorkflowDispatcher implements ExecutionWorkflowDispatcher {
+export class RestateExecutionWorkflowDispatcher
+  implements ExecutionWorkflowDispatcher, InteractionSignalDispatcher
+{
   readonly #fetch: typeof fetch
   readonly #ingressUrl: string
 
@@ -200,16 +205,48 @@ export class RestateExecutionWorkflowDispatcher implements ExecutionWorkflowDisp
 
   async submit(inputValue: ExecutionWorkflowInput): Promise<void> {
     const input = ExecutionWorkflowInputSchema.parse(inputValue)
-    const response = await this.#fetch(this.#submissionUrl(input.executionId), {
+    await this.#send(input.executionId, 'run', input)
+  }
+
+  async deliver(
+    input: InteractionRequest & { response: NonNullable<InteractionRequest['response']> }
+  ): Promise<void> {
+    const request = InteractionRequestSchema.parse(input)
+    if (request.state !== 'responded' || !request.response)
+      throw new RestateWorkflowSubmissionError()
+    await this.#send(
+      request.executionId,
+      'respondToInteraction',
+      {
+        interactionId: request.interactionId,
+        responseId: request.response.responseId,
+        action: request.response.action,
+        ...(request.response.value === undefined ? {} : { value: request.response.value }),
+      },
+      `${request.interactionId}:${request.response.responseId}`
+    )
+  }
+
+  async #send(
+    executionId: string,
+    handler: 'run' | 'respondToInteraction',
+    payload: unknown,
+    idempotencyKey?: string
+  ): Promise<void> {
+    const response = await this.#fetch(this.#submissionUrl(executionId, handler), {
       method: 'POST',
       redirect: 'error',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify(input),
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        ...(idempotencyKey === undefined ? {} : { 'idempotency-key': idempotencyKey }),
+      },
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(managedCloudOperationalPolicy.payload.publicRequestDeadlineMs),
     }).catch(() => {
       throw new RestateWorkflowSubmissionError()
     })
-    if (response.status === 409) return
+    if (response.status === 409 && handler === 'run') return
     if (response.status !== 202) throw new RestateWorkflowSubmissionError()
     const body = await response.text()
     if (body.length > 4_096) throw new RestateWorkflowSubmissionError()
@@ -218,7 +255,8 @@ export class RestateExecutionWorkflowDispatcher implements ExecutionWorkflowDisp
       if (
         typeof parsed !== 'object' ||
         parsed === null ||
-        Reflect.get(parsed, 'status') !== 'Accepted' ||
+        (Reflect.get(parsed, 'status') !== 'Accepted' &&
+          Reflect.get(parsed, 'status') !== 'PreviouslyAccepted') ||
         typeof Reflect.get(parsed, 'invocationId') !== 'string' ||
         !/^inv_[A-Za-z0-9]{1,252}$/.test(Reflect.get(parsed, 'invocationId'))
       ) {
@@ -230,10 +268,13 @@ export class RestateExecutionWorkflowDispatcher implements ExecutionWorkflowDisp
     }
   }
 
-  #submissionUrl(executionId: string): URL {
+  #submissionUrl(executionId: string, handler: 'run' | 'respondToInteraction'): URL {
     const base = new URL(this.#ingressUrl)
     base.pathname = `${base.pathname.replace(/\/$/, '')}/`
-    return new URL(`${restateWorkflowName}/${encodeURIComponent(executionId)}/run/send`, base)
+    return new URL(
+      `${restateWorkflowName}/${encodeURIComponent(executionId)}/${handler}/send`,
+      base
+    )
   }
 }
 

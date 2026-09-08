@@ -30,6 +30,22 @@ and index retention/export policy have not been certified.
 
 ## Remaining production path
 
+`DurableInteractionDeliveryService` now supplies a shared, not-yet-routed response
+boundary. It checks accepted-command and execution workspace/project scope, exact
+interaction execution/attempt ownership, allowed principal, and active/latest attempt
+before recording the response. Caller-supplied principal/timestamp fields are rejected;
+the authenticated principal and service clock supply them. It signals only the stored
+response, leaving that record available for explicit retry after ambiguous delivery.
+This is not an automatic recovery worker or an atomic execution/response transaction.
+
+The Restate dispatcher supports the shared interaction handler with an interaction/response-ID
+idempotency key. It requires HTTP 202 plus a validated invocation ID and `Accepted`
+or `PreviouslyAccepted`, matching [Restate 1.7.8 ingress source](https://github.com/restatedev/restate/blob/v1.7.8/crates/ingress-http/src/handler/service_handler.rs#L370).
+HTTP 409 remains a supported workflow-start replay only, not an accepted interaction
+signal. Tests cover exact-body retry, preserved response identity after a lost ACK,
+cross-scope answered replay rejection, spoofed principal, inactive/replaced execution,
+and invalid dispatch status. Public API/SDK/relay composition remains outstanding.
+
 - Local direct runtime dispatch now persists pending input/approval/permission requests
   before returning `awaiting_input`. Execution and attempt scope come from the accepted
   command/execution records, the allowed principal is the accepting service principal,
