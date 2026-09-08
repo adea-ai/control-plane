@@ -2615,7 +2615,7 @@
           "path": "tests/repository.test.mjs"
         }
       ],
-      "assessment": "Repository tests verify the current Code Foundry workflow callers, required contexts, parallel validation groups, coverage publication, and staging-release policy."
+      "assessment": "Repository tests verify the current Code Foundry workflow callers, required contexts, parallel validation groups, coverage publication, and direct-to-main release policy."
     },
     {
       "id": "M1-ISSUE-8",
