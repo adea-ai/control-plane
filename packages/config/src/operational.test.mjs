@@ -7,6 +7,33 @@ import {
 } from './index.ts'
 
 describe('managed-cloud operational policy', () => {
+  test('binds every nested operational setting into the digest', () => {
+    const baseline = operationalPolicyDigest(managedCloudOperationalPolicy)
+    for (const [section, settings] of Object.entries(managedCloudOperationalPolicy)) {
+      if (typeof settings !== 'object') continue
+      for (const [field, value] of Object.entries(settings)) {
+        if (typeof value !== 'number') continue
+        const changed = structuredClone(managedCloudOperationalPolicy)
+        changed[section][field] = value + 1
+        expect(operationalPolicyDigest(changed)).not.toBe(baseline)
+      }
+    }
+  })
+
+  test('ignores object insertion order at every level', () => {
+    const reordered = Object.fromEntries(
+      Object.entries(managedCloudOperationalPolicy)
+        .reverse()
+        .map(([key, value]) => [
+          key,
+          typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse()) : value,
+        ])
+    )
+    expect(operationalPolicyDigest(reordered)).toBe(
+      operationalPolicyDigest(managedCloudOperationalPolicy)
+    )
+  })
+
   test('publishes the accepted bounded defaults and a stable digest', () => {
     expect(managedCloudOperationalPolicy.heartbeat).toEqual({
       intervalMs: 15_000,
