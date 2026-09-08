@@ -14,6 +14,7 @@ import { createIsolatedPostgres } from '../packages/testing/src/postgres.ts'
 import { contextAuthoringRecoveryFixture } from './context-authoring-recovery-fixture.mjs'
 import { validationRecoveryFixture } from './validation-recovery-fixture.mjs'
 import { evaluationRecoveryFixture } from './evaluation-recovery-fixture.mjs'
+import { seedRetiredCommandRecoveryFixture } from '../packages/database/src/retired-command-recovery-fixture.mjs'
 
 const expectedRunId = 'eval-run-restore-drill'
 const expectedDigest = `sha256:${'d'.repeat(64)}`
@@ -44,6 +45,7 @@ const source = await createIsolatedPostgres({ migrate: true })
 const target = await createIsolatedPostgres({ migrate: false })
 
 try {
+  const retirement = await seedRetiredCommandRecoveryFixture(source.application)
   const validation = validationRecoveryFixture('restore')
   await new PostgresExecutionValidationCommandRepository(source.application).commit(
     validation.record,
@@ -240,6 +242,7 @@ try {
   }
   if (!deniedBeforeBootstrap) throw new Error('RESTORE_APPLICATION_ACCESS_NOT_ISOLATED')
   await target.migrate()
+  await retirement.assertRecovered(target.application)
   observed.assertRecovered(await restoredEvaluations.getRun(observed.run.evalRunId))
   await restoredEvaluations.saveRun(observed.run)
   observed.assertRecovered(await restoredEvaluations.getRun(observed.run.evalRunId))

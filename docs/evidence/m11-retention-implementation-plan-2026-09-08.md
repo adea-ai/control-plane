@@ -49,6 +49,23 @@ PostgreSQL outage, restart, and backup/restore drills. The latter are existing
 recovery drills, not proof that deletion survives backup restoration; that
 specific acceptance test remains outstanding below.
 
+## Increment: post-retirement snapshot recovery
+
+The SQLite repository test now creates a real provider backup after reserving
+the rejection key and simulating receipt removal, restores it into a different
+database file, and verifies both receipt absence and readmission rejection.
+The PostgreSQL restore drill seeds a terminal command through the real services,
+reserves its rejection key, removes only that fixture receipt, and uses its
+existing `pg_dump`/`pg_restore` flow into a separate database. After application
+grants are reapplied, the fixture checks exact rejection-record identity,
+receipt absence, and rejected lookup/direct admission with a changed hash.
+
+These tests concern snapshots **taken after retirement**. A snapshot predating
+retirement cannot contain a later rejection record. Reapplying deletion records
+from an independent durable source before exposing an older restored snapshot
+remains unimplemented and is still a release gate. Neither test authorizes
+deleting live command data or expiring backups.
+
 ## Current evidence
 
 - `packages/config/src/operational.ts` specifies 30-day command-inbox and

@@ -140,6 +140,20 @@ describe('SQLite domain repositories', () => {
       expect(
         await repository.get({ ...accepted.command, projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
       ).toBeUndefined()
+      const snapshot = await provider.backup()
+      provider.close()
+      provider = new SqlitePersistenceProvider({ path: join(directory, 'restored.sqlite') })
+      await provider.restore(snapshot)
+      const restored = new SqliteCommandAcceptanceRepository(provider)
+      await expect(restored.get(accepted.command)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      await expect(restored.accept(accepted.command, accepted.execution)).rejects.toMatchObject({
+        code: 'COMMAND_RETENTION_EXPIRED',
+      })
+      expect(
+        await provider.transaction((transaction) => transaction.list('command-inbox'))
+      ).toEqual([])
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })
