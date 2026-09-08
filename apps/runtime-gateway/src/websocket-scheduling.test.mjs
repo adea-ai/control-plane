@@ -142,3 +142,31 @@ test('rejects upgrades that finish authentication after shutdown starts', async 
   expect((await options.fetch(request, native)).status).toBe(503)
   expect(upgrades).toBe(0)
 })
+
+test('scheduled maintenance follows lifecycle checks and reports incomplete pages', async () => {
+  const order = []
+  let reports = 0
+  const { server } = fixture(
+    async () => {
+      order.push('lifecycle')
+    },
+    {
+      inventoryMaintenance: {
+        runPage: async () => {
+          order.push('inventory')
+          return { visited: 1, updated: 0, conflicts: 1, failed: [], cycleComplete: false }
+        },
+      },
+      onSweepError: () => {
+        reports++
+      },
+    }
+  )
+  server.start()
+  try {
+    await until(() => reports > 0)
+    expect(order.slice(0, 2)).toEqual(['lifecycle', 'inventory'])
+  } finally {
+    await server.close()
+  }
+})

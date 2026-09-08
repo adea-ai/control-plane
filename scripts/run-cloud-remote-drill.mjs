@@ -9,7 +9,11 @@ import {
   contextPackageSerializationFixtures,
 } from '../packages/context/src/index.ts'
 import { ExecutionLifecycleService, InteractionService } from '../packages/domain/src/index.ts'
-import { RuntimeConnectionRegistry } from '../packages/runtime-sdk/src/index.ts'
+import {
+  RuntimeConnectionRegistry,
+  RuntimeHealthIngestionService,
+  RecordingRuntimeAvailabilityChangePublisher,
+} from '../packages/runtime-sdk/src/index.ts'
 import {
   PostgresContextPackageRepository,
   PostgresExecutionPlanRepository,
@@ -20,6 +24,7 @@ import {
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
   PostgresRuntimeChannelOwnershipRepository,
+  PostgresRuntimeInventoryCheckpointRepository,
   PostgresInteractionRepository,
 } from '../packages/database/src/index.ts'
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
@@ -35,6 +40,10 @@ import {
   SyntheticRuntimeNodeIdentityAuthority,
   RuntimeGatewayWebSocketLifecycle,
   RuntimeGatewayWebSocketServer,
+  RuntimeInventoryIngestionService,
+  RuntimeInventoryMessageHandler,
+  DefaultRuntimeInventoryNormalizer,
+  RuntimeInventoryMaintenance,
   RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
@@ -180,6 +189,32 @@ try {
   const ownership = new PostgresRuntimeChannelOwnershipRepository(database.application)
   const coordination = new RepositoryRuntimeNodeCoordination(ownership)
   const metrics = new RecordingGatewayMetrics()
+  const runtimeRepository = new PostgresRuntimeConnectionRepository(database.application)
+  const runtimeRegistry = new RuntimeConnectionRegistry(runtimeRepository)
+  const checkpoints = new PostgresRuntimeInventoryCheckpointRepository(database.application)
+  const projections = new PostgresRuntimeDiscoveryRepository(database.application)
+  const changes = new RecordingRuntimeAvailabilityChangePublisher()
+  const health = new RuntimeHealthIngestionService({
+    registry: runtimeRegistry,
+    changes,
+    policy: {
+      adapterMajor: 1,
+      driverMajor: 1,
+      harnessMajor: 1,
+      protocolMajor: 1,
+      healthTtlMs: 60_000,
+      maximumCapabilityTtlMs: 60_000,
+    },
+  })
+  const inventoryIngestion = new RuntimeInventoryIngestionService({
+    registry: runtimeRegistry,
+    health,
+    checkpoints,
+    projections,
+    changes,
+    metrics,
+    normalizer: new DefaultRuntimeInventoryNormalizer(),
+  })
   const commands = new PostgresRuntimeCommandRepository(database.application)
   const received = []
   const quarantine = []
@@ -237,11 +272,7 @@ try {
   const router = new RuntimeGatewayMessageRouter({
     delivery,
     events,
-    inventory: {
-      handle: async () => {
-        throw new Error('UNEXPECTED_INVENTORY')
-      },
-    },
+    inventory: new RuntimeInventoryMessageHandler({ inventory: inventoryIngestion }),
   })
   server = new RuntimeGatewayWebSocketServer({
     lifecycle,
@@ -524,12 +555,48 @@ try {
   strictEqual(received.length, 4)
   deepStrictEqual(quarantine, [])
   if (gatewayError) throw gatewayError
+  socket.send(
+    JSON.stringify({
+      ...golden.inventory,
+      protocolVersion: GatewayProtocolManifest.current,
+      sentAt: now,
+      observedAt: now,
+      runtimeDrivers: [
+        { ...golden.inventory.runtimeDrivers[0], adapterVersion: '1.0.0', capabilityTtlMs: 5_000 },
+      ],
+    })
+  )
+  await until(async () => (await checkpoints.get(nodeId)) !== undefined, 'inventory-ingested')
   const admittedChannel = await ownership.lookup(nodeId)
   ok(admittedChannel, 'Live WebSocket ownership must be persisted')
   await server.close()
   const recoveredOwnership = new PostgresRuntimeChannelOwnershipRepository(database.application)
   strictEqual(await recoveredOwnership.lookup(nodeId), undefined)
   deepStrictEqual(await recoveredOwnership.claim(admittedChannel), { accepted: false })
+  const maintenance = new RuntimeInventoryMaintenance({
+    checkpoints,
+    connections: runtimeRepository,
+    registry: runtimeRegistry,
+    health,
+    ownership: coordination,
+    projections,
+    now: () => new Date(Date.parse(now) + 60_001),
+  })
+  const refreshedInventory = await maintenance.runPage()
+  strictEqual(refreshedInventory.updated, 1)
+  deepStrictEqual(refreshedInventory.failed, [])
+  const discovered = await projections.listRuntimeConnections({
+    workspaceId,
+    runtimeNodeRefId: nodeId,
+  })
+  ok(
+    discovered.some(
+      (model) =>
+        model.freshness.state === 'stale' &&
+        model.eligibility.state === 'ineligible' &&
+        model.node.health === 'offline'
+    )
+  )
   console.log(
     'Cloud remote drill passed: PostgreSQL dispatch, approval and cancellation, authenticated WebSocket delivery/ACK and result, Artifact-backed terminal state, and immutable command replay. Approval response is seeded; node and cancellation waiter are scripted. Cancellation is delivered after execution completion, not a native stop proof. Native permission origination, active cancellation confirmation, usage settlement and live provider execution remain unverified.'
   )

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { RuntimeNodeChannel } from './authentication.js'
+import type { RuntimeInventoryMaintenance } from './runtime-inventory-maintenance.js'
 import type {
   RuntimeGatewayWebSocketLifecycle,
   RuntimeGatewaySocket,
@@ -58,6 +59,7 @@ export interface RuntimeGatewayWebSocketServerOptions {
   readonly serve?: RuntimeGatewayNativeServe
   readonly sweepIntervalMs?: number
   readonly onSweepError?: () => void
+  readonly inventoryMaintenance?: Pick<RuntimeInventoryMaintenance, 'runPage'>
 }
 
 export class RuntimeGatewayWebSocketServer {
@@ -72,6 +74,7 @@ export class RuntimeGatewayWebSocketServer {
   #server: NativeGatewayServer | undefined
   readonly #sweepIntervalMs: number
   readonly #onSweepError: () => void
+  readonly #inventoryMaintenance: Pick<RuntimeInventoryMaintenance, 'runPage'> | undefined
   #sweepTimer: ReturnType<typeof setTimeout> | undefined
   #sweepTask: Promise<void> | undefined
   #closing: Promise<void> | undefined
@@ -92,6 +95,7 @@ export class RuntimeGatewayWebSocketServer {
     if (this.#sweepIntervalMs > 60_000) throw new Error('Invalid sweepIntervalMs')
     this.#onSweepError =
       options.onSweepError ?? (() => console.error('RUNTIME_GATEWAY_SWEEP_FAILED'))
+    this.#inventoryMaintenance = options.inventoryMaintenance
   }
 
   start(): void {
@@ -144,7 +148,12 @@ export class RuntimeGatewayWebSocketServer {
     this.#sweepTimer = setTimeout(() => {
       this.#sweepTimer = undefined
       this.#sweepTask = Promise.resolve()
-        .then(() => this.#lifecycle.sweep())
+        .then(async () => {
+          await this.#lifecycle.sweep()
+          const maintenance = await this.#inventoryMaintenance?.runPage()
+          if (maintenance && (maintenance.failed.length > 0 || maintenance.conflicts > 0))
+            throw new Error('INVENTORY_MAINTENANCE_INCOMPLETE')
+        })
         .catch(() => {
           // Never forward raw persistence errors or let a reporting sink stop future sweeps.
           try {

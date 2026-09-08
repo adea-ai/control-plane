@@ -12,6 +12,7 @@ import {
   RuntimeInventoryMessageHandler,
   RuntimeInventoryIngestionError,
   RuntimeInventoryIngestionService,
+  RuntimeInventoryMaintenance,
 } from './index.js'
 
 const nodeId = 'rnr_01JABCDEF0123456789ABCDEFG'
@@ -20,6 +21,97 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('maintenance pages disconnected inventory, preserves restrictions and converges without repeated writes', async () => {
+    const fixture = createFixture()
+    const frame = inventory(1, [driver(runtimeA), driver(runtimeB)])
+    await fixture.service.ingest(frame, source())
+    const initial = fixture.projections.runtimeConnections[0].model
+    initial.access.entitlement = { state: 'denied' }
+    initial.eligibility.reasons.push('ENTITLEMENT_DENIED')
+    initial.eligibility.state = 'ineligible'
+    const worker = maintenance(fixture, { pageSize: 1 })
+    const first = worker.runPage()
+    expect(worker.runPage()).toBe(first)
+    expect(await first).toMatchObject({ visited: 1, updated: 1, failed: [] })
+    expect(await worker.runPage()).toMatchObject({ visited: 1, updated: 1, failed: [] })
+    expect(await worker.runPage()).toMatchObject({ visited: 0, cycleComplete: false })
+    expect(await worker.runPage()).toMatchObject({ cycleComplete: true })
+    const projected = await fixture.projections.getRuntimeConnection(
+      { workspaceId },
+      initial.runtimeConnectionId
+    )
+    expect(projected.eligibility).toMatchObject({ state: 'ineligible' })
+    expect(projected.eligibility.reasons).toContain('ENTITLEMENT_DENIED')
+    expect(projected.access).toEqual(initial.access)
+    expect(projected.freshness.state).toBe('stale')
+    expect(await worker.runPage()).toMatchObject({ visited: 1, updated: 0 })
+  })
+
+  test('maintenance expires disappeared history and preserves revocation', async () => {
+    const fixture = createFixture()
+    const initial = await fixture.service.ingest(
+      inventory(1, [driver(runtimeA), driver(runtimeB)]),
+      source()
+    )
+    await fixture.service.ingest(inventory(2, [driver(runtimeB)]), source())
+    const current = await fixture.registry.get(initial.updated[1].runtimeConnectionId)
+    await fixture.registry.revoke({
+      runtimeConnectionId: current.runtimeConnectionId,
+      expectedVersion: current.version,
+      observedAt: '2026-08-25T12:00:03.000Z',
+    })
+    const result = await maintenance(fixture).runPage()
+    expect(result).toMatchObject({ updated: 2, failed: [] })
+    expect((await fixture.registry.get(initial.updated[0].runtimeConnectionId)).status).toBe(
+      'expired'
+    )
+    const revoked = await fixture.projections.getRuntimeConnection(
+      { workspaceId },
+      current.runtimeConnectionId
+    )
+    expect(revoked.status).toBe('revoked')
+    expect(revoked.eligibility.state).toBe('ineligible')
+  })
+
+  test('maintenance reports conflicts and retries the projection after registry state changed', async () => {
+    const fixture = createFixture()
+    await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    const compare = fixture.projections.compareAndSetRuntimeConnection.bind(fixture.projections)
+    fixture.projections.compareAndSetRuntimeConnection = async () => false
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      updated: 0,
+      conflicts: 1,
+      failed: [],
+    })
+    fixture.projections.compareAndSetRuntimeConnection = compare
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      updated: 1,
+      conflicts: 0,
+      failed: [],
+    })
+  })
+
+  test('maintenance isolates a missing projection and rejects malformed scan scope', async () => {
+    const fixture = createFixture()
+    const result = await fixture.service.ingest(
+      inventory(1, [driver(runtimeA), driver(runtimeB)]),
+      source()
+    )
+    fixture.projections.runtimeConnections.shift()
+    expect(await maintenance(fixture).runPage()).toMatchObject({
+      visited: 2,
+      updated: 1,
+      failed: [result.updated[0].runtimeConnectionId],
+    })
+    const worker = maintenance(fixture, {
+      connections: {
+        scanByRuntimeNode: async () => [
+          { ...result.updated[0], runtimeNodeRefId: 'rnr_01JBBCDEF0123456789ABCDEFG' },
+        ],
+      },
+    })
+    await expect(worker.runPage()).rejects.toThrow('INVENTORY_MAINTENANCE_SCAN_INVALID')
+  })
   test('rejects normalized TTL extension before applying any inventory state', async () => {
     const fixture = createFixture()
     const frame = inventory(
@@ -358,6 +450,19 @@ function createFixture(options = {}) {
   }
   const projections = {
     runtimeConnections: [],
+    async getRuntimeConnection(scope, id) {
+      return structuredClone(
+        this.runtimeConnections.findLast(
+          (row) => row.workspaceId === scope.workspaceId && row.model.runtimeConnectionId === id
+        )?.model
+      )
+    },
+    async compareAndSetRuntimeConnection(scope, expected, next) {
+      const current = await this.getRuntimeConnection(scope, expected.runtimeConnectionId)
+      if (JSON.stringify(current) !== JSON.stringify(expected)) return false
+      this.runtimeConnections.push({ workspaceId: scope.workspaceId, model: structuredClone(next) })
+      return true
+    },
     async putRuntimeConnection(workspaceId, model) {
       this.runtimeConnections.push({ workspaceId, model })
     },
@@ -380,6 +485,19 @@ function createFixture(options = {}) {
       disappearanceTtlMs: 30_000,
     }),
   }
+}
+
+function maintenance(fixture, overrides = {}) {
+  return new RuntimeInventoryMaintenance({
+    checkpoints: fixture.checkpoints,
+    connections: fixture.repository,
+    registry: fixture.registry,
+    health: fixture.health,
+    projections: fixture.projections,
+    ownership: { lookup: async () => undefined },
+    now: () => new Date('2026-08-25T12:02:00.000Z'),
+    ...overrides,
+  })
 }
 
 function source(channelGeneration = 1) {

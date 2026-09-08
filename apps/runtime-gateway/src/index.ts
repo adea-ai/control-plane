@@ -6,6 +6,7 @@ export * from './runtime-command-delivery.js'
 export * from './reconnect-reconciliation.js'
 export * from './runtime-event-ingestion.js'
 export * from './runtime-inventory-ingestion.js'
+export * from './runtime-inventory-maintenance.js'
 export * from './runtime-message-handler.js'
 export * from './websocket-lifecycle.js'
 

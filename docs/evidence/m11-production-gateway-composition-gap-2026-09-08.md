@@ -1,5 +1,43 @@
 # M11 production Runtime Gateway composition gap
 
+## Inventory maintenance implementation
+
+RuntimeInventoryMaintenance now consumes the checkpoint and per-node connection
+scanners, registry, health service, ownership lookup and conditional projection
+writer. Each pass handles at most one node and one connection page (default 32,
+maximum 128). Concurrent calls share the running pass. Cursors advance through
+history and reset at cycle end; restart begins a fresh cycle. Invalid scan
+ordering/scope rejects before writes. Per-record failures are reported and do
+not prevent later records/cycles from being visited.
+
+The pass refreshes stale/disconnected inventory, expires disappeared history at
+its declared expiry and preserves revocation. Projection updates retain existing
+access restrictions, eligibility reasons, capability metadata and remediation;
+they only reduce eligibility. A scoped compare-and-set prevents replacement of
+a changed projection, and later cycles can retry after registry state already
+changed. Unchanged projections do not generate repeated writes. Registry and
+projection writes remain separate transactions, not an atomic cross-repository
+commit. Retried availability-event publication remains a separate durability
+concern.
+
+RuntimeGatewayWebSocketServer accepts an injected maintenance pass and runs it
+after lifecycle sweeps, using the same non-overlap/shutdown behavior. Incomplete
+pages produce the fixed sweep-failure diagnostic. Production startup still must
+supply this composition; simply constructing a server without maintenance does
+not enable inventory refresh. Dependency timeouts, fleet latency and SQLite
+scanner support remain unverified/unimplemented respectively.
+
+Focused tests cover pagination, disconnected state, restriction preservation,
+idempotent convergence, disappeared expiry, revocation, projection conflicts,
+missing projections and invalid scan scope. The cloud remote drill now routes a
+real WebSocket inventory frame into PostgreSQL rather than rejecting inventory.
+After channel drain, an explicit maintenance pass produces stale/ineligible
+discovery with offline node health. That PostgreSQL-backed drill and existing
+database restart/restore lanes pass. Identity and native responses are still
+synthetic/scripted; the clock for post-disconnect expiry is advanced in the
+fixture. This is not production deployment, multi-host load or native runtime
+acceptance. Earlier inspection entries below retain historical provenance.
+
 ## Per-node connection scan prerequisite
 
 RuntimeConnectionScanner adds a node-scoped, exclusive connection-ID cursor with
