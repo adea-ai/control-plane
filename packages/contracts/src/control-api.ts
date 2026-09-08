@@ -467,6 +467,10 @@ const contextPackageReference = {
 }
 
 export interface ControlApiFixtureSet {
+  readonly executionCancellation: {
+    readonly request: ExecutionCancellationCommand
+    readonly response: z.input<typeof ExecutionCancellationCommandResultSchema>
+  }
   readonly interactionResponse: {
     readonly request: InteractionResponseCommand
     readonly response: z.input<typeof InteractionResponseCommandResultSchema>
@@ -504,6 +508,26 @@ export interface ControlApiFixtureSet {
 }
 
 export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
+  executionCancellation: {
+    request: {
+      ...requestContext,
+      commandId,
+      idempotencyKey: 'cancellation-01JABCDEF0123456789ABCDEFG',
+      payloadHash: 'f'.repeat(64),
+      operation: 'execution.cancel',
+      issuedAt: '2026-08-23T12:00:00.000Z',
+      payload: { executionId: 'exe_01JABCDEF0123456789ABCDEFG' },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        commandId,
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        status: 'accepted',
+        replayed: false,
+      },
+    },
+  },
   interactionResponse: {
     request: {
       ...requestContext,

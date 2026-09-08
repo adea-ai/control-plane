@@ -259,3 +259,11 @@ The complete integration command passed, including all three Cloud HTTP tests an
 database outage/restart/restore drills. Formatting and focused lint passed. The
 downstream acknowledgement is scripted; this does not certify real Restate or
 remote native cancellation, live deployment, or aggregate usage settlement.
+
+## SDK test-helper cancellation support
+
+The exported SDK test server initially returned `STUB_MISCONFIGURED` for the new
+`cancelExecution` method. A regression reproduced that failure. The public fixture
+set and stub path map now include execution cancellation, preserving the same
+acceptance-only response contract as the real API. This is client test-helper
+coverage, not additional runtime acceptance evidence.
