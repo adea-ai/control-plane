@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto'
 import {
+  CommandInboxError,
   CommandInboxRecordSchema,
   CommandInboxScopeSchema,
   ExecutionSchema,
@@ -13,6 +15,7 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
 import { executions } from './schema/executions.js'
+import { retiredCommandKeys } from './schema/retired-command-keys.js'
 
 export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
@@ -24,6 +27,10 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     const parsedCommand = CommandInboxRecordSchema.parse(command)
     const parsedExecution = ExecutionSchema.parse(execution)
     return this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${retirementKey(parsedCommand)}, 0))`
+      )
+      await assertNotRetired(transaction, parsedCommand)
       const insertedCommand = await transaction
         .insert(commandInbox)
         .values(toCommandRow(parsedCommand))
@@ -73,8 +80,56 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
 
   async get(scope: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
     const parsed = CommandInboxScopeSchema.parse(scope)
+    await assertNotRetired(this.database, parsed)
     const [row] = await this.database.select().from(commandInbox).where(scopeWhere(parsed)).limit(1)
     return row ? fromCommandRow(row) : undefined
+  }
+
+  /** Reserve a rejection key; domain payload deletion remains a separate operation. */
+  async retireExpiredCommand(scopeInput: CommandInboxScope, retiredAt: string): Promise<boolean> {
+    const scope = CommandInboxScopeSchema.parse(scopeInput)
+    const timestamp = new Date(retiredAt)
+    if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== retiredAt)
+      throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
+    const key = retirementKey(scope)
+    return this.database.transaction(async (transaction) => {
+      await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
+      const [retired] = await transaction
+        .select()
+        .from(retiredCommandKeys)
+        .where(eq(retiredCommandKeys.scopeKey, key))
+        .limit(1)
+      if (retired) return true
+      const [row] = await transaction
+        .select()
+        .from(commandInbox)
+        .where(scopeWhere(scope))
+        .limit(1)
+        .for('update')
+      if (!row) return false
+      const command = fromCommandRow(row)
+      const [executionRow] = await transaction
+        .select()
+        .from(executions)
+        .where(eq(executions.executionId, command.executionId))
+        .limit(1)
+        .for('update')
+      if (!executionRow) throw new Error('COMMAND_EXECUTION_INVARIANT_VIOLATION')
+      const execution = fromExecutionRow(executionRow)
+      if (
+        !['completed', 'failed'].includes(command.status) ||
+        !['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state) ||
+        timestamp.getTime() <= Date.parse(command.retentionExpiresAt)
+      )
+        return false
+      await transaction.insert(retiredCommandKeys).values({
+        scopeKey: key,
+        commandId: command.commandId,
+        executionId: command.executionId,
+        retiredAt: timestamp,
+      })
+      return true
+    })
   }
 
   async getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined> {
@@ -115,6 +170,34 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
 }
 
 type CommandRow = typeof commandInbox.$inferSelect
+
+type CommandTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
+
+async function assertNotRetired(
+  database: ControlPlaneDatabase | CommandTransaction,
+  scope: CommandInboxScope
+): Promise<void> {
+  const [row] = await database
+    .select()
+    .from(retiredCommandKeys)
+    .where(eq(retiredCommandKeys.scopeKey, retirementKey(scope)))
+    .limit(1)
+  if (row) throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
+}
+
+function retirementKey(scope: CommandInboxScope): string {
+  return createHash('sha256')
+    .update(
+      [
+        scope.callerPrincipalId,
+        scope.operation,
+        scope.workspaceId,
+        scope.projectId,
+        scope.idempotencyKey,
+      ].join('\u001f')
+    )
+    .digest('hex')
+}
 
 function toCommandRow(command: CommandInboxRecord): typeof commandInbox.$inferInsert {
   return {

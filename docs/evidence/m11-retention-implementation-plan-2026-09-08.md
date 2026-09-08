@@ -26,6 +26,29 @@ direct repository admission and service replay rejection despite altered request
 metadata, and caller/project isolation. This is SQLite-only prerequisite
 coverage; it does not prove PostgreSQL parity or full retention acceptance.
 
+## Increment: PostgreSQL command rejection keys
+
+Migration `0036_retired_command_keys.sql` adds the four-column rejection table
+with a hashed scoped key and no foreign keys or request payload. PostgreSQL
+admission and `retireExpiredCommand` share a transaction advisory lock for that
+key. Retirement also locks the command and execution rows while checking the
+same terminal-state and expiry conditions used by SQLite. Scoped reads reject
+retired keys; transactional admission rechecks before inserting any command or
+execution. No production deletion or scheduler is enabled.
+
+The real PostgreSQL integration test covers active-state refusal, the exact
+deadline, eight concurrent retirements, simulated receipt deletion in an
+isolated test database, repository reconstruction, eight rejected readmissions,
+changed request metadata, and caller/project isolation. The rejection record
+retains its original identity and timestamp. This verifies the PostgreSQL
+prerequisite, not an end-to-end cleanup worker or provider retention policy.
+
+The integration suite passes all 27 database tests plus Cloud HTTP, portability,
+graph, and testing integration lanes, authenticated remote delivery, and the
+PostgreSQL outage, restart, and backup/restore drills. The latter are existing
+recovery drills, not proof that deletion survives backup restoration; that
+specific acceptance test remains outstanding below.
+
 ## Current evidence
 
 - `packages/config/src/operational.ts` specifies 30-day command-inbox and

@@ -79,6 +79,7 @@ import {
   projectStates,
   reconciliationCheckpoints,
   releaseAuditRecords,
+  retiredCommandKeys,
   runtimeCommands,
   runtimeEventReceipts,
   runtimeInventoryCheckpoints,
@@ -1522,6 +1523,119 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         .from(reconciliationCheckpoints)
         .where(eq(reconciliationCheckpoints.executionId, execution.executionId))
     ).toHaveLength(1)
+  })
+
+  test('retired command keys prevent PostgreSQL readmission after receipt removal', async () => {
+    const now = '2026-08-24T11:00:00.000Z'
+    const retiredAt = '2026-09-24T11:00:00.000Z'
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAW'
+    const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+    const service = new CommandInboxService({
+      repository,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    })
+    const input = {
+      callerPrincipalId: 'svc_retention-test',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-retirement-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-23T11:00:00.000Z',
+    }
+    const accepted = await service.acceptExecution(input)
+    expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+    expect(
+      await repository.compareAndSet(1, {
+        ...accepted.command,
+        status: 'failed',
+        terminalAt: now,
+        errorReference: 'error://test/cancelled',
+        version: 2,
+      })
+    ).toBe(true)
+    expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(false)
+    await isolated.application
+      .update(executions)
+      .set({ state: 'cancelled', terminalAt: new Date(now) })
+      .where(eq(executions.executionId, accepted.execution.executionId))
+    expect(await repository.retireExpiredCommand(accepted.command, input.retentionExpiresAt)).toBe(
+      false
+    )
+    expect(
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          new PostgresCommandAcceptanceRepository(isolated.application).retireExpiredCommand(
+            accepted.command,
+            retiredAt
+          )
+        )
+      )
+    ).toEqual(Array(8).fill(true))
+    // Simulate future dependency-aware payload cleanup only in the isolated test database.
+    await isolated.application
+      .delete(commandInbox)
+      .where(eq(commandInbox.commandId, input.commandId))
+    const restarted = new PostgresCommandAcceptanceRepository(isolated.application)
+    await expect(restarted.get(accepted.command)).rejects.toMatchObject({
+      code: 'COMMAND_RETENTION_EXPIRED',
+    })
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 8 }, () =>
+        restarted.accept({ ...accepted.command, payloadHash: 'c'.repeat(64) }, accepted.execution)
+      )
+    )
+    expect(
+      attempts.every(
+        (result) =>
+          result.status === 'rejected' && result.reason.code === 'COMMAND_RETENTION_EXPIRED'
+      )
+    ).toBe(true)
+    await expect(
+      new CommandInboxService({
+        repository: restarted,
+        executionIdFactory: () => {
+          throw new Error('MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: { validate: async () => true },
+        now: () => retiredAt,
+      }).acceptExecution({
+        ...input,
+        commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FAX',
+        receivedAt: retiredAt,
+        retentionExpiresAt: '2026-11-24T11:00:00.000Z',
+      })
+    ).rejects.toMatchObject({ code: 'COMMAND_RETENTION_EXPIRED' })
+    expect(
+      await restarted.get({ ...accepted.command, callerPrincipalId: 'svc_other' })
+    ).toBeUndefined()
+    expect(
+      await restarted.get({ ...accepted.command, projectId: 'prj_01CRZ3NDEKTSV4RRFFQ69G5FAX' })
+    ).toBeUndefined()
+    const [tombstone] = await isolated.application
+      .select()
+      .from(retiredCommandKeys)
+      .where(eq(retiredCommandKeys.commandId, input.commandId))
+    expect(tombstone).toEqual({
+      scopeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      commandId: input.commandId,
+      executionId: accepted.execution.executionId,
+      retiredAt: new Date(retiredAt),
+    })
   })
 
   test('atomically accepts one execution for concurrent duplicate commands and audits conflicts', async () => {
