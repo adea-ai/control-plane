@@ -15,6 +15,11 @@ import {
   createExecutionPlanTestFixtureInputs,
 } from '../packages/execution-plan/src/testing.ts'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { ControlPlaneClient } from '@control-plane/sdk'
+import {
+  createControlApiApplication,
+  createPrivateApiAuthentication,
+} from '../apps/control-api/dist/index.js'
 
 const event = (type, fields) => `event: ${type}\ndata: ${JSON.stringify({ type, ...fields })}\n\n`
 
@@ -43,7 +48,20 @@ const directory = await mkdtemp(join(tmpdir(), 'm11-installed-acp-certification-
 let rpc
 let server
 let local
+let application
 let requests = 0
+let cancellationStreamClosed = false
+let cancellationRequestAborted = false
+let cancellationCleanupVerified = false
+let streamHeartbeat
+async function until(predicate, description) {
+  const deadline = Date.now() + 20000
+  do {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  } while (Date.now() < deadline)
+  throw new Error(`ACP_CERTIFICATION_TIMEOUT:${description}`)
+}
 try {
   const cwd = join(directory, 'workspace')
   const home = join(directory, 'home')
@@ -52,12 +70,13 @@ try {
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
+    idleTimeout: 0,
     async fetch(request) {
       if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/responses')
         return new Response(null, { status: 404 })
       const body = await request.json()
       requests++
-      if (requests === 3) {
+      if (requests >= 3) {
         assert.equal(body.model, 'gpt-5.4')
         assert(JSON.stringify(body).includes('Complete the assigned task safely.'))
         assert(JSON.stringify(body).includes('Inspect and update project files.'))
@@ -83,6 +102,36 @@ try {
           input_tokens_details: { cached_tokens: 0 },
           output_tokens_details: { reasoning_tokens: 0 },
         },
+      }
+      if (requests === 4) {
+        request.signal.addEventListener(
+          'abort',
+          () => {
+            cancellationRequestAborted = true
+          },
+          { once: true }
+        )
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  event('response.created', {
+                    response: { ...result, status: 'in_progress', output: [] },
+                  })
+                )
+              )
+              streamHeartbeat = setInterval(() => {
+                controller.enqueue(new TextEncoder().encode(': pending\n\n'))
+              }, 100)
+            },
+            cancel() {
+              clearInterval(streamHeartbeat)
+              cancellationStreamClosed = true
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
       }
       return new Response(
         event('response.created', { response: { ...result, status: 'in_progress', output: [] } }) +
@@ -111,6 +160,7 @@ try {
         PATH: `${dirname(nodeExecutable)}:/usr/bin:/bin`,
         HOME: home,
         CODEX_HOME: codexHome,
+        CODEX_PATH: join(installation, 'native/codex'),
       },
       onNotification: () => undefined,
       onRequest: (id) => client.respondError(id, -32601, 'Certification does not authorize tools'),
@@ -174,10 +224,35 @@ try {
       DATA_RESIDENCY: 'us',
     }).map(([key, value]) => [`CONTROL_PLANE_CODEX_ACP_${key}`, value])
   )
+  const runtimeOptions = resolveLocalRuntimeOptions({
+    ...launcher,
+    CONTROL_PLANE_LOCAL_RUNTIME: 'codex-acp',
+  })
   local = new LocalControlPlaneComposition({
     dataDirectory: join(directory, 'local'),
     workflowEndpointPort: 19083,
-    ...resolveLocalRuntimeOptions({ ...launcher, CONTROL_PLANE_LOCAL_RUNTIME: 'codex-acp' }),
+    runtimeFactory(repositories) {
+      const runtime = runtimeOptions.runtimeFactory(repositories)
+      const cleanup = runtime.cleanup.bind(runtime)
+      runtime.cleanup = async (handle) => {
+        try {
+          if (requests === 4) {
+            try {
+              await until(() => cancellationStreamClosed, 'native-stream-close-before-cleanup')
+            } catch (error) {
+              console.error(
+                JSON.stringify({ cancellationStreamClosed, cancellationRequestAborted })
+              )
+              throw error
+            }
+            cancellationCleanupVerified = true
+          }
+        } finally {
+          await cleanup(handle)
+        }
+      }
+      return runtime
+    },
   })
   const fixtureOptions = {
     profileCapabilityRequirements: ['stream.output'],
@@ -190,24 +265,54 @@ try {
   for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
   await local.contextPackages.put(inputs.contextPackage)
   await local.executionPlans.put(plan)
-  const base = ControlApiFixtures.executionAcceptance.request
-  const accepted = await local.executionAcceptanceService.accept(
-    {
-      ...base,
-      issuedAt: new Date().toISOString(),
-      payload: {
-        ...base.payload,
-        executionPlan: {
-          executionPlanId: plan.executionPlanId,
-          contentDigest: plan.contentDigest,
-          schemaVersion: plan.schemaVersion,
-        },
-        deadlineAt: new Date(Date.now() + 60000).toISOString(),
-        retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-      },
+  const authentication = await createPrivateApiAuthentication(join(directory, 'api-auth'))
+  const metadata = {
+    serviceName: 'control-api',
+    version: 'native-certification',
+    commitSha: 'native-certification',
+    environment: 'test',
+    instanceId: 'installed-acp',
+  }
+  application = await createControlApiApplication({
+    metadata,
+    logger: { write: () => undefined },
+    health: () => ({ status: 'ok', metadata }),
+    readiness: () => ({ status: 'ready', metadata }),
+    serviceAuthenticator: authentication.authenticator,
+    executionAcceptanceService: local.executionAcceptanceService,
+    executionCancellationService: local.executionCancellationService,
+  })
+  await application.listen(0, '127.0.0.1')
+  let loseCancellationAck = true
+  const sdk = new ControlPlaneClient({
+    baseUrl: `http://127.0.0.1:${application.getHttpServer().address().port}`,
+    credential: (await readFile(authentication.credentialFile, 'utf8')).trim(),
+    fetch: async (url, init) => {
+      const response = await fetch(url, init)
+      if (new URL(url).pathname === '/v1/executions/cancel' && response.ok && loseCancellationAck) {
+        loseCancellationAck = false
+        await response.arrayBuffer()
+        throw new Error('ACP_CERTIFICATION_LOST_CANCEL_ACK')
+      }
+      return response
     },
-    base.caller.servicePrincipalId
-  )
+  })
+  const base = ControlApiFixtures.executionAcceptance.request
+  const acceptance = {
+    ...base,
+    issuedAt: new Date().toISOString(),
+    payload: {
+      ...base.payload,
+      executionPlan: {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      },
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+    },
+  }
+  const accepted = await sdk.acceptExecution(acceptance)
   const deadline = Date.now() + 20000
   let execution
   do {
@@ -229,19 +334,61 @@ try {
   assert.equal(attached.ok, true)
   assert.equal((await attached.json()).status, 'completed')
   assert.equal(requests, 3)
+  const cancellationIssuedAt = Date.now()
+  const cancelled = await sdk.acceptExecution({
+    ...acceptance,
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFH',
+    idempotencyKey: 'installed-acp-cancel-execution',
+    issuedAt: new Date(cancellationIssuedAt).toISOString(),
+    payload: {
+      ...acceptance.payload,
+      deadlineAt: new Date(cancellationIssuedAt + 60000).toISOString(),
+      retentionExpiresAt: new Date(cancellationIssuedAt + 30 * 86400000).toISOString(),
+    },
+  })
+  await until(() => requests === 4, 'native-cancellation-request')
+  const cancellation = {
+    ...base,
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFJ',
+    operation: 'execution.cancel',
+    issuedAt: new Date().toISOString(),
+    payload: { executionId: cancelled.data.executionId },
+  }
+  await assert.rejects(sdk.cancelExecution(cancellation), /ACP_CERTIFICATION_LOST_CANCEL_ACK/)
+  const replay = await sdk.cancelExecution({
+    ...cancellation,
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFK',
+  })
+  assert.equal(replay.data.commandId, cancellation.commandId)
+  assert.equal(replay.data.replayed, true)
+  const cancelledAttachment = await fetch(
+    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${cancelled.data.executionId}/attach`,
+    { signal: AbortSignal.timeout(30000) }
+  )
+  assert.equal(cancelledAttachment.ok, true)
+  assert.equal((await cancelledAttachment.json()).status, 'cancelled')
+  const cancelledExecution = await local.executions.getExecution(cancelled.data.executionId)
+  assert.equal(cancelledExecution.state, 'cancelled')
+  assert.equal(cancelledExecution.terminalResultRef, undefined)
+  assert.equal((await local.executions.listAttempts(cancelled.data.executionId)).length, 1)
+  assert.equal(cancellationStreamClosed, true)
+  assert.equal(cancellationCleanupVerified, true)
+  assert.equal(requests, 4)
   console.log(
     JSON.stringify(
       {
         suite: 'm11-installed-acp',
         bundleSha256: pinnedAcpBuild.bundleSha256,
+        nativeSha256: manifest.nativeBuild.executableSha256,
         nodeVersion,
         requests,
         freshPromptUsage: { inputTokens: 11, outputTokens: 3 },
         restartedPromptUsage: { inputTokens: 11, outputTokens: 3 },
         localLauncher:
-          'codex-acp; SQLite; real Restate; published profile and Skill; configured model; one attempt',
+          'codex-acp; authenticated HTTP API; SQLite; real Restate; completion and cancellation; one attempt each',
+        cancellation: 'lost ACK replayed; native model stream closed before runtime cleanup',
         scope:
-          'native loaded-session accounting and Local launcher completion; not in-flight recovery or full milestone certification',
+          'native loaded-session accounting and Local HTTP completion/cancellation; not in-flight recovery or full milestone certification',
       },
       null,
       2
@@ -250,11 +397,16 @@ try {
 } finally {
   try {
     try {
-      await local?.close()
+      try {
+        await application?.close()
+      } finally {
+        await local?.close()
+      }
     } finally {
       await rpc?.close()
     }
   } finally {
+    clearInterval(streamHeartbeat)
     server?.stop(true)
     await rm(directory, { recursive: true, force: true })
   }

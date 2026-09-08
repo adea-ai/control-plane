@@ -1,0 +1,61 @@
+diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
+index 3712b28..810aa28 100644
+--- a/codex-rs/codex-api/src/sse/responses.rs
++++ b/codex-rs/codex-api/src/sse/responses.rs
+@@ -551,7 +551,10 @@ async fn process_sse_with_treatment(
+ 
+     loop {
+         let start = Instant::now();
+-        let response = timeout(idle_timeout, stream.next()).await;
++        let response = tokio::select! {
++            _ = tx_event.closed() => return,
++            response = timeout(idle_timeout, stream.next()) => response,
++        };
+         if let Some(t) = telemetry.as_ref() {
+             t.on_sse_poll(&response, start.elapsed());
+         }
+@@ -716,6 +719,10 @@ fn rate_limit_regex() -> &'static regex_lite::Regex {
+     })
+ }
+ 
++#[cfg(test)]
++#[path = "responses_cancellation_tests.rs"]
++mod cancellation_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/codex-rs/codex-api/src/sse/responses_cancellation_tests.rs b/codex-rs/codex-api/src/sse/responses_cancellation_tests.rs
+new file mode 100644
+index 0000000..c985fb0
+--- /dev/null
++++ b/codex-rs/codex-api/src/sse/responses_cancellation_tests.rs
+@@ -0,0 +1,28 @@
++use super::*;
++use bytes::Bytes;
++use codex_client::TransportError;
++
++#[tokio::test]
++async fn dropping_consumer_releases_a_silent_provider_stream() {
++    let (bytes_tx, bytes_rx) = mpsc::channel::<Result<Bytes, TransportError>>(1);
++    let stream = futures::stream::unfold(bytes_rx, |mut receiver| async move {
++        receiver.recv().await.map(|value| (value, receiver))
++    });
++    let (tx, rx) = mpsc::channel::<Result<ResponseEvent, ApiError>>(1);
++    let task = tokio::spawn(process_sse(
++        Box::pin(stream),
++        tx,
++        Duration::from_secs(60),
++        /*telemetry*/ None,
++    ));
++    tokio::task::yield_now().await;
++    assert!(!bytes_tx.is_closed());
++    drop(rx);
++    let released = timeout(Duration::from_secs(1), bytes_tx.closed()).await;
++    task.abort();
++    let _ = task.await;
++    assert!(
++        released.is_ok(),
++        "consumer cancellation retained the provider stream"
++    );
++}

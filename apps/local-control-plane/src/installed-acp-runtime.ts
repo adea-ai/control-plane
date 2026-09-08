@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, readFile, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { pinnedAcpBuild } from '@control-plane/acp-adapter'
+import { pinnedAcpBuild, verifyPinnedCodexNativeBinary } from '@control-plane/acp-adapter'
 import { createExecutionId } from '@control-plane/control-api'
 import { createLocalAcpRuntime, createRepositoryAcpTaskPromptResolver } from './acp-runtime.js'
 import type { LocalManagedPiRuntimeRepositories } from './managed-pi-runtime.js'
@@ -47,6 +47,9 @@ export async function verifyLocalAcpInstallation(directory: string): Promise<str
   )
   if (codex.version !== pinnedAcpBuild.codexVersion)
     throw new Error('ACP_INSTALL_CODEX_VERSION_MISMATCH')
+  if (manifest.nativeBuild?.executable !== 'native/codex')
+    throw new Error('ACP_NATIVE_REBUILD_REQUIRED')
+  await verifyPinnedCodexNativeBinary(join(directory, 'native/codex'), manifest.nativeBuild)
   return executable
 }
 
@@ -70,7 +73,7 @@ export function createInstalledLocalAcpRuntime(
     PATH: `${dirname(options.nodeExecutable)}:/usr/bin:/bin`,
     HOME: home,
     CODEX_HOME: options.codexHome,
-    CODEX_PATH: join(options.installationDirectory, 'source/node_modules/.bin/codex'),
+    CODEX_PATH: join(options.installationDirectory, 'native/codex'),
     CODEX_CONFIG: JSON.stringify({ model: route.model, model_provider: route.provider }),
     MODEL_PROVIDER: route.provider,
   }
