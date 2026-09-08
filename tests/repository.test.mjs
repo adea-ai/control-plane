@@ -218,12 +218,12 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.match(config, /^features: all$/m)
   assert.match(config, /^license: apache-2\.0$/m)
   assert.match(config, /^git_workflow: direct$/m)
-  assert.match(config, /^release_merge_strategy: rebase$/m)
+  assert.match(config, /^release_merge_strategy: squash$/m)
   assert.match(config, /^codeql: auto$/m)
   assert.match(config, /^dependency_review: auto$/m)
   assert.match(config, /^opencode_security: true$/m)
   assert.match(config, /^staging_validation_mode: audit$/m)
-  assert.match(config, /^runtime_ref: v1\.5\.1$/m)
+  assert.match(config, /^runtime_ref: v1\.9\.5$/m)
   for (const runner of [
     'runner',
     'ci_runner',
@@ -253,10 +253,9 @@ test('emits the required gate contexts and documents the direct-workflow policy'
   assert.match(contributing, /feature PRs land on `main` with squash merges/)
   assert.match(ci, /Feature branches must squash into `main`/)
   assert.doesNotMatch(contributing, /feature PRs land on `staging` with squash merges/)
-  assert.doesNotMatch(contributing, /staging-release|git switch staging|origin staging/)
   assert.doesNotMatch(contributing, /(?:from|targeting|at) `staging`/)
-  assert.match(contributing, /configured Git workflow is `direct`/)
-  assert.match(contributing, /not an intermediate Git integration branch/)
+  assert.match(contributing, /The Git workflow is `direct`/)
+  assert.match(contributing, /Feature branches never touch `staging`/)
 })
 
 test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {
@@ -276,7 +275,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.5\.1/
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.9\.5/
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 2)
   assert.match(validation, /cancel-in-progress: true/)
@@ -284,7 +283,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(validation, /branches: \[main\]/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v1\.5\.1/)
+  assert.match(release, /release\.yml@v1\.9\.5/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)

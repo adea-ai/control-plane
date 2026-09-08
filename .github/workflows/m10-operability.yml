@@ -50,7 +50,8 @@ jobs:
             "$compose_root/server/control-plane" \
             "$compose_root/server/postgres" \
             "$compose_root/server/restate"
-          export RESTATE_REQUEST_IDENTITY_PUBLIC_KEY="$(node ../../scripts/provision-restate-identity.mjs "$compose_root/server/restate")"
+          RESTATE_REQUEST_IDENTITY_PUBLIC_KEY="$(node ../../scripts/provision-restate-identity.mjs "$compose_root/server/restate")"
+          export RESTATE_REQUEST_IDENTITY_PUBLIC_KEY
           sudo chown -R 1000:1000 "$compose_root/simple" "$compose_root/server/control-plane"
           sudo chown -R 70:70 "$compose_root/server/postgres"
           sudo chown -R 0:0 "$compose_root/server/restate"
@@ -88,9 +89,10 @@ jobs:
           test "$credential_before" = "$credential_after"
           docker compose --profile simple down
 
-          export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
-          export POSTGRES_MIGRATION_PASSWORD="$(openssl rand -hex 32)"
-          export POSTGRES_APPLICATION_PASSWORD="$(openssl rand -hex 32)"
+          POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+          POSTGRES_MIGRATION_PASSWORD="$(openssl rand -hex 32)"
+          POSTGRES_APPLICATION_PASSWORD="$(openssl rand -hex 32)"
+          export POSTGRES_PASSWORD POSTGRES_MIGRATION_PASSWORD POSTGRES_APPLICATION_PASSWORD
           export CONTROL_PLANE_SERVER_DATA_PATH="$compose_root/server/control-plane"
           export POSTGRES_DATA_PATH="$compose_root/server/postgres"
           export RESTATE_DATA_PATH="$compose_root/server/restate"
