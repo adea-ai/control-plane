@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.10.0...workspace-v1.11.0) (2026-09-08)
+
+
+### Features
+
+* **local:** persist terminal usage before cancellation cleanup ([#427](https://github.com/adea-ai/control-plane/issues/427)) ([3470d9a](https://github.com/adea-ai/control-plane/commit/3470d9ac5d0f1f32e70f3b8deedf82c3b37a06b4))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.9.0...workspace-v1.10.0) (2026-09-08)
 
 
