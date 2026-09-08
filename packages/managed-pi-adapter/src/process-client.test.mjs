@@ -187,6 +187,8 @@ describe('ManagedPiProcessClient', () => {
       expect(record.prompt).toBe('bounded task context')
       expect(record.systemPrompt).toBe('immutable system instruction')
       const nativeStatus = await client.status(handle)
+      const nativeEvents = []
+      for await (const event of client.progress(handle)) nativeEvents.push(event)
       await adapter.cleanup(handle)
       const recoveredHandle = handle
       handle = undefined
@@ -196,6 +198,37 @@ describe('ManagedPiProcessClient', () => {
         state: 'succeeded',
         result: nativeStatus.result,
       })
+      const recoveredEvents = []
+      for await (const event of recreated.progress(recoveredHandle)) recoveredEvents.push(event)
+      expect(recoveredEvents).toEqual(nativeEvents)
+      const resumedEvents = []
+      for await (const event of recreated.progress(recoveredHandle, 2)) resumedEvents.push(event)
+      expect(resumedEvents).toEqual(nativeEvents.filter((event) => event.sequence > 2))
+      expect(await recreated.progress(recoveredHandle, 0, AbortSignal.abort()).next()).toEqual({
+        done: true,
+        value: undefined,
+      })
+      const terminalPath = join(
+        directory,
+        'executions',
+        'terminal-results',
+        `${recoveredHandle.attemptId}.json`
+      )
+      const originalRecord = JSON.parse(await readFile(terminalPath, 'utf8'))
+      const legacy = structuredClone(originalRecord)
+      delete legacy.events
+      await writeFile(terminalPath, JSON.stringify(legacy))
+      expect((await recreated.status(recoveredHandle)).result).toEqual(nativeStatus.result)
+      await expect(recreated.progress(recoveredHandle).next()).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
+      })
+      const corrupted = structuredClone(originalRecord)
+      corrupted.events[0].sequence = 2
+      await writeFile(terminalPath, JSON.stringify(corrupted))
+      await expect(recreated.progress(recoveredHandle).next()).rejects.toMatchObject({
+        code: 'PI_TERMINAL_RECONCILIATION_REQUIRED',
+      })
+      await writeFile(terminalPath, JSON.stringify(originalRecord))
       await expect(
         recreated.reconcile({ ...recoveredHandle, startedAt: '2026-01-01T00:00:00.000Z' })
       ).rejects.toMatchObject({ code: 'PI_TERMINAL_RECONCILIATION_REQUIRED' })

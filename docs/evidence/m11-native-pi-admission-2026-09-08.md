@@ -115,3 +115,23 @@ original port owner was not captured. The unchanged isolated E2E rerun passed
 environment/lifecycle observation, not a proven code fix or a clean first pass.
 The subsequent unchanged full-suite rerun also passed: 990 unit, 104 E2E, and
 67 smoke tests. No unrelated process was stopped to obtain the passing reruns.
+
+## Terminal event-history recovery
+
+Terminal records now also contain the original ordered native event stream,
+including its final status and usage events. Persistence starts only after those
+events have been appended, and consumers still wait for durable persistence
+before observing terminal events. A fresh client reads the original sequences
+and applies `afterSequence` without synthesizing new events or counters.
+
+Records enforce contiguous sequences starting at one, a final status matching
+the terminal snapshot, at most 4096 events, and the existing 8 MiB total bound.
+Exceeding these bounds requires reconciliation rather than silently truncating
+history. Existing schema-version-1 records without events still support status
+reads, but progress recovery explicitly requires reconciliation. These event
+payloads belong to the same private terminal-snapshot retention class.
+
+The process-backed suite passes 8 tests / 48 assertions: exact replay after
+cleanup, cursor filtering, pre-aborted reads, legacy status compatibility,
+legacy-history refusal, and damaged sequence refusal are covered. This is not
+live in-flight process reattachment or a published-Pi event-recovery proof.

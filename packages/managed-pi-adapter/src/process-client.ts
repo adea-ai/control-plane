@@ -14,7 +14,7 @@ import {
   type ManagedPiClient,
   type ManagedPiEvent,
 } from './index.js'
-import { persistTerminalRecord, readTerminalRecord } from './terminal-record.js'
+import { persistTerminalRecord, readTerminalRecord, readTerminalEvents } from './terminal-record.js'
 
 const DRIVER_VERSION = '1.1.0'
 const PROTOCOL_VERSION = '1.0.0'
@@ -264,6 +264,15 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async *progress(handleInput: RuntimeExecutionHandle, afterSequence = 0, signal?: AbortSignal) {
+    const handle = RuntimeExecutionHandleSchema.parse(handleInput)
+    if (!this.#executions.has(handle.handleId)) {
+      if (signal?.aborted) return
+      for (const event of await readTerminalEvents(this.#dataDirectory, handle)) {
+        if (signal?.aborted) return
+        if (event.sequence > afterSequence) yield event
+      }
+      return
+    }
     const execution = this.#require(handleInput)
     let cursor = afterSequence
     while (true) {
@@ -298,8 +307,8 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       if (execution.state !== 'running') return this.#status(execution)
       execution.state = 'cancelled'
       execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
-      this.#persist(execution)
       appendEvent(execution, { kind: 'status', state: 'cancelled' }, this.#now())
+      this.#persist(execution)
     }
     return this.#status(execution)
   }
@@ -383,11 +392,9 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
       if (execution.error !== undefined) {
         execution.state = 'errored'
-        this.#persist(execution)
         appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
       } else {
         execution.state = 'succeeded'
-        this.#persist(execution)
         appendEvent(
           execution,
           {
@@ -400,6 +407,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         )
         appendEvent(execution, { kind: 'status', state: 'succeeded' }, this.#now())
       }
+      this.#persist(execution)
     } catch (error) {
       this.#fail(execution, asError(error))
     }
@@ -410,15 +418,16 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     execution.error = error
     execution.state = 'errored'
     execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
-    this.#persist(execution)
     appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
+    this.#persist(execution)
   }
 
   #persist(execution: ProcessExecution): void {
     execution.persistence = persistTerminalRecord(
       this.#dataDirectory,
       execution.handle,
-      this.#snapshot(execution)
+      this.#snapshot(execution),
+      execution.events
     )
     // Consumers await this same rejection; avoid an unhandled rejection before they poll.
     void execution.persistence.catch(() => undefined)

@@ -8,27 +8,44 @@ import {
   type RuntimeExecutionHandle,
 } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
-import { ManagedPiStatusSchema, type ManagedPiStatus } from './index.js'
+import {
+  ManagedPiEventSchema,
+  ManagedPiStatusSchema,
+  type ManagedPiEvent,
+  type ManagedPiStatus,
+} from './index.js'
 
 const recordSchema = () =>
   z
     .object({
       schemaVersion: z.literal(1),
       handle: RuntimeExecutionHandleSchema,
+      events: z.array(ManagedPiEventSchema).max(4096).optional(),
       status: ManagedPiStatusSchema.refine(({ state }) =>
         ['succeeded', 'errored', 'cancelled'].includes(state)
       ),
     })
     .strict()
+    .refine(({ events, status }) => {
+      if (!events) return true
+      const terminal = events.at(-1)
+      return (
+        events.every((event, index) => event.sequence === index + 1) &&
+        terminal?.kind === 'status' &&
+        terminal.state === status.state
+      )
+    })
 const MAX_RECORD_BYTES = 8_388_608
 
 export async function persistTerminalRecord(
   dataDirectory: string,
   handle: RuntimeExecutionHandle,
-  status: ManagedPiStatus
+  status: ManagedPiStatus,
+  events: readonly ManagedPiEvent[]
 ): Promise<void> {
-  const record = recordSchema().parse({ schemaVersion: 1, handle, status })
-  const bytes = JSON.stringify(record)
+  const record = recordSchema().safeParse({ schemaVersion: 1, handle, status, events })
+  if (!record.success) throw uncertain()
+  const bytes = JSON.stringify(record.data)
   if (Buffer.byteLength(bytes) > MAX_RECORD_BYTES) throw uncertain()
   const directory = join(dataDirectory, 'terminal-results')
   const temporary = join(directory, `${handle.attemptId}.${randomUUID()}.tmp`)
@@ -61,6 +78,19 @@ export async function readTerminalRecord(
   dataDirectory: string,
   input: RuntimeExecutionHandle
 ): Promise<ManagedPiStatus> {
+  return (await readRecord(dataDirectory, input)).status
+}
+
+export async function readTerminalEvents(
+  dataDirectory: string,
+  input: RuntimeExecutionHandle
+): Promise<ManagedPiEvent[]> {
+  const record = await readRecord(dataDirectory, input)
+  if (!record.events) throw uncertain()
+  return record.events
+}
+
+async function readRecord(dataDirectory: string, input: RuntimeExecutionHandle) {
   const handle = RuntimeExecutionHandleSchema.parse(input)
   try {
     const file = await open(
@@ -77,7 +107,7 @@ export async function readTerminalRecord(
         record.handle.startedAt !== handle.startedAt
       )
         throw uncertain()
-      return record.status
+      return record
     } finally {
       await file.close()
     }
