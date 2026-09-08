@@ -1,5 +1,34 @@
 # M11 native ACP permission continuation
 
+## Experimental aggregate accounting — 2026-09-08
+
+A local, unpublished patch to upstream `v1.7.0` passed the two-call permission
+probe with `M11_AGGREGATE_USAGE=1`. The bundled harness SHA-256 was
+`e43f61a54b37456c7c6bc02287d84f128f4aa3cce1f3b6cde771146ce32cc911`.
+Real Restate and Local SQLite settled 22 input / 6 output tokens, one attempt,
+one approved marker write, two model calls, and successful acceptance replay.
+The container had no mounts or external network and was removed after the run.
+
+The patch subtracts a known prompt baseline from monotonic cumulative native
+counts, ignores stale-turn notifications, and returns unavailable usage for an
+unknown baseline or counter regression. Fifteen focused tests, upstream type
+checking, the bundle build, and the wider upstream suite (489 passed, 26 skipped)
+passed. This is experimental fresh-session evidence, not installation support or
+an upstream release. Loaded-session baseline recovery, cancelled-execution usage
+settlement, live-provider billing and all-profile certification remain open.
+The original unpatched observations below are retained as historical evidence.
+
+The exact source change is retained in
+[`fixtures/codex-acp-1.7.0-prompt-usage.patch`](fixtures/codex-acp-1.7.0-prompt-usage.patch).
+Apply it only to upstream commit `2b48e9822330fc09f3a94a81563e5c4bb779601a`
+(`agentclientprotocol/codex-acp`, tag `v1.7.0`), using `git apply --unidiff-zero`.
+The zero-context format avoids whitespace-only patch context lines. The isolated patched commit was
+`15983ca`. Reproduce with the upstream lockfile: `npm ci --ignore-scripts`,
+`npx --no-install vitest run --no-file-parallelism --retry=0`,
+`npm run typecheck`, and `npm run build`. Replace the harness bundle only inside
+the disposable probe container, then run the Local probe in `permission` mode
+with `M11_AGGREGATE_USAGE=1`. This patch is evidence, not an automatic install hook.
+
 ## Scope and result
 
 On 2026-09-08, the isolated native permission probe completed through the

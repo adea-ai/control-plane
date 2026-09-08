@@ -23,6 +23,7 @@ const container = process.argv[2]
 const cancel = process.argv[3] === 'cancel'
 const permissionCount = process.argv[3] === 'repeated-permission' ? 2 : 1
 const permission = process.argv[3] === 'permission' || permissionCount === 2
+const aggregateUsage = process.env.M11_AGGREGATE_USAGE === '1'
 const interactionId = (index) => `int_01JABCDEF0123456789ABCDE${index === 1 ? 'FG' : 'FH'}`
 assert.ok(process.argv[3] === undefined || cancel || permission)
 assert.match(container ?? '', /^control-plane-m11-acp-local-[a-zA-Z0-9-]+$/)
@@ -255,9 +256,11 @@ try {
     result = JSON.parse(new TextDecoder().decode(stored.body))
     assert.equal(result.output.text, 'M11 isolated ACP response.')
     // Pinned codex-acp 1.7.0 exposes lastTokenUsage, not the sum of the
-    // two model calls. Assert faithful persistence, not aggregate cost coverage.
-    assert.equal(result.usage.inputTokens, 11)
-    assert.equal(result.usage.outputTokens, 3)
+    // model calls. The explicit aggregate mode tests the experimental patched
+    // harness; default mode preserves the unpatched historical assertion.
+    const expectedCalls = aggregateUsage && permission ? permissionCount + 1 : 1
+    assert.equal(result.usage.inputTokens, 11 * expectedCalls)
+    assert.equal(result.usage.outputTokens, 3 * expectedCalls)
   }
   if (permission) {
     for (const command of responseCommands)
@@ -292,7 +295,7 @@ try {
             publicSdk: true,
             markerWrites: permissionCount,
             modelCalls: permissionCount + 1,
-            aggregateUsageVerified: false,
+            aggregateUsageVerified: aggregateUsage,
           }
         : {}),
       ...(cancellationElapsedMs === undefined ? {} : { cancellationElapsedMs }),
