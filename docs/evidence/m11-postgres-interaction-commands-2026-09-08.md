@@ -79,3 +79,15 @@ permission response is seeded instead of originating from a native runtime,
 the node and terminal result are scripted, and Restate is not exercised by this
 drill. The authenticated public API, Restate workflow, gateway, and a real
 runtime still need to be proven together for full managed-cloud acceptance.
+
+## Stale interaction state during remote control
+
+Focused waiter regressions reproduced two incorrect outcomes: input/approval
+waits returned the same already-answered interaction while its execution-state
+event lagged; a succeeded cancellation returned an old interaction instead of
+cancellation confirmation. The waiter now extracts the answered interaction ID
+from the validated control command and waits past that specific interaction.
+Cancellation ignores nonterminal interaction state while still honoring terminal
+execution state, command failure/confirmation, and durable expiry. A distinct
+subsequent interaction remains observable. All six focused waiter tests pass.
+These are controlled repository observations, not additional live-runtime proof.

@@ -14,6 +14,56 @@ const input = {
 }
 
 describe('remote runtime durable outcome waiter', () => {
+  test.each(['runtime.approval', 'runtime.input'])(
+    '%s waits past its answered interaction for the next durable interaction',
+    async (operation) => {
+      let polls = 0
+      const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
+      const nextId = 'int_01JABCDEF0123456789ABCDEFH'
+      const waiter = fixture({
+        executions: {
+          getExecution: async () => {
+            polls++
+            return { state: 'awaiting_input' }
+          },
+        },
+        events: {
+          queryAfter: async () => [
+            {
+              type: 'interaction.requested',
+              payload: { interactionId: polls === 1 ? interactionId : nextId },
+            },
+          ],
+        },
+      })
+      expect(
+        await waiter.wait({
+          ...input,
+          command: {
+            ...command,
+            commandEnvelope: {
+              ...golden.command,
+              operation,
+              requiredCapabilities: [
+                operation === 'runtime.input' ? 'interaction.user-input' : 'interaction.approval',
+              ],
+              payload: {
+                version: 1,
+                parameters: {
+                  handleId: `managed-pi:${input.attemptId}`,
+                  interactionId,
+                  ...(operation === 'runtime.input'
+                    ? { text: 'continue' }
+                    : { decision: 'approve' }),
+                },
+              },
+            },
+          },
+        })
+      ).toEqual({ outcome: 'awaiting_input', interactionId: nextId })
+      expect(polls).toBe(2)
+    }
+  )
   test('observes a recovered terminal execution without requiring process-local state', async () => {
     let polls = 0
     const waiter = fixture({
@@ -80,8 +130,13 @@ describe('remote runtime durable outcome waiter', () => {
   test('treats a succeeded runtime cancellation command as cancellation confirmation', async () => {
     let sleeps = 0
     const waiter = fixture({
-      executions: { getExecution: async () => ({ state: 'running' }) },
+      executions: { getExecution: async () => ({ state: 'awaiting_input' }) },
       commands: { get: async () => ({ status: 'succeeded' }) },
+      events: {
+        queryAfter: async () => [
+          { type: 'interaction.requested', payload: { interactionId: 'int_old' } },
+        ],
+      },
       sleep: async () => {
         sleeps += 1
       },
