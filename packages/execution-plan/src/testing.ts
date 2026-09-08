@@ -14,6 +14,12 @@ export interface ExecutionPlanTestFixtureOptions {
 export function createExecutionPlanTestFixture(
   options: ExecutionPlanTestFixtureOptions = {}
 ): ExecutionPlan {
+  return new ExecutionPlanCompiler('1.0.0').compile(createExecutionPlanTestFixtureInputs(options))
+}
+
+export function createExecutionPlanTestFixtureInputs(
+  options: ExecutionPlanTestFixtureOptions = {}
+) {
   const ids = {
     workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
     projectId: 'prj_01JABCDEF0123456789ABCDEFG',
@@ -26,7 +32,7 @@ export function createExecutionPlanTestFixture(
     skillVersionId: 'skv_01JABCDEF0123456789ABCDEFG',
   }
   const constraints = structuredClone(executionConstraintFixtures.write)
-  return new ExecutionPlanCompiler('1.0.0').compile({
+  return {
     correlation: {
       workspaceId: ids.workspaceId,
       projectId: ids.projectId,
@@ -88,5 +94,5 @@ export function createExecutionPlanTestFixture(
     ],
     outputContract: { contractRef: 'contract://execution-result/v1' },
     compiledAt: '2026-08-23T12:00:00.000Z',
-  })
+  }
 }

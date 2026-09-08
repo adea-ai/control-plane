@@ -25,7 +25,10 @@ export interface LocalAcpRuntimeOptions extends AcpProcessTransportOptions {
 }
 
 /** Explicit native harness configuration; does not install or authenticate the harness. */
-export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRuntimeTransport {
+export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRuntimeTransport & {
+  open(): Promise<void>
+  close(): Promise<void>
+} {
   if (typeof options.resolvePrompt !== 'function')
     throw new Error('ACP_LOCAL_PROMPT_RESOLVER_REQUIRED')
   const processTransport = new AcpProcessTransport(options)

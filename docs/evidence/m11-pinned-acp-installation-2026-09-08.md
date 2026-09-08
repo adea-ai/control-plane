@@ -28,8 +28,8 @@ native authentication, model routing, sandbox policy, or in-flight recovery.
 A fresh Node 24.18.0 build passed 492 upstream tests with 26 explicit skips and
 produced bundle SHA-256
 `6c6da8939e3c5e835f939850451074b84359e0fddb87ab48872e2a68b9a94529`.
-The skips are not native acceptance passes. Installed-runtime verification and
-supported composition-root wiring remain required before promotion.
+The skips are not native acceptance passes. The installed-runtime verification
+and Local composition-root checks below are separate from the build.
 
 ## Installed native stdio verification
 
@@ -44,7 +44,21 @@ process. Both prompts must report exactly 11 input and 3 output tokens, with onl
 two model requests. It rejects native tool requests and does not use user provider
 credentials. The model server, native processes and temporary state are cleaned up.
 
+After those two requests, the lane selects `codex-acp` through the Local runtime
+configuration and completes a third request using SQLite and real Restate. It
+publishes the fixture profile, Skill and context inputs, accepts one execution,
+checks one completed attempt and its 11/3 token result, and waits for the Restate
+workflow to complete. The model endpoint verifies profile and Skill instructions
+and the configured model. Deliberately conflicting native default model/provider
+settings demonstrate that the explicit runtime route wins. This uses the Local
+acceptance service, not the public HTTP bootstrap path.
+
 The isolated installation passed this lane on Node 24.18.0. npm user and global
-configuration are both isolated in the installer. This is native process-restart
-and loaded-session accounting evidence, not in-flight reattachment, multi-call
-accounting, model quality, Local composition-root or full milestone certification.
+configuration are both isolated in the installer. The extended three-request lane
+also passed, as did build, type checking, lint, formatting and all 1,263 repository
+tests (1,064 unit, 127 E2E, 72 smoke). This is native process-restart, loaded-session
+accounting and Local launcher completion evidence, not in-flight reattachment,
+multi-call accounting, model quality or full milestone certification. See
+`docs/local-deployment.md` for the explicit startup configuration. Native
+authentication remains operator-owned; installation does not authenticate or
+silently enable a runtime.

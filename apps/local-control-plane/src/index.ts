@@ -14,6 +14,7 @@ import {
 } from './composition.js'
 import { createLocalApiAuthentication } from './authentication.js'
 import { createLocalManagedPiRuntime } from './managed-pi-runtime.js'
+import { createInstalledLocalAcpRuntime } from './installed-acp-runtime.js'
 
 export const serviceName = 'local-control-plane'
 
@@ -101,12 +102,38 @@ export * from './local-api-composition.js'
 export * from './direct-runtime-activities.js'
 export * from './managed-pi-runtime.js'
 export * from './acp-runtime.js'
+export * from './installed-acp-runtime.js'
 
 export function resolveLocalRuntimeOptions(
   environment: Readonly<Record<string, string | undefined>>
 ): Pick<LocalControlPlaneCompositionOptions, 'runtimeFactory'> {
   const family = environment['CONTROL_PLANE_LOCAL_RUNTIME']
   if (family === undefined || family.length === 0) return {}
+  if (family === 'codex-acp') {
+    const required = (suffix: string) => {
+      const value = environment[`CONTROL_PLANE_CODEX_ACP_${suffix}`]
+      if (!value) throw new Error(`LOCAL_CODEX_ACP_${suffix}_REQUIRED`)
+      return value
+    }
+    const options = {
+      installationDirectory: required('INSTALLATION'),
+      nodeExecutable: required('NODE'),
+      cwd: required('CWD'),
+      codexHome: required('HOME'),
+      provider: required('PROVIDER'),
+      model: required('MODEL'),
+      modelAlias: required('MODEL_ALIAS'),
+      modelCapabilities: required('MODEL_CAPABILITIES')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+      providerClass: required('PROVIDER_CLASS'),
+      dataResidency: required('DATA_RESIDENCY'),
+    }
+    return {
+      runtimeFactory: (repositories) => createInstalledLocalAcpRuntime(repositories, options),
+    }
+  }
   if (family !== 'managed-pi') throw new Error('LOCAL_RUNTIME_FAMILY_INVALID')
   const provider = environment['CONTROL_PLANE_MANAGED_PI_PROVIDER']
   const model = environment['CONTROL_PLANE_MANAGED_PI_MODEL']
