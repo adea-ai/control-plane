@@ -11,7 +11,11 @@ read to infer the baseline. Missing observations still produce unavailable usage
 
 After the native probe, review added rejection of decreasing baseline counters.
 The final source passed type checking, build, and 492 upstream tests (26 skipped).
-The native probe preceded that final guard; it was not rerun on the final bundle.
+The native restart probe was then rebuilt from final source `856b87c` and rerun
+with that guard included. It passed again: one prior-total notification arrived
+before the prompt, and the resumed prompt charged 11 input / 3 output tokens,
+excluding the earlier prompt's usage. The rebuilt probe imports the final source
+directly; this is not a claim that the production entrypoint is packaged or installed.
 Final bundle SHA-256: `6c6da8939e3c5e835f939850451074b84359e0fddb87ab48872e2a68b9a94529`.
 The native probe source is included in the patch as `src/resume-usage-probe.ts`;
 it must run only inside the credential-free, network-isolated probe container.
