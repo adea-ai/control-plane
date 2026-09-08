@@ -19,7 +19,9 @@ import {
 
 const container = process.argv[2]
 const cancel = process.argv[3] === 'cancel'
-const permission = process.argv[3] === 'permission'
+const permissionCount = process.argv[3] === 'repeated-permission' ? 2 : 1
+const permission = process.argv[3] === 'permission' || permissionCount === 2
+const interactionId = (index) => `int_01JABCDEF0123456789ABCDE${index === 1 ? 'FG' : 'FH'}`
 assert.ok(process.argv[3] === undefined || cancel || permission)
 assert.match(container ?? '', /^control-plane-m11-acp-local-[a-zA-Z0-9-]+$/)
 const docker = process.env.M11_DOCKER_PATH ?? '/usr/local/bin/docker'
@@ -57,13 +59,14 @@ const composition = new LocalControlPlaneComposition({
       cwd: '/tmp',
       environment: { PATH: '/usr/local/bin:/usr/bin:/bin' },
       externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
-      interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+      interactionId,
       requestTimeoutMs: 20000,
       turnTimeoutMs: 30000,
     }),
   workflowEndpointPort: 19083,
 })
 let application, sdk, responseCommand
+const responseCommands = []
 try {
   await composition.start()
   const runtime = composition.runtimeTransport
@@ -137,41 +140,46 @@ try {
     ? await sdk.acceptExecution(request)
     : await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
   if (permission) {
-    const deadline = Date.now() + 20000
-    let pending
-    while (Date.now() < deadline) {
-      pending = await composition.interactions.get('int_01JABCDEF0123456789ABCDEFG')
-      if (pending) break
-      await delay(50)
+    for (let index = 1; index <= permissionCount; index++) {
+      const deadline = Date.now() + 20000
+      let pending
+      while (Date.now() < deadline) {
+        pending = await composition.interactions.get(interactionId(index))
+        if (pending) break
+        await delay(50)
+      }
+      assert.equal(pending?.state, 'pending', 'NATIVE_PERMISSION_NOT_OBSERVED')
+      assert.equal(pending.kind, 'permission')
+      const marker = execFileSync(
+        docker,
+        [
+          'exec',
+          container,
+          'node',
+          '-e',
+          'const fs=require("node:fs");process.stdout.write(fs.existsSync("/tmp/m11-permission-proof")?fs.readFileSync("/tmp/m11-permission-proof","utf8"):"")',
+        ],
+        { encoding: 'utf8' }
+      )
+      assert.equal(marker, 'approved\n'.repeat(index - 1), 'NATIVE_ACTION_PRECEDED_APPROVAL')
+      responseCommand = {
+        ...ControlApiFixtures.interactionResponse.request,
+        commandId: `cmd_01JABCDEF0123456789ABCDE${index === 1 ? 'FG' : 'FH'}`,
+        idempotencyKey: `native-permission:${index}`,
+        workspaceId: request.workspaceId,
+        projectId: request.projectId,
+        issuedAt,
+        payload: {
+          executionId: accepted.data.executionId,
+          attemptId: pending.attemptId,
+          interactionId: pending.interactionId,
+          expectedVersion: pending.version,
+          action: 'grant',
+        },
+      }
+      assert.equal((await sdk.respondToInteraction(responseCommand)).data.status, 'accepted')
+      responseCommands.push(responseCommand)
     }
-    assert.equal(pending?.state, 'pending', 'NATIVE_PERMISSION_NOT_OBSERVED')
-    assert.equal(pending.kind, 'permission')
-    const markerExists = execFileSync(
-      docker,
-      [
-        'exec',
-        container,
-        'node',
-        '-e',
-        'console.log(require("node:fs").existsSync("/tmp/m11-permission-proof"))',
-      ],
-      { encoding: 'utf8' }
-    ).trim()
-    assert.equal(markerExists, 'false', 'NATIVE_ACTION_PRECEDED_APPROVAL')
-    responseCommand = {
-      ...ControlApiFixtures.interactionResponse.request,
-      workspaceId: request.workspaceId,
-      projectId: request.projectId,
-      issuedAt,
-      payload: {
-        executionId: accepted.data.executionId,
-        attemptId: pending.attemptId,
-        interactionId: pending.interactionId,
-        expectedVersion: pending.version,
-        action: 'grant',
-      },
-    }
-    assert.equal((await sdk.respondToInteraction(responseCommand)).data.status, 'accepted')
   }
   if (cancel) {
     // Wait for the actual model request, not just the persisted starting state.
@@ -240,7 +248,8 @@ try {
     assert.equal(result.usage.outputTokens, 3)
   }
   if (permission) {
-    assert.equal((await sdk.respondToInteraction(responseCommand)).data.replayed, true)
+    for (const command of responseCommands)
+      assert.equal((await sdk.respondToInteraction(command)).data.replayed, true)
     assert.equal(
       execFileSync(
         docker,
@@ -253,9 +262,9 @@ try {
         ],
         { encoding: 'utf8' }
       ),
-      'approved\n'
+      'approved\n'.repeat(permissionCount)
     )
-    assert.equal(modelCalls(), 2)
+    assert.equal(modelCalls(), permissionCount + 1)
   }
   console.log(
     JSON.stringify({
@@ -269,8 +278,8 @@ try {
         ? {
             nativePermission: true,
             publicSdk: true,
-            markerWrites: 1,
-            modelCalls: 2,
+            markerWrites: permissionCount,
+            modelCalls: permissionCount + 1,
             aggregateUsageVerified: false,
           }
         : {}),

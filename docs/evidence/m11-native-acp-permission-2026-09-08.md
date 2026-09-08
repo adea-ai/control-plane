@@ -60,7 +60,7 @@ at upstream tag `v1.7.0`, commit
 `CodexEventHandler.ts` assigns `params.tokenUsage.last` to `lastTokenUsage`, and
 `CodexAcpServer.ts` returns `toPromptUsage(lastTokenUsage)`. The probe verifies
 faithful persistence of that native result, **not aggregate execution cost**.
-Aggregate accounting, repeated native approvals, native process-restart recovery,
+Aggregate accounting, native process-restart recovery,
 all-profile parity, independent review, and the broader M11 acceptance matrix
 remain open.
 
@@ -69,3 +69,20 @@ Reproduction fixtures are
 `fixtures/m11-acp-local-probe-2026-09-08.mjs <isolated-container> permission`.
 Use a fresh marker and model-call counter for each run; never attach host
 credentials or a host workspace to this probe.
+
+## Two sequential native approvals
+
+The `repeated-permission` probe also passed on 2026-09-08 using the same pinned
+packages and container isolation. Set the model fixture's
+`M11_PERMISSION_PROBE=2`. It returned distinct function-call IDs for two tool
+requests, each requiring a separate public SDK grant. Before each grant, the
+probe asserted the exact marker contents: empty before the first and one line
+before the second. Final contents contained exactly two lines. Replaying both
+commands after completion did not add another line or model request.
+
+Observed result: `completed`, one attempt, two marker writes, three model calls,
+and native-reported usage 11 input / 3 output tokens with duration 453 ms.
+Aggregate usage remains unverified; the three fixture responses total 33/9.
+The SQLite regression `repeated-interaction.test.mjs` separately exercises
+replayed interaction history and both durable effect replays (12 assertions).
+Neither test establishes process-restart reattachment or all-profile parity.

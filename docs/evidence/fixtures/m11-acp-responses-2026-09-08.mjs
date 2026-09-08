@@ -13,12 +13,14 @@ const server = createServer((request, response) => {
   calls++
   // Cancellation probe: keep the native model request pending until its caller aborts.
   if (process.env.M11_HOLD_RESPONSES === '1') return
-  const permission = process.env.M11_PERMISSION_PROBE === '1' && calls === 1
+  const permissionCount = process.env.M11_PERMISSION_PROBE === '2' ? 2 : 1
+  const permission =
+    ['1', '2'].includes(process.env.M11_PERMISSION_PROBE) && calls <= permissionCount
   const item = permission
     ? {
-        id: 'fc_m11_permission',
+        id: `fc_m11_permission_${calls}`,
         type: 'function_call',
-        call_id: 'call_m11_permission',
+        call_id: `call_m11_permission_${calls}`,
         name: 'exec_command',
         arguments: JSON.stringify({
           cmd: "printf 'approved\\n' >> /tmp/m11-permission-proof",
