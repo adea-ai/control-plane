@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   reserveInstallDirectory,
+  createAcpBuildEnvironment,
   pinnedAcpBuild,
   validateInstallDestination,
 } from '../scripts/install-m11-codex-acp.mjs'
@@ -27,6 +28,32 @@ test('ACP installer never overwrites a pre-existing installation', async () => {
     await writeFile(join(directory, 'owner.txt'), 'existing user data')
     await expect(reserveInstallDirectory(directory)).rejects.toMatchObject({ code: 'EEXIST' })
     expect(await readFile(join(directory, 'owner.txt'), 'utf8')).toBe('existing user data')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('ACP build isolates both user and global npm configuration', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-acp-build-environment-'))
+  try {
+    const environment = await createAcpBuildEnvironment(join(directory, 'home'))
+    expect(await readFile(environment.npm_config_globalconfig, 'utf8')).toBe('')
+    expect(environment.npm_config_userconfig).toBe('/dev/null')
+    expect(environment.HOME).toBe(join(directory, 'home'))
+    expect(Object.keys(environment).toSorted()).toEqual(
+      [
+        'CI',
+        'GIT_CONFIG_GLOBAL',
+        'GIT_CONFIG_NOSYSTEM',
+        'GIT_TERMINAL_PROMPT',
+        'HOME',
+        'PATH',
+        'npm_config_cache',
+        'npm_config_globalconfig',
+        'npm_config_registry',
+        'npm_config_userconfig',
+      ].toSorted()
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

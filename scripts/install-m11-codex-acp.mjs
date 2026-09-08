@@ -32,6 +32,24 @@ export async function reserveInstallDirectory(destination) {
   await mkdir(destination, { mode: 0o700 })
 }
 
+export async function createAcpBuildEnvironment(buildHome) {
+  await mkdir(buildHome, { mode: 0o700 })
+  const globalConfig = join(buildHome, 'npm-global-config')
+  await writeFile(globalConfig, '', { mode: 0o600, flag: 'wx' })
+  return {
+    PATH: `${dirname(process.execPath)}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+    HOME: buildHome,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+    npm_config_userconfig: '/dev/null',
+    npm_config_globalconfig: globalConfig,
+    npm_config_registry: 'https://registry.npmjs.org',
+    npm_config_cache: join(buildHome, 'npm-cache'),
+    CI: 'true',
+  }
+}
+
 /** Explicit opt-in build; never overwrites an installation or reads user npm/git credentials. */
 export async function installPinnedAcp(destinationInput) {
   const destination = validateInstallDestination(destinationInput)
@@ -47,18 +65,7 @@ export async function installPinnedAcp(destinationInput) {
   await reserveInstallDirectory(destination)
   const source = join(destination, 'source')
   const buildHome = join(destination, '.build-home')
-  await mkdir(buildHome, { mode: 0o700 })
-  const environment = {
-    PATH: `${dirname(process.execPath)}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-    HOME: buildHome,
-    GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: '/dev/null',
-    GIT_TERMINAL_PROMPT: '0',
-    npm_config_userconfig: '/dev/null',
-    npm_config_registry: 'https://registry.npmjs.org',
-    npm_config_cache: join(buildHome, 'npm-cache'),
-    CI: 'true',
-  }
+  const environment = await createAcpBuildEnvironment(buildHome)
   const run = (command, args, cwd = source) =>
     new Promise((resolveRun, reject) => {
       const child = spawn(command, args, {

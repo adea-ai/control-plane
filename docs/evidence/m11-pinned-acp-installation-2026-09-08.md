@@ -30,3 +30,21 @@ produced bundle SHA-256
 `6c6da8939e3c5e835f939850451074b84359e0fddb87ab48872e2a68b9a94529`.
 The skips are not native acceptance passes. Installed-runtime verification and
 supported composition-root wiring remain required before promotion.
+
+## Installed native stdio verification
+
+```sh
+bun scripts/certify-m11-installed-acp.mjs /absolute/installation /absolute/node24
+```
+
+This explicit native lane validates the installation manifest and bundle, starts
+the installed executable with a fresh HOME/CODEX_HOME and a loopback model fixture,
+completes one prompt, closes the process, and loads the native session in a new
+process. Both prompts must report exactly 11 input and 3 output tokens, with only
+two model requests. It rejects native tool requests and does not use user provider
+credentials. The model server, native processes and temporary state are cleaned up.
+
+The isolated installation passed this lane on Node 24.18.0. npm user and global
+configuration are both isolated in the installer. This is native process-restart
+and loaded-session accounting evidence, not in-flight reattachment, multi-call
+accounting, model quality, Local composition-root or full milestone certification.
