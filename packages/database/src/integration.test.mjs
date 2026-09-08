@@ -54,6 +54,7 @@ import { PostgresReconciliationCheckpointRepository } from './reconciliation-che
 import { PostgresReleaseAuditRepository } from './release-audit-repository.ts'
 import { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.ts'
 import { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.ts'
+import { PostgresRuntimeHealthEventDispatcher } from './runtime-health-dispatcher.ts'
 import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-repository.ts'
 import { PostgresRuntimeCommandRepository } from './runtime-command-repository.ts'
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
@@ -1481,6 +1482,99 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     ).toMatchObject({ reason: 'already_current' })
     expect(await readPending()).toHaveLength(2)
+    const applied = new Map()
+    const deliveries = []
+    let loseAcknowledgement = true
+    const transport = {
+      async deliver(event) {
+        deliveries.push(event.deliveryKey)
+        const existing = applied.get(event.deliveryKey)
+        if (existing) expect(existing).toEqual(event)
+        else applied.set(event.deliveryKey, structuredClone(event))
+        if (loseAcknowledgement) {
+          loseAcknowledgement = false
+          throw new Error('ACK_LOST')
+        }
+        return { acceptedDeliveryKey: event.deliveryKey }
+      },
+    }
+    const dispatcher = new PostgresRuntimeHealthEventDispatcher(isolated.application, transport)
+    const firstDispatch = dispatcher.dispatchBatch(1)
+    expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
+    expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
+    const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
+      isolated.application,
+      transport
+    )
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 2,
+      failed: 0,
+      conflicts: 0,
+    })
+    expect(applied.size).toBe(2)
+    expect(deliveries).toHaveLength(3)
+    expect(new Set(deliveries).size).toBe(2)
+    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+      delivered: 0,
+      failed: 0,
+      conflicts: 0,
+    })
+    for (const limit of [0, -1, 1.5, 129])
+      expect(() => recreatedDispatcher.dispatchBatch(limit)).toThrow(
+        'INVALID_RUNTIME_HEALTH_DISPATCH_LIMIT'
+      )
+    await restarted.ingest(
+      {
+        ...report,
+        reportSequence: 2,
+        observedAt: '2026-08-24T21:03:00.000Z',
+        capabilitySnapshot: {
+          ...report.capabilitySnapshot,
+          version: 2,
+          observedAt: '2026-08-24T21:03:00.000Z',
+        },
+      },
+      '2026-08-24T21:03:01.000Z'
+    )
+    let deliverySignal
+    const hung = new PostgresRuntimeHealthEventDispatcher(
+      isolated.application,
+      {
+        deliver(_event, signal) {
+          deliverySignal = signal
+          return new Promise(() => {})
+        },
+      },
+      () => new Date(),
+      10
+    )
+    expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    expect(deliverySignal.aborted).toBe(true)
+    const wrongAck = new PostgresRuntimeHealthEventDispatcher(isolated.application, {
+      async deliver() {
+        return { acceptedDeliveryKey: 'wrong-key' }
+      },
+    })
+    expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+      delivered: 1,
+      failed: 0,
+      conflicts: 0,
+    })
+    expect(applied.size).toBe(3)
+    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+    for (const timeout of [0, -1, 1.5, 60_001])
+      expect(
+        () =>
+          new PostgresRuntimeHealthEventDispatcher(
+            isolated.application,
+            transport,
+            undefined,
+            timeout
+          )
+      ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
   })
 
   test('persists scoped external session references without native ownership transfer', async () => {

@@ -1,5 +1,29 @@
 # M11 production Runtime Gateway composition gap
 
+## Standalone health-event dispatch
+
+Live #188 and #197 explicitly put live Agent HQ dependencies in M12. The missing
+live runtime-health receiver is not itself an M11 blocker; M11 must prove the
+standalone producer/consumer contract without creating a second product authority.
+
+PostgresRuntimeHealthEventDispatcher reads at most 128 pending/failed health
+events, validates payload and aggregate identity, and delivers a versioned internal
+envelope with a stable opaque deduplication key derived from the durable record.
+It does not expose the database UUID. An exact-key acknowledgement permits a
+revision-conditional publication update. Failed/ambiguous attempts remain durable
+and move behind older attempts; concurrent calls on one instance coalesce.
+Transport attempts have a configurable 1–60000 ms deadline (default 10000) and
+abort signal. A transport ignoring abort may still finish later: delivery is
+at-least-once, and receivers must durably deduplicate before acknowledging.
+
+The PostgreSQL test uses a synthetic deduplicating consumer to cover an applied
+event with lost acknowledgement, dispatcher recreation, stable-key retry, empty
+published queues, a hung transport, wrong-key acknowledgement and invalid limits.
+The synthetic consumer's Map is not proof of durable Agent HQ application. Fleet
+concurrency, consumer crash recovery, authenticated routing/workspace binding,
+backoff/quarantine policy, scheduler wiring and the final standalone conformance
+matrix remain open. No HTTP endpoint or live receiver has been invented or called.
+
 ## Atomic PostgreSQL health-event acceptance
 
 A focused SDK reproduction confirms the direct-publisher failure boundary:
