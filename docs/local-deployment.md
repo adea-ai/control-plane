@@ -84,6 +84,15 @@ owner-only. Do not back up one of those paths independently while work is admitt
 Stop the Local Control Plane and confirm the process plus bundled Restate child have exited. Create
 and verify an integrity manifest without printing file contents:
 
+Successful Local composition shutdown requests a cold SQLite checkpoint before closing the
+database. It truncates the WAL and verifies the switch to DELETE journal mode so deferred
+statement cleanup cannot remove sidecars during filesystem copying. Normal startup reinstates
+WAL mode. If another connection prevents this transition, shutdown reports
+`SQLITE_CHECKPOINT_BUSY`; do not proceed with the directory checkpoint until all users of the
+database are stopped and a clean shutdown/checkpoint succeeds. Ordinary provider `close()`
+remains available without this exclusive cold-checkpoint requirement. Never manually delete a
+live WAL to make backup succeed.
+
 ```sh
 bun run checkpoint create --profile local --source "$CONTROL_PLANE_DATA_DIR" --destination ./backups/local-pre-upgrade
 bun run checkpoint verify --checkpoint ./backups/local-pre-upgrade

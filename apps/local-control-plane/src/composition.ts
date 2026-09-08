@@ -343,9 +343,12 @@ export class LocalControlPlaneComposition {
       } finally {
         await this.secrets.close()
         await this.objectStore.close()
-        this.persistence.close()
-        this.coordination.close()
-        this.observability.close()
+        try {
+          this.persistence.close({ checkpoint: true })
+        } finally {
+          this.coordination.close()
+          this.observability.close()
+        }
       }
     }
   }

@@ -27,6 +27,49 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('closes SQLite sidecars before a cold filesystem checkpoint', async () => {
+    const { instance, directory } = await provider()
+    await instance.transaction((tx) => tx.put({ namespace: 'close', id: 'record', value: 1 }))
+    await instance.health()
+    instance.close({ checkpoint: true })
+    expect(
+      await stat(join(directory, 'control-plane.sqlite-shm')).catch(() => undefined)
+    ).toBeUndefined()
+    expect(
+      await stat(join(directory, 'control-plane.sqlite-wal')).catch(() => undefined)
+    ).toBeUndefined()
+    Bun.gc(true)
+    expect(
+      await stat(join(directory, 'control-plane.sqlite-shm')).catch(() => undefined)
+    ).toBeUndefined()
+    await instance.migrate()
+    expect((await instance.transaction((tx) => tx.get('close', 'record'))).value).toBe(1)
+    expect((await instance.health()).details.wal).toBe(true)
+  })
+
+  test('fails cold-close checkpoint with another reader without discarding committed data', async () => {
+    const { instance, directory } = await provider()
+    await instance.transaction((tx) => tx.put({ namespace: 'close', id: 'record', value: 2 }))
+    const reader = new DatabaseSync(join(directory, 'control-plane.sqlite'))
+    try {
+      reader.exec('BEGIN')
+      reader.prepare('SELECT * FROM control_plane_records').all()
+      let failure
+      try {
+        instance.close({ checkpoint: true })
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({ code: 'SQLITE_CHECKPOINT_BUSY' })
+      await expect(instance.health()).rejects.toMatchObject({ code: 'SQLITE_CLOSED' })
+      reader.exec('ROLLBACK')
+    } finally {
+      reader.close()
+    }
+    await instance.migrate()
+    expect((await instance.transaction((tx) => tx.get('close', 'record'))).value).toBe(2)
+  }, 15000)
+
   test('scans bounded namespace pages by exclusive storage ID across reopen', async () => {
     const { instance } = await provider()
     for (const id of ['c', 'a', 'b']) {

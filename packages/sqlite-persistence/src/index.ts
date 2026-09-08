@@ -44,6 +44,7 @@ export type SqlitePersistenceErrorCode =
   | 'SQLITE_REVISION_CONFLICT'
   | 'SQLITE_SCHEMA_INCOMPATIBLE'
   | 'SQLITE_BACKUP_INVALID'
+  | 'SQLITE_CHECKPOINT_BUSY'
   | 'SQLITE_CLOSED'
 
 export class SqlitePersistenceError extends Error {
@@ -185,11 +186,27 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     }
   }
 
-  close(): void {
+  close(options: { readonly checkpoint?: boolean } = {}): void {
     if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
-    this.#native?.close()
-    this.#native = undefined
-    this.#drizzle = undefined
+    const database = this.#native
+    try {
+      if (database && options.checkpoint) {
+        // A cold directory checkpoint must not depend on deferred statement GC
+        // removing WAL sidecars after the caller starts copying files.
+        database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+        const mode = database.prepare('PRAGMA journal_mode = DELETE').get() as
+          | Readonly<Record<string, unknown>>
+          | undefined
+        if (mode?.['journal_mode'] !== 'delete')
+          throw new SqlitePersistenceError('SQLITE_CHECKPOINT_BUSY')
+      }
+    } catch {
+      throw new SqlitePersistenceError('SQLITE_CHECKPOINT_BUSY')
+    } finally {
+      database?.close()
+      this.#native = undefined
+      this.#drizzle = undefined
+    }
   }
 
   async #open(): Promise<DatabaseSync> {
