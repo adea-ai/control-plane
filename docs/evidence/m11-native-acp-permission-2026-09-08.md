@@ -86,3 +86,34 @@ Aggregate usage remains unverified; the three fixture responses total 33/9.
 The SQLite regression `repeated-interaction.test.mjs` separately exercises
 replayed interaction history and both durable effect replays (12 assertions).
 Neither test establishes process-restart reattachment or all-profile parity.
+
+## Native cancellation with connection-close evidence
+
+The cancellation probe passed on 2026-09-08 at candidate `6254e98` with the
+connection-observation fixture changes in this commit. The same pinned native
+packages ran without host mounts or external networking. With
+`M11_HOLD_RESPONSES=1`, the model fixture observed one active native request before
+the internal Restate cancellation signal. Afterwards it observed zero active
+requests and exactly one closed held connection. Local SQLite and workflow attach
+both reported cancelled; acceptance replay retained one attempt and one model
+request. Observed cancellation settlement was 81 ms, below the probe's five-second
+bound and native prompt timeout.
+
+```json
+{
+  "state": "cancelled",
+  "acceptanceReplay": true,
+  "attempts": 1,
+  "realRestate": true,
+  "workflowCompleted": true,
+  "cancellationElapsedMs": 81,
+  "nativeModelConnectionClosed": true
+}
+```
+
+Run `fixtures/m11-acp-local-probe-2026-09-08.mjs <isolated-container> cancel`;
+`M11_WORKFLOW_PORT` optionally selects the Local workflow endpoint port. An initial
+run stopped before execution on a port collision; the successful run used 19085.
+This is Local direct ACP evidence with a deterministic model fixture. It does not
+certify public API cancellation, remote gateway cancellation, live-provider billing,
+native process restart, or all-profile convergence.

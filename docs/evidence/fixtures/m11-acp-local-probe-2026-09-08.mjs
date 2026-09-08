@@ -63,7 +63,7 @@ const composition = new LocalControlPlaneComposition({
       requestTimeoutMs: 20000,
       turnTimeoutMs: 30000,
     }),
-  workflowEndpointPort: 19083,
+  workflowEndpointPort: Number(process.env.M11_WORKFLOW_PORT ?? 19083),
 })
 let application, sdk, responseCommand
 const responseCommands = []
@@ -120,8 +120,8 @@ try {
       retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
     },
   }
-  const modelCalls = () =>
-    Number(
+  const modelState = () =>
+    JSON.parse(
       execFileSync(
         docker,
         [
@@ -129,11 +129,12 @@ try {
           container,
           'node',
           '-e',
-          'fetch("http://127.0.0.1:8787/probe").then(r=>r.json()).then(x=>console.log(x.calls))',
+          'fetch("http://127.0.0.1:8787/probe").then(r=>r.text()).then(x=>console.log(x))',
         ],
         { encoding: 'utf8' }
       ).trim()
     )
+  const modelCalls = () => modelState().calls
   const baselineCalls = cancel ? modelCalls() : 0
   let cancellationStartedAt
   const accepted = sdk
@@ -202,6 +203,7 @@ try {
       if (calls === baselineCalls) await delay(50)
     }
     assert.equal(calls, baselineCalls + 1)
+    assert.equal(modelState().activeRequests, 1, 'NATIVE_MODEL_REQUEST_NOT_PENDING')
     cancellationStartedAt = Date.now()
     const cancellation = await fetch(
       `http://127.0.0.1:8080/execution-lifecycle/${accepted.data.executionId}/cancelExecution`,
@@ -230,6 +232,12 @@ try {
   assert.equal((await workflowResult.json()).status, cancel ? 'cancelled' : 'completed')
   const cancellationElapsedMs =
     cancellationStartedAt === undefined ? undefined : Date.now() - cancellationStartedAt
+  if (cancel) {
+    const abortDeadline = Date.now() + 5000
+    while (modelState().activeRequests !== 0 && Date.now() < abortDeadline) await delay(50)
+    assert.equal(modelState().activeRequests, 0, 'NATIVE_MODEL_REQUEST_STILL_ACTIVE')
+    assert.equal(modelState().abortedRequests, 1, 'NATIVE_MODEL_ABORT_NOT_OBSERVED')
+  }
   const replay = sdk
     ? await sdk.acceptExecution(request)
     : await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
@@ -284,6 +292,7 @@ try {
           }
         : {}),
       ...(cancellationElapsedMs === undefined ? {} : { cancellationElapsedMs }),
+      ...(cancel ? { nativeModelConnectionClosed: true } : {}),
     })
   )
   if (cancel) {

@@ -1,9 +1,11 @@
 import { createServer } from 'node:http'
 let calls = 0
+let activeRequests = 0
+let abortedRequests = 0
 const server = createServer((request, response) => {
   request.resume()
   if (request.url === '/probe') {
-    response.end(JSON.stringify({ calls }))
+    response.end(JSON.stringify({ calls, activeRequests, abortedRequests }))
     return
   }
   if (request.url !== '/v1/responses' || request.method !== 'POST') {
@@ -12,7 +14,14 @@ const server = createServer((request, response) => {
   }
   calls++
   // Cancellation probe: keep the native model request pending until its caller aborts.
-  if (process.env.M11_HOLD_RESPONSES === '1') return
+  if (process.env.M11_HOLD_RESPONSES === '1') {
+    activeRequests++
+    response.once('close', () => {
+      activeRequests--
+      abortedRequests++
+    })
+    return
+  }
   const permissionCount = process.env.M11_PERMISSION_PROBE === '2' ? 2 : 1
   const permission =
     ['1', '2'].includes(process.env.M11_PERMISSION_PROBE) && calls <= permissionCount
