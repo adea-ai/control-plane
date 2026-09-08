@@ -250,16 +250,32 @@ export class RuntimeInventoryIngestionService {
     this.#assertSource(inventory, source)
     if (this.#unitOfWork) {
       const prepared = await this.#normalize(inventory, nodeStatus)
-      return this.#unitOfWork.run(
+      const emissions: (() => void)[] = []
+      const metrics: GatewayMetrics = {
+        increment: (name, labels) => emissions.push(() => this.#metrics.increment(name, labels)),
+        setGauge: (name, value, labels) =>
+          emissions.push(() => this.#metrics.setGauge(name, value, labels)),
+        observe: (name, value, labels) =>
+          emissions.push(() => this.#metrics.observe(name, value, labels)),
+      }
+      const result = await this.#unitOfWork.run(
         { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId },
         (ports) =>
           new RuntimeInventoryIngestionService({
             ...ports,
             normalizer: this.#normalizer,
-            metrics: this.#metrics,
+            metrics,
             disappearanceTtlMs: this.#disappearanceTtlMs,
           }).#ingestPrepared(inventory, source, nodeStatus, prepared)
       )
+      for (const emit of emissions) {
+        try {
+          emit()
+        } catch {
+          // Telemetry is best-effort and cannot undo a committed inventory.
+        }
+      }
+      return result
     }
     return this.#ingestPrepared(inventory, source, nodeStatus)
   }

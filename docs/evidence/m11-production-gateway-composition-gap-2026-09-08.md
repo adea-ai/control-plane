@@ -1,5 +1,17 @@
 # M11 production Runtime Gateway composition gap
 
+## Commit-aware inventory telemetry
+
+Transactional ingestion buffers its inventory metric emissions until the unit of
+work resolves after commit. A rejected transaction discards those emissions.
+Exporter exceptions after commit are isolated per emission and cannot reject the
+committed inventory result. Tests reproduce premature success metrics and an
+exporter exception, then verify deferred publication, discard on commit failure,
+and a successful committed result despite exporter failures. These callback
+tests complement the existing real PostgreSQL rollback tests; they do not prove
+durable or exactly-once metric delivery. A crash after commit can lose metrics,
+and the nontransactional fixture path retains its existing behavior.
+
 ## Preparation outside inventory transactions
 
 Transactional ingestion now normalizes and validates all entries before entering
@@ -20,8 +32,8 @@ hold normalization and verify no transaction entry, advance the checkpoint while
 preparation is held, then verify stale rejection with one normalization call.
 A mutation test rejects attempted input mutation before transaction entry.
 This removes normalizer waits from the database-lock interval; it is not an
-end-to-end deadline or proof of bounded history/database operations. Metrics-before-
-commit handling and the broader snapshot concurrency matrix remain open.
+end-to-end deadline or proof of bounded history/database operations. The broader
+snapshot concurrency matrix remains open.
 
 ## Transaction-bound inventory ingestion
 
@@ -45,7 +57,7 @@ concurrent full/delta snapshot acceptance matrix.
 The optional nontransactional fixture path still exists. Production factories
 must inject the durable composition. Normalization runs before the
 transaction and must not perform external effects; transaction duration, bounded
-history scanning, metrics emitted before commit, source-generation changes during
+history scanning, source-generation changes during
 work, and full-profile/concurrent snapshot verification remain open gates.
 
 ## Guarded ordinary runtime projection writes

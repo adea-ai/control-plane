@@ -21,6 +21,48 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('publishes inventory metrics only after the unit of work commits', async () => {
+    for (const commitFails of [true, false]) {
+      const scoped = createFixture()
+      const metrics = new RecordingGatewayMetrics()
+      let samplesBeforeCommit
+      const fixture = createFixture({
+        metrics,
+        unitOfWork: {
+          async run(_scope, operation) {
+            const result = await operation(scoped)
+            samplesBeforeCommit = metrics.samples.length
+            if (commitFails) throw new Error('COMMIT_FAILED')
+            return result
+          },
+        },
+      })
+      const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+      if (commitFails) await expect(pending).rejects.toThrow('COMMIT_FAILED')
+      else expect((await pending).outcome).toBe('applied')
+      expect(samplesBeforeCommit).toBe(0)
+      expect(metrics.samples).toHaveLength(commitFails ? 0 : 2)
+    }
+  })
+
+  test('metrics exporter failure cannot reject committed inventory', async () => {
+    const scoped = createFixture()
+    let attempts = 0
+    const failMetric = () => {
+      attempts++
+      throw new Error('EXPORTER_FAILED')
+    }
+    const fixture = createFixture({
+      metrics: { increment: failMetric, setGauge: failMetric, observe: failMetric },
+      unitOfWork: { run: async (_scope, operation) => operation(scoped) },
+    })
+    expect((await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())).outcome).toBe(
+      'applied'
+    )
+    expect(attempts).toBe(2)
+    expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+  })
+
   test('shares one deeply immutable inventory snapshot across normalizers', async () => {
     const inputs = []
     const fixture = createFixture({
@@ -540,7 +582,7 @@ function createFixture(options = {}) {
       maximumCapabilityTtlMs: 60_000,
     },
   })
-  const metrics = new RecordingGatewayMetrics()
+  const metrics = options.metrics ?? new RecordingGatewayMetrics()
   const normalizer = {
     async normalize({ driver: input, inventory: report, nodeStatus }) {
       const suffix = input.opaqueRef === runtimeA ? 'A' : 'B'
