@@ -70,6 +70,13 @@ reactivatable nonterminal revisions so a delayed build cannot start compute afte
 verified. Applying the Infrastructure as Code file can start compute; it must never be used as an
 ordinary standby reconciliation command.
 
+Standby requires `--project <project-id>` as well as `--environment staging` or `production`.
+It checks actual repository source configuration, not just Git trigger count. Railway source
+disconnection is service-wide: the command refuses to proceed if the same service has a Git source
+or trigger in another environment, or if it cannot verify the full environment/trigger inventory.
+It repeats this check immediately before disconnection. Coordinate configuration changes while
+running standby; the provider does not offer a conditional atomic disconnect across environments.
+
 The baseline is:
 
 | Environment | Git source                       | Running replicas                       | Persistent state                                         |
@@ -102,8 +109,8 @@ To activate staging for a bounded Cloud test:
    order, and verifies that running replicas and nonterminal deployment work are both zero:
 
    ```sh
-   bun run railway:standby --environment staging
-   bun run railway:standby --environment staging --apply --confirm staging
+   bun run railway:standby --project <project-id> --environment staging
+   bun run railway:standby --project <project-id> --environment staging --apply --confirm staging
    railway service list --environment staging --json
    ```
 
