@@ -90,3 +90,11 @@ Local composition opens lifecycle-aware runtime adapters before its workflow
 endpoint and closes them after the endpoint stops, including startup rollback.
 Adapters without lifecycle hooks retain their existing behavior. This wiring does
 not establish process-restart recovery or complete Milestone 11 acceptance.
+
+The Local lifecycle regression also runs a disposable native-wire subprocess
+through the published-plan lookup, attempt lifecycle, SQLite outcome persistence,
+and duplicate dispatch replay. Its no-filesystem capability profile is explicit:
+the default fixture's `filesystem.read` requirement is separately asserted
+ineligible. Native ACP tool support must not be treated as evidence of a specific
+filesystem capability. This regression uses a wire fixture, not a real model or
+filesystem-tool certification.

@@ -14,6 +14,7 @@ import {
   resolveEmbeddedDeploymentProfile,
   resolveLocalApiHost,
   resolveLocalRuntimeOptions,
+  createLocalAcpRuntime,
 } from './index.ts'
 
 describe('Local Control Plane composition', () => {
@@ -497,126 +498,191 @@ describe('Local Control Plane composition', () => {
     }
   })
 
-  test('persists direct runtime completion through the shared durable lifecycle', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'control-plane-local-lifecycle-'))
-    const plan = createExecutionPlanTestFixture()
-    const handle = {
-      handleId: 'local:att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      startedAt: '2026-08-29T00:00:00.000Z',
-    }
-    const composition = new LocalControlPlaneComposition({
-      dataDirectory: directory,
-      workflowRuntime: {
-        profile: 'local',
-        start: async () => undefined,
-        health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
-        stop: async () => undefined,
-      },
-      endpointFactory: {
-        create: async () => ({ run: async () => undefined, shutdown: async () => undefined }),
-      },
-      runtimeTransport: new TransportedRuntimeAdapter(
-        new DirectLocalRuntimeTransport({
-          start: async ({ attemptId }) => ({ ...handle, attemptId }),
-          progress: async function* () {},
-          status: async (runtimeHandle) => ({
-            handle: runtimeHandle,
-            state: 'completed',
-            observedAt: '2026-08-29T00:00:01.000Z',
-            result: {
-              outcome: 'completed',
-              output: { ok: true },
-              usage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
-              artifacts: [],
+  test.each(['reference', 'native-wire'])(
+    'persists %s runtime completion through the shared durable lifecycle',
+    async (runtimeKind) => {
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-local-lifecycle-'))
+      // This wire fixture completes a text-only task; it does not implement filesystem access.
+      const plan = createExecutionPlanTestFixture({
+        profileCapabilityRequirements: [],
+        skillRequiredCapabilities: [],
+      })
+      const handle = {
+        handleId: 'local:att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        startedAt: '2026-08-29T00:00:00.000Z',
+      }
+      const composition = new LocalControlPlaneComposition({
+        dataDirectory: directory,
+        workflowRuntime: {
+          profile: 'local',
+          start: async () => undefined,
+          health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
+          stop: async () => undefined,
+        },
+        endpointFactory: {
+          create: async () => ({ run: async () => undefined, shutdown: async () => undefined }),
+        },
+        runtimeTransport:
+          runtimeKind === 'native-wire'
+            ? createLocalAcpRuntime({
+                executablePath: process.execPath,
+                cwd: directory,
+                environment: {},
+                externalSessionId: () => 'ses_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+                interactionId: () => 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+                args: [
+                  '-e',
+                  `
+          let buffer='', prompts=0;
+          const reply=(id,result)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');
+          process.stdin.on('data',chunk=>{
+            buffer+=chunk; let end;
+            while((end=buffer.indexOf('\\n'))>=0){
+              const m=JSON.parse(buffer.slice(0,end)); buffer=buffer.slice(end+1);
+              if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'local-wire-fixture',version:'1.0.0'},agentCapabilities:{sessionCapabilities:{close:{}}}});
+              else if(m.method==='session/new')reply(m.id,{sessionId:'native-local'});
+              else if(m.method==='session/prompt'){
+                if(++prompts!==1)throw Error('duplicate prompt');
+                reply(m.id,{stopReason:'end_turn',usage:{inputTokens:11,outputTokens:3}});
+              }
+              else if(m.method==='session/close')reply(m.id,{});
+              else throw Error('unexpected method:'+m.method);
+            }
+          });
+        `,
+                ],
+              })
+            : new TransportedRuntimeAdapter(
+                new DirectLocalRuntimeTransport({
+                  start: async ({ attemptId }) => ({ ...handle, attemptId }),
+                  progress: async function* () {},
+                  status: async (runtimeHandle) => ({
+                    handle: runtimeHandle,
+                    state: 'completed',
+                    observedAt: '2026-08-29T00:00:01.000Z',
+                    result: {
+                      outcome: 'completed',
+                      output: { ok: true },
+                      usage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
+                      artifacts: [],
+                    },
+                  }),
+                  cleanup: async () => undefined,
+                }),
+                'test'
+              ),
+      })
+      try {
+        await composition.start()
+        if (runtimeKind === 'native-wire') {
+          expect(
+            await composition.runtimeTransport.inspect(
+              createExecutionPlanTestFixture().runtimeRequirements
+            )
+          ).toMatchObject({
+            capabilityEvaluation: { eligible: false, missingRequired: ['filesystem.read'] },
+          })
+          expect(
+            await composition.runtimeTransport.inspect(plan.runtimeRequirements)
+          ).toMatchObject({
+            health: 'healthy',
+            capabilityEvaluation: { eligible: true },
+          })
+        }
+        await composition.executionPlans.put(plan)
+        const accepted = await composition.commands.acceptExecution({
+          callerPrincipalId: 'svc_agent-hq',
+          operation: 'execution.accept',
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          requestId: plan.correlation.requestId,
+          idempotencyKey: 'local-durable-lifecycle',
+          payloadHash: 'a'.repeat(64),
+          correlation: {
+            workspaceId: plan.correlation.workspaceId,
+            projectId: plan.correlation.projectId,
+            taskId: plan.correlation.taskId,
+            agentId: plan.correlation.agentId,
+          },
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          receivedAt: '2026-08-29T00:00:00.000Z',
+          retentionExpiresAt: '2026-09-29T00:00:00.000Z',
+        })
+        const executionId = accepted.execution.executionId
+        const attemptId = `att_${executionId.slice(4)}`
+        const workflowId = 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+        const activities = composition.executionLifecycleActivities
+
+        await activities.persistStatus({
+          executionId,
+          state: 'queued',
+          effectKey: `${workflowId}:queued`,
+        })
+        await activities.ensureAttempt({
+          executionId,
+          workflowId,
+          effectKey: `${workflowId}:attempt`,
+        })
+        await activities.persistStatus({
+          executionId,
+          attemptId,
+          state: 'starting',
+          effectKey: `${workflowId}:starting`,
+        })
+        const outcome = await activities.dispatch({
+          executionId,
+          attemptId,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          effectKey: `${workflowId}:dispatch`,
+        })
+        expect(outcome.outcome).toBe('completed')
+        expect(
+          await activities.dispatch({
+            executionId,
+            attemptId,
+            executionPlan: {
+              executionPlanId: plan.executionPlanId,
+              contentDigest: plan.contentDigest,
+              schemaVersion: plan.schemaVersion,
             },
-          }),
-          cleanup: async () => undefined,
-        }),
-        'test'
-      ),
-    })
-    try {
-      await composition.start()
-      await composition.executionPlans.put(plan)
-      const accepted = await composition.commands.acceptExecution({
-        callerPrincipalId: 'svc_agent-hq',
-        operation: 'execution.accept',
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        requestId: plan.correlation.requestId,
-        idempotencyKey: 'local-durable-lifecycle',
-        payloadHash: 'a'.repeat(64),
-        correlation: {
-          workspaceId: plan.correlation.workspaceId,
-          projectId: plan.correlation.projectId,
-          taskId: plan.correlation.taskId,
-          agentId: plan.correlation.agentId,
-        },
-        executionPlan: {
-          executionPlanId: plan.executionPlanId,
-          contentDigest: plan.contentDigest,
-          schemaVersion: plan.schemaVersion,
-        },
-        receivedAt: '2026-08-29T00:00:00.000Z',
-        retentionExpiresAt: '2026-09-29T00:00:00.000Z',
-      })
-      const executionId = accepted.execution.executionId
-      const attemptId = `att_${executionId.slice(4)}`
-      const workflowId = 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV'
-      const activities = composition.executionLifecycleActivities
+            effectKey: `${workflowId}:dispatch`,
+          })
+        ).toEqual(outcome)
+        await activities.persistStatus({
+          executionId,
+          attemptId,
+          state: 'completed',
+          effectKey: `${workflowId}:completed`,
+          resultReference: outcome.resultReference,
+        })
 
-      await activities.persistStatus({
-        executionId,
-        state: 'queued',
-        effectKey: `${workflowId}:queued`,
-      })
-      await activities.ensureAttempt({
-        executionId,
-        workflowId,
-        effectKey: `${workflowId}:attempt`,
-      })
-      await activities.persistStatus({
-        executionId,
-        attemptId,
-        state: 'starting',
-        effectKey: `${workflowId}:starting`,
-      })
-      const outcome = await activities.dispatch({
-        executionId,
-        attemptId,
-        executionPlan: {
-          executionPlanId: plan.executionPlanId,
-          contentDigest: plan.contentDigest,
-          schemaVersion: plan.schemaVersion,
-        },
-        effectKey: `${workflowId}:dispatch`,
-      })
-      await activities.persistStatus({
-        executionId,
-        attemptId,
-        state: 'completed',
-        effectKey: `${workflowId}:completed`,
-        resultReference: outcome.resultReference,
-      })
-
-      expect(await composition.executions.getExecution(executionId)).toMatchObject({
-        state: 'completed',
-        latestAttemptId: attemptId,
-        terminalResultRef: outcome.resultReference,
-      })
-      expect(await composition.executions.getAttempt(attemptId)).toMatchObject({
-        state: 'completed',
-        terminalResultRef: outcome.resultReference,
-      })
-      expect(await composition.commandRepository.getByExecutionId(executionId)).toMatchObject({
-        status: 'completed',
-        resultReference: outcome.resultReference,
-      })
-    } finally {
-      await composition.close()
-      await rm(directory, { recursive: true, force: true })
+        expect(await composition.executions.getExecution(executionId)).toMatchObject({
+          state: 'completed',
+          latestAttemptId: attemptId,
+          terminalResultRef: outcome.resultReference,
+        })
+        expect(await composition.executions.getAttempt(attemptId)).toMatchObject({
+          state: 'completed',
+          terminalResultRef: outcome.resultReference,
+        })
+        expect(await composition.commandRepository.getByExecutionId(executionId)).toMatchObject({
+          status: 'completed',
+          resultReference: outcome.resultReference,
+        })
+      } finally {
+        await composition.close()
+        await rm(directory, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   test('keeps the loopback API credential outside SQLite in an owner-only file', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-local-auth-'))
