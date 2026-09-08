@@ -872,7 +872,7 @@
       "heading": "Atomic acceptance and conflict (section 4)",
       "requirement": "Validation, authorization, inbox insertion and logical execution creation are atomic where possible; conflicting payload hash reuse is rejected and replay returns the recorded response or processing state.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -880,13 +880,19 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-acceptance-map.md",
+          "commit": "5c3b505fdb3ac88e3895d7caef6d0a7c033d7343",
+          "scope": "SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Partial evidence at 5c3b505: SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
       }
     },
     {
@@ -987,7 +993,7 @@
       "heading": "Cancellation terminal precedence (section 9)",
       "requirement": "If execution completion wins a cancellation race, return the existing terminal result without rewriting it as cancelled.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -995,13 +1001,19 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-native-pi-terminal-cancellation-2026-09-08.md",
+          "commit": "79d454e401c126f6f2cd15b1bf0c7f5317804a55",
+          "scope": "Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Partial evidence at 79d454e: Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
       }
     },
     {
@@ -1815,7 +1827,7 @@
       "heading": "Inventory freshness (section 14)",
       "requirement": "Runtime and provider inventory becomes stale after 60 seconds unless the concrete adapter/provider advertises a shorter safe TTL.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-transport",
       "lane": "integration",
       "issueRefs": [186, 188, 190, 194],
@@ -1823,13 +1835,19 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-runtime-inventory-ttl-2026-09-08.md",
+          "commit": "6bb4b26d716da86c3d257fbc52474cf0500f9cc5",
+          "scope": "Protocol v1.6 default remote runtime normalization preserves a five-second advertised TTL and health refresh marks it stale after expiry; legacy omission retains sixty seconds. In-memory registry/checkpoints only; live advertisement, durable/scheduled expiry, Local freshness and ContextProvider consumers remain unverified."
         }
       ],
       "gap": {
         "issue": 188,
         "severity": "high",
         "owner": "runtime-transport",
-        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+        "disposition": "Partial evidence at 6bb4b26: Protocol v1.6 default remote runtime normalization preserves a five-second advertised TTL and health refresh marks it stale after expiry; legacy omission retains sixty seconds. In-memory registry/checkpoints only; live advertisement, durable/scheduled expiry, Local freshness and ContextProvider consumers remain unverified."
       }
     },
     {

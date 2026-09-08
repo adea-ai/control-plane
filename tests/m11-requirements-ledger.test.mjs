@@ -33,6 +33,14 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('distinguishes the recorded audit baseline from later scoped evidence', async () => {
+    const report = await renderRequirementsReport(ledger)
+    expect(report).toContain('not the current branch head')
+    expect(report).toContain(
+      'does not re-certify that baseline or establish whole-milestone completion'
+    )
+  })
+
   test('covers every normative source and prior milestone', async () => {
     const result = await validateRequirementsLedger(ledger, {
       repositoryRoot: new URL('..', import.meta.url),
