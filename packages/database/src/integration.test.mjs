@@ -1915,23 +1915,23 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
           isolated.application.transaction(async (transaction) => {
             try {
               const result = await operation(transaction)
-              if (stall === 'query') await transaction.execute(sql`select pg_sleep(1)`)
+              if (stall === 'query') await transaction.execute(sql`select pg_sleep(11)`)
               return result
             } finally {
               finished()
             }
           }),
       }
-      const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy, {
-        transactionTimeoutMs: 500,
-      })
+      // Use the real 10-second production budget. A 500 ms test override can
+      // expire during normal remote writes, before reaching the injected stall.
+      const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy)
       let phase = 'timeout'
       try {
         await rejects(
           bounded.run(inventoryScope, async (ports) => {
             await applyInventory(ports)
             wrote = true
-            if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 1_000))
+            if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 11_000))
           }),
           (error) => {
             for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
@@ -2025,7 +2025,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
       })
     ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-  })
+  }, 60_000)
 
   test('persists scoped external session references without native ownership transfer', async () => {
     await isolated.migrate()

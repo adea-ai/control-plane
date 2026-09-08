@@ -1,5 +1,25 @@
 # M11 production Runtime Gateway composition gap
 
+## Inventory timeout test uses the production budget
+
+The intermittent Neon failure recurred at `08605c3`. The retained diagnostic
+reported `INVENTORY_TIMEOUT_BEFORE_WRITES:CONNECTION_CLOSED:650ms`; 30 other
+database tests passed. This confirms rejection before the intended post-write
+stall, not successful rollback coverage. The error code alone cannot prove which
+network/backend component closed the connection, but the 500 ms override creates
+a timing assumption that ordinary remote inventory writes need not satisfy.
+
+Evidence: [diagnostic Neon failure](https://github.com/adea-ai/control-plane/actions/runs/34245541340/job/102127072133).
+
+The inventory regression now uses the unmodified production default of 10 seconds
+and injects 11-second idle-callback / active-query stalls. Both cases must still
+complete their writes, reject, roll back registry/outbox/projection/checkpoint
+changes, release ownership locking and recover through the same pool. Only this
+combined test receives a 60-second runner budget. The separate small driver probe
+retains its 500 ms deadline. No production timeout, database setting, retry or
+acceptance assertion is relaxed. Live Neon acceptance must be rerun on this
+candidate before treating the timing hypothesis as resolved.
+
 ## Accumulated inventory bounds checked before writes
 
 The protocol bounds each incoming inventory frame, while the checkpoint bounds
