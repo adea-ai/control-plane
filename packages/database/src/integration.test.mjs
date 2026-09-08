@@ -29,12 +29,7 @@ import {
   executionValidationPayloadHash,
 } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import {
-  ExternalSessionRegistry,
-  RecordingRuntimeAvailabilityChangePublisher,
-  RuntimeConnectionRegistry,
-  RuntimeHealthIngestionService,
-} from '@control-plane/runtime-sdk'
+import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-plane/runtime-sdk'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
@@ -58,6 +53,7 @@ import {
 import { PostgresReconciliationCheckpointRepository } from './reconciliation-checkpoint-repository.ts'
 import { PostgresReleaseAuditRepository } from './release-audit-repository.ts'
 import { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.ts'
+import { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.ts'
 import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-repository.ts'
 import { PostgresRuntimeCommandRepository } from './runtime-command-repository.ts'
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
@@ -1401,8 +1397,38 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       limitations: [],
       diagnostics: [],
     }
-    const changes = new RecordingRuntimeAvailabilityChangePublisher()
-    const ingestion = new RuntimeHealthIngestionService({ registry, changes, policy })
+    const readPending = () =>
+      isolated.application
+        .select()
+        .from(outboxEvents)
+        .where(eq(outboxEvents.aggregateId, runtimeConnectionId))
+    const failing = new PostgresRuntimeHealthIngestionService(
+      {
+        transaction: (operation) =>
+          isolated.application.transaction((transaction) =>
+            operation(
+              new Proxy(transaction, {
+                get(target, property) {
+                  if (property === 'insert')
+                    return (table) => {
+                      if (table === outboxEvents) throw new Error('OUTBOX_UNAVAILABLE')
+                      return target.insert(table)
+                    }
+                  const value = Reflect.get(target, property)
+                  return typeof value === 'function' ? value.bind(target) : value
+                },
+              })
+            )
+          ),
+      },
+      policy
+    )
+    await expect(failing.ingest(report, '2026-08-24T21:01:10.000Z')).rejects.toThrow(
+      'OUTBOX_UNAVAILABLE'
+    )
+    expect((await registry.get(runtimeConnectionId)).lastHealthReportSequence).toBeUndefined()
+    expect(await readPending()).toHaveLength(0)
+    const ingestion = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
     const healthy = await ingestion.ingest(report, '2026-08-24T21:01:10.000Z')
     expect(healthy.connection).toMatchObject({
       availabilityState: 'healthy',
@@ -1412,20 +1438,23 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       lastHealthReportSequence: 1,
       lastDiscoveredAt: '2026-08-24T21:00:30.000Z',
     })
-    expect(changes.events).toHaveLength(1)
+    expect(await readPending()).toHaveLength(1)
 
-    const restartedChanges = new RecordingRuntimeAvailabilityChangePublisher()
-    const restarted = new RuntimeHealthIngestionService({
-      registry: new RuntimeConnectionRegistry(
-        new PostgresRuntimeConnectionRepository(isolated.application)
-      ),
-      changes: restartedChanges,
-      policy,
-    })
+    const restarted = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
     expect(await restarted.ingest(report, '2026-08-24T21:01:20.000Z')).toMatchObject({
       applied: false,
       reason: 'replayed_report',
     })
+    expect(await readPending()).toHaveLength(1)
+    await expect(
+      failing.refresh({
+        runtimeConnectionId,
+        nodeStatus: 'offline',
+        evaluatedAt: '2026-08-24T21:02:01.000Z',
+      })
+    ).rejects.toThrow('OUTBOX_UNAVAILABLE')
+    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+    expect(await readPending()).toHaveLength(1)
     const stale = await restarted.refresh({
       runtimeConnectionId,
       nodeStatus: 'offline',
@@ -1440,7 +1469,18 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         diagnostics: expect.arrayContaining(['CAPABILITY_SNAPSHOT_STALE', 'NODE_OFFLINE']),
       },
     })
-    expect(restartedChanges.events).toHaveLength(1)
+    const pending = await readPending()
+    expect(pending).toHaveLength(2)
+    expect(pending.every((row) => row.status === 'pending')).toBe(true)
+    expect(pending.map((row) => row.payload.currentState).sort()).toEqual(['healthy', 'stale'])
+    expect(
+      await restarted.refresh({
+        runtimeConnectionId,
+        nodeStatus: 'offline',
+        evaluatedAt: '2026-08-24T21:02:02.000Z',
+      })
+    ).toMatchObject({ reason: 'already_current' })
+    expect(await readPending()).toHaveLength(2)
   })
 
   test('persists scoped external session references without native ownership transfer', async () => {

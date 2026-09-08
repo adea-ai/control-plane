@@ -11,7 +11,6 @@ import {
 import { ExecutionLifecycleService, InteractionService } from '../packages/domain/src/index.ts'
 import {
   RuntimeConnectionRegistry,
-  RuntimeHealthIngestionService,
   RecordingRuntimeAvailabilityChangePublisher,
 } from '../packages/runtime-sdk/src/index.ts'
 import {
@@ -23,6 +22,7 @@ import {
   PostgresRuntimeEventEffectSink,
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
+  PostgresRuntimeHealthIngestionService,
   PostgresRuntimeChannelOwnershipRepository,
   PostgresRuntimeInventoryCheckpointRepository,
   PostgresInteractionRepository,
@@ -194,17 +194,13 @@ try {
   const checkpoints = new PostgresRuntimeInventoryCheckpointRepository(database.application)
   const projections = new PostgresRuntimeDiscoveryRepository(database.application)
   const changes = new RecordingRuntimeAvailabilityChangePublisher()
-  const health = new RuntimeHealthIngestionService({
-    registry: runtimeRegistry,
-    changes,
-    policy: {
-      adapterMajor: 1,
-      driverMajor: 1,
-      harnessMajor: 1,
-      protocolMajor: 1,
-      healthTtlMs: 60_000,
-      maximumCapabilityTtlMs: 60_000,
-    },
+  const health = new PostgresRuntimeHealthIngestionService(database.application, {
+    adapterMajor: 1,
+    driverMajor: 1,
+    harnessMajor: 1,
+    protocolMajor: 1,
+    healthTtlMs: 60_000,
+    maximumCapabilityTtlMs: 60_000,
   })
   const inventoryIngestion = new RuntimeInventoryIngestionService({
     registry: runtimeRegistry,

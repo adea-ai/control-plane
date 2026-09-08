@@ -1,5 +1,27 @@
 # M11 production Runtime Gateway composition gap
 
+## Atomic PostgreSQL health-event acceptance
+
+A focused SDK reproduction confirms the direct-publisher failure boundary:
+ingestion commits healthy state, publication throws, and replay returns
+`replayed_report` without another publication attempt. This low-level service
+still requires a transaction-aware publisher composition for durable use.
+
+PostgresRuntimeHealthIngestionService now constructs the registry and health
+service inside one database transaction and inserts availability changes into
+the existing outbox_events table there. Report ingestion and freshness refresh
+therefore commit state plus a pending event together, or roll back both. The
+PostgreSQL integration case injects outbox insertion failure for both paths,
+checks rollback, then checks pending events survive service recreation and are
+not duplicated by report or freshness replay. The real WebSocket/PostgreSQL
+drill uses this composition for health ingestion and maintenance.
+
+This proves pending-event acceptance, not delivery. A bounded dispatcher with
+stable event-ID deduplication, acknowledgement/retry and restart tests remains
+required. Inventory disappearance publication still uses its separate publisher;
+this change does not make that path atomic. Production identity, telemetry,
+executable composition and profile acceptance remain open.
+
 ## Bounded SQLite storage scan prerequisite
 
 PersistenceTransaction now exposes an exclusive storage-ID scan with a validated

@@ -14,7 +14,7 @@ import { runtimeConnections } from './schema/runtime-connections.js'
 export class PostgresRuntimeConnectionRepository
   implements RuntimeConnectionRepository, RuntimeConnectionScanner
 {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'update'>) {}
 
   async scanByRuntimeNode(input: RuntimeConnectionScan): Promise<readonly RuntimeConnection[]> {
     const { runtimeNodeRefId, afterConnectionId, limit } = RuntimeConnectionScanSchema.parse(input)

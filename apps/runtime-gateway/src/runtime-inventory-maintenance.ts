@@ -23,7 +23,7 @@ export interface RuntimeInventoryMaintenanceOptions {
   readonly checkpoints: RuntimeInventoryCheckpointScanner
   readonly connections: RuntimeConnectionScanner
   readonly registry: RuntimeConnectionRegistry
-  readonly health: RuntimeHealthIngestionService
+  readonly health: Pick<RuntimeHealthIngestionService, 'refresh'>
   readonly ownership: Pick<RuntimeNodeCoordinationPort, 'lookup'>
   readonly projections: {
     getRuntimeConnection(scope: ProjectionScope, id: string): Promise<Projection | undefined>

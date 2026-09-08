@@ -138,7 +138,7 @@ export interface RuntimeDiscoveryProjectionWriter {
 
 export interface RuntimeInventoryIngestionOptions {
   readonly registry: RuntimeConnectionRegistry
-  readonly health: RuntimeHealthIngestionService
+  readonly health: Pick<RuntimeHealthIngestionService, 'ingest'>
   readonly checkpoints: RuntimeInventoryCheckpointRepository
   readonly changes: RuntimeAvailabilityChangePublisher
   readonly normalizer: RuntimeInventoryNormalizer
@@ -173,7 +173,7 @@ export class RuntimeInventoryIngestionError extends Error {
 export class RuntimeInventoryIngestionService {
   readonly #changes: RuntimeAvailabilityChangePublisher
   readonly #checkpoints: RuntimeInventoryCheckpointRepository
-  readonly #health: RuntimeHealthIngestionService
+  readonly #health: Pick<RuntimeHealthIngestionService, 'ingest'>
   readonly #disappearanceTtlMs: number
   readonly #metrics: GatewayMetrics
   readonly #normalizer: RuntimeInventoryNormalizer

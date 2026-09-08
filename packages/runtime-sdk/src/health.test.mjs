@@ -82,6 +82,24 @@ function report(overrides = {}) {
 }
 
 describe('runtime health ingestion', () => {
+  test('direct publisher failure leaves committed state without a replayable event', async () => {
+    const { changes, registry, service } = await createHarness()
+    let attempts = 0
+    changes.publish = async () => {
+      attempts++
+      throw new Error('PUBLICATION_UNAVAILABLE')
+    }
+    await expect(service.ingest(report(), '2026-08-24T20:01:10.000Z')).rejects.toThrow(
+      'PUBLICATION_UNAVAILABLE'
+    )
+    expect((await registry.get(connectionId)).availabilityState).toBe('healthy')
+    expect(await service.ingest(report(), '2026-08-24T20:01:11.000Z')).toMatchObject({
+      reason: 'replayed_report',
+    })
+    expect(attempts).toBe(1)
+    expect(changes.events).toHaveLength(0)
+  })
+
   test('keeps node-online state distinct from degraded runtime health', async () => {
     const { changes, service } = await createHarness()
     const result = await service.ingest(
