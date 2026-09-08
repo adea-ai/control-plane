@@ -639,6 +639,43 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     ).toEqual([])
     expect(await isolated.application.select().from(runtimeDiscoveryProjections)).toHaveLength(2)
+    const next = {
+      ...runtime,
+      observedAt: new Date(Date.parse(runtime.observedAt) + 1_000).toISOString(),
+    }
+    expect(
+      await restarted.compareAndSetRuntimeConnection(
+        { ...scope, workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+        runtime,
+        next
+      )
+    ).toBe(false)
+    const updates = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new PostgresRuntimeDiscoveryRepository(isolated.application).compareAndSetRuntimeConnection(
+          scope,
+          runtime,
+          next
+        )
+      )
+    )
+    expect(updates.filter(Boolean)).toHaveLength(1)
+    expect(
+      await restarted.compareAndSetRuntimeConnection(scope, runtime, {
+        ...next,
+        observedAt: new Date(Date.parse(next.observedAt) + 1_000).toISOString(),
+      })
+    ).toBe(false)
+    expect(await restarted.getRuntimeConnection(scope, runtime.runtimeConnectionId)).toEqual(next)
+    await expect(restarted.compareAndSetRuntimeConnection(scope, next, runtime)).rejects.toThrow(
+      'RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH'
+    )
+    await expect(
+      restarted.compareAndSetRuntimeConnection(scope, next, {
+        ...next,
+        runtimeConnectionId: 'rtc_01JBBCDEF0123456789ABCDEFG',
+      })
+    ).rejects.toThrow('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
   })
 
   test('persists immutable evaluation evidence across repository restart', async () => {

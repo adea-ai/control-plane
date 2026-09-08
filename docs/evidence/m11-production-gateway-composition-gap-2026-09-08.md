@@ -1,5 +1,21 @@
 # M11 production Runtime Gateway composition gap
 
+## Discovery refresh concurrency prerequisite
+
+PostgresRuntimeDiscoveryRepository now exposes a scoped compare-and-set for
+runtime projections. It compares the complete expected JSON projection in the
+same SQL update, preserves stored workspace/node ownership, rejects identity
+changes or backwards observation time, and returns false if the row is missing,
+outside scope or changed since the read. The existing ingestion upsert remains
+unchanged; refresh callers must use the new conditional operation.
+
+The PostgreSQL integration regression starts eight competing updates from the
+same prior projection and observes one winner. It also checks wrong-workspace
+rejection, stale expected-state rejection, retained winner state, backwards time
+and changed runtime identity. This protects a future refresh writer from
+overwriting a newer projection; it does not make the registry and projection
+one atomic transaction or implement the refresh worker itself.
+
 ## Durable inventory scan prerequisite
 
 RuntimeInventoryCheckpointScanner now provides an internal keyset scan by node

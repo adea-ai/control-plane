@@ -5,7 +5,7 @@ import {
   type ExternalSessionDiscoveryReadModel,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
-import { and, asc, eq, type SQL } from 'drizzle-orm'
+import { and, asc, eq, sql, type SQL } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { runtimeDiscoveryProjections } from './schema/runtime-discovery-projections.js'
 
@@ -17,6 +17,39 @@ export interface PostgresRuntimeDiscoveryScope {
 
 export class PostgresRuntimeDiscoveryRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  async compareAndSetRuntimeConnection(
+    scopeValue: PostgresRuntimeDiscoveryScope,
+    expectedValue: RuntimeConnectionDiscoveryReadModel,
+    nextValue: RuntimeConnectionDiscoveryReadModel
+  ): Promise<boolean> {
+    const scope = parseScope(scopeValue)
+    const expected = RuntimeConnectionDiscoveryReadModelSchema.parse(expectedValue)
+    const next = RuntimeConnectionDiscoveryReadModelSchema.parse(nextValue)
+    if (
+      expected.runtimeConnectionId !== next.runtimeConnectionId ||
+      expected.runtimeDefinitionId !== next.runtimeDefinitionId ||
+      expected.node?.runtimeNodeRefId !== next.node?.runtimeNodeRefId ||
+      Date.parse(next.observedAt) < Date.parse(expected.observedAt)
+    ) {
+      throw new Error('RUNTIME_DISCOVERY_REFRESH_IDENTITY_MISMATCH')
+    }
+    const rows = await this.database
+      .update(runtimeDiscoveryProjections)
+      .set({
+        model: next,
+        updatedAt: new Date(next.observedAt),
+      })
+      .where(
+        and(
+          ...conditions('runtime_connection', scope),
+          eq(runtimeDiscoveryProjections.resourceId, expected.runtimeConnectionId),
+          sql`${runtimeDiscoveryProjections.model} = ${JSON.stringify(expected)}::jsonb`
+        )
+      )
+      .returning({ resourceId: runtimeDiscoveryProjections.resourceId })
+    return rows.length === 1
+  }
 
   async putRuntimeConnection(
     workspaceIdValue: string,
