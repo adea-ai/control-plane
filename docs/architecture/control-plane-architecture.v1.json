@@ -993,6 +993,45 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-INTERACTION-RESPOND",
+      "name": "respondToInteraction",
+      "operation": "interaction.respond",
+      "method": "POST",
+      "path": "/v1/interactions/respond",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with interaction:respond scope and stored principal/workspace/project ownership",
+        "service": "InteractionCommandController -> DurableInteractionCommandService",
+        "persistence": "SQLite command receipts and interaction records",
+        "execution": "Restate shared interaction handler -> direct runtime response",
+        "delivery": "durable signal acceptance and idempotent receipt replay",
+        "cleanup": "attempt interaction cleanup and composition shutdown"
+      },
+      "assessment": "Authenticated route and SQLite conflict/retry behavior are tested; Local wires the service and other profiles fail closed when unconfigured.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/executions/interaction-command.controller.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/interaction-command-service.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Verify native interactions through HTTP and complete PostgreSQL, relay, automatic reconciliation and retention/export parity."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "interaction.respond",
+      "openApiResponseStatuses": ["202", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-MARKETPLACE-CATALOG",
       "name": "marketplaceCatalog",
       "operation": "marketplace.catalog.read",

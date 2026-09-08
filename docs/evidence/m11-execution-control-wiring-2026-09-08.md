@@ -34,8 +34,8 @@ The public `interaction.respond` command/result schemas now define complete comm
 and attempt scope, strict authority fields, the domain-equivalent 8 KiB UTF-8 JSON
 input limit, and a signal-acceptance acknowledgement that cannot claim execution
 completion or include private response content. The authenticated API route is now
-`POST /v1/interactions/respond`, requiring `interaction:respond`; the SDK operation
-is still outstanding. A caller/workspace/project/operation/idempotency-key-scoped SQLite
+`POST /v1/interactions/respond`, requiring `interaction:respond`; the SDK exposes
+`respondToInteraction` with request and acknowledgement validation. A caller/workspace/project/operation/idempotency-key-scoped SQLite
 receipt repository retains the first command identity under concurrent reservation
 and restart, and separately records confirmed signal acceptance. The command service
 now authorizes before reservation or receipt replay, compares actual payloads rather
@@ -62,7 +62,11 @@ cross-scope answered replay rejection, spoofed principal, inactive/replaced exec
 and invalid dispatch status. Local composition now wires the command service into
 the API; profiles without a configured service return 503. Authenticated route tests
 cover missing credentials, missing scope, wrong workspace/project and safe error
-normalization. A full native-interaction run through this HTTP route, SDK/relay
+normalization. An SDK-to-real-router test uses a temporary private credential file
+and a recorded command service (not a native runtime). The current v3 OpenAPI includes
+the operation with HTTP 202; compatibility checks protect successful response schemas
+including 202, and the architecture audit reads the current manifest version rather
+than the old v2 artifact. A full native-interaction run through this HTTP route, relay
 wiring, and the remaining profile compositions are still outstanding.
 
 - Local direct runtime dispatch now persists pending input/approval/permission requests

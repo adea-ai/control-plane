@@ -21,14 +21,23 @@ bun add @adea-ai/sdk
 ## Usage
 
 ```ts
-import { createControlClient } from '@adea-ai/sdk'
+import { ControlPlaneClient } from '@adea-ai/sdk'
 
 // Testing helpers are a separate subpath so production bundles stay lean:
-import { createTestControlClient } from '@adea-ai/sdk/testing'
+import { createControlPlaneStub } from '@adea-ai/sdk/testing'
 ```
 
 The package also ships an OpenAPI baseline under `openapi/` (see the
 `openapi:check` / `openapi:generate` scripts in the repository).
+
+`client.respondToInteraction(command)` calls `POST /v1/interactions/respond`
+with an `interaction.respond` command and requires the `interaction:respond`
+credential scope. Preserve the scoped idempotency key and payload when retrying.
+The server retains the first response identity; an accepted acknowledgement means
+the workflow signal was accepted, not that execution completed. Input values are
+limited to 8 KiB of UTF-8 JSON. Profiles without the durable command service return
+503; Local wiring is implemented, while native and cross-profile acceptance remain
+under verification.
 
 ## License
 

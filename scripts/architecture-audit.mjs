@@ -205,8 +205,17 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
       path: value.path,
     }))
     .sort((left, right) => left.operation.localeCompare(right.operation))
+  const { PublicContractManifest } = await import(
+    pathToFileURL(resolve(root, 'packages/contracts/src/versioning.ts')).href
+  )
   const openApi = JSON.parse(
-    await readFile(resolve(root, 'packages/control-sdk/openapi/control-plane.v2.json'), 'utf8')
+    await readFile(
+      resolve(
+        root,
+        `packages/control-sdk/openapi/control-plane.v${PublicContractManifest.current.major}.json`
+      ),
+      'utf8'
+    )
   )
   const openapiOperations = Object.entries(openApi.paths)
     .flatMap(([path, methods]) =>

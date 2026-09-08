@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -6,6 +6,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, test } from 'bun:test'
 import { AcpAdapter, AcpDriver, ReferenceAcpTransport } from '@control-plane/acp-adapter'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { ControlPlaneClient } from '@control-plane/sdk'
+import {
+  createControlApiApplication,
+  createPrivateApiAuthentication,
+} from '../apps/control-api/dist/index.js'
 import {
   createFilesystemCheckpoint,
   restoreFilesystemCheckpoint,
@@ -50,6 +55,71 @@ const observedAt = '2026-08-30T12:00:00.000Z'
 const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
 
 describe('M11 standalone execution composition', () => {
+  test('SDK invokes the authenticated interaction HTTP route with private credentials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-interaction-sdk-'))
+    let application
+    try {
+      const authentication = await createPrivateApiAuthentication(directory)
+      const credential = (await readFile(authentication.credentialFile, 'utf8')).trim()
+      const calls = []
+      const metadata = {
+        serviceName: 'control-api',
+        version: 'test',
+        commitSha: 'test',
+        environment: 'test',
+        instanceId: 'interaction-sdk',
+      }
+      application = await createControlApiApplication({
+        metadata,
+        logger: { write: () => undefined },
+        health: () => ({ status: 'ok', metadata }),
+        readiness: () => ({ status: 'ready', metadata }),
+        serviceAuthenticator: authentication.authenticator,
+        interactionCommandService: {
+          respond: async (input, principal) => {
+            calls.push({ input, principal })
+            return ControlApiFixtures.interactionResponse.response
+          },
+        },
+      })
+      // Exercise the real HTTP router without leaving a listening test server behind.
+      const fetch = async (url, init) => {
+        const response = await application.inject({
+          method: init.method,
+          url: new URL(url).pathname,
+          headers: init.headers,
+          payload: init.body,
+        })
+        return new Response(response.body, {
+          status: response.statusCode,
+          headers: response.headers,
+        })
+      }
+      const client = new ControlPlaneClient({
+        baseUrl: 'http://127.0.0.1',
+        credential,
+        fetch,
+      })
+      expect(
+        await client.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+      ).toEqual(ControlApiFixtures.interactionResponse.response)
+      expect(calls).toEqual([
+        { input: ControlApiFixtures.interactionResponse.request, principal: 'svc_agent-hq' },
+      ])
+      const unauthorized = new ControlPlaneClient({
+        baseUrl: 'http://127.0.0.1',
+        credential: 'invalid',
+        fetch,
+      })
+      await expect(
+        unauthorized.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+      ).rejects.toMatchObject({ status: 401 })
+      expect(calls).toHaveLength(1)
+    } finally {
+      await application?.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test.each(['restart', 'checkpoint-restore'])(
     'resumes a graph approval after restarting real Local Restate and SQLite (%s)',
     async (recoveryMode) => {

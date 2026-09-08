@@ -38,6 +38,9 @@ describe('deterministic Control Plane stub', () => {
     expect(await client.acceptExecution(ControlApiFixtures.executionAcceptance.request)).toEqual(
       ControlApiFixtures.executionAcceptance.response
     )
+    expect(
+      await client.respondToInteraction(ControlApiFixtures.interactionResponse.request)
+    ).toEqual(ControlApiFixtures.interactionResponse.response)
 
     expect(stub.requests.map((request) => request.operation)).toEqual([
       'authentication.verify',
@@ -47,6 +50,7 @@ describe('deterministic Control Plane stub', () => {
       'runtime.list',
       'execution.validate',
       'execution.accept',
+      'interaction.respond',
     ])
     expect(JSON.stringify(stub.requests)).not.toContain('stub-agent-hq-token')
   })

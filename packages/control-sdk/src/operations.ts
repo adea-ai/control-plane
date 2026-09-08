@@ -1,4 +1,6 @@
 import {
+  InteractionResponseCommandSchema,
+  InteractionResponseCommandResultSchema,
   ContextPackageResolutionRequestSchema,
   ContextPackageResolutionResponseSchema,
   ExecutionAcceptanceRequestSchema,
@@ -28,6 +30,14 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  respondToInteraction: {
+    responseStatus: 202,
+    operation: 'interaction.respond',
+    method: 'POST',
+    path: '/v1/interactions/respond',
+    requestSchema: InteractionResponseCommandSchema,
+    responseSchema: InteractionResponseCommandResultSchema,
+  },
   verifyAuthentication: {
     operation: 'authentication.verify',
     method: 'POST',

@@ -445,6 +445,10 @@ const contextPackageReference = {
 }
 
 export interface ControlApiFixtureSet {
+  readonly interactionResponse: {
+    readonly request: InteractionResponseCommand
+    readonly response: z.input<typeof InteractionResponseCommandResultSchema>
+  }
   readonly authentication: {
     readonly request: ServiceAuthenticationRequest
     readonly response: z.input<typeof ServiceAuthenticationResponseSchema>
@@ -478,6 +482,36 @@ export interface ControlApiFixtureSet {
 }
 
 export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
+  interactionResponse: {
+    request: {
+      ...requestContext,
+      commandId,
+      idempotencyKey: 'interaction-01JABCDEF0123456789ABCDEFG',
+      payloadHash: 'f'.repeat(64),
+      operation: 'interaction.respond',
+      issuedAt: '2026-08-23T12:00:00.000Z',
+      payload: {
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        expectedVersion: 1,
+        action: 'input',
+        value: 'continue',
+      },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        commandId,
+        responseId: commandId,
+        executionId: 'exe_01JABCDEF0123456789ABCDEFG',
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        interactionId: 'int_01JABCDEF0123456789ABCDEFG',
+        status: 'accepted',
+        replayed: false,
+      },
+    },
+  },
   authentication: {
     request: {
       ...requestContext,

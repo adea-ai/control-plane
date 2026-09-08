@@ -36,7 +36,7 @@ export function createControlApiOpenApiDocument() {
           },
         },
         responses: {
-          200: {
+          [operation.responseStatus ?? 200]: {
             description: 'Successful response',
             content: {
               'application/json': { schema: jsonSchema(operation.responseSchema, 'output') },
@@ -85,11 +85,14 @@ export function findBreakingContractChanges(previous, next) {
         nextOperation.requestBody?.content?.['application/json']?.schema,
         { changes, direction: 'request', operationLabel, path: '' }
       )
-      compareSchema(
-        previousOperation.responses?.['200']?.content?.['application/json']?.schema,
-        nextOperation.responses?.['200']?.content?.['application/json']?.schema,
-        { changes, direction: 'response', operationLabel, path: '' }
-      )
+      for (const [status, response] of Object.entries(previousOperation.responses ?? {})) {
+        if (!/^2\d\d$/.test(status)) continue
+        compareSchema(
+          response?.content?.['application/json']?.schema,
+          nextOperation.responses?.[status]?.content?.['application/json']?.schema,
+          { changes, direction: 'response', operationLabel, path: '' }
+        )
+      }
     }
   }
   return changes
