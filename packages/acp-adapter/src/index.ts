@@ -288,6 +288,7 @@ export interface AcpTransport {
 
 export interface AcpSessionReplay {
   readonly updates: readonly AcpUpdate[]
+  readonly nativeUpdates?: readonly z.util.JSONType[]
   readonly completeness: 'complete' | 'partial' | 'unavailable'
 }
 
@@ -784,7 +785,13 @@ export class AcpDriver implements RuntimeAdapter {
                   ? 'ACP_HISTORY_PARTIAL'
                   : 'ACP_HISTORY_UNAVAILABLE',
               ],
-        entries: normalizeHistory(replay.updates, this.#now),
+        entries: replay.nativeUpdates
+          ? replay.nativeUpdates.map((update, index) => ({
+              sequence: (operation.afterSequence ?? 0) + index + 1,
+              occurredAt: this.#now().toISOString(),
+              data: { type: 'native-acp-update', update },
+            }))
+          : normalizeHistory(replay.updates, this.#now, operation.afterSequence ?? 0),
       })
     }
     if (operation.operation === 'load') {
@@ -1689,7 +1696,8 @@ function safeNativeDisplayName(value: string | undefined): string | undefined {
 
 function normalizeHistory(
   updates: readonly AcpUpdate[],
-  now: () => Date
+  now: () => Date,
+  afterSequence = 0
 ): Array<{ sequence: number; occurredAt: string; data: Record<string, z.util.JSONType> }> {
   return updates.flatMap((update, index) => {
     if (
@@ -1700,7 +1708,7 @@ function normalizeHistory(
     }
     return [
       {
-        sequence: index + 1,
+        sequence: afterSequence + index + 1,
         occurredAt: now().toISOString(),
         data: { type: 'output', text: update.text, messageId: update.messageId },
       },

@@ -77,6 +77,18 @@ try {
   const nativeSessionId = inventory.sessions[0].sessionId
   await transport.request('session/resume', { sessionId: nativeSessionId })
   assert.deepEqual((await driver.status(handle)).result, status.result)
+  const history = await driver.session({
+    operation: 'history',
+    sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+  })
+  assert.equal(history.completeness, 'partial')
+  assert.ok(
+    history.entries.some((entry) => entry.data.update.sessionUpdate === 'user_message_chunk')
+  )
+  assert.ok(
+    history.entries.some((entry) => entry.data.update.sessionUpdate === 'agent_message_chunk')
+  )
+  assert.deepEqual((await driver.status(handle)).result, status.result)
   await transport.cleanup(nativeSessionId)
   console.log(
     JSON.stringify({
@@ -86,6 +98,7 @@ try {
       duplicateHandle: true,
       cleanupConfirmed: true,
       resumePreservedResult: true,
+      nativeHistoryEvents: history.entries.length,
     })
   )
 } finally {

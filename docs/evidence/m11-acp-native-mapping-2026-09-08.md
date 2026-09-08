@@ -192,6 +192,36 @@ container and installation were removed afterwards. This verifies the pinned
 agent's successful resume path, not reconnect/crash recovery, multiple-turn
 execution on an existing handle, load/history replay, or live-model behavior.
 
+## Native load/history follow-up
+
+The process transport now implements replay through advertised `session/load`,
+using the configured cwd and MCP servers. A separate bounded capture receives
+native updates until load acknowledges completion; it does not feed the live
+execution output queue or usage accounting. User, assistant, tool, and other
+native event types are preserved in `native-acp-update` history entries. The
+driver preserves the requested sequence offset for both native and normalized
+replay representations.
+
+Replay is reported as partial: successful ACP load does not prove that the agent
+emitted every underlying history record. Unsupported load, lost acknowledgements,
+and capture-limit violations reject instead of returning a fabricated complete
+history. Capture is limited to 4096 updates / 4 MiB. Uncertain load remains fenced;
+cleanup waits for load and prevents a new operation from racing that cleanup.
+Historical user/tool records do not become assistant output or new usage charges.
+
+The retained real-agent probe loaded seven native history events, including user
+and assistant messages, after its one completed prompt and resume. It compared
+the prior execution result for exact equality after history replay and closed
+the session again. The isolated Responses endpoint still counted exactly one
+model request. Versions, image digest, and isolation matched the earlier probes;
+the disposable container and its package installation were removed afterwards.
+This does not certify all historical content variants, cross-process recovery,
+multi-page history stability, or a live model.
+The final focused process suite passed 29 tests / 84 assertions. Root lint,
+type-check, formatting, build, and test passed, including 101 E2E tests / 571
+assertions. An initial redundant-object-spread lint error was corrected before
+the successful full validation run.
+
 This implementation is not exported from the package entrypoint or ready for
 promotion. Required follow-up includes late/ambiguous create reconciliation,
 retained-result limits, remaining native session lifecycle

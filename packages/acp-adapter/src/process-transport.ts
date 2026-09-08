@@ -4,6 +4,7 @@ import {
   AcpSnapshotSchema,
   AcpUpdateSchema,
   type AcpSnapshot,
+  type AcpSessionReplay,
   type AcpTransport,
   type AcpUpdate,
 } from './index.js'
@@ -37,6 +38,7 @@ type Session = {
   resuming?: Promise<unknown>
   resumePending?: boolean
   closed?: boolean
+  closeRequested?: boolean
 }
 
 export interface AcpProcessTransportOptions extends Omit<
@@ -61,6 +63,8 @@ export class AcpProcessTransport implements AcpTransport {
   readonly #permissions = new Map<number, { nativeId: string | number; sessionId: string }>()
   #permissionSequence = 0
   #supportsClose = false
+  #supportsLoad = false
+  readonly #replays = new Map<string, { promise: Promise<void>; updates: Json[]; bytes: number }>()
 
   constructor(options: AcpProcessTransportOptions) {
     for (const timeout of [options.turnTimeoutMs ?? 300_000, options.requestTimeoutMs ?? 30_000]) {
@@ -156,14 +160,24 @@ export class AcpProcessTransport implements AcpTransport {
   ): Promise<unknown> {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
     if (method === 'session/list') return this.#listSessions(params, signal)
+    if (method === 'session/load') {
+      const { sessionId } = SessionParams.parse(params)
+      await this.replay(sessionId, signal ? { signal } : {})
+      return {}
+    }
     if (method === 'session/resume') {
       const { sessionId } = SessionParams.parse(params)
+      if (this.#replays.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_LOADING')
       if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#creating >= 128)
         throw new Error('ACP_NATIVE_SESSION_LIMIT')
       const session = this.#sessions.get(sessionId) ?? this.#registerSession(sessionId)
+      if (session.closeRequested && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
       if (session.snapshot.state === 'running') throw new Error('ACP_NATIVE_SESSION_BUSY')
       if (session.closing && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
       if (!session.resuming) {
+        delete session.closing
+        session.closed = false
+        session.closeRequested = false
         session.resumePending = true
         session.resuming = (async () => {
           if (session.closing) await session.closing
@@ -193,6 +207,12 @@ export class AcpProcessTransport implements AcpTransport {
     }
     if (method === 'initialize') {
       const result = await this.#rpc.request(method, params, this.#requestOptions(signal))
+      this.#supportsLoad = z
+        .object({
+          protocolVersion: z.literal(1),
+          agentCapabilities: z.object({ loadSession: z.literal(true) }),
+        })
+        .safeParse(result).success
       this.#supportsClose = z
         .object({
           protocolVersion: z.literal(1),
@@ -211,7 +231,9 @@ export class AcpProcessTransport implements AcpTransport {
     if (method === 'session/prompt') {
       const { sessionId } = SessionParams.parse(params)
       const session = this.#session(sessionId)
+      if (this.#replays.has(sessionId)) throw new Error('ACP_NATIVE_SESSION_LOADING')
       if (session.closing) throw new Error('ACP_NATIVE_SESSION_CLOSING')
+      if (session.closeRequested) throw new Error('ACP_NATIVE_SESSION_CLOSING')
       if (session.resumePending) throw new Error('ACP_NATIVE_SESSION_RESUMING')
       if (session.turn) throw new Error('ACP_NATIVE_TURN_ALREADY_STARTED')
       session.startedAt = Date.now()
@@ -231,6 +253,57 @@ export class AcpProcessTransport implements AcpTransport {
       return {}
     }
     return this.#rpc.request(method, params, this.#requestOptions(signal))
+  }
+
+  replaySupport(): boolean {
+    return this.#supportsLoad
+  }
+
+  async replay(
+    nativeSessionId: string,
+    options: { readonly afterSequence?: number; readonly signal?: AbortSignal } = {}
+  ): Promise<AcpSessionReplay> {
+    const sessionId = SessionId.parse(nativeSessionId)
+    const afterSequence = z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(options.afterSequence ?? 0)
+    if (options.signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
+    if (!this.#supportsLoad) throw new Error('ACP_NATIVE_LOAD_UNSUPPORTED')
+    if (!this.#sessions.has(sessionId) && this.#sessions.size + this.#creating >= 128)
+      throw new Error('ACP_NATIVE_SESSION_LIMIT')
+    const session = this.#sessions.get(sessionId) ?? this.#registerSession(sessionId)
+    if (session.closeRequested && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
+    if (session.snapshot.state === 'running' || session.resumePending)
+      throw new Error('ACP_NATIVE_SESSION_BUSY')
+    if (session.closing && !session.closed) throw new Error('ACP_NATIVE_SESSION_CLOSING')
+    let replay = this.#replays.get(sessionId)
+    if (!replay) {
+      delete session.closing
+      session.closed = false
+      session.closeRequested = false
+      replay = { promise: Promise.resolve(), updates: [], bytes: 0 }
+      this.#replays.set(sessionId, replay)
+      replay.promise = this.#rpc
+        .request(
+          'session/load',
+          { sessionId, cwd: this.#options.cwd, mcpServers: [...(this.#options.mcpServers ?? [])] },
+          this.#requestOptions()
+        )
+        .then((result) => {
+          z.object({}).passthrough().parse(result)
+          session.closed = false
+          delete session.closing
+          this.#replays.delete(sessionId)
+        })
+    }
+    await this.#waitForCleanup(replay.promise, options.signal)
+    return {
+      updates: [],
+      nativeUpdates: structuredClone(replay.updates.slice(afterSequence)),
+      completeness: 'partial',
+    }
   }
 
   async #listSessions(params: Record<string, Json>, signal?: AbortSignal) {
@@ -320,6 +393,9 @@ export class AcpProcessTransport implements AcpTransport {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
     const session = this.#session(nativeSessionId)
     if (!this.#supportsClose) throw new Error('ACP_NATIVE_CLOSE_UNSUPPORTED')
+    session.closeRequested = true
+    const replay = this.#replays.get(nativeSessionId)
+    if (replay) await this.#waitForCleanup(replay.promise, signal)
     if (session.resuming)
       await this.#waitForCleanup(
         session.resuming.then(() => undefined),
@@ -387,6 +463,15 @@ export class AcpProcessTransport implements AcpTransport {
       .object({ sessionId: SessionId, update: z.record(z.string(), z.json()) })
       .passthrough()
       .parse(params)
+    const replay = this.#replays.get(envelope.sessionId)
+    if (replay) {
+      const bytes = Buffer.byteLength(JSON.stringify(envelope.update))
+      if (replay.bytes + bytes > 4_194_304 || replay.updates.length >= 4096)
+        throw new Error('ACP_NATIVE_HISTORY_LIMIT')
+      replay.bytes += bytes
+      replay.updates.push(envelope.update)
+      return
+    }
     if (!this.#sessions.has(envelope.sessionId) && this.#creating > 0) {
       const bytes = Buffer.byteLength(JSON.stringify(params))
       if (this.#earlyBytes + bytes > 4_194_304 || this.#earlyCount >= 4096)
@@ -443,7 +528,13 @@ export class AcpProcessTransport implements AcpTransport {
       .passthrough()
       .parse(params)
     const session = this.#session(input.sessionId)
-    if (session.cancelRequested || session.closing || session.resumePending) {
+    if (
+      session.cancelRequested ||
+      session.closeRequested ||
+      session.closing ||
+      session.resumePending ||
+      this.#replays.has(input.sessionId)
+    ) {
       this.#rpc.respond(nativeId, { outcome: { outcome: 'cancelled' } })
       return
     }

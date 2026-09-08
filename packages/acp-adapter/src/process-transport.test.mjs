@@ -20,7 +20,14 @@ process.stdin.on('data',chunk=>{
  buffer+=chunk; let i;
  while((i=buffer.indexOf('\\n'))!==-1){
   const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);
-  if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:process.env.SCENARIO==='no-close'?{}:{sessionCapabilities:{close:{}}}});
+  if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:process.env.SCENARIO==='no-close'?{}:{loadSession:process.env.SCENARIO!=='no-load',sessionCapabilities:{close:{}}}});
+  if(m.method==='session/load'){
+   if(m.params.cwd!==process.cwd()||!Array.isArray(m.params.mcpServers))throw Error('missing load configuration');
+   const history=[{sessionUpdate:'user_message_chunk',content:{type:'text',text:'historical input'}},{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'historical output'}},{sessionUpdate:'tool_call',toolCallId:'old-tool',status:'completed'},{sessionUpdate:'usage_update',used:99999,size:200000}];
+   if(process.env.SCENARIO==='history-limit')for(let i=0;i<4097;i++)send({jsonrpc:'2.0',method:'session/update',params:{sessionId:m.params.sessionId,update:{sessionUpdate:'tool_call',toolCallId:String(i)}}});
+   for(const update of history)send({jsonrpc:'2.0',method:'session/update',params:{sessionId:m.params.sessionId,update}});
+   if(process.env.SCENARIO!=='lost-load')setTimeout(()=>reply(m.id,{}),20);
+  }
   if(m.method==='session/close'){closes++;if(process.env.SCENARIO!=='lost-close')reply(m.id,{});}
   if(m.method==='close-probe')reply(m.id,{closes});
   if(m.method==='resume-probe')reply(m.id,{resumes});
@@ -83,6 +90,78 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('native history preserves event types without contaminating live output or usage', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    const handle = await driver.start(startRequest)
+    for await (const event of driver.progress(handle))
+      if (event.type === 'interaction')
+        await driver.submitApproval(handle, {
+          interactionId: event.data.interactionId,
+          idempotencyKey: 'history-control',
+          decision: 'approve',
+        })
+    const before = await transport.snapshot('native-1')
+    const history = await driver.session({
+      operation: 'history',
+      sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+      afterSequence: 1,
+    })
+    expect(history.completeness).toBe('partial')
+    expect(history.entries.map((entry) => entry.sequence)).toEqual([2, 3, 4])
+    expect(history.entries.map((entry) => entry.data.update.sessionUpdate)).toEqual([
+      'agent_message_chunk',
+      'tool_call',
+      'usage_update',
+    ])
+    expect(await transport.snapshot('native-1')).toEqual(before)
+    const all = await transport.replay('native-1')
+    expect(all.nativeUpdates[0].sessionUpdate).toBe('user_message_chunk')
+    expect(all.updates).toEqual([])
+  } finally {
+    await transport.close()
+  }
+})
+
+test('cleanup fences new operations while waiting for history replay', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    await driver.inspect()
+    const replay = transport.replay('discovered')
+    const closing = transport.cleanup('discovered')
+    await expect(transport.replay('discovered')).rejects.toThrow('ACP_NATIVE_SESSION_CLOSING')
+    await Promise.all([replay, closing])
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await transport.request('session/resume', { sessionId: 'discovered' })
+    await transport.cleanup('discovered')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 2 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test.each(['no-load', 'lost-load', 'history-limit'])(
+  'native history fails without successful load: %s',
+  async (scenario) => {
+    const { transport, driver } = fixture(scenario)
+    try {
+      await transport.open()
+      await driver.inspect()
+      await expect(transport.replay('discovered')).rejects.toThrow()
+      if (scenario === 'lost-load') {
+        await expect(transport.replay('discovered')).rejects.toThrow()
+        await expect(
+          transport.request('session/prompt', { sessionId: 'discovered', prompt: [] })
+        ).rejects.toThrow('ACP_NATIVE_SESSION_LOADING')
+      }
+    } finally {
+      await transport.close()
+    }
+  }
+)
 
 test('native resume attaches discovery with configuration and coalesces calls', async () => {
   const { transport, driver } = fixture()
