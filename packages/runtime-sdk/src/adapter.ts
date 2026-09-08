@@ -135,10 +135,21 @@ export const RuntimeExecutionStatusSchema = z
     state: RuntimeExecutionStateSchema,
     observedAt: TimestampSchema,
     result: RuntimeExecutionResultSchema.optional(),
+    // Observed usage survives unsuccessful termination without fabricating a result.
+    terminalUsage: RuntimeUsageSchema.optional(),
     error: RuntimeErrorSchema.optional(),
   })
   .strict()
   .superRefine((status, context) => {
+    if (
+      status.terminalUsage !== undefined &&
+      !['cancelled', 'failed', 'timed_out'].includes(status.state)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Terminal usage requires an unsuccessful terminal status',
+      })
+    }
     if ((status.state === 'completed') !== (status.result !== undefined)) {
       context.addIssue({
         code: 'custom',

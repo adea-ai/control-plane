@@ -11,6 +11,28 @@ import {
 } from './index.ts'
 
 const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
+
+test('cancelled status preserves authoritative usage without a completed result', async () => {
+  const adapter = createAdapter()
+  const handle = await adapter.start({ attemptId, idempotencyKey: 'cancel-usage', executionPlan })
+  const status = {
+    handle,
+    state: 'cancelled',
+    observedAt: '2026-08-24T20:00:00.000Z',
+    terminalUsage: { inputTokens: 11, outputTokens: 3, durationMs: 20 },
+  }
+  expect(RuntimeExecutionStatusSchema.parse(status).terminalUsage).toEqual(status.terminalUsage)
+  expect(RuntimeExecutionStatusSchema.parse(status).result).toBeUndefined()
+  expect(RuntimeExecutionStatusSchema.safeParse({ ...status, state: 'running' }).success).toBe(
+    false
+  )
+  expect(
+    RuntimeExecutionStatusSchema.safeParse({
+      ...status,
+      terminalUsage: { ...status.terminalUsage, inputTokens: -1 },
+    }).success
+  ).toBe(false)
+})
 const executionPlan = Object.freeze({
   schemaVersion: 1,
   executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',

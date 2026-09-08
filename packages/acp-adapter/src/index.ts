@@ -14,6 +14,7 @@ import {
   RuntimeSessionOperationSchema,
   RuntimeSessionResultSchema,
   RuntimeStartRequestSchema,
+  RuntimeUsageSchema,
   TransportedRuntimeAdapter,
   inspectRuntimeCapabilities,
   assessExternalSession,
@@ -247,7 +248,13 @@ export const AcpSnapshotSchema = z.discriminatedUnion('state', [
       artifacts: z.array(RuntimeArtifactReferenceSchema).max(1024),
     })
     .strict(),
-  z.object({ state: z.literal('cancelled'), observedAt: TimestampSchema }).strict(),
+  z
+    .object({
+      state: z.literal('cancelled'),
+      observedAt: TimestampSchema,
+      usage: RuntimeUsageSchema.optional(),
+    })
+    .strict(),
   z
     .object({
       state: z.enum(['failed', 'timed_out']),
@@ -1765,6 +1772,14 @@ function acpPrompt(attemptId: string, plan: RuntimeExecutionPlanSnapshot): strin
 
 function normalizeSnapshot(handle: RuntimeExecutionHandle, snapshotInput: AcpSnapshot) {
   const snapshot = AcpSnapshotSchema.parse(snapshotInput)
+  if (snapshot.state === 'cancelled') {
+    return RuntimeExecutionStatusSchema.parse({
+      handle,
+      state: 'cancelled',
+      observedAt: snapshot.observedAt,
+      ...(snapshot.usage === undefined ? {} : { terminalUsage: snapshot.usage }),
+    })
+  }
   if (snapshot.state === 'completed') {
     return RuntimeExecutionStatusSchema.parse({
       handle,

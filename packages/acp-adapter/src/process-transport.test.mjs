@@ -542,6 +542,11 @@ test('native process cancellation resolves pending permissions and waits for the
         })
     }
     expect((await driver.status(handle)).state).toBe('cancelled')
+    expect((await driver.status(handle)).terminalUsage).toMatchObject({
+      inputTokens: 11,
+      outputTokens: 3,
+    })
+    expect((await driver.status(handle)).result).toBeUndefined()
   } finally {
     await transport.close()
   }

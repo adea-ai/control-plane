@@ -599,7 +599,20 @@ export class AcpProcessTransport implements AcpTransport {
   #complete(session: Session, input: Json): void {
     const result = PromptResult.parse(input)
     const observedAt = new Date().toISOString()
-    if (result.stopReason === 'cancelled') session.snapshot = { state: 'cancelled', observedAt }
+    if (result.stopReason === 'cancelled')
+      session.snapshot = {
+        state: 'cancelled',
+        observedAt,
+        ...(result.usage === undefined
+          ? {}
+          : {
+              usage: {
+                inputTokens: result.usage.inputTokens,
+                outputTokens: result.usage.outputTokens,
+                durationMs: Math.max(0, Date.now() - session.startedAt),
+              },
+            }),
+      }
     else if (result.stopReason !== 'end_turn') {
       this.#fail(session, 'ACP_NATIVE_TURN_INCOMPLETE')
       return
