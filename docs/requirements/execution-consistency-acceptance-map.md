@@ -48,3 +48,22 @@ This is concrete process-exit recovery at the SQLite inbox-service boundary for
 CONS-A18-03. The plan validator is a fixture. It is not an authenticated HTTP/IPC
 test, PostgreSQL parity, native runtime/billing proof, a power-loss/fsync test or
 whole-profile certification; the scenario's full acceptance remains open.
+
+## PostgreSQL commit/reply subprocess regression
+
+`packages/database/src/integration.test.mjs` now exercises the same checkpoint
+with a separate Bun process and the real PostgreSQL inbox repository. The child
+receives only the application URL for the runner-created isolated database. It
+exits with code 73 after commit, before returning acceptance or closing its
+connection through application cleanup. Eight retries from the parent recover
+the original command/execution without another allocation or plan validation;
+scoped database queries show one command and one execution, and conflicting
+payload reuse rejects.
+
+The disposable local PostgreSQL integration run passed all 28 database tests,
+the other configured integration lanes, authenticated scripted remote delivery,
+and the existing database outage/restart/backup-restore drills. This adds concrete
+PostgreSQL service-boundary parity with the SQLite subprocess regression. It
+does not certify Neon, an authenticated public acceptance reply, host/database
+power loss, native runtime billing or full composition recovery. The plan
+validator remains a fixture and CONS-A18-03 is still open at its full scope.

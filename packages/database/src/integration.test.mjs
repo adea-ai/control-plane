@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import process from 'node:process'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import {
@@ -1637,6 +1639,97 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       retiredAt: new Date(retiredAt),
     })
   })
+
+  test('recovers a committed command after the accepting process exits before replying', async () => {
+    const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
+    const input = {
+      callerPrincipalId: 'svc_agent-hq',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-process-exit',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: '2026-08-24T11:00:00.000Z',
+      retentionExpiresAt: '2026-09-23T11:00:00.000Z',
+    }
+    const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+    applicationUrl.pathname = `/${isolated.name}`
+    const child = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `
+      import { CommandInboxService } from '@control-plane/domain';
+      import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
+      import { PostgresCommandAcceptanceRepository } from ${JSON.stringify(new URL('./command-inbox-repository.ts', import.meta.url).href)};
+      const connection = createPostgresConnection({ role: 'application', url: process.env.TEST_APPLICATION_URL });
+      const service = new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(connection.database),
+        executionIdFactory: () => ${JSON.stringify(`exe_${suffix}`)},
+        executionPlanValidator: { validate: async () => true },
+        now: () => ${JSON.stringify(input.receivedAt)},
+        failureInjector: { checkpoint(name) { if (name === 'control_api.after_accept') process.exit(73); } },
+      });
+      await service.acceptExecution(${JSON.stringify(input)});
+      console.log('UNEXPECTED_ACCEPTANCE_REPLY');
+    `,
+      ],
+      {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+        env: { PATH: process.env.PATH, TEST_APPLICATION_URL: applicationUrl.toString() },
+        encoding: 'utf8',
+        timeout: 10_000,
+      }
+    )
+    expect(child.error).toBeUndefined()
+    expect(child.signal).toBeNull()
+    expect(child.status).toBe(73)
+    expect(child.stdout).toBe('')
+    const recovered = new CommandInboxService({
+      repository: new PostgresCommandAcceptanceRepository(isolated.application),
+      executionIdFactory: () => {
+        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+      },
+      executionPlanValidator: {
+        validate: async () => {
+          throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+        },
+      },
+      now: () => input.receivedAt,
+    })
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => recovered.acceptExecution(input))
+    )
+    expect(results.every((result) => result.replayed)).toBe(true)
+    expect(results.every((result) => result.command.commandId === input.commandId)).toBe(true)
+    expect(results.every((result) => result.execution.executionId === `exe_${suffix}`)).toBe(true)
+    expect(
+      await isolated.application
+        .select()
+        .from(executions)
+        .where(eq(executions.taskId, input.correlation.taskId))
+    ).toHaveLength(1)
+    expect(
+      await isolated.application
+        .select()
+        .from(commandInbox)
+        .where(eq(commandInbox.commandId, input.commandId))
+    ).toHaveLength(1)
+    await expect(
+      recovered.acceptExecution({ ...input, payloadHash: 'c'.repeat(64) })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
+  }, 15_000)
 
   test('atomically accepts one execution for concurrent duplicate commands and audits conflicts', async () => {
     const repository = new PostgresCommandAcceptanceRepository(isolated.application)
