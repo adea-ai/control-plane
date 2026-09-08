@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createExecutionPlanTestFixture } from '../packages/execution-plan/src/testing.ts'
 import { ManagedPiAdapter, ManagedPiDriver } from '../packages/managed-pi-adapter/src/index.ts'
 import { ManagedPiProcessClient } from '../packages/managed-pi-adapter/src/process-client.ts'
@@ -186,6 +187,33 @@ try {
   })
   assert.equal((await adapter.status(cancelled)).state, 'cancelled')
   assert.equal(requests.length, 2)
+  const local = Bun.spawn(
+    [
+      process.execPath,
+      'test',
+      'tests/m11-standalone-e2e.test.mjs',
+      '--test-name-pattern',
+      'runs the packaged managed Pi RPC client through Local Restate',
+    ],
+    {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        M11_REAL_PI_EXECUTABLE: executablePath,
+        M11_REAL_PI_AGENT_DIRECTORY: agentDirectory,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }
+  )
+  const [exitCode, stdout, stderr] = await Promise.all([
+    local.exited,
+    new Response(local.stdout).text(),
+    new Response(local.stderr).text(),
+  ])
+  if (exitCode !== 0) throw new Error(`LOCAL_PI_CERTIFICATION_FAILED\n${stdout}\n${stderr}`)
+  assert.equal(requests.length, 3, 'Local composition must reach the real Pi model endpoint once')
+  assert(JSON.stringify(requests[2].body.messages).includes('Complete the assigned task safely.'))
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer fixture-only')
     assert.equal(request.body.model, 'fixture')
@@ -204,6 +232,11 @@ try {
     completed: true,
     cancellation: true,
     duplicateStart: 'same-handle-one-request',
+    localComposition: {
+      persistence: 'sqlite',
+      workflow: 'real-local-restate',
+      execution: 'completed',
+    },
     usage: { inputTokens: 11, outputTokens: 3 },
     limitations: inspection.limitations,
   }
