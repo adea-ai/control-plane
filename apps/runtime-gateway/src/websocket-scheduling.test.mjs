@@ -1,7 +1,107 @@
 import { expect, test } from 'bun:test'
 import { RuntimeGatewayWebSocketServer } from './websocket-server.ts'
+import { RuntimeHealthDeliveryWorker } from './runtime-health-delivery-worker.ts'
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('held health delivery does not overlap or delay ownership sweeps and drains once', async () => {
+  let sweeps = 0
+  let deliveries = 0
+  let release
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  const worker = new RuntimeHealthDeliveryWorker({
+    intervalMs: 5,
+    dispatcher: {
+      async dispatchBatch(limit) {
+        expect(limit).toBe(1)
+        deliveries++
+        await held
+        return { delivered: 1, failed: 0, conflicts: 0 }
+      },
+    },
+  })
+  const { server } = fixture(async () => {
+    sweeps++
+  })
+  server.start()
+  worker.start()
+  try {
+    await until(() => deliveries === 1 && sweeps >= 3)
+    expect(deliveries).toBe(1)
+    const closing = worker.close()
+    expect(worker.close()).toBe(closing)
+    let closed = false
+    void closing.then(() => {
+      closed = true
+    })
+    await server.close()
+    await pause(10)
+    expect(closed).toBe(false)
+    release()
+    await closing
+    await pause(15)
+    expect(deliveries).toBe(1)
+    expect(() => worker.start()).toThrow()
+  } finally {
+    release()
+    await worker.close()
+    await server.close()
+  }
+})
+
+test('health delivery failures and reporting errors retain later passes', async () => {
+  let calls = 0
+  const reports = []
+  const worker = new RuntimeHealthDeliveryWorker({
+    intervalMs: 5,
+    dispatcher: {
+      async dispatchBatch() {
+        calls++
+        if (calls === 1) throw new Error('private')
+        return { delivered: 0, failed: calls === 2 ? 1 : 0, conflicts: 0 }
+      },
+    },
+    onError: (...args) => {
+      reports.push(args)
+      throw new Error('private sink')
+    },
+  })
+  worker.start()
+  try {
+    await until(() => calls >= 3)
+    expect(reports).toEqual([[], []])
+  } finally {
+    await worker.close()
+  }
+})
+
+test('health delivery close before start or first tick prevents dispatch', async () => {
+  let calls = 0
+  const options = {
+    intervalMs: 20,
+    dispatcher: {
+      async dispatchBatch() {
+        calls++
+        return { delivered: 0, failed: 0, conflicts: 0 }
+      },
+    },
+  }
+  const unopened = new RuntimeHealthDeliveryWorker(options)
+  await unopened.close()
+  expect(() => unopened.start()).toThrow()
+  const worker = new RuntimeHealthDeliveryWorker(options)
+  worker.start()
+  expect(() => worker.start()).toThrow()
+  await worker.close()
+  await pause(30)
+  expect(calls).toBe(0)
+  for (const intervalMs of [0, -1, 1.5, 60_001])
+    expect(() => new RuntimeHealthDeliveryWorker({ ...options, intervalMs })).toThrow()
+  for (const batchSize of [0, -1, 1.5, 129])
+    expect(() => new RuntimeHealthDeliveryWorker({ ...options, batchSize })).toThrow()
+})
 async function until(predicate) {
   const deadline = Date.now() + 2_000
   while (!predicate()) {

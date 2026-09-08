@@ -23,6 +23,7 @@ import {
   PostgresExecutionEventRepository,
   PostgresRuntimeConnectionRepository,
   PostgresRuntimeHealthIngestionService,
+  PostgresRuntimeHealthEventDispatcher,
   PostgresRuntimeChannelOwnershipRepository,
   PostgresRuntimeInventoryCheckpointRepository,
   PostgresInteractionRepository,
@@ -44,6 +45,7 @@ import {
   RuntimeInventoryMessageHandler,
   DefaultRuntimeInventoryNormalizer,
   RuntimeInventoryMaintenance,
+  RuntimeHealthDeliveryWorker,
   RepositoryRuntimeNodeCoordination,
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
@@ -55,13 +57,15 @@ import {
 import { FilesystemObjectStore } from '../packages/object-store/dist/index.js'
 import { golden } from '../packages/runtime-gateway-protocol/fixtures/index.mjs'
 import { GatewayProtocolManifest } from '../packages/runtime-gateway-protocol/src/index.ts'
+import { acceptRuntimeHealthFixture } from '../packages/database/src/runtime-health-consumer-fixture.mjs'
+import { outboxEvents } from '../packages/database/src/schema/messaging.ts'
 
 // Real database/network/Artifact plumbing; the synthetic node supplies a scripted
 // terminal status. This is not a live Pi provider or Restate certification.
 const database = await createIsolatedPostgres({ migrate: true })
 const directory = await mkdtemp(join(tmpdir(), 'cloud-remote-drill-'))
 const store = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 65536 })
-let server, native, socket, authenticator, dispatch, approval
+let server, native, socket, authenticator, dispatch, approval, healthDeliveryWorker
 try {
   const now = new Date().toISOString()
   const deadlineAt = new Date(Date.now() + 15000).toISOString()
@@ -593,12 +597,32 @@ try {
         model.node.health === 'offline'
     )
   )
+  const deliveredHealth = new Set()
+  healthDeliveryWorker = new RuntimeHealthDeliveryWorker({
+    intervalMs: 5,
+    dispatcher: new PostgresRuntimeHealthEventDispatcher(database.application, {
+      async deliver(event) {
+        const receipt = await acceptRuntimeHealthFixture(database.application, event)
+        deliveredHealth.add(event.deliveryKey)
+        return receipt
+      },
+    }),
+  })
+  healthDeliveryWorker.start()
+  await until(async () => deliveredHealth.size === 2, 'health-outbox-delivered')
+  await healthDeliveryWorker.close()
+  const healthRows = (await database.application.select().from(outboxEvents)).filter(
+    (row) => row.eventType === 'runtime.availability_changed'
+  )
+  strictEqual(healthRows.length, 2)
+  ok(healthRows.every((row) => row.status === 'published'))
   console.log(
     'Cloud remote drill passed: PostgreSQL dispatch, approval and cancellation, authenticated WebSocket delivery/ACK and result, Artifact-backed terminal state, and immutable command replay. Approval response is seeded; node and cancellation waiter are scripted. Cancellation is delivered after execution completion, not a native stop proof. Native permission origination, active cancellation confirmation, usage settlement and live provider execution remain unverified.'
   )
 } finally {
   socket?.close()
   await server?.close()
+  await healthDeliveryWorker?.close()
   await native?.stop(true)
   authenticator?.close()
   await dispatch?.catch(() => {})

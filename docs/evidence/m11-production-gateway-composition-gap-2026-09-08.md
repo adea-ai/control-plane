@@ -1,5 +1,28 @@
 # M11 production Runtime Gateway composition gap
 
+## Independent health-delivery worker
+
+RuntimeHealthDeliveryWorker owns a completion-scheduled timer separate from
+WebSocket ownership sweeps. Defaults are one event per batch and a 1000 ms
+interval; validated bounds are 1–128 events and 1–60000 ms. No next batch is
+scheduled until the current batch settles. Failed/conflicted batches report only
+a fixed diagnostic, and reporter failure cannot stop later passes. Persistent
+backoff and quarantine remain dispatcher responsibilities.
+
+Close cancels future ticks, shares its drain promise and waits for the current
+batch. Closed instances cannot restart. Injected gateway startup registers
+reverse-order cleanup so channels close before event-delivery drain; startup
+failure also cleans both resources. Tests hold delivery while ownership sweeps
+continue, and cover nonoverlap, drain, close-before-tick, failure isolation and
+configuration bounds. The PostgreSQL/WebSocket drill runs the worker against the
+durable synthetic consumer and verifies both health outbox records are published.
+
+Transport timeouts do not bound hung database operations; bootstrap shutdown
+limits remain relevant. This is an injectable composition plus standalone drill,
+not the missing production identity/transport/configuration factory. Fleet
+contention, authenticated workspace routing and operator quarantine recovery
+remain open. No new production service or database was deployed for this change.
+
 ## Durable retry and quarantine policy
 
 Migration 0038 adds nullable next-attempt and quarantine timestamps plus a retry
