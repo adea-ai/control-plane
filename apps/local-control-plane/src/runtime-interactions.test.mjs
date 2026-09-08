@@ -37,6 +37,38 @@ function setup(overrides = {}) {
   return { repository, bridge }
 }
 
+test('terminal cleanup cancels only pending requests for its exact attempt and is replayable', async () => {
+  const { repository, bridge } = setup()
+  await bridge.record(executionId, attemptId, event())
+  const pending = await repository.get(interactionId)
+  const answeredId = `int_${suffix.slice(0, -1)}W`
+  await repository.insert({ ...pending, interactionId: answeredId })
+  const answered = await new InteractionService(repository).respond({
+    interactionId: answeredId,
+    executionId,
+    attemptId,
+    responseId: `cmd_${suffix}`,
+    action: 'deny',
+    respondingPrincipalId: 'svc_owner',
+    expectedVersion: 1,
+    respondedAt: new Date().toISOString(),
+  })
+  const other = {
+    ...pending,
+    interactionId: `int_${suffix.slice(0, -1)}X`,
+    attemptId: `att_${suffix.slice(0, -1)}W`,
+  }
+  await repository.insert(other)
+  await bridge.resolveTerminal(executionId, attemptId)
+  const cancelled = await repository.get(interactionId)
+  expect(cancelled).toMatchObject({ state: 'cancelled', version: 2 })
+  expect(cancelled.resolvedAt).toBeString()
+  expect(await repository.get(answeredId)).toEqual(answered)
+  expect(await repository.get(other.interactionId)).toEqual(other)
+  await bridge.resolveTerminal(executionId, attemptId)
+  expect(await repository.get(interactionId)).toEqual(cancelled)
+})
+
 test('native interaction ownership comes from accepted command, not runtime data', async () => {
   const { repository, bridge } = setup()
   await bridge.record(executionId, attemptId, event())

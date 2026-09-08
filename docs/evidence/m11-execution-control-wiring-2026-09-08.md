@@ -21,6 +21,13 @@ answered-state replay after reopen, stale CAS rejection, and immutable scope.
 No schema migration or new database dependency is required for SQLite's generic
 record store.
 
+SQLite also has an attempt-scoped lookup index. The first insert or lookup backfills
+pre-index rows and writes a completion marker in the same transaction; subsequent
+inserts atomically write both the request and its pointer. Normal lookups read only
+the exact execution/attempt namespace and then reread primary records. The one-time
+backfill still reads all retained interaction rows; large-history migration latency
+and index retention/export policy have not been certified.
+
 ## Remaining production path
 
 - Local direct runtime dispatch now persists pending input/approval/permission requests
@@ -37,6 +44,12 @@ record store.
   reject completed, failed, cancelled, timed-out, cancelling, reconciliation-required,
   and replaced-attempt cases. This rejects already-observed terminal state; it is not
   a claim of atomic ordering against a concurrently arriving terminal update.
+- Direct runtime cleanup now resolves pending records for its exact attempt before
+  runtime release. It preserves answered/expired/cancelled history and uses the
+  existing version-conditional domain transition. Regression tests cover backfill,
+  reopen, attempt isolation, answered-history preservation, and cleanup replay.
+  A concurrent response CAS may cause cleanup to retry; this does not establish
+  atomic ordering against late request creation.
 - Verify this request/response bridge through real native pending interactions and
   restart, including terminal cleanup of pending records and user-visible prompt details.
 - Compose the existing domain interaction service with authenticated, workspace-safe

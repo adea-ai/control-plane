@@ -213,6 +213,9 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   }): Promise<void> {
     await this.#effect(input.effectKey, async () => {
       const handle = await this.#handle(input.executionId, input.attemptId, false)
+      const attemptId = input.attemptId ?? handle?.attemptId
+      if (attemptId !== undefined)
+        await this.interactions?.resolveTerminal(input.executionId, attemptId)
       if (handle !== undefined) await this.runtime.cleanup(handle)
       return { cleaned: true }
     })

@@ -93,6 +93,11 @@ export class InMemoryInteractionRepository implements InteractionRepository {
   async get(id: string) {
     return cloneOptional(this.#requests.get(id))
   }
+  async listForAttempt(executionId: string, attemptId: string): Promise<InteractionRequest[]> {
+    return [...this.#requests.values()]
+      .filter((request) => request.executionId === executionId && request.attemptId === attemptId)
+      .map((request) => clone(request))
+  }
   async compareAndSet(version: number, request: InteractionRequest) {
     if (this.#requests.get(request.interactionId)?.version !== version) return false
     this.#requests.set(request.interactionId, clone(request))

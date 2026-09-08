@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { InteractionService } from '@control-plane/domain'
 import { SqliteInteractionRepository, SqlitePersistenceProvider } from './index.ts'
@@ -26,6 +27,51 @@ const response = {
   expectedVersion: 1,
   respondedAt: '2026-09-08T00:10:00.000Z',
 }
+
+test('attempt lookup backfills old rows and indexes new rows across reopen', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'control-plane-interaction-index-'))
+  const path = join(directory, 'state.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const pending = { ...request, state: 'pending', version: 1 }
+    await provider.transaction((transaction) =>
+      transaction.put({
+        namespace: 'interaction-requests',
+        id: `r-${createHash('sha256').update(request.interactionId).digest('hex')}`,
+        value: pending,
+      })
+    )
+    let repository = new SqliteInteractionRepository(provider)
+    expect(await repository.listForAttempt(request.executionId, request.attemptId)).toEqual([
+      pending,
+    ])
+    const other = {
+      ...pending,
+      interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+      attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+    }
+    expect(await repository.insert(other)).toBe(true)
+    await new InteractionService(repository).resolveTerminal(
+      request.interactionId,
+      response.respondedAt
+    )
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteInteractionRepository(provider)
+    expect(await repository.listForAttempt(request.executionId, request.attemptId)).toMatchObject([
+      { state: 'cancelled', version: 2 },
+    ])
+    expect(await repository.listForAttempt(other.executionId, other.attemptId)).toEqual([other])
+    expect(
+      await repository.listForAttempt('exe_01ARZ3NDEKTSV4RRFFQ69G5FAW', request.attemptId)
+    ).toEqual([])
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('SQLite interactions preserve pending authorization and concurrent response replay across reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-interactions-'))

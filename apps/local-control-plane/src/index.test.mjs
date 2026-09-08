@@ -528,6 +528,27 @@ describe('Local Control Plane composition', () => {
           text: 'continue safely',
         },
       ])
+      const answered = await interactions.get(authorizedResponse.interactionId)
+      const pendingId = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+      await interactions.insert({
+        ...answered,
+        interactionId: pendingId,
+        state: 'pending',
+        version: 1,
+        response: undefined,
+        resolvedAt: undefined,
+      })
+      const cleanup = {
+        executionId: input.executionId,
+        attemptId: input.attemptId,
+        effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:cleanup',
+      }
+      await activities.cleanup(cleanup)
+      const cancelled = await interactions.get(pendingId)
+      expect(cancelled).toMatchObject({ state: 'cancelled', version: 2 })
+      expect(await interactions.get(authorizedResponse.interactionId)).toEqual(answered)
+      await activities.cleanup(cleanup)
+      expect(await interactions.get(pendingId)).toEqual(cancelled)
     } finally {
       persistence.close()
       objectStore.close()

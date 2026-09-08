@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from 'node:util'
 import {
   InteractionRequestSchema,
+  InteractionService,
+  type InteractionRequest,
   type InteractionRepository,
   type CommandAcceptanceRepository,
 } from '@control-plane/domain'
@@ -10,9 +12,21 @@ const interactionStates = new Set(['running', 'awaiting_input'])
 
 export class LocalRuntimeInteractions {
   constructor(
-    readonly repository: InteractionRepository,
+    readonly repository: InteractionRepository & {
+      listForAttempt(executionId: string, attemptId: string): Promise<InteractionRequest[]>
+    },
     readonly commands: Pick<CommandAcceptanceRepository, 'getByExecutionId' | 'getExecution'>
   ) {}
+
+  async resolveTerminal(executionId: string, attemptId: string): Promise<void> {
+    const service = new InteractionService(this.repository)
+    const resolvedAt = new Date().toISOString()
+    for (const request of await this.repository.listForAttempt(executionId, attemptId)) {
+      if (request.executionId !== executionId || request.attemptId !== attemptId)
+        throw new Error('LOCAL_INTERACTION_SCOPE_MISMATCH')
+      await service.resolveTerminal(request.interactionId, resolvedAt)
+    }
+  }
 
   async record(
     executionId: string,
