@@ -1,4 +1,4 @@
-import { deepStrictEqual, strictEqual, ok } from 'node:assert/strict'
+import { deepStrictEqual, strictEqual, ok, rejects } from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +24,7 @@ import {
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
 import { DurableRemoteWorkflowRuntime } from '../apps/workflow-worker/src/remote-workflow-runtime.ts'
 import { ManagedPiRemoteCommandFactory } from '../apps/workflow-worker/src/managed-pi-remote-command.ts'
+import { PollingRemoteRuntimeOutcomeWaiter } from '../apps/workflow-worker/src/remote-runtime-waiter.ts'
 import {
   RuntimeCommandDeliveryService,
   RuntimeEventIngestionService,
@@ -410,6 +411,34 @@ try {
   const terminalCommand = await commands.get(command.commandId)
   deepStrictEqual(await composition.runtime.dispatch(input), outcome)
   deepStrictEqual(await commands.get(command.commandId), terminalCommand)
+  const lateRuntime = new DurableRemoteWorkflowRuntime({
+    attempts: new PostgresExecutionRepository(database.application),
+    commands: new PostgresRuntimeCommandRepository(database.application),
+    factory: new ManagedPiRemoteCommandFactory({
+      contextPackages: new PostgresContextPackageRepository(database.application),
+      executions: new PostgresExecutionRepository(database.application),
+      interactions: new PostgresInteractionRepository(database.application),
+      runtimeDiscovery: {
+        getRuntimeConnection: ({ runtimeConnectionId, ...scope }) =>
+          discovery.getRuntimeConnection(scope, runtimeConnectionId),
+      },
+      now: () => new Date(Date.parse(deadlineAt) + 60_000),
+    }),
+    waiter: new PollingRemoteRuntimeOutcomeWaiter({
+      executions: new PostgresExecutionRepository(database.application),
+      commands: new PostgresRuntimeCommandRepository(database.application),
+      events: new PostgresExecutionEventRepository(database.application),
+    }),
+  })
+  deepStrictEqual(await lateRuntime.dispatch(input), outcome)
+  deepStrictEqual(await lateRuntime.applyInteraction(approvalInput), outcome)
+  deepStrictEqual(await commands.get(command.commandId), terminalCommand)
+  deepStrictEqual(await commands.get(approvalCommand.commandId), retainedApproval)
+  await rejects(
+    lateRuntime.dispatch({ ...input, effectKey: `${input.effectKey}:late-new` }),
+    /REMOTE_RUNTIME_COMMAND_EXPIRED/
+  )
+  strictEqual(received.length, 3)
   strictEqual(
     (await executions.getExecution(executionId)).terminalResultRef,
     outcome.resultReference

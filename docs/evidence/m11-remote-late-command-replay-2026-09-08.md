@@ -34,3 +34,17 @@ Workspace validation passes: lint, type-check, format check, 984 unit tests,
 including 27 PostgreSQL tests, remote delivery, and outage/restart/restore
 drills. Those integration lanes retain their existing scripted-node limits;
 the new post-deadline assertions are in the focused suites described above.
+
+## PostgreSQL remote drill follow-up
+
+`run-cloud-remote-drill.mjs` now reconstructs the runtime with fresh PostgreSQL
+repository instances and the production polling outcome waiter after the
+scripted node completes its execution. Only the factory clock advances beyond
+the attempt deadline; this is not a wall-clock soak. Late execute and approval
+replays recover the same terminal outcome and exact stored command records.
+The authenticated socket remains at three received messages, and an unseen
+effect key fails expiry validation. The full integration runner, including
+outage/restart/restore drills, passes with these assertions.
+
+This adds durable PostgreSQL coverage to the focused in-memory tests. The node
+is still scripted and no paid provider or native remote execution is certified.
