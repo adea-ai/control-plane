@@ -1,5 +1,30 @@
 # M11 production Runtime Gateway composition gap
 
+## Actual Neon verification passed on the diagnostic candidate
+
+Candidate `26d65c7` completed the real preview verification: 41 builds, migration
+validation/application, all 31 database tests, the other integration packages
+(35 successful integration/build tasks), and the scripted remote PostgreSQL /
+WebSocket drill. Step-level results confirm verification ran and succeeded, not
+merely that the job concluded green. A direct read-only connection to the preview
+reported PostgreSQL `18.6 (c5250a2)` and a default `transaction_timeout` of `0`;
+the inventory deadline remains transaction-local.
+
+Evidence: [executed successful verification](https://github.com/adea-ai/control-plane/actions/runs/34244646245/job/102123434597).
+The 500 ms test deadline and write-before-stall assertion were unchanged. The
+earlier rejection before writes did not reproduce; its underlying error code was
+not captured by that earlier candidate, so its root cause remains unconfirmed.
+The bounded diagnostic is retained. This success is not proof that the first
+failure was repaired or that the deadline test is free of timing sensitivity.
+
+Local verification on the same code passed format, lint, type checks, the full
+1,224-test unit/E2E/smoke suite, all 31 database tests, and connection-loss,
+restart and backup/restore drills. Remote disruption/restore is deliberately
+skipped by the runner; local drill results must not be presented as Neon recovery
+evidence. The remote WebSocket drill still uses scripted node/approval inputs,
+not a live native provider or production identity authority. Production Gateway
+composition and the remaining milestone gates below remain open.
+
 ## Preview credentials enabled; first real Neon run failed
 
 The subsequent authorized configuration created `control_plane_admin` on the
