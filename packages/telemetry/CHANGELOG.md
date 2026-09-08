@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.2.3...telemetry-v1.3.0) (2026-09-08)
+
+
+### Features
+
+* **packages:** publish six stable packages under [@adea-ai](https://github.com/adea-ai) on npm ([#398](https://github.com/adea-ai/control-plane/issues/398)) ([973a8df](https://github.com/adea-ai/control-plane/commit/973a8df4eb4957f1b9ffa92760aff6584cc6605d))
+
 ## [1.2.3](https://github.com/adea-ai/control-plane/compare/telemetry-v1.2.2...telemetry-v1.2.3) (2026-09-07)
 
 

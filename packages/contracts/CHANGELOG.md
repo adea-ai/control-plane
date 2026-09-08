@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.5.2...contracts-v1.6.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+* **packages:** publish six stable packages under [@adea-ai](https://github.com/adea-ai) on npm ([#398](https://github.com/adea-ai/control-plane/issues/398)) ([973a8df](https://github.com/adea-ai/control-plane/commit/973a8df4eb4957f1b9ffa92760aff6584cc6605d))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/contracts-v1.5.1...contracts-v1.5.2) (2026-09-07)
 
 

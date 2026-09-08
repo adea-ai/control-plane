@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.1.2...sqlite-persistence-v1.2.0) (2026-09-08)
+
+
+### Features
+
+* **m11:** add verified SQLite forward migration history ([#414](https://github.com/adea-ai/control-plane/issues/414)) ([293ad41](https://github.com/adea-ai/control-plane/commit/293ad418469ee356f7dbe4523c8bd6896f958f4f))
+* **m11:** integrate standalone runtime and audit candidate ([#412](https://github.com/adea-ai/control-plane/issues/412)) ([a76f274](https://github.com/adea-ai/control-plane/commit/a76f27453e558525a05089e3c88085153a63a528))
+
+
+### Bug Fixes
+
+* **m11:** preserve SQLite state on rejected migrations and record cloud evidence ([#413](https://github.com/adea-ai/control-plane/issues/413)) ([794e065](https://github.com/adea-ai/control-plane/commit/794e065a8db20af4db25c7f07ef42f67e7129385))
+
 ## [1.1.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.1.1...sqlite-persistence-v1.1.2) (2026-09-07)
 
 
