@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.11.0...workspace-v1.11.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **local:** require terminal confirmation before cancellation commit ([#430](https://github.com/adea-ai/control-plane/issues/430)) ([2cccca2](https://github.com/adea-ai/control-plane/commit/2cccca20413d18b804d3cfb9042e786c7078b693))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.10.0...workspace-v1.11.0) (2026-09-08)
 
 
