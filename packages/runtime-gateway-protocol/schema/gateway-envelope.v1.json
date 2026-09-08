@@ -653,6 +653,7 @@
                 "type": "string",
                 "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
               },
+              "capabilityTtlMs": { "type": "integer", "exclusiveMinimum": 0, "maximum": 60000 },
               "protocolVersion": {
                 "type": "object",
                 "properties": {
@@ -710,6 +711,7 @@
                 "type": "string",
                 "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
               },
+              "capabilityTtlMs": { "type": "integer", "exclusiveMinimum": 0, "maximum": 60000 },
               "protocolVersion": {
                 "type": "object",
                 "properties": {
@@ -877,6 +879,29 @@
       ]
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "inventory" } },
+        "required": ["type"],
+        "anyOf": [
+          {
+            "properties": { "runtimeDrivers": { "contains": { "required": ["capabilityTtlMs"] } } },
+            "required": ["runtimeDrivers"]
+          },
+          {
+            "properties": {
+              "contextProviders": { "contains": { "required": ["capabilityTtlMs"] } }
+            },
+            "required": ["contextProviders"]
+          }
+        ]
+      },
+      "then": {
+        "properties": { "protocolVersion": { "properties": { "minor": { "minimum": 6 } } } }
+      }
+    }
+  ],
   "x-control-plane-prohibitedPayloadKeys": [
     "credential",
     "databaseId",

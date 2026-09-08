@@ -149,7 +149,7 @@ describe('Runtime Gateway protocol', () => {
         payload: { version: 1, parameters: { action: 'resume', sessionRef: 'opaque-session' } },
       }).success
     ).toBeTrue()
-    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 5 })
+    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 6 })
   })
 
   test('fails closed instead of evicting duplicate-effect protection when its ledger is full', () => {
@@ -183,6 +183,37 @@ describe('Runtime Gateway protocol', () => {
     expect(inventoryFixtures.alternateProvider.contextProviders[0].driverFamily).toBe(
       'alternate-context'
     )
+  })
+
+  test('accepts bounded advertised inventory TTL only with negotiated v1.6', () => {
+    expect(
+      negotiateGatewayProtocolVersion(GatewayProtocolManifest.supported, [{ major: 1, minor: 5 }])
+    ).toEqual({ major: 1, minor: 5 })
+    const frame = {
+      ...inventoryFixtures.noProvider,
+      protocolVersion: { major: 1, minor: 6 },
+      runtimeDrivers: [
+        {
+          ...inventoryFixtures.noProvider.runtimeDrivers[0],
+          adapterVersion: '1.0.0',
+          capabilityTtlMs: 5_000,
+        },
+      ],
+    }
+    expect(GatewayEnvelopeSchema.safeParse(frame).success).toBeTrue()
+    for (const minor of [0, 1, 2, 3, 4, 5]) {
+      expect(
+        GatewayEnvelopeSchema.safeParse({ ...frame, protocolVersion: { major: 1, minor } }).success
+      ).toBeFalse()
+    }
+    for (const capabilityTtlMs of [0, -1, 60_001, 1.5]) {
+      expect(
+        GatewayEnvelopeSchema.safeParse({
+          ...frame,
+          runtimeDrivers: [{ ...frame.runtimeDrivers[0], capabilityTtlMs }],
+        }).success
+      ).toBeFalse()
+    }
   })
 
   test('supports additive v1.2 inventory deltas with correlated runtime versions', () => {
@@ -275,6 +306,15 @@ describe('Runtime Gateway protocol', () => {
 
     expect(schema.default.$schema).toBe('https://json-schema.org/draft/2020-12/schema')
     expect(schema.default.oneOf).toHaveLength(9)
+    expect(schema.default.allOf[0].if.properties.type.const).toBe('inventory')
+    expect(schema.default.allOf[0].then.properties.protocolVersion.properties.minor.minimum).toBe(6)
+    for (const family of ['runtimeDrivers', 'contextProviders']) {
+      expect(
+        schema.default.allOf[0].if.anyOf.some((condition) =>
+          condition.properties[family]?.contains.required.includes('capabilityTtlMs')
+        )
+      ).toBe(true)
+    }
     expect(Object.keys(manifest.default.dependencies)).toEqual(['zod'])
     expect(Object.keys(manifest.default.devDependencies ?? {})).toEqual([])
   })

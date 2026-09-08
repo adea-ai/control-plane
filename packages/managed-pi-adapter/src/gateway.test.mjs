@@ -117,7 +117,7 @@ describe('non-co-located Managed Pi through Runtime Gateway', () => {
       JSON.parse(await readFile(matrixUrl, 'utf8'))
     )
     const certification = matrix.certifications.find(
-      ({ certificationId }) => certificationId === 'managed-pi-reference-1-0-0'
+      ({ certificationId }) => certificationId === 'managed-pi-reference-gateway-1-6-0'
     )
 
     expect(certification).toMatchObject({

@@ -197,7 +197,7 @@ describe('non-co-located ACP through Runtime Gateway', () => {
       JSON.parse(await readFile(matrixUrl, 'utf8'))
     )
     const certification = matrix.certifications.find(
-      ({ certificationId }) => certificationId === 'acp-reference-1-0-0'
+      ({ certificationId }) => certificationId === 'acp-reference-gateway-1-6-0'
     )
 
     expect(certification).toMatchObject({

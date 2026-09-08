@@ -103,7 +103,7 @@ export class DefaultRuntimeInventoryNormalizer implements RuntimeInventoryNormal
         capabilitySnapshot: {
           version: inventory.snapshotVersion,
           observedAt: inventory.observedAt,
-          ttlMs: 60_000,
+          ttlMs: driver.capabilityTtlMs ?? 60_000,
           verification: 'verified',
           source: 'adapter_driver_negotiation',
           capabilities,

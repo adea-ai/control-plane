@@ -20,6 +20,47 @@ const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway inventory ingestion', () => {
+  test('preserves a shorter advertised capability TTL during normalization', async () => {
+    const frame = inventory(1, [{ ...driver(runtimeA), capabilityTtlMs: 5_000 }], {
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const normalizer = new DefaultRuntimeInventoryNormalizer()
+    expect(
+      (
+        await normalizer.normalize({
+          driver: frame.runtimeDrivers[0],
+          inventory: frame,
+          nodeStatus: 'online',
+        })
+      ).healthReport.capabilitySnapshot.ttlMs
+    ).toBe(5_000)
+    const legacy = inventory(1, [driver(runtimeA)])
+    expect(
+      (
+        await normalizer.normalize({
+          driver: legacy.runtimeDrivers[0],
+          inventory: legacy,
+          nodeStatus: 'online',
+        })
+      ).healthReport.capabilitySnapshot.ttlMs
+    ).toBe(60_000)
+    const fixture = createFixture({ normalizer })
+    const result = await fixture.service.ingest(frame, {
+      ...source(),
+      protocolVersion: { major: 1, minor: 6 },
+    })
+    const connection = result.updated[0]
+    expect(connection.capabilitySnapshotExpiresAt).toBe(
+      new Date(Date.parse(frame.observedAt) + 5_000).toISOString()
+    )
+    const refreshed = await fixture.health.refresh({
+      runtimeConnectionId: connection.runtimeConnectionId,
+      nodeStatus: 'online',
+      evaluatedAt: new Date(Date.parse(frame.observedAt) + 5_001).toISOString(),
+    })
+    expect(refreshed.connection.availabilityState).toBe('stale')
+  })
+
   test('normalizes and routes a live inventory frame through the production handler', async () => {
     const frame = inventory(1, [driver(runtimeA)])
     const normalizer = new DefaultRuntimeInventoryNormalizer()
@@ -282,12 +323,13 @@ function createFixture(options = {}) {
     registry,
     changes,
     projections,
+    health,
     service: new RuntimeInventoryIngestionService({
       registry,
       health,
       checkpoints,
       changes,
-      normalizer,
+      normalizer: options.normalizer ?? normalizer,
       projections,
       metrics,
       disappearanceTtlMs: 30_000,

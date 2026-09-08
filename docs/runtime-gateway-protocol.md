@@ -65,6 +65,14 @@ Each command must require at least one normalized `session.*` capability and rem
 same node, workspace, RuntimeConnection, execution, attempt, command, and payload identities. Native
 session identifiers and local paths are resolved by the node-side driver and never cross the gateway.
 
+Protocol v1.6 adds optional `capabilityTtlMs` to inventory driver descriptors.
+The integer range is 1–60,000 milliseconds; omission preserves the 60-second
+default. Senders may emit this field only after negotiating v1.6 or later and
+must omit it for older peers. The default runtime inventory normalizer preserves
+a shorter advertised TTL when creating the capability snapshot; the health
+policy can further shorten but never extend that snapshot's expiry. This does
+not change heartbeat timing or make provider inventory a RuntimeConnection.
+
 Queued commands and commands whose prior sequence is provably beyond the node's acknowledged watermark may be redelivered with the same semantic command ID. An acknowledged command missing from the retained ledger, an explicit unknown outcome, an unknown command, or a state conflict is never guessed: M3 reconciliation is invoked and manual-intervention telemetry is emitted. Expired commands are expired without send, while revoked nodes or grants and changed/incompatible runtime capabilities prevent resume. Recovery duration, redelivery, unknown outcome, and manual-intervention metrics describe the reconnect path.
 
 Concrete runtime adapters implement `RuntimeAdapterEventNormalizer`; provider or harness event types never enter execution state or the `ExecutionEvent` log. Normalized progress becomes bounded attempt, interaction, usage, or Artifact events. A stable event ID and the PostgreSQL `runtime_event_receipts` inbox make duplicate delivery identifiable across gateway restarts, reject conflicting reuse, and safely classify out-of-order progress.
