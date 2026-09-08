@@ -120,8 +120,35 @@ endpoint, not a live model, native tool/approval coverage, durable process recov
 session lifecycle certification, Local/Gateway wiring, or descendant cleanup
 certification. No runtime registry entry has been promoted.
 
+## Native close follow-up
+
+Cleanup now requires the v1 `sessionCapabilities.close` advertisement, cancels a
+running turn and waits for its outcome, then requests `session/close`. Concurrent
+cleanup and explicit close calls share one retained operation. New prompts are
+fenced once closing begins, late permission requests receive cancelled outcomes,
+and terminal output/usage remain available. Unsupported close and missing close
+acknowledgement are errors, not successful cleanup. A lost acknowledgement retains
+the rejected operation instead of automatically repeating close. Aborting a
+cleanup waiter releases that waiter; it does not reverse an already dispatched
+native close or prove the session stopped.
+
+The process-backed fixture suite passes 16 tests / 54 assertions, covering
+close coalescing, prompt fencing, late permissions, unsupported close, lost close
+acknowledgement, and prior creation/cancellation/output cases. Root lint,
+type-check, format, build, and test passed; E2E remained 101 / 571.
+
+The retained driver probe was extended to call cleanup twice after completion and
+rerun against a fresh isolated container with the same pinned versions and image
+described above. Observed result: completed, one output event, usage 11/3,
+duplicate handle, and `cleanupConfirmed: true`. The fixture counted one model
+request. The native process tree was gone after transport close; only the
+container's timer and internal model fixture remained before container removal.
+The disposable container and its package installation were removed. This is
+native successful-close evidence; crash recovery, lost acknowledgements against
+the real agent, and all-platform descendant cleanup remain unverified.
+
 This implementation is not exported from the package entrypoint or ready for
-promotion. Required follow-up includes late/ambiguous create reconciliation, late permission
-requests after cancellation, retained-result limits, native session lifecycle
+promotion. Required follow-up includes late/ambiguous create reconciliation,
+retained-result limits, remaining native session lifecycle
 operations, and full real-agent validation. Cache/thought usage is retained in
 the raw result; final accounting semantics still need explicit verification.

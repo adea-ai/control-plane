@@ -33,6 +33,7 @@ type Session = {
   turn?: Promise<void>
   startedAt: number
   cancelRequested: boolean
+  closing?: Promise<void>
 }
 
 export interface AcpProcessTransportOptions extends Omit<
@@ -56,6 +57,7 @@ export class AcpProcessTransport implements AcpTransport {
   #earlyCount = 0
   readonly #permissions = new Map<number, { nativeId: string | number; sessionId: string }>()
   #permissionSequence = 0
+  #supportsClose = false
 
   constructor(options: AcpProcessTransportOptions) {
     for (const timeout of [options.turnTimeoutMs ?? 300_000, options.requestTimeoutMs ?? 30_000]) {
@@ -142,9 +144,27 @@ export class AcpProcessTransport implements AcpTransport {
     signal?: AbortSignal
   ): Promise<unknown> {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
+    if (method === 'initialize') {
+      const result = await this.#rpc.request(method, params, this.#requestOptions(signal))
+      this.#supportsClose = z
+        .object({
+          protocolVersion: z.literal(1),
+          agentCapabilities: z.object({
+            sessionCapabilities: z.object({ close: z.object({}).passthrough() }),
+          }),
+        })
+        .safeParse(result).success
+      return result
+    }
+    if (method === 'session/close') {
+      const { sessionId } = SessionParams.parse(params)
+      await this.cleanup(sessionId, signal)
+      return {}
+    }
     if (method === 'session/prompt') {
       const { sessionId } = SessionParams.parse(params)
       const session = this.#session(sessionId)
+      if (session.closing) throw new Error('ACP_NATIVE_SESSION_CLOSING')
       if (session.turn) throw new Error('ACP_NATIVE_TURN_ALREADY_STARTED')
       session.startedAt = Date.now()
       session.snapshot = { state: 'running', observedAt: new Date().toISOString() }
@@ -208,14 +228,26 @@ export class AcpProcessTransport implements AcpTransport {
   async cleanup(nativeSessionId: string, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
     const session = this.#session(nativeSessionId)
+    if (!this.#supportsClose) throw new Error('ACP_NATIVE_CLOSE_UNSUPPORTED')
+    if (!session.closing) session.closing = this.#closeSession(nativeSessionId, session)
+    await this.#waitForCleanup(session.closing, signal)
+  }
+
+  async #closeSession(nativeSessionId: string, session: Session): Promise<void> {
     if (session.snapshot.state === 'running') {
-      await this.request('session/cancel', { sessionId: nativeSessionId }, signal)
-      if (session.turn) await this.#waitForCleanup(session.turn, signal)
-      const settled = await this.snapshot(nativeSessionId, signal)
+      await this.request('session/cancel', { sessionId: nativeSessionId })
+      if (session.turn) await this.#waitForCleanup(session.turn)
+      const settled = await this.snapshot(nativeSessionId)
       if (settled.state !== 'cancelled' && settled.state !== 'completed')
         throw new Error('ACP_NATIVE_CLEANUP_UNCONFIRMED')
     }
     this.#cancelPermissions(nativeSessionId)
+    const result = await this.#rpc.request(
+      'session/close',
+      { sessionId: nativeSessionId },
+      this.#requestOptions()
+    )
+    z.object({}).passthrough().parse(result)
   }
 
   #requestOptions(signal?: AbortSignal) {
@@ -313,7 +345,7 @@ export class AcpProcessTransport implements AcpTransport {
       .passthrough()
       .parse(params)
     const session = this.#session(input.sessionId)
-    if (session.cancelRequested) {
+    if (session.cancelRequested || session.closing) {
       this.#rpc.respond(nativeId, { outcome: { outcome: 'cancelled' } })
       return
     }

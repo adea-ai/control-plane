@@ -3,7 +3,7 @@ import { AcpDriver } from './index.ts'
 import { AcpProcessTransport } from './process-transport.ts'
 
 const source = `
-let buffer='', creates=0, prompts=0;
+let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0;
 const pending=new Map();
 const creating=[];
 const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
@@ -20,7 +20,10 @@ process.stdin.on('data',chunk=>{
  buffer+=chunk; let i;
  while((i=buffer.indexOf('\\n'))!==-1){
   const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);
-  if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:{}});
+  if(m.method==='initialize')reply(m.id,{protocolVersion:1,agentInfo:{name:'wire-test',version:'1.0.0'},agentCapabilities:process.env.SCENARIO==='no-close'?{}:{sessionCapabilities:{close:{}}}});
+  if(m.method==='session/close'){closes++;if(process.env.SCENARIO!=='lost-close')reply(m.id,{});}
+  if(m.method==='close-probe')reply(m.id,{closes});
+  if(m.method==='late-probe')reply(m.id,{lateCancelled});
   if(m.method==='session/new'){
    creates++;
    if(process.env.SCENARIO==='concurrent'){
@@ -44,12 +47,14 @@ process.stdin.on('data',chunk=>{
    if(process.env.SCENARIO==='exit'){process.exit(0);}
    send({jsonrpc:'2.0',id:'permission:'+s,method:'session/request_permission',params:{sessionId:s,toolCall:{toolCallId:'tool-1',title:'Allow once?'},options:[{optionId:'opaque-allow',kind:'allow_once'},{optionId:'opaque-deny',kind:'reject_once'}]}});
   }
-  if(m.method==='session/cancel'&&process.env.SCENARIO!=='ignore-cancel')finish(m.params.sessionId,true);
+  if(m.method==='session/cancel'&&process.env.SCENARIO==='late-permission')send({jsonrpc:'2.0',id:'late:'+m.params.sessionId,method:'session/request_permission',params:{sessionId:m.params.sessionId,toolCall:{toolCallId:'late-tool'},options:[{optionId:'late-allow',kind:'allow_once'}]}});
+  else if(m.method==='session/cancel'&&process.env.SCENARIO!=='ignore-cancel')finish(m.params.sessionId,true);
+  if(typeof m.id==='string'&&m.id.startsWith('late:')&&m.result){if(m.result.outcome.outcome==='cancelled')lateCancelled++;finish(m.id.slice(5),true);}
   if(m.method==='probe')reply(m.id,{creates,prompts});
   if(typeof m.id==='string'&&m.id.startsWith('permission:')&&m.result){
    const outcome=m.result.outcome;
    if(outcome.outcome==='selected'&&outcome.optionId!=='opaque-allow')throw Error('wrong native option');
-   if(process.env.SCENARIO!=='ignore-cancel')finish(m.id.slice('permission:'.length),outcome.outcome==='cancelled');
+   if(!['ignore-cancel','late-permission'].includes(process.env.SCENARIO))finish(m.id.slice('permission:'.length),outcome.outcome==='cancelled');
   }
  }
 });
@@ -64,6 +69,68 @@ const startRequest = {
     runtimeRequirements: [],
   },
 }
+
+test('native cleanup closes once, retains snapshots, and fences later prompts', async () => {
+  const { transport, driver } = fixture()
+  try {
+    await transport.open()
+    const handle = await driver.start(startRequest)
+    await Promise.all([transport.cleanup('native-1'), transport.cleanup('native-1')])
+    expect((await driver.status(handle)).state).toBe('cancelled')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await transport.request('session/close', { sessionId: 'native-1' })
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await expect(
+      transport.request('session/prompt', { sessionId: 'native-1', prompt: [] })
+    ).rejects.toThrow('ACP_NATIVE_SESSION_CLOSING')
+  } finally {
+    await transport.close()
+  }
+})
+
+test('cleanup cancels late native permissions before confirming close', async () => {
+  const { transport, driver } = fixture('late-permission')
+  try {
+    await transport.open()
+    const handle = await driver.start(startRequest)
+    await transport.cleanup('native-1')
+    expect((await driver.status(handle)).state).toBe('cancelled')
+    expect(await transport.request('late-probe', {})).toEqual({ lateCancelled: 1 })
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test('cleanup fails explicitly when native close is not advertised', async () => {
+  const { transport, driver } = fixture('no-close')
+  try {
+    await transport.open()
+    await driver.inspect()
+    await transport.createSession('unsupported')
+    await expect(transport.cleanup('native-1')).rejects.toThrow('ACP_NATIVE_CLOSE_UNSUPPORTED')
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 0 })
+  } finally {
+    await transport.close()
+  }
+})
+
+test('a lost close acknowledgement remains uncertain without repeating close', async () => {
+  const { transport, driver } = fixture('lost-close')
+  try {
+    await transport.open()
+    await driver.inspect()
+    await transport.createSession('lost-close')
+    await expect(transport.cleanup('native-1')).rejects.toThrow()
+    await expect(transport.cleanup('native-1')).rejects.toThrow()
+    expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
+    await expect(
+      transport.request('session/prompt', { sessionId: 'native-1', prompt: [] })
+    ).rejects.toThrow('ACP_NATIVE_SESSION_CLOSING')
+  } finally {
+    await transport.close()
+  }
+})
 
 test('concurrent creates retain their own early updates even when replies arrive in reverse order', async () => {
   const { transport, driver } = fixture('concurrent')

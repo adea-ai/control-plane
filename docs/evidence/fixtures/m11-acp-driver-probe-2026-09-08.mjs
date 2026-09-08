@@ -70,12 +70,15 @@ try {
   assert.equal(status.result.usage.inputTokens, 11)
   assert.equal(status.result.usage.outputTokens, 3)
   assert.ok(outputs > 0)
+  await driver.cleanup(handle)
+  await driver.cleanup(handle)
   console.log(
     JSON.stringify({
       state: status.state,
       outputs,
       usage: status.result.usage,
       duplicateHandle: true,
+      cleanupConfirmed: true,
     })
   )
 } finally {
