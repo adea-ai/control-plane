@@ -1,5 +1,26 @@
 # M11 production Runtime Gateway composition gap
 
+## Server lifecycle scheduling follow-up
+
+RuntimeGatewayWebSocketServer now schedules lifecycle sweeps after startup with
+a default one-second interval (configurable positive integer up to sixty
+seconds). Scheduling is completion-based: a slow sweep never overlaps the next
+one. Failure reports a fixed diagnostic with no raw persistence error and allows
+a later retry. This is not a hard real-time deadline or a timeout on repository
+calls; production dependency timeouts remain necessary.
+
+Shutdown cancels the timer, awaits the current sweep, prevents new upgrades
+(including authentication finishing during drain), closes the lifecycle and
+stops the native listener even when lifecycle cleanup fails. Repeated close
+calls share the same completion. Restarting a closed instance is rejected.
+
+Scheduler tests cover non-overlap, drain waiting, cancellation before the first
+tick, isolated reporting failure, retry, cleanup failure and upgrade/drain race.
+A real-WebSocket test with synthetic identity and an in-memory repository
+changes ownership without push notification or a manual sweep and observes
+automatic stale-socket closure. This closes the server's missing lifecycle
+timer, not inventory health/disappearance scheduling or production composition.
+
 ## Gateway repository coordination follow-up
 
 The cloud remote drill now composes this adapter with the PostgreSQL ownership

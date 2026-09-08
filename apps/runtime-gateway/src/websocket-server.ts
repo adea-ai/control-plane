@@ -56,6 +56,8 @@ export interface RuntimeGatewayWebSocketServerOptions {
     readonly idleTimeoutSeconds: number
   }
   readonly serve?: RuntimeGatewayNativeServe
+  readonly sweepIntervalMs?: number
+  readonly onSweepError?: () => void
 }
 
 export class RuntimeGatewayWebSocketServer {
@@ -68,6 +70,11 @@ export class RuntimeGatewayWebSocketServer {
   readonly #port: number
   readonly #serve: RuntimeGatewayNativeServe
   #server: NativeGatewayServer | undefined
+  readonly #sweepIntervalMs: number
+  readonly #onSweepError: () => void
+  #sweepTimer: ReturnType<typeof setTimeout> | undefined
+  #sweepTask: Promise<void> | undefined
+  #closing: Promise<void> | undefined
 
   constructor(options: RuntimeGatewayWebSocketServerOptions) {
     this.#lifecycle = options.lifecycle
@@ -81,10 +88,15 @@ export class RuntimeGatewayWebSocketServer {
       'idleTimeoutSeconds'
     )
     this.#serve = options.serve ?? nativeBunServe
+    this.#sweepIntervalMs = positiveInteger(options.sweepIntervalMs ?? 1_000, 'sweepIntervalMs')
+    if (this.#sweepIntervalMs > 60_000) throw new Error('Invalid sweepIntervalMs')
+    this.#onSweepError =
+      options.onSweepError ?? (() => console.error('RUNTIME_GATEWAY_SWEEP_FAILED'))
   }
 
   start(): void {
-    if (this.#server !== undefined) throw new Error('Runtime Gateway server is already started')
+    if (this.#server !== undefined || this.#closing !== undefined)
+      throw new Error('Runtime Gateway server is already started or closed')
     this.#server = this.#serve({
       hostname: this.#hostname,
       port: this.#port,
@@ -108,17 +120,49 @@ export class RuntimeGatewayWebSocketServer {
           ),
       },
     })
+    this.#scheduleSweep()
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.#closing !== undefined) return this.#closing
     const server = this.#server
-    if (server === undefined) return
+    if (server === undefined) return Promise.resolve()
     this.#server = undefined
-    await this.#lifecycle.close()
-    await server.stop(false)
+    if (this.#sweepTimer !== undefined) clearTimeout(this.#sweepTimer)
+    this.#closing = (async () => {
+      await this.#sweepTask
+      try {
+        await this.#lifecycle.close()
+      } finally {
+        await server.stop(true)
+      }
+    })()
+    return this.#closing
+  }
+
+  #scheduleSweep(): void {
+    this.#sweepTimer = setTimeout(() => {
+      this.#sweepTimer = undefined
+      this.#sweepTask = Promise.resolve()
+        .then(() => this.#lifecycle.sweep())
+        .catch(() => {
+          // Never forward raw persistence errors or let a reporting sink stop future sweeps.
+          try {
+            this.#onSweepError()
+          } catch {
+            /* callback failure is isolated */
+          }
+        })
+        .finally(() => {
+          this.#sweepTask = undefined
+          if (this.#server !== undefined) this.#scheduleSweep()
+        })
+    }, this.#sweepIntervalMs)
+    this.#sweepTimer.unref()
   }
 
   async #upgrade(request: Request, server: NativeUpgradeServer): Promise<Response | undefined> {
+    if (this.#server === undefined) return new Response('Runtime Gateway draining', { status: 503 })
     const url = new URL(request.url)
     if (request.method !== 'GET' || url.pathname !== '/runtime-gateway/v1/connect') {
       return new Response('Not Found', { status: 404 })
@@ -132,6 +176,7 @@ export class RuntimeGatewayWebSocketServer {
     } catch {
       return new Response('RuntimeNode authentication rejected', { status: 401 })
     }
+    if (this.#server === undefined) return new Response('Runtime Gateway draining', { status: 503 })
     const upgraded = server.upgrade(request, {
       data: { connectionId: `gwc_${randomUUID()}`, authenticatedChannel },
     })
