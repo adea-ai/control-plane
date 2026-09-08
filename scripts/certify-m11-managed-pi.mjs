@@ -235,6 +235,8 @@ try {
     assert.equal(request.body.stream, true)
     assert.equal(request.body.tools?.length ?? 0, 0)
   }
+  const originalEvents = []
+  for await (const event of client.progress(handle)) originalEvents.push(event)
   await adapter.cleanup(handle)
   handles.splice(handles.indexOf(handle), 1)
   const recreated = new ManagedPiProcessClient(clientOptions)
@@ -247,6 +249,15 @@ try {
   assert.equal(recovered.state, 'succeeded')
   assert.deepEqual(recovered.result.output, status.result.output)
   assert.deepEqual(recovered.result.usage, status.result.usage)
+  const recoveredEvents = []
+  for await (const event of recreated.progress(handle)) recoveredEvents.push(event)
+  assert.deepEqual(recoveredEvents, originalEvents)
+  const resumedEvents = []
+  for await (const event of recreated.progress(handle, 2)) resumedEvents.push(event)
+  assert.deepEqual(
+    resumedEvents,
+    originalEvents.filter((event) => event.sequence > 2)
+  )
   await adapter.cleanup(cancelled)
   handles.splice(handles.indexOf(cancelled), 1)
   assert.equal((await recreated.reconcile(cancelled)).state, 'cancelled')
@@ -267,6 +278,7 @@ try {
     changedNativeCommand: 'rejected',
     clientRecreationAfterCleanup: 'reconciliation-required-no-new-request',
     terminalRecoveryAfterCleanup: ['succeeded-with-original-output-and-usage', 'cancelled'],
+    eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {
       persistence: 'sqlite',
       workflow: 'real-local-restate',

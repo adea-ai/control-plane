@@ -135,3 +135,11 @@ The process-backed suite passes 8 tests / 48 assertions: exact replay after
 cleanup, cursor filtering, pre-aborted reads, legacy status compatibility,
 legacy-history refusal, and damaged sequence refusal are covered. This is not
 live in-flight process reattachment or a published-Pi event-recovery proof.
+
+The published-Pi runner subsequently verified exact event-history recovery and
+cursor filtering with Pi 0.84.2, Node 24.18.0, and Bun 1.4.0. The recovered events
+deep-equaled the original stream, and recovery after sequence 2 returned exactly
+the original events above that cursor. The report emitted
+`eventRecoveryAfterCleanup: exact-history-and-cursor-filtering`; total model
+requests remained three and cleanup completed. This establishes terminal event
+recovery for the pinned runtime, not live in-flight reattachment.
