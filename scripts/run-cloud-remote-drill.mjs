@@ -79,6 +79,7 @@ try {
     status: 'connected',
     health: 'healthy',
     capabilities: [
+      { name: 'execution.cancel', support: 'supported' },
       { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
@@ -107,8 +108,9 @@ try {
     connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
     freshness: { state: 'fresh', observedAt: now, expiresAt: deadlineAt },
     versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1', protocol: '1.5.0' },
-    capabilities: ['filesystem.read', 'stream.output', 'interaction.approval'],
+    capabilities: ['filesystem.read', 'stream.output', 'interaction.approval', 'execution.cancel'],
     capabilityDetails: [
+      { name: 'execution.cancel', support: 'supported' },
       { name: 'interaction.approval', support: 'supported' },
       { name: 'filesystem.read', support: 'supported' },
       { name: 'stream.output', support: 'supported' },
@@ -424,8 +426,8 @@ try {
   )
   deepStrictEqual(quarantine, [])
   ok(result.result.artifact.sizeBytes > 0)
-  // Persistence-only cancellation replay: the waiter is scripted, so this does
-  // not certify cancellation transport or a provider stopping work.
+  // Cancellation delivery and ACK use the real channel. The execution has
+  // already completed and the waiter is scripted: this does not prove a native stop.
   let cancellationClock = new Date()
   const cancellationFactory = new ManagedPiRemoteCommandFactory({
     contextPackages: new PostgresContextPackageRepository(database.application),
@@ -457,15 +459,42 @@ try {
     reason: 'user_request',
   }
   await cancellationRuntime().cancel(cancellationInput)
+  await delivery.deliver(cancellationRecords[0].commandId, { channelGeneration: 1, sequence: 4 })
+  await until(() => received.length === 4, 'cancellation-delivery')
+  const cancellationCommand = received[3]
+  strictEqual(cancellationCommand.operation, 'runtime.cancel')
+  deepStrictEqual(cancellationCommand.payload.parameters, {
+    handleId: `managed-pi:${attemptId}`,
+    requestedAt: cancellationRecords[0].issuedAt,
+  })
+  socket.send(
+    JSON.stringify({
+      ...golden.ack,
+      commandId: cancellationCommand.commandId,
+      payloadHash: cancellationCommand.payloadHash,
+      sentAt: new Date().toISOString(),
+      sequence: cancellationCommand.sequence,
+    })
+  )
+  await until(
+    async () => (await commands.get(cancellationCommand.commandId)).status === 'acknowledged',
+    'cancellation-ack'
+  )
+  const acknowledgedCancellation = await commands.get(cancellationCommand.commandId)
   cancellationClock = new Date(cancellationClock.getTime() + 6 * 60 * 1000)
   await Promise.all(
     Array.from({ length: 8 }, () => cancellationRuntime().cancel(cancellationInput))
   )
   strictEqual(cancellationRecords.length, 9)
-  for (const record of cancellationRecords) deepStrictEqual(record, cancellationRecords[0])
-  deepStrictEqual(await commands.get(cancellationRecords[0].commandId), cancellationRecords[0])
+  for (const record of cancellationRecords.slice(1)) {
+    deepStrictEqual(record, acknowledgedCancellation)
+  }
+  deepStrictEqual(await commands.get(cancellationCommand.commandId), acknowledgedCancellation)
+  strictEqual(received.length, 4)
+  deepStrictEqual(quarantine, [])
+  if (gatewayError) throw gatewayError
   console.log(
-    'Cloud remote drill passed: PostgreSQL dispatch and approval, signed WebSocket command/approval ACK and result, Artifact-backed terminal state, immutable dispatch/approval replay and persistence-only cancellation replay. Approval response is seeded; node and cancellation waiter are scripted. Native permission origination, cancellation transport, usage settlement and live provider execution remain unverified.'
+    'Cloud remote drill passed: PostgreSQL dispatch, approval and cancellation, authenticated WebSocket delivery/ACK and result, Artifact-backed terminal state, and immutable command replay. Approval response is seeded; node and cancellation waiter are scripted. Cancellation is delivered after execution completion, not a native stop proof. Native permission origination, active cancellation confirmation, usage settlement and live provider execution remain unverified.'
   )
 } finally {
   socket?.close()

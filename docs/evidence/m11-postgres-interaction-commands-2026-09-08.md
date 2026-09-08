@@ -114,3 +114,14 @@ original `requestedAt`. Input, grant, and deny still reject an expired attempt.
 All 12 command-factory tests passed after the fix (one failed before it).
 This proves construction only; remote cancellation delivery and native stop
 confirmation remain separate acceptance gates.
+
+## Cancellation delivery and acknowledgement
+
+The PostgreSQL remote drill now explicitly advertises `execution.cancel`, sends
+the queued cancellation over the authenticated WebSocket, checks its handle and
+original request timestamp, and waits for the persisted acknowledgement. Eight
+retries after advancing the factory clock beyond the original five-minute lease
+retain the acknowledged record without another socket command. The node and
+cancellation waiter remain scripted, and this scenario deliberately follows
+execution completion. It proves transport and immutable replay, not cancellation
+of active native work or a public cancellation API.
