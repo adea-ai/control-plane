@@ -226,7 +226,12 @@ export const AcpUpdateSchema = z.union([
 ])
 
 export const AcpSnapshotSchema = z.discriminatedUnion('state', [
-  z.object({ state: z.enum(['starting', 'running']), observedAt: TimestampSchema }).strict(),
+  z
+    .object({
+      state: z.enum(['starting', 'running', 'awaiting_input']),
+      observedAt: TimestampSchema,
+    })
+    .strict(),
   z
     .object({
       state: z.literal('completed'),

@@ -405,7 +405,15 @@ export class AcpProcessTransport implements AcpTransport {
 
   async snapshot(nativeSessionId: string, signal?: AbortSignal): Promise<AcpSnapshot> {
     if (signal?.aborted) throw new Error('ACP_NATIVE_ABORTED')
-    return structuredClone(this.#session(nativeSessionId).snapshot)
+    const snapshot = this.#session(nativeSessionId).snapshot
+    // Keep the underlying prompt running so its update stream and cancellation
+    // lifecycle remain live while the caller decides a pending permission.
+    if (
+      snapshot.state === 'running' &&
+      [...this.#permissions.values()].some((permission) => permission.sessionId === nativeSessionId)
+    )
+      return { state: 'awaiting_input', observedAt: snapshot.observedAt }
+    return structuredClone(snapshot)
   }
 
   async cleanup(nativeSessionId: string, signal?: AbortSignal): Promise<void> {

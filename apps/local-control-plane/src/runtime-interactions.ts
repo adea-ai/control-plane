@@ -32,7 +32,7 @@ export class LocalRuntimeInteractions {
     executionId: string,
     attemptId: string,
     event: RuntimeExecutionProgress
-  ): Promise<void> {
+  ): Promise<boolean> {
     const [command, execution] = await Promise.all([
       this.commands.getByExecutionId(executionId),
       this.commands.getExecution(executionId),
@@ -77,7 +77,7 @@ export class LocalRuntimeInteractions {
       requestedAt,
       expiresAt,
     })
-    if (await this.repository.insert(request)) return
+    if (await this.repository.insert(request)) return true
     const existing = await this.repository.get(request.interactionId)
     if (
       !existing ||
@@ -87,6 +87,7 @@ export class LocalRuntimeInteractions {
       !isDeepStrictEqual(existing.allowedPrincipalIds, request.allowedPrincipalIds)
     )
       throw new Error('LOCAL_INTERACTION_ID_CONFLICT')
+    return existing.state === 'pending'
   }
 
   async assertResponse(input: {

@@ -438,12 +438,14 @@ test.each(['complete', 'early'])(
       const events = []
       for await (const event of driver.progress(handle)) {
         events.push(event)
-        if (event.type === 'interaction')
+        if (event.type === 'interaction') {
+          expect((await driver.status(handle)).state).toBe('awaiting_input')
           await driver.submitApproval(handle, {
             interactionId: event.data.interactionId,
             idempotencyKey: 'native:approve',
             decision: 'approve',
           })
+        }
       }
       const status = await driver.status(handle)
       expect(status.state).toBe('completed')

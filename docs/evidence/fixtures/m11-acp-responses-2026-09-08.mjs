@@ -13,13 +13,27 @@ const server = createServer((request, response) => {
   calls++
   // Cancellation probe: keep the native model request pending until its caller aborts.
   if (process.env.M11_HOLD_RESPONSES === '1') return
-  const item = {
-    id: `msg_${calls}`,
-    type: 'message',
-    role: 'assistant',
-    status: 'completed',
-    content: [{ type: 'output_text', text: 'M11 isolated ACP response.', annotations: [] }],
-  }
+  const permission = process.env.M11_PERMISSION_PROBE === '1' && calls === 1
+  const item = permission
+    ? {
+        id: 'fc_m11_permission',
+        type: 'function_call',
+        call_id: 'call_m11_permission',
+        name: 'exec_command',
+        arguments: JSON.stringify({
+          cmd: "printf 'approved\\n' >> /tmp/m11-permission-proof",
+          sandbox_permissions: 'require_escalated',
+          justification: 'Write the isolated M11 permission marker.',
+        }),
+        status: 'completed',
+      }
+    : {
+        id: `msg_${calls}`,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'M11 isolated ACP response.', annotations: [] }],
+      }
   const result = {
     id: `resp_${calls}`,
     object: 'response',
@@ -39,6 +53,26 @@ const server = createServer((request, response) => {
   const send = (type, fields) =>
     response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...fields })}\n\n`)
   send('response.created', { response: { ...result, status: 'in_progress', output: [] } })
+  if (permission) {
+    send('response.output_item.added', {
+      output_index: 0,
+      item: { ...item, status: 'in_progress', arguments: '' },
+    })
+    send('response.function_call_arguments.delta', {
+      item_id: item.id,
+      output_index: 0,
+      delta: item.arguments,
+    })
+    send('response.function_call_arguments.done', {
+      item_id: item.id,
+      output_index: 0,
+      arguments: item.arguments,
+    })
+    send('response.output_item.done', { output_index: 0, item })
+    send('response.completed', { response: result })
+    response.end()
+    return
+  }
   send('response.output_item.added', {
     output_index: 0,
     item: { ...item, status: 'in_progress', content: [] },

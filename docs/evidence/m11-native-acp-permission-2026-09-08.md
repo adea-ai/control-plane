@@ -1,0 +1,71 @@
+# M11 native ACP permission continuation
+
+## Scope and result
+
+On 2026-09-08, the isolated native permission probe completed through the
+authenticated public SDK, Local SQLite interaction storage, and real Restate.
+This is a narrow Local acceptance result, not completion of M11 or all four
+deployment profiles.
+
+The probe used `@agentclientprotocol/codex-acp@1.7.0` and
+`@openai/codex@0.148.0` in a task-owned container with no host mounts, no
+credentials, no external network after installation, dropped capabilities, and
+no-new-privileges. The model fixture ran on container loopback. Native
+`INITIAL_AGENT_MODE=read-only` selected user-reviewed permission requests.
+
+The fixture's first model response requested `exec_command` to append one line to
+`/tmp/m11-permission-proof` inside that container. The probe checked that this
+file did not exist before granting the persisted permission through the SDK.
+After completion, acceptance and response replay retained one attempt, exactly
+one marker line, and two model requests.
+
+Successful probe output:
+
+```json
+{
+  "state": "completed",
+  "persistedUsage": { "inputTokens": 11, "outputTokens": 3, "durationMs": 313 },
+  "acceptanceReplay": true,
+  "attempts": 1,
+  "realRestate": true,
+  "workflowCompleted": true,
+  "nativePermission": true,
+  "publicSdk": true,
+  "markerWrites": 1,
+  "modelCalls": 2,
+  "aggregateUsageVerified": false
+}
+```
+
+## Reproduced defects and fixes
+
+1. ACP exposed a pending permission as `running`. Local converted this
+   nonterminal status into a failed outcome and terminal cleanup cancelled the
+   request. A focused native-process test reproduced `running` instead of
+   `awaiting_input`. The transport now derives waiting status from pending
+   permissions while keeping its underlying prompt/update/cancellation lifecycle
+   running.
+2. Approval delivery returns before the native prompt finishes. Local treated
+   that running acknowledgement as failure. Local now consumes progress until
+   completion or a subsequent pending interaction. Replayed, durably resolved
+   interaction events do not suspend the resumed turn again. Tests cover both
+   completed and running response acknowledgements.
+
+## Usage limitation and remaining gates
+
+The two fixture model responses each report 11 input and 3 output tokens, but
+the pinned native adapter exposes only the last usage breakdown. Source checked
+at upstream tag `v1.7.0`, commit
+`2b48e9822330fc09f3a94a81563e5c4bb779601a`:
+`CodexEventHandler.ts` assigns `params.tokenUsage.last` to `lastTokenUsage`, and
+`CodexAcpServer.ts` returns `toPromptUsage(lastTokenUsage)`. The probe verifies
+faithful persistence of that native result, **not aggregate execution cost**.
+Aggregate accounting, repeated native approvals, native process-restart recovery,
+all-profile parity, independent review, and the broader M11 acceptance matrix
+remain open.
+
+Reproduction fixtures are
+`fixtures/m11-acp-responses-2026-09-08.mjs` (set `M11_PERMISSION_PROBE=1`) and
+`fixtures/m11-acp-local-probe-2026-09-08.mjs <isolated-container> permission`.
+Use a fresh marker and model-call counter for each run; never attach host
+credentials or a host workspace to this probe.

@@ -405,156 +405,177 @@ describe('Local Control Plane composition', () => {
     }
   })
 
-  test('resumes a direct runtime with the durable interaction input value', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'control-plane-direct-input-'))
-    const persistence = new SqlitePersistenceProvider({
-      path: join(directory, 'control-plane.sqlite'),
-    })
-    const objectStore = new FilesystemObjectStore({
-      rootDirectory: join(directory, 'artifacts'),
-      maxObjectBytes: 1024 * 1024,
-    })
-    const handle = {
-      handleId: 'local:att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      startedAt: '2026-08-29T00:00:00.000Z',
-    }
-    const submitted = []
-    const driver = {
-      start: async () => handle,
-      progress: async function* () {
-        yield {
-          handleId: handle.handleId,
-          sequence: 1,
-          occurredAt: '2026-08-29T00:00:01.000Z',
-          type: 'interaction',
-          data: { interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV', kind: 'input' },
-        }
-      },
-      status: async () => ({
-        handle,
-        state: 'awaiting_input',
-        observedAt: '2026-08-29T00:00:01.000Z',
-      }),
-      submitInput: async (runtimeHandle, request) => {
-        submitted.push(request)
-        return {
-          handle: runtimeHandle,
-          state: 'completed',
-          observedAt: '2026-08-29T00:00:02.000Z',
-          result: {
-            outcome: 'completed',
-            output: { answer: request.text },
-            usage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
-            artifacts: [],
-          },
-        }
-      },
-      cleanup: async () => undefined,
-    }
-    const interactions = new SqliteInteractionRepository(persistence)
-    const activities = new DirectRuntimeActivityPort(
-      persistence,
-      objectStore,
-      new TransportedRuntimeAdapter(new DirectLocalRuntimeTransport(driver), 'test'),
-      new LocalRuntimeInteractions(interactions, {
-        getByExecutionId: async () => ({
-          executionId: input.executionId,
-          ...input.executionPlan.correlation,
-          callerPrincipalId: 'svc_owner',
-          retentionExpiresAt: '2099-01-01T00:00:00.000Z',
-        }),
-        getExecution: async () => ({
-          latestAttemptId: input.attemptId,
-          state: 'awaiting_input',
-          correlation: input.executionPlan.correlation,
-        }),
+  test.each(['completed', 'running'])(
+    'resumes a direct runtime with durable input and a %s acknowledgement',
+    async (acknowledgement) => {
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-direct-input-'))
+      const persistence = new SqlitePersistenceProvider({
+        path: join(directory, 'control-plane.sqlite'),
       })
-    )
-    const input = {
-      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      attemptId: handle.attemptId,
-      executionPlan: {
-        correlation: {
-          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-          projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        },
-        executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        contentDigest: `sha256:${'a'.repeat(64)}`,
-        schemaVersion: 1,
-        runtimeRequirements: [],
-      },
-      effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:dispatch',
-    }
-    try {
-      await persistence.migrate()
-      expect(await activities.dispatch(input)).toEqual({
-        outcome: 'awaiting_input',
-        interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      const objectStore = new FilesystemObjectStore({
+        rootDirectory: join(directory, 'artifacts'),
+        maxObjectBytes: 1024 * 1024,
       })
-      const authorizedResponse = {
-        interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        executionId: input.executionId,
-        attemptId: input.attemptId,
-        action: 'input',
-        value: 'continue safely',
+      const handle = {
+        handleId: 'local:att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        startedAt: '2026-08-29T00:00:00.000Z',
       }
-      await expect(
-        activities.applyInteraction({ ...authorizedResponse, effectKey: 'unconfirmed-response' })
-      ).rejects.toThrow('LOCAL_INTERACTION_RESPONSE_UNCONFIRMED')
-      expect(submitted).toEqual([])
-      await new InteractionService(interactions).respond({
-        ...authorizedResponse,
-        expectedVersion: 1,
-        respondingPrincipalId: 'svc_owner',
-        respondedAt: new Date().toISOString(),
+      const submitted = []
+      let finished = false
+      const completed = (answer) => ({
+        handle,
+        state: 'completed',
+        observedAt: '2026-08-29T00:00:02.000Z',
+        result: {
+          outcome: 'completed',
+          output: { answer },
+          usage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
+          artifacts: [],
+        },
       })
-      expect(
-        await activities.applyInteraction({
+      const driver = {
+        start: async () => handle,
+        progress: async function* () {
+          yield {
+            handleId: handle.handleId,
+            sequence: 1,
+            occurredAt: '2026-08-29T00:00:01.000Z',
+            type: 'interaction',
+            data: { interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV', kind: 'input' },
+          }
+          if (submitted.length) finished = true
+        },
+        status: async () =>
+          finished
+            ? completed(submitted[0].text)
+            : {
+                handle,
+                state: 'awaiting_input',
+                observedAt: '2026-08-29T00:00:01.000Z',
+              },
+        submitInput: async (runtimeHandle, request) => {
+          submitted.push(request)
+          if (acknowledgement === 'running')
+            return { handle: runtimeHandle, state: 'running', observedAt: handle.startedAt }
+          return {
+            handle: runtimeHandle,
+            state: 'completed',
+            observedAt: '2026-08-29T00:00:02.000Z',
+            result: {
+              outcome: 'completed',
+              output: { answer: request.text },
+              usage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
+              artifacts: [],
+            },
+          }
+        },
+        cleanup: async () => undefined,
+      }
+      const interactions = new SqliteInteractionRepository(persistence)
+      const activities = new DirectRuntimeActivityPort(
+        persistence,
+        objectStore,
+        new TransportedRuntimeAdapter(new DirectLocalRuntimeTransport(driver), 'test'),
+        new LocalRuntimeInteractions(interactions, {
+          getByExecutionId: async () => ({
+            executionId: input.executionId,
+            ...input.executionPlan.correlation,
+            callerPrincipalId: 'svc_owner',
+            retentionExpiresAt: '2099-01-01T00:00:00.000Z',
+          }),
+          getExecution: async () => ({
+            latestAttemptId: input.attemptId,
+            state: 'awaiting_input',
+            correlation: input.executionPlan.correlation,
+          }),
+        })
+      )
+      const input = {
+        executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        attemptId: handle.attemptId,
+        executionPlan: {
+          correlation: {
+            workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          },
+          executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          contentDigest: `sha256:${'a'.repeat(64)}`,
+          schemaVersion: 1,
+          runtimeRequirements: [],
+        },
+        effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:dispatch',
+      }
+      try {
+        await persistence.migrate()
+        expect(await activities.dispatch(input)).toEqual({
+          outcome: 'awaiting_input',
+          interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        })
+        const authorizedResponse = {
           interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
           responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-          action: 'input',
-          value: 'continue safely',
           executionId: input.executionId,
           attemptId: input.attemptId,
-          effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:interaction',
+          action: 'input',
+          value: 'continue safely',
+        }
+        await expect(
+          activities.applyInteraction({ ...authorizedResponse, effectKey: 'unconfirmed-response' })
+        ).rejects.toThrow('LOCAL_INTERACTION_RESPONSE_UNCONFIRMED')
+        expect(submitted).toEqual([])
+        await new InteractionService(interactions).respond({
+          ...authorizedResponse,
+          expectedVersion: 1,
+          respondingPrincipalId: 'svc_owner',
+          respondedAt: new Date().toISOString(),
         })
-      ).toMatchObject({ outcome: 'completed' })
-      expect(submitted).toEqual([
-        {
-          interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-          idempotencyKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:interaction',
-          text: 'continue safely',
-        },
-      ])
-      const answered = await interactions.get(authorizedResponse.interactionId)
-      const pendingId = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
-      await interactions.insert({
-        ...answered,
-        interactionId: pendingId,
-        state: 'pending',
-        version: 1,
-        response: undefined,
-        resolvedAt: undefined,
-      })
-      const cleanup = {
-        executionId: input.executionId,
-        attemptId: input.attemptId,
-        effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:cleanup',
+        expect(
+          await activities.applyInteraction({
+            interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            action: 'input',
+            value: 'continue safely',
+            executionId: input.executionId,
+            attemptId: input.attemptId,
+            effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:interaction',
+          })
+        ).toMatchObject({ outcome: 'completed' })
+        expect(submitted).toEqual([
+          {
+            interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            idempotencyKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:interaction',
+            text: 'continue safely',
+          },
+        ])
+        const answered = await interactions.get(authorizedResponse.interactionId)
+        const pendingId = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+        await interactions.insert({
+          ...answered,
+          interactionId: pendingId,
+          state: 'pending',
+          version: 1,
+          response: undefined,
+          resolvedAt: undefined,
+        })
+        const cleanup = {
+          executionId: input.executionId,
+          attemptId: input.attemptId,
+          effectKey: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAV:execution-lifecycle-v1:cleanup',
+        }
+        await activities.cleanup(cleanup)
+        const cancelled = await interactions.get(pendingId)
+        expect(cancelled).toMatchObject({ state: 'cancelled', version: 2 })
+        expect(await interactions.get(authorizedResponse.interactionId)).toEqual(answered)
+        await activities.cleanup(cleanup)
+        expect(await interactions.get(pendingId)).toEqual(cancelled)
+      } finally {
+        persistence.close()
+        objectStore.close()
+        await rm(directory, { recursive: true, force: true })
       }
-      await activities.cleanup(cleanup)
-      const cancelled = await interactions.get(pendingId)
-      expect(cancelled).toMatchObject({ state: 'cancelled', version: 2 })
-      expect(await interactions.get(authorizedResponse.interactionId)).toEqual(answered)
-      await activities.cleanup(cleanup)
-      expect(await interactions.get(pendingId)).toEqual(cancelled)
-    } finally {
-      persistence.close()
-      objectStore.close()
-      await rm(directory, { recursive: true, force: true })
     }
-  })
+  )
 
   test.each(['reference', 'native-wire'])(
     'persists %s runtime completion through the shared durable lifecycle',

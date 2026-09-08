@@ -1,11 +1,16 @@
 // Real native harness + Local Restate + SQLite; model responses remain deterministic fixtures.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { ControlPlaneClient } from '@control-plane/sdk'
+import {
+  createControlApiApplication,
+  createPrivateApiAuthentication,
+} from '../../../apps/control-api/src/index.ts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   createLocalAcpRuntime,
@@ -14,7 +19,8 @@ import {
 
 const container = process.argv[2]
 const cancel = process.argv[3] === 'cancel'
-assert.ok(process.argv[3] === undefined || cancel)
+const permission = process.argv[3] === 'permission'
+assert.ok(process.argv[3] === undefined || cancel || permission)
 assert.match(container ?? '', /^control-plane-m11-acp-local-[a-zA-Z0-9-]+$/)
 const docker = process.env.M11_DOCKER_PATH ?? '/usr/local/bin/docker'
 const [inspection] = JSON.parse(execFileSync(docker, ['inspect', container], { encoding: 'utf8' }))
@@ -32,6 +38,7 @@ const composition = new LocalControlPlaneComposition({
         '-i',
         '-e',
         'NO_BROWSER=1',
+        ...(permission ? ['-e', 'INITIAL_AGENT_MODE=read-only'] : []),
         '-e',
         `DEFAULT_AUTH_REQUEST=${JSON.stringify({
           methodId: 'gateway',
@@ -56,6 +63,7 @@ const composition = new LocalControlPlaneComposition({
     }),
   workflowEndpointPort: 19083,
 })
+let application, sdk, responseCommand
 try {
   await composition.start()
   const runtime = composition.runtimeTransport
@@ -65,6 +73,31 @@ try {
     skillRequiredCapabilities: [],
   })
   await composition.executionPlans.put(plan)
+  if (permission) {
+    const authentication = await createPrivateApiAuthentication(directory)
+    const credential = (await readFile(authentication.credentialFile, 'utf8')).trim()
+    const metadata = {
+      serviceName: 'control-api',
+      version: 'probe',
+      commitSha: 'probe',
+      environment: 'test',
+      instanceId: 'native-permission',
+    }
+    application = await createControlApiApplication({
+      metadata,
+      logger: { write: () => undefined },
+      health: () => ({ status: 'ok', metadata }),
+      readiness: () => ({ status: 'ready', metadata }),
+      serviceAuthenticator: authentication.authenticator,
+      executionAcceptanceService: composition.executionAcceptanceService,
+      interactionCommandService: composition.interactionCommandService,
+    })
+    await application.listen(0, '127.0.0.1')
+    sdk = new ControlPlaneClient({
+      baseUrl: `http://127.0.0.1:${application.getHttpServer().address().port}`,
+      credential,
+    })
+  }
   const issuedAt = new Date().toISOString()
   const request = {
     ...ControlApiFixtures.executionAcceptance.request,
@@ -100,7 +133,46 @@ try {
     )
   const baselineCalls = cancel ? modelCalls() : 0
   let cancellationStartedAt
-  const accepted = await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
+  const accepted = sdk
+    ? await sdk.acceptExecution(request)
+    : await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
+  if (permission) {
+    const deadline = Date.now() + 20000
+    let pending
+    while (Date.now() < deadline) {
+      pending = await composition.interactions.get('int_01JABCDEF0123456789ABCDEFG')
+      if (pending) break
+      await delay(50)
+    }
+    assert.equal(pending?.state, 'pending', 'NATIVE_PERMISSION_NOT_OBSERVED')
+    assert.equal(pending.kind, 'permission')
+    const markerExists = execFileSync(
+      docker,
+      [
+        'exec',
+        container,
+        'node',
+        '-e',
+        'console.log(require("node:fs").existsSync("/tmp/m11-permission-proof"))',
+      ],
+      { encoding: 'utf8' }
+    ).trim()
+    assert.equal(markerExists, 'false', 'NATIVE_ACTION_PRECEDED_APPROVAL')
+    responseCommand = {
+      ...ControlApiFixtures.interactionResponse.request,
+      workspaceId: request.workspaceId,
+      projectId: request.projectId,
+      issuedAt,
+      payload: {
+        executionId: accepted.data.executionId,
+        attemptId: pending.attemptId,
+        interactionId: pending.interactionId,
+        expectedVersion: pending.version,
+        action: 'grant',
+      },
+    }
+    assert.equal((await sdk.respondToInteraction(responseCommand)).data.status, 'accepted')
+  }
   if (cancel) {
     // Wait for the actual model request, not just the persisted starting state.
     const pendingDeadline = Date.now() + 15000
@@ -150,7 +222,9 @@ try {
   assert.equal((await workflowResult.json()).status, cancel ? 'cancelled' : 'completed')
   const cancellationElapsedMs =
     cancellationStartedAt === undefined ? undefined : Date.now() - cancellationStartedAt
-  const replay = await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
+  const replay = sdk
+    ? await sdk.acceptExecution(request)
+    : await composition.executionAcceptanceService.accept(request, 'svc_m11-acp-local')
   assert.equal(replay.data.executionId, execution.executionId)
   assert.equal((await composition.executions.listAttempts(execution.executionId)).length, 1)
   let result
@@ -160,8 +234,28 @@ try {
     )
     result = JSON.parse(new TextDecoder().decode(stored.body))
     assert.equal(result.output.text, 'M11 isolated ACP response.')
+    // Pinned codex-acp 1.7.0 exposes lastTokenUsage, not the sum of the
+    // two model calls. Assert faithful persistence, not aggregate cost coverage.
     assert.equal(result.usage.inputTokens, 11)
     assert.equal(result.usage.outputTokens, 3)
+  }
+  if (permission) {
+    assert.equal((await sdk.respondToInteraction(responseCommand)).data.replayed, true)
+    assert.equal(
+      execFileSync(
+        docker,
+        [
+          'exec',
+          container,
+          'node',
+          '-e',
+          'process.stdout.write(require("node:fs").readFileSync("/tmp/m11-permission-proof","utf8"))',
+        ],
+        { encoding: 'utf8' }
+      ),
+      'approved\n'
+    )
+    assert.equal(modelCalls(), 2)
   }
   console.log(
     JSON.stringify({
@@ -171,6 +265,15 @@ try {
       attempts: 1,
       realRestate: true,
       workflowCompleted: true,
+      ...(permission
+        ? {
+            nativePermission: true,
+            publicSdk: true,
+            markerWrites: 1,
+            modelCalls: 2,
+            aggregateUsageVerified: false,
+          }
+        : {}),
       ...(cancellationElapsedMs === undefined ? {} : { cancellationElapsedMs }),
     })
   )
@@ -179,6 +282,7 @@ try {
     assert.ok(cancellationElapsedMs < 5000, 'CANCELLATION_WAITED_FOR_NATIVE_PROMPT_TIMEOUT')
   }
 } finally {
+  await application?.close()
   await composition.close()
   composition.persistence.close()
   await rm(directory, { recursive: true, force: true })

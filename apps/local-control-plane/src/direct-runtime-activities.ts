@@ -131,17 +131,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
         await this.#cancelHandle(handle, cancellation)
         return { outcome: 'cancelled' }
       }
-      let interactionId: string | undefined
-      for await (const progress of this.runtime.progress(handle)) {
-        const candidate = progress.data['interactionId']
-        if (progress.type === 'interaction' && typeof candidate === 'string') {
-          await this.interactions?.record(input.executionId, input.attemptId, progress)
-          interactionId = candidate
-          break
-        }
-      }
-      const status = await this.runtime.status(handle)
-      return this.#outcome(input.executionId, input.attemptId, status, interactionId)
+      return this.#observe(input.executionId, input.attemptId, handle)
     })
   }
 
@@ -190,8 +180,30 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
           retryable: false,
         }
       }
+      if (['starting', 'running', 'awaiting_input'].includes(status.state))
+        return this.#observe(input.executionId, input.attemptId, handle, input.interactionId)
       return this.#outcome(input.executionId, input.attemptId, status)
     })
+  }
+
+  async #observe(
+    executionId: string,
+    attemptId: string,
+    handle: RuntimeExecutionHandle,
+    respondedInteractionId?: string
+  ): Promise<WorkflowRuntimeOutcome> {
+    let interactionId: string | undefined
+    for await (const progress of this.runtime.progress(handle)) {
+      const candidate = progress.data['interactionId']
+      if (progress.type !== 'interaction' || typeof candidate !== 'string') continue
+      // Progress is replayable. Previously resolved requests must not suspend
+      // this resumed turn again; their durable records retain the scope check.
+      const pending = await this.interactions?.record(executionId, attemptId, progress)
+      if (pending === false || candidate === respondedInteractionId) continue
+      interactionId = candidate
+      break
+    }
+    return this.#outcome(executionId, attemptId, await this.runtime.status(handle), interactionId)
   }
 
   async cancel(input: {
