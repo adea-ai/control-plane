@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.7.0...runtime-sdk-v1.8.0) (2026-09-09)
+
+
+### Features
+
+* add marketplace agent plugin plans ([0441004](https://github.com/adea-ai/control-plane/commit/0441004f34fd4b61b4fa63acd261bdbab9432856))
+* add marketplace Agent Plugins plans ([#440](https://github.com/adea-ai/control-plane/issues/440)) ([0441004](https://github.com/adea-ai/control-plane/commit/0441004f34fd4b61b4fa63acd261bdbab9432856))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.6.0...runtime-sdk-v1.7.0) (2026-09-08)
 
 

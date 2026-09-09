@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.12.1...workspace-v1.13.0) (2026-09-09)
+
+
+### Features
+
+* add marketplace agent plugin plans ([0441004](https://github.com/adea-ai/control-plane/commit/0441004f34fd4b61b4fa63acd261bdbab9432856))
+* add marketplace Agent Plugins plans ([#440](https://github.com/adea-ai/control-plane/issues/440)) ([0441004](https://github.com/adea-ai/control-plane/commit/0441004f34fd4b61b4fa63acd261bdbab9432856))
+
+
+### Bug Fixes
+
+* **acp:** preserve native approval identity across progress replay ([#438](https://github.com/adea-ai/control-plane/issues/438)) ([22e1653](https://github.com/adea-ai/control-plane/commit/22e1653626e724f9e46d44ad388f07729de8d0f7))
+
 ## [1.12.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.12.0...workspace-v1.12.1) (2026-09-08)
 
 
