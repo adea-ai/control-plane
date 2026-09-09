@@ -33,7 +33,19 @@ Authenticated Adea service principals use:
   raw catalog artifacts and the workspace's sanitized installation states;
 - `POST /v1/marketplace/install` with `marketplace:install` to submit an
   idempotent request containing `pluginId`, exact `releaseId`, exact
-  `canonicalContentDigest`, requested harness, and workspace/user identity.
+  `canonicalContentDigest`, requested harness, stable installation instance,
+  and workspace/user identity;
+- `POST /v1/marketplace/install-plan` with `marketplace:install` to negotiate
+  an Agent Plugins `planVersion: 2` proposal for a verified adapter profile.
+  The profile is supplied by a tested Control Plane adapter authority, never
+  inferred from a harness name or accepted from a browser client.
+
+Installation plans are advisory: `allowedToActivate` is always `false` and
+`approvalRequired` is always `true`. The plan binds the exact source commit,
+source digest, canonical package digest, selected strategy, component
+selection, `packageKey`, and stable `dataKey`. Materialization must preserve
+source modes and activation must recheck provenance, policy, realpath
+containment, connector/credential authority, and the live profile.
 
 The envelope's top-level `workspaceId` is the Control Plane service scope used
 by authentication. The nested `workspaceIdentity.workspaceId` is Adea's

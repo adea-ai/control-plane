@@ -1,0 +1,1 @@
+ALTER TABLE "marketplace_installations" ADD COLUMN "package_digest" varchar(71);

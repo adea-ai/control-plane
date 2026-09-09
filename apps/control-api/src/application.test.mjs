@@ -1249,6 +1249,7 @@ describe('Control API', () => {
     expect(document.paths).toHaveProperty('/v1/external-sessions/list')
     expect(document.paths).toHaveProperty('/v1/marketplace/catalog')
     expect(document.paths).toHaveProperty('/v1/marketplace/install')
+    expect(document.paths).toHaveProperty('/v1/marketplace/install-plan')
     expect(document.paths).toHaveProperty('/health')
     expect(document.components?.securitySchemes).toHaveProperty('service-bearer')
   })

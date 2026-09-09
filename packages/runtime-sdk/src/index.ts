@@ -1,4 +1,5 @@
 export * from './adapter.js'
+export * from './agent-plugins.js'
 export * from './channel-ownership.js'
 export * from './capabilities.js'
 export * from './conformance.js'

@@ -32,6 +32,8 @@ import {
   type RuntimeConnectionListResponse,
   type MarketplaceCatalogRequest,
   type MarketplaceCatalogResponse,
+  type MarketplaceInstallPlanRequest,
+  type MarketplaceInstallPlanResponse,
   type MarketplaceInstallRequest,
   type MarketplaceInstallResponse,
 } from '@control-plane/contracts'
@@ -184,6 +186,12 @@ export class ControlPlaneClient {
 
   marketplaceInstall(input: MarketplaceInstallRequest): Promise<MarketplaceInstallResponse> {
     return this.#request(ControlApiOperations.marketplaceInstall, input)
+  }
+
+  marketplaceInstallPlan(
+    input: MarketplaceInstallPlanRequest
+  ): Promise<MarketplaceInstallPlanResponse> {
+    return this.#request(ControlApiOperations.marketplaceInstallPlan, input)
   }
 
   async #request<RequestInput, RequestOutput, ResponseOutput>(

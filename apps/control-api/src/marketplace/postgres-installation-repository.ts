@@ -41,6 +41,10 @@ export class PostgresMarketplaceInstallationRepository implements MarketplaceIns
       .values({
         ...record,
         canonicalContentDigest: record.canonicalContentDigest,
+        ...(record.installationInstanceId === undefined
+          ? {}
+          : { installationInstanceId: record.installationInstanceId }),
+        ...(record.packageDigest === undefined ? {} : { packageDigest: record.packageDigest }),
         createdAt: new Date(record.createdAt),
         requiredConnectors: [...record.requiredConnectors],
         requiredCredentials: [...record.requiredCredentials],
@@ -63,6 +67,10 @@ function fromRow(row: MarketplaceInstallationRow): MarketplaceInstallationRecord
     catalogId: row.catalogId,
     createdAt: row.createdAt.toISOString(),
     idempotencyKey: row.idempotencyKey,
+    ...(row.installationInstanceId === null
+      ? {}
+      : { installationInstanceId: row.installationInstanceId }),
+    ...(row.packageDigest === null ? {} : { packageDigest: row.packageDigest }),
     installationId: row.installationId,
     pluginId: row.pluginId,
     releaseId: row.releaseId,

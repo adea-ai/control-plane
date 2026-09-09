@@ -7,6 +7,7 @@ import {
   type CapabilityEvaluation,
   type CapabilityRequirement,
 } from './capabilities.js'
+import { AgentPluginsCapabilityReportSchema } from './agent-plugins.js'
 
 const TimestampSchema = z.iso.datetime()
 const SemanticVersionSchema = z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
@@ -51,6 +52,8 @@ export const RuntimeAdapterInspectionSchema = z
     health: z.enum(['healthy', 'degraded', 'unavailable']),
     capabilities: z.array(RuntimeCapabilitySchema).max(64),
     limitations: z.array(z.string().min(1).max(512)).max(64),
+    // Optional until each adapter has published tested Agent Plugins evidence.
+    agentPlugins: AgentPluginsCapabilityReportSchema.optional(),
     observedAt: TimestampSchema,
     capabilityEvaluation: CapabilityEvaluationSchema.optional(),
   })

@@ -1,5 +1,16 @@
 import { createHash } from 'node:crypto'
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common'
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common'
+import type { InstallationPlan } from './agent-plugins.js'
+import {
+  assertMarketplacePlanRequest,
+  createMarketplaceAgentPluginsPlan,
+  type MarketplaceHarnessProfileAuthority,
+} from './agent-plugins.js'
 import type {
   MarketplacePlugin,
   MarketplaceRegistryService,
@@ -30,6 +41,8 @@ export type MarketplaceInstallationRecord = Readonly<{
   releaseId: string
   canonicalContentDigest: string
   requestedHarness: string
+  installationInstanceId?: string
+  packageDigest?: string
   requiredConnectors: readonly string[]
   requiredCredentials: readonly string[]
   state: MarketplaceInstallationState
@@ -51,6 +64,7 @@ export interface MarketplaceInstallationRepository {
 export interface MarketplaceInstallationAuthority {
   list(workspaceId: string): Promise<readonly MarketplaceInstallationRecord[]>
   install(envelope: MarketplaceInstallEnvelope): Promise<MarketplaceInstallationRecord>
+  plan?(envelope: MarketplaceInstallPlanEnvelope): Promise<InstallationPlan>
 }
 
 export class InMemoryMarketplaceInstallationRepository implements MarketplaceInstallationRepository {
@@ -106,23 +120,39 @@ export type MarketplaceInstallEnvelope = Readonly<{
     releaseId: string
     canonicalContentDigest: string
     requestedHarness: string
+    installationInstanceId?: string
     workspaceIdentity: MarketplaceWorkspaceIdentity
   }>
   idempotencyKey: string
+}>
+
+export type MarketplaceInstallPlanEnvelope = Readonly<{
+  workspaceId: string
+  payload: Readonly<{
+    pluginId: string
+    releaseId: string
+    instanceId: string
+    requestedHarness: string
+    workspaceIdentity: MarketplaceWorkspaceIdentity
+  }>
 }>
 
 @Injectable()
 export class MarketplaceInstallationService {
   readonly #registry: MarketplaceRegistryService
   readonly #repository: MarketplaceInstallationRepository
-  readonly #policy: MarketplacePolicyAuthorities
+  readonly #policy: MarketplacePolicyAuthorities & {
+    harnessProfile?: MarketplaceHarnessProfileAuthority
+  }
   readonly #now: () => string
 
   constructor(
     options: Readonly<{
       registry: MarketplaceRegistryService
       repository: MarketplaceInstallationRepository
-      policy?: MarketplacePolicyAuthorities
+      policy?: MarketplacePolicyAuthorities & {
+        harnessProfile?: MarketplaceHarnessProfileAuthority
+      }
       now?: () => string
     }>
   ) {
@@ -136,6 +166,38 @@ export class MarketplaceInstallationService {
     return this.#repository.listByWorkspace(workspaceId)
   }
 
+  async plan(envelope: MarketplaceInstallPlanEnvelope): Promise<InstallationPlan> {
+    const request = assertMarketplacePlanRequest(envelope)
+    const profile = await this.#policy.harnessProfile?.resolve({
+      harness: request.requestedHarness,
+      userId: request.workspaceIdentity.userId,
+      workspaceId: request.workspaceIdentity.workspaceId,
+    })
+    if (!profile)
+      throw new ServiceUnavailableException({
+        code: 'MARKETPLACE_HARNESS_PROFILE_UNAVAILABLE',
+        message: 'No verified harness profile is available for the requested runtime',
+      })
+    const snapshot = await this.#registry.getCatalog()
+    const plugin = snapshot.catalog.plugins.find(
+      (candidate) => candidate.pluginId === request.pluginId
+    )
+    const release = plugin
+      ? plugin.availableReleases.find((candidate) => candidate.releaseId === request.releaseId)
+      : undefined
+    if (!plugin || !release)
+      throw new BadRequestException({
+        code: 'MARKETPLACE_RELEASE_NOT_FOUND',
+        message: 'The requested marketplace release is not present in the verified catalog',
+      })
+    if (!(await this.#registry.verifyRelease(plugin, release)))
+      throw new ServiceUnavailableException({
+        code: 'MARKETPLACE_RELEASE_UNAVAILABLE',
+        message: 'The exact marketplace release could not be verified',
+      })
+    return createMarketplaceAgentPluginsPlan({ snapshot, request, profile })
+  }
+
   async install(envelope: MarketplaceInstallEnvelope): Promise<MarketplaceInstallationRecord> {
     const request = parseEnvelope(envelope)
     const requestDigest = digest({
@@ -143,6 +205,7 @@ export class MarketplaceInstallationService {
       pluginId: request.payload.pluginId,
       releaseId: request.payload.releaseId,
       requestedHarness: request.payload.requestedHarness,
+      installationInstanceId: request.payload.installationInstanceId,
       workspaceIdentity: request.payload.workspaceIdentity,
     })
     const workspaceId = request.payload.workspaceIdentity.workspaceId
@@ -171,12 +234,17 @@ export class MarketplaceInstallationService {
         request.payload
       )
     const now = this.#now()
+    const releasePackageDigest = packageDigestForRelease(release)
     const record: MarketplaceInstallationRecord = {
       canonicalContentDigest: request.payload.canonicalContentDigest,
       catalogId: snapshot.catalogId,
       createdAt: now,
       idempotencyKey: request.idempotencyKey,
       installationId: `ins_${createHash('sha256').update(`${workspaceId}:${request.idempotencyKey}`).digest('hex').slice(0, 26)}`,
+      ...(request.payload.installationInstanceId
+        ? { installationInstanceId: request.payload.installationInstanceId }
+        : {}),
+      ...(releasePackageDigest ? { packageDigest: releasePackageDigest } : {}),
       pluginId: request.payload.pluginId,
       releaseId: request.payload.releaseId,
       requestDigest,
@@ -267,6 +335,13 @@ export class UnavailableMarketplaceInstallationService implements MarketplaceIns
   async install(): Promise<never> {
     throw new Error('MARKETPLACE_INSTALLATION_NOT_CONFIGURED')
   }
+
+  async plan(): Promise<never> {
+    throw new ServiceUnavailableException({
+      code: 'MARKETPLACE_INSTALLATION_NOT_CONFIGURED',
+      message: 'Marketplace installation planning is not configured',
+    })
+  }
 }
 
 function parseEnvelope(value: MarketplaceInstallEnvelope): MarketplaceInstallEnvelope {
@@ -284,6 +359,9 @@ function parseEnvelope(value: MarketplaceInstallEnvelope): MarketplaceInstallEnv
     !/^release:[a-f0-9]{64}$/.test(stringValue(payload.releaseId)) ||
     !/^sha256:[a-f0-9]{64}$/.test(stringValue(payload.canonicalContentDigest)) ||
     !stringValue(payload.requestedHarness) ||
+    (payload.installationInstanceId !== undefined &&
+      (!stringValue(payload.installationInstanceId) ||
+        payload.installationInstanceId.length > 256)) ||
     !stringValue(identity.workspaceId) ||
     !stringValue(identity.userId)
   )
@@ -292,6 +370,14 @@ function parseEnvelope(value: MarketplaceInstallEnvelope): MarketplaceInstallEnv
       message: 'Marketplace installation request is invalid',
     })
   return value
+}
+
+function packageDigestForRelease(release: MarketplaceRelease | undefined): string | undefined {
+  if (!release || !isObject(release['releaseMetadata'])) return undefined
+  const packageValue = release['releaseMetadata']['agentPlugins']
+  if (!isObject(packageValue)) return undefined
+  const value = packageValue['packageDigest']
+  return /^sha256:[a-f0-9]{64}$/.test(stringValue(value)) ? stringValue(value) : undefined
 }
 
 function digest(value: unknown): string {
@@ -303,7 +389,7 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   const object = value as Record<string, unknown>
   return `{${Object.keys(object)
-    .sort()
+    .toSorted()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
     .join(',')}}`
 }

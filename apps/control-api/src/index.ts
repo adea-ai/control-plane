@@ -23,6 +23,7 @@ import type { ProfileResolutionService } from './queries/profile-resolution.serv
 import type { ProjectStateResolutionService } from './queries/project-state-resolution.service.js'
 import type { ContextPackageResolutionService } from './queries/context-package-resolution.service.js'
 import type { MarketplaceInstallationAuthority } from './marketplace/installation.js'
+import type { MarketplaceHarnessProfileAuthority } from './marketplace/agent-plugins.js'
 import type { MarketplaceRegistryService } from './marketplace/registry.js'
 
 export const serviceName = 'control-api'
@@ -46,6 +47,7 @@ export interface ControlApiStartOptions {
   readonly serviceAuthenticator?: ServiceAuthenticator
   readonly marketplaceRegistryService?: MarketplaceRegistryService
   readonly marketplaceInstallationService?: MarketplaceInstallationAuthority
+  readonly marketplaceHarnessProfileAuthority?: MarketplaceHarnessProfileAuthority
 }
 
 export interface StartedControlApi {
@@ -78,7 +80,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
               managedCloud,
               logger,
               options.postgresConnectionFactory,
-              options.contextAuthoring
+              options.contextAuthoring,
+              options.marketplaceHarnessProfileAuthority
             )
       if (cloudComposition !== undefined) {
         registerResource('control-api-postgres', () => cloudComposition.connection.close())
@@ -159,6 +162,11 @@ export {
   type ContextPackageResolutionService,
 } from './queries/context-package-resolution.service.js'
 export { MarketplaceController } from './marketplace/marketplace.controller.js'
+export {
+  createMarketplaceAgentPluginsPlan,
+  type MarketplaceAgentPluginsPlanRequest,
+  type MarketplaceHarnessProfileAuthority,
+} from './marketplace/agent-plugins.js'
 export {
   InMemoryMarketplaceInstallationRepository,
   MarketplaceInstallationService,
