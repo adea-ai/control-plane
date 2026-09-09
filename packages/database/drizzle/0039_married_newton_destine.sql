@@ -1,0 +1,2 @@
+ALTER TABLE "marketplace_installations" ALTER COLUMN "requested_harness" SET DATA TYPE varchar(128);--> statement-breakpoint
+ALTER TABLE "marketplace_installations" ADD COLUMN "installation_instance_id" varchar(256);

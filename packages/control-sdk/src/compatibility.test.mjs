@@ -26,6 +26,7 @@ describe('Control API generated contract', () => {
       '/v1/interactions/respond',
       '/v1/marketplace/catalog',
       '/v1/marketplace/install',
+      '/v1/marketplace/install-plan',
       '/v1/profiles/resolve',
       '/v1/project-states/resolve',
       '/v1/runtime-connections/get',

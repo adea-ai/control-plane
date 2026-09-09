@@ -203,6 +203,8 @@ export const MarketplaceCatalogResponseSchema = successResponse(
     artifacts: MarketplaceArtifactsSchema,
     installations: z.array(
       MarketplacePluginReferenceContractSchema.extend({
+        installationInstanceId: z.string().min(1).max(256).optional(),
+        packageDigest: DigestSchema.optional(),
         state: z.enum([
           'pending-authorization',
           'unavailable',
@@ -220,6 +222,7 @@ export const MarketplaceInstallRequestSchema = CommandContextSchema.extend({
   issuedAt: TimestampSchema,
   payload: MarketplacePluginReferenceContractSchema.extend({
     requestedHarness: z.string().min(1).max(128),
+    installationInstanceId: z.string().min(1).max(256).optional(),
     workspaceIdentity: MarketplaceIdentitySchema,
   }),
 })
@@ -228,6 +231,8 @@ export const MarketplaceInstallResponseSchema = successResponse(
   MarketplacePluginReferenceContractSchema.extend({
     installationId: z.string().min(1).max(128),
     catalogId: z.string().regex(/^catalog:[a-f0-9]{64}$/),
+    installationInstanceId: z.string().min(1).max(256).optional(),
+    packageDigest: DigestSchema.optional(),
     requestedHarness: z.string().min(1).max(128),
     state: z.enum([
       'pending-authorization',
@@ -243,6 +248,39 @@ export type MarketplaceCatalogRequest = z.input<typeof MarketplaceCatalogRequest
 export type MarketplaceCatalogResponse = z.output<typeof MarketplaceCatalogResponseSchema>
 export type MarketplaceInstallRequest = z.input<typeof MarketplaceInstallRequestSchema>
 export type MarketplaceInstallResponse = z.output<typeof MarketplaceInstallResponseSchema>
+
+export const MarketplaceInstallPlanRequestSchema = CommandContextSchema.extend({
+  operation: z.literal('marketplace.install.plan'),
+  issuedAt: TimestampSchema,
+  payload: z.object({
+    pluginId: z.string().regex(/^plugin:[a-z0-9-]+:[a-z0-9][a-z0-9-]{1,127}$/),
+    releaseId: z.string().regex(/^release:[a-f0-9]{64}$/),
+    instanceId: z.string().min(1).max(256),
+    requestedHarness: z.string().min(1).max(128),
+    workspaceIdentity: MarketplaceIdentitySchema,
+  }),
+})
+
+// The published Agent Plugins package owns the complete plan schema. Control
+// Plane checks the security-critical identity fields here and preserves the
+// remaining plan fields as an opaque, versioned response for forward evolution.
+export const MarketplaceInstallPlanResponseSchema = successResponse(
+  z
+    .object({
+      planVersion: z.literal(2),
+      pluginId: z.string().min(1),
+      releaseId: z.string().min(1),
+      instanceId: z.string().min(1),
+      strategy: z.enum(['native-agent-plugin', 'component-adapter', 'unavailable']),
+      compatibility: z.enum(['full', 'partial', 'unsupported']),
+      allowedToActivate: z.literal(false),
+      approvalRequired: z.literal(true),
+    })
+    .passthrough()
+)
+
+export type MarketplaceInstallPlanRequest = z.output<typeof MarketplaceInstallPlanRequestSchema>
+export type MarketplaceInstallPlanResponse = z.output<typeof MarketplaceInstallPlanResponseSchema>
 
 export const RuntimeReadModelSchema = z.object({
   runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId,

@@ -1112,6 +1112,34 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-MARKETPLACE-INSTALL-PLAN",
+      "name": "marketplaceInstallPlan",
+      "operation": "marketplace.install.plan",
+      "method": "POST",
+      "path": "/v1/marketplace/install-plan",
+      "inOpenApi": true,
+      "controllerReachable": true,
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with marketplace:install scope and workspace authority",
+        "service": "MarketplaceController -> createMarketplaceAgentPluginsPlan",
+        "persistence": "no mutation; immutable registry release and installation identity are carried into the advisory plan",
+        "execution": "no upstream package execution, dependency installation, or lifecycle invocation",
+        "delivery": "exact plugin, release, source digest, package digest, and fail-closed compatibility decision",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "The authenticated plan operation verifies the immutable Agent Plugins package, negotiates tested harness evidence, and never grants activation; materialization and activation remain Control Plane-owned follow-up work.",
+      "evidence": [
+        { "kind": "contract", "path": "packages/contracts/src/control-api.ts" },
+        { "kind": "implementation", "path": "apps/control-api/src/marketplace/agent-plugins.ts" },
+        { "kind": "test", "path": "apps/control-api/src/marketplace/agent-plugins.test.mjs" }
+      ],
+      "openApiOperationId": "marketplace.install.plan",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true
+    },
+    {
       "id": "OP-MARKETPLACE-INSTALL",
       "name": "marketplaceInstall",
       "operation": "marketplace.install.request",
@@ -1364,7 +1392,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:431f71392778e97b611731a1f84e8661e7ffb2c1bb5b5ae7bcb3531a90d58c61"
+      "sourceDigest": "sha256:4fd1fa00d15e1a07d3b000ffa1baf6f15b07ba129edfd1b5872a2c03509b6551"
     },
     {
       "id": "hosted-server",

@@ -319,6 +319,7 @@ describe('Control Plane marketplace contract', () => {
         pluginId: 'plugin:openai-official:gmail',
         releaseId: `release:${'c'.repeat(64)}`,
         requestedHarness: 'codex',
+        installationInstanceId: 'workspace-user-gmail',
         workspaceIdentity: { userId: 'user-1', workspaceId: ids.workspaceId },
       },
       workspaceId: ids.workspaceId,
@@ -328,6 +329,7 @@ describe('Control Plane marketplace contract', () => {
     expect(first).toEqual(replay)
     expect(first).toMatchObject({
       canonicalContentDigest: `sha256:${'b'.repeat(64)}`,
+      installationInstanceId: 'workspace-user-gmail',
       pluginId: 'plugin:openai-official:gmail',
       releaseId: `release:${'c'.repeat(64)}`,
       state: 'installed',

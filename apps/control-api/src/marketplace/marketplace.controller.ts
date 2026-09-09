@@ -15,8 +15,10 @@ import type { MarketplaceRegistryService } from './registry.js'
 import { MARKETPLACE_INSTALLATION_SERVICE, MARKETPLACE_REGISTRY_SERVICE } from './tokens.js'
 import type {
   MarketplaceInstallEnvelope,
+  MarketplaceInstallPlanEnvelope,
   MarketplaceInstallationAuthority,
 } from './installation.js'
+import { MarketplaceRegistryPlanError, planFailureResponse } from './agent-plugins.js'
 
 @ApiTags('marketplace')
 @Controller({ path: 'marketplace', version: '1' })
@@ -57,6 +59,22 @@ export class MarketplaceController {
     const result = await this.installations.install(parseInstallEnvelope(envelope))
     return { data: result, meta: responseMetadata(request) }
   }
+
+  @Post('install-plan')
+  @HttpCode(200)
+  @RequireServiceAuthentication('marketplace:install')
+  @ApiOperation({ summary: 'Negotiate a capability-bound Agent Plugins installation plan' })
+  @ApiOkResponse({ description: 'Advisory installation plan; activation remains policy-owned' })
+  async installPlan(@Body() envelope: unknown, @Req() request: FastifyRequest) {
+    if (!this.installations.plan) planFailureResponseUnavailable()
+    try {
+      const result = await this.installations.plan(parseInstallPlanEnvelope(envelope))
+      return { data: result, meta: responseMetadata(request) }
+    } catch (error) {
+      if (error instanceof MarketplaceRegistryPlanError) planFailureResponse(error)
+      throw error
+    }
+  }
 }
 
 function readIdentity(value: unknown): { workspaceId: string; userId: string } {
@@ -80,6 +98,22 @@ function readIdentity(value: unknown): { workspaceId: string; userId: string } {
     userId: stringValue(identity['userId']),
     workspaceId: stringValue(identity['workspaceId']),
   }
+}
+
+function parseInstallPlanEnvelope(value: unknown): MarketplaceInstallPlanEnvelope {
+  if (!isObject(value) || !isObject(value['payload']))
+    throw new ServiceUnavailableException({
+      code: 'MARKETPLACE_REQUEST_INVALID',
+      message: 'Marketplace installation-plan request is invalid',
+    })
+  return value as MarketplaceInstallPlanEnvelope
+}
+
+function planFailureResponseUnavailable(): never {
+  throw new ServiceUnavailableException({
+    code: 'MARKETPLACE_INSTALLATION_NOT_CONFIGURED',
+    message: 'Marketplace installation planning is not configured',
+  })
 }
 
 function parseInstallEnvelope(value: unknown): MarketplaceInstallEnvelope {

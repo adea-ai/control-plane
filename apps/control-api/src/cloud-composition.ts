@@ -46,6 +46,7 @@ import {
   type MarketplaceInstallationAuthority,
 } from './marketplace/installation.js'
 import { PostgresMarketplaceInstallationRepository } from './marketplace/postgres-installation-repository.js'
+import type { MarketplaceHarnessProfileAuthority } from './marketplace/agent-plugins.js'
 import { MarketplaceRegistryService } from './marketplace/registry.js'
 
 const executionPlanCompilerVersion = '1.0.0'
@@ -78,7 +79,8 @@ export function createManagedCloudControlApiComposition(
   configuration: ManagedCloudConfiguration,
   logger: StructuredLogger,
   connectionFactory: PostgresConnectionFactory = createPostgresConnection,
-  contextAuthoring?: ContextAuthoringCompositionOptions
+  contextAuthoring?: ContextAuthoringCompositionOptions,
+  marketplaceHarnessProfileAuthority?: MarketplaceHarnessProfileAuthority
 ): ManagedCloudControlApiComposition {
   if (
     configuration.service !== 'control-api' ||
@@ -173,6 +175,9 @@ export function createManagedCloudControlApiComposition(
       registry: marketplaceRegistryService,
       repository: new PostgresMarketplaceInstallationRepository(connection.database),
       policy: {
+        ...(marketplaceHarnessProfileAuthority === undefined
+          ? {}
+          : { harnessProfile: marketplaceHarnessProfileAuthority }),
         authorizeSecurityClassification: async ({ classification }) =>
           classification['level'] === 'low',
       },

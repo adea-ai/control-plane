@@ -36,6 +36,7 @@ const publicOperations = [
   'external-session.list',
   'interaction.respond',
   'marketplace.catalog.read',
+  'marketplace.install.plan',
   'marketplace.install.request',
   'profile.resolve',
   'project-state.resolve',
