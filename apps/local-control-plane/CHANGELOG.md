@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.5.1...local-control-plane-v1.5.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **acp:** preserve native approval identity across progress replay ([#438](https://github.com/adea-ai/control-plane/issues/438)) ([22e1653](https://github.com/adea-ai/control-plane/commit/22e1653626e724f9e46d44ad388f07729de8d0f7))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.5.0...local-control-plane-v1.5.1) (2026-09-08)
 
 
