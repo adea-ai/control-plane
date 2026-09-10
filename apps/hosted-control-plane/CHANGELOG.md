@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.3.0...hosted-control-plane-v1.3.1) (2026-09-10)
+
+
+### Maintenance
+
+* roll up dependencies and Code Foundry v1.28.6 ([#442](https://github.com/adea-ai/control-plane/issues/442)) ([09a245a](https://github.com/adea-ai/control-plane/commit/09a245abf2ed325d9dfc7f900851389745c83e3e))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.2.0...hosted-control-plane-v1.3.0) (2026-09-08)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.2...restate-runtime-v1.1.3) (2026-09-10)
+
+
+### Maintenance
+
+* roll up dependencies and Code Foundry v1.28.6 ([#442](https://github.com/adea-ai/control-plane/issues/442)) ([09a245a](https://github.com/adea-ai/control-plane/commit/09a245abf2ed325d9dfc7f900851389745c83e3e))
+
 ## [1.1.2](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.1...restate-runtime-v1.1.2) (2026-09-07)
 
 

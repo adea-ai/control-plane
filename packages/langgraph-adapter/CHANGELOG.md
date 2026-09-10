@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.2.0...langgraph-adapter-v1.2.1) (2026-09-10)
+
+
+### Maintenance
+
+* roll up dependencies and Code Foundry v1.28.6 ([#442](https://github.com/adea-ai/control-plane/issues/442)) ([09a245a](https://github.com/adea-ai/control-plane/commit/09a245abf2ed325d9dfc7f900851389745c83e3e))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.1.2...langgraph-adapter-v1.2.0) (2026-09-08)
 
 
