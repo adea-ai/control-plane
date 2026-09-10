@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/adea-ai/control-plane/compare/sandbox-v1.1.2...sandbox-v1.1.3) (2026-09-10)
+
+
+### Bug Fixes
+
+* eliminate lint warnings and stabilize websocket replacement test ([#444](https://github.com/adea-ai/control-plane/issues/444)) ([c3157a6](https://github.com/adea-ai/control-plane/commit/c3157a6d6f6fe11881958786c817a6ea9032063d))
+
 ## [1.1.2](https://github.com/adea-ai/control-plane/compare/sandbox-v1.1.1...sandbox-v1.1.2) (2026-09-07)
 
 

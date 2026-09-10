@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.6.0...workflow-worker-v1.6.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* eliminate lint warnings and stabilize websocket replacement test ([#444](https://github.com/adea-ai/control-plane/issues/444)) ([c3157a6](https://github.com/adea-ai/control-plane/commit/c3157a6d6f6fe11881958786c817a6ea9032063d))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.5.0...workflow-worker-v1.6.0) (2026-09-08)
 
 
