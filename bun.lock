@@ -30,7 +30,7 @@
         "@control-plane/sqlite-persistence": "workspace:*",
         "@control-plane/usage-ledger": "workspace:*",
         "@control-plane/workflow-runtime": "workspace:*",
-        "@langchain/langgraph": "1.4.13",
+        "@langchain/langgraph": "1.4.14",
         "@types/node": "26.4.1",
         "oxfmt": "^0.66.0",
         "oxlint": "^1.81.0",
@@ -41,7 +41,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.3.2",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -61,7 +61,7 @@
         "class-transformer": "0.5.1",
         "class-validator": "0.15.1",
         "drizzle-orm": "0.45.2",
-        "fastify": "5.12.1",
+        "fastify": "5.12.3",
         "reflect-metadata": "0.2.2",
         "rxjs": "7.8.2",
       },
@@ -71,7 +71,7 @@
     },
     "apps/hosted-control-plane": {
       "name": "@control-plane/hosted-control-plane",
-      "version": "1.1.2",
+      "version": "1.3.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -91,7 +91,7 @@
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
-      "version": "1.1.2",
+      "version": "1.5.2",
       "dependencies": {
         "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
@@ -112,13 +112,13 @@
         "@control-plane/workflow-runtime": "workspace:*",
         "@control-plane/workflow-worker": "workspace:*",
         "@nestjs/common": "12.0.1",
-        "@restatedev/restate-server": "1.7.8",
-        "fastify": "5.12.1",
+        "@restatedev/restate-server": "1.7.9",
+        "fastify": "5.12.3",
       },
     },
     "apps/runtime-gateway": {
       "name": "@control-plane/runtime-gateway",
-      "version": "1.2.2",
+      "version": "1.4.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -130,7 +130,7 @@
     },
     "apps/runtime-worker": {
       "name": "@control-plane/runtime-worker",
-      "version": "1.4.2",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -156,7 +156,7 @@
     },
     "apps/workflow-worker": {
       "name": "@control-plane/workflow-worker",
-      "version": "1.4.2",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -179,7 +179,7 @@
     },
     "packages/acp-adapter": {
       "name": "@control-plane/acp-adapter",
-      "version": "1.2.2",
+      "version": "1.5.2",
       "dependencies": {
         "@control-plane/domain": "workspace:*",
         "@control-plane/runtime-gateway-protocol": "workspace:*",
@@ -197,7 +197,7 @@
     },
     "packages/config": {
       "name": "@control-plane/config",
-      "version": "1.3.2",
+      "version": "1.5.0",
       "dependencies": {
         "@control-plane/telemetry": "workspace:*",
         "zod": "4.5.4",
@@ -205,7 +205,7 @@
     },
     "packages/context": {
       "name": "@control-plane/context",
-      "version": "1.3.2",
+      "version": "1.4.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -214,14 +214,14 @@
     },
     "packages/contracts": {
       "name": "@control-plane/contracts",
-      "version": "1.5.2",
+      "version": "1.8.0",
       "dependencies": {
         "zod": "4.5.4",
       },
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.3.3",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
       },
@@ -250,7 +250,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.7.3",
+      "version": "1.10.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -273,11 +273,11 @@
     },
     "packages/deployment": {
       "name": "@control-plane/deployment",
-      "version": "1.1.1",
+      "version": "1.3.0",
     },
     "packages/domain": {
       "name": "@control-plane/domain",
-      "version": "1.5.2",
+      "version": "1.7.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",
@@ -295,7 +295,7 @@
     },
     "packages/execution-plan": {
       "name": "@control-plane/execution-plan",
-      "version": "1.2.2",
+      "version": "1.4.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -306,12 +306,12 @@
     },
     "packages/langgraph-adapter": {
       "name": "@control-plane/langgraph-adapter",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
-        "@langchain/langgraph": "1.4.13",
+        "@langchain/langgraph": "1.4.14",
         "@langchain/langgraph-checkpoint": "1.1.5",
         "@langchain/langgraph-checkpoint-postgres": "1.0.5",
         "zod": "4.5.4",
@@ -322,7 +322,7 @@
     },
     "packages/managed-pi-adapter": {
       "name": "@control-plane/managed-pi-adapter",
-      "version": "1.2.2",
+      "version": "1.3.1",
       "dependencies": {
         "@control-plane/domain": "workspace:*",
         "@control-plane/runtime-gateway-protocol": "workspace:*",
@@ -356,7 +356,7 @@
       "name": "@control-plane/object-store",
       "version": "1.2.2",
       "dependencies": {
-        "@aws-sdk/client-s3": "3.1124.0",
+        "@aws-sdk/client-s3": "3.1127.0",
         "@control-plane/deployment": "workspace:*",
       },
     },
@@ -381,14 +381,14 @@
     },
     "packages/production-readiness": {
       "name": "@control-plane/production-readiness",
-      "version": "1.1.3",
+      "version": "1.2.0",
       "dependencies": {
         "zod": "4.5.4",
       },
     },
     "packages/profile-portability": {
       "name": "@control-plane/profile-portability",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "bin": {
         "control-plane-portability": "./dist/cli.js",
       },
@@ -428,14 +428,14 @@
     },
     "packages/runtime-gateway-protocol": {
       "name": "@control-plane/runtime-gateway-protocol",
-      "version": "1.2.2",
+      "version": "1.4.0",
       "dependencies": {
         "zod": "4.5.4",
       },
     },
     "packages/runtime-sdk": {
       "name": "@control-plane/runtime-sdk",
-      "version": "1.5.3",
+      "version": "1.8.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",
@@ -458,7 +458,7 @@
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.1.2",
+      "version": "1.3.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -473,7 +473,7 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.2.3",
+      "version": "1.3.0",
       "devDependencies": {
         "@opentelemetry/api": "1.9.1",
         "@sentry/node": "10.73.0",
@@ -497,7 +497,7 @@
     },
     "packages/tool-sdk": {
       "name": "@control-plane/tool-sdk",
-      "version": "1.2.3",
+      "version": "1.3.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",
@@ -513,7 +513,7 @@
     },
     "packages/workflow-runtime": {
       "name": "@control-plane/workflow-runtime",
-      "version": "1.1.2",
+      "version": "1.3.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
@@ -530,7 +530,7 @@
   "packages": {
     "@aws-sdk/checksums": ["@aws-sdk/checksums@3.1000.29", "", { "dependencies": { "@aws-sdk/core": "^3.977.9", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-Dtu0gr4dnATZAPwEYbpCsG+MpLM7OAliy2gTepEFQwl1vZ6DL3QMH2FveMa3HLvPsOdhJsPRB3KtxVhph9T75A=="],
 
-    "@aws-sdk/client-s3": ["@aws-sdk/client-s3@3.1124.0", "", { "dependencies": { "@aws-sdk/checksums": "^3.1000.29", "@aws-sdk/core": "^3.977.9", "@aws-sdk/credential-provider-node": "^3.972.82", "@aws-sdk/middleware-sdk-s3": "^3.972.75", "@aws-sdk/signature-v4-multi-region": "^3.996.46", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/fetch-http-handler": "^5.7.2", "@smithy/node-http-handler": "^4.11.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-f20BksgVlXufcf/mijde1LAjwM/iSDdG3mGtN3yRFOUzXtlFEOjxNi1Rf2Kb+rSgoiOSpO0hUOna9Bs+J1gX2A=="],
+    "@aws-sdk/client-s3": ["@aws-sdk/client-s3@3.1127.0", "", { "dependencies": { "@aws-sdk/checksums": "^3.1000.29", "@aws-sdk/core": "^3.977.9", "@aws-sdk/credential-provider-node": "^3.972.82", "@aws-sdk/middleware-sdk-s3": "^3.972.75", "@aws-sdk/signature-v4-multi-region": "^3.996.46", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/fetch-http-handler": "^5.7.2", "@smithy/node-http-handler": "^4.11.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-0ZSAgmEda33xPqVPt+bx2KzrXV1cUCKRRVPGliLu+V7DzHPa04CqPSi1maGEM4O0LDP0iI6HRSW5ULloNwayNw=="],
 
     "@aws-sdk/core": ["@aws-sdk/core@3.977.9", "", { "dependencies": { "@aws-sdk/types": "^3.974.5", "@aws-sdk/xml-builder": "^3.972.40", "@aws/lambda-invoke-store": "^0.3.0", "@smithy/core": "^3.33.3", "@smithy/signature-v4": "^5.6.12", "@smithy/types": "^4.17.2", "bowser": "^2.11.0", "tslib": "^2.6.2" } }, "sha512-reqPFEQrZxDZpeGj4PFMepBeR5LGYHRqq/L0motTzgFkCRBA4rFdaVXDSLYyGHhxVz7sT2PDnPN9CluGSfgyJA=="],
 
@@ -736,7 +736,7 @@
 
     "@langchain/core": ["@langchain/core@1.2.9", "", { "dependencies": { "@cfworker/json-schema": "^4.0.2", "@standard-schema/spec": "^1.1.0", "js-tiktoken": "^1.0.12", "langsmith": ">=0.5.0 <1.0.0", "mustache": "^4.2.0", "p-queue": "^6.6.2", "zod": "^3.25.76 || ^4" } }, "sha512-conzSEj9Zu1AyXJLXsSbgrtxtxinmI1yGqQ5CIJZSoV5rvv+yvQE/vgBnoySpBQ/bl3YPgj2FL/gbDjWykLSfg=="],
 
-    "@langchain/langgraph": ["@langchain/langgraph@1.4.13", "", { "dependencies": { "@langchain/langgraph-checkpoint": "^1.1.5", "@langchain/langgraph-sdk": "~1.10.0", "@langchain/protocol": "^0.0.18", "@standard-schema/spec": "1.1.0" }, "peerDependencies": { "@langchain/core": "^1.1.48", "zod": "^3.25.32 || ^4.2.0" } }, "sha512-LO1ak6jNQ9jR13tm7Ay4Yh2/otrH7LNVUwWTAI7WJigVdW5Fb6LuYSZUzVn4S7sVSiyVFfnrUcDTd8c7eAzPrQ=="],
+    "@langchain/langgraph": ["@langchain/langgraph@1.4.14", "", { "dependencies": { "@langchain/langgraph-checkpoint": "^1.1.5", "@langchain/langgraph-sdk": "~1.10.2", "@langchain/protocol": "^0.0.19", "@standard-schema/spec": "1.1.0" }, "peerDependencies": { "@langchain/core": "^1.1.48", "zod": "^3.25.32 || ^4.2.0" } }, "sha512-uWAdRYTllfKCnTrlyovExPJCHJwcf3Wl2LzUlnaqsT7Rmoo3aCeYtq/7MV/Pw4q11motG8pR8bjr6T6V8Pe1gQ=="],
 
     "@langchain/langgraph-checkpoint": ["@langchain/langgraph-checkpoint@1.1.5", "", { "peerDependencies": { "@langchain/core": "^1.1.48" } }, "sha512-BwDwl5VeTOh6CVuiIPgsUgfK51vTJDMSbFcSCUfjJWsl8/DPdK/mbv+ejxJstkSk/BlSPMP4JfXWcN6jD2ea2Q=="],
 
@@ -744,7 +744,7 @@
 
     "@langchain/langgraph-sdk": ["@langchain/langgraph-sdk@1.10.2", "", { "dependencies": { "@langchain/protocol": "^0.0.19", "@types/json-schema": "^7.0.15", "p-queue": "^9.0.1", "p-retry": "^7.1.1" }, "peerDependencies": { "@langchain/core": "^1.1.48", "react": "^18 || ^19", "react-dom": "^18 || ^19" }, "optionalPeers": ["react", "react-dom"] }, "sha512-86qsfdBZWu1ZgywLN8AThU/jXi9rjPDZPWcTJp4SA1A/L62ypTNoSXbvtiwZt1odokXccYTxK1XWS8tmVdvEmw=="],
 
-    "@langchain/protocol": ["@langchain/protocol@0.0.18", "", {}, "sha512-XW1egQtPfsGI41w2AMZNFZrUIwFSQHTjVMZs0OaTpCAvht/QLoaPN8FQcsysMVypOhupG28J29yOorrc70otBQ=="],
+    "@langchain/protocol": ["@langchain/protocol@0.0.19", "", {}, "sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q=="],
 
     "@lukeed/csprng": ["@lukeed/csprng@1.1.0", "", {}, "sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA=="],
 
@@ -858,15 +858,15 @@
 
     "@restatedev/restate-sdk-core": ["@restatedev/restate-sdk-core@1.17.0", "", {}, "sha512-439ONo+YDoG4YBZnQ0wXaWkJDdOqDJ0AjqOwUAYZolxoC5JoaHqWzEFWkeRXiSNpsOc1+ODRUUGupDQ7qxcvJg=="],
 
-    "@restatedev/restate-server": ["@restatedev/restate-server@1.7.8", "", { "dependencies": { "@scarf/scarf": "^1.4.0" }, "optionalDependencies": { "@restatedev/restate-server-darwin-arm64": "1.7.8", "@restatedev/restate-server-darwin-x64": "1.7.8", "@restatedev/restate-server-linux-arm64": "1.7.8", "@restatedev/restate-server-linux-x64": "1.7.8" }, "bin": { "restate-server": "lib/index.js" } }, "sha512-MmtYQNVWRES8MEC+gw2NQByvq9VUHRzy4oIrQxvNCeCvHqecyvIbcRwyi7TG4buH+YOtN+54vPCUq9K0MMaZAQ=="],
+    "@restatedev/restate-server": ["@restatedev/restate-server@1.7.9", "", { "dependencies": { "@scarf/scarf": "^1.4.0" }, "optionalDependencies": { "@restatedev/restate-server-darwin-arm64": "1.7.9", "@restatedev/restate-server-darwin-x64": "1.7.9", "@restatedev/restate-server-linux-arm64": "1.7.9", "@restatedev/restate-server-linux-x64": "1.7.9" }, "bin": { "restate-server": "lib/index.js" } }, "sha512-ra9HCmyymRob2vhAY1w/bWrBbT0VuOqySNDpc5u+WMy7SIHvz+CJzWoBNE+RE44curyv5Bu1wJmrtiO+XiX0EA=="],
 
-    "@restatedev/restate-server-darwin-arm64": ["@restatedev/restate-server-darwin-arm64@1.7.8", "", { "os": "darwin", "cpu": "arm64" }, "sha512-xhGHyvOKFkOP47GSPWKqGF7SzgPJgsUSrxILxzdBStzNSbchxnKVNgPi9vs7nPAHm5TesydLfe4/9dsJUItiUQ=="],
+    "@restatedev/restate-server-darwin-arm64": ["@restatedev/restate-server-darwin-arm64@1.7.9", "", { "os": "darwin", "cpu": "arm64" }, "sha512-vpzu8TCPBk+owsuHzX9BbIUUeaAWXHFn+Z7sm7x+OY6CN6QYwzT5mPSnarX6LMN0+tklOGkIilZg0ajj5VW4aQ=="],
 
-    "@restatedev/restate-server-darwin-x64": ["@restatedev/restate-server-darwin-x64@1.7.8", "", { "os": "darwin", "cpu": "x64" }, "sha512-EsRJaOfA3rwhaninuzQpH6icq+1+e5DrkE1SEhydblfhF43eA/g1UpecPJ1uo+XRBO9xcF/jQjLfWhJ1Q2Cm8Q=="],
+    "@restatedev/restate-server-darwin-x64": ["@restatedev/restate-server-darwin-x64@1.7.9", "", { "os": "darwin", "cpu": "x64" }, "sha512-hsxXrRBEyFMDCw2ywUD3hf+2CJE1G97FSheHMe5Esmvi7ONhcwKu5EkBg7ounqfifG95GGHxp6ICTvlCVyE58w=="],
 
-    "@restatedev/restate-server-linux-arm64": ["@restatedev/restate-server-linux-arm64@1.7.8", "", { "os": "linux", "cpu": "arm64" }, "sha512-eAwBeE93D+v6HG/cQmlJrelvmPHL644LQvD5n6uYrbziitM0hGtMmqxvrqkwJ9D0AuRlo1WpEVV45hw94cFHLg=="],
+    "@restatedev/restate-server-linux-arm64": ["@restatedev/restate-server-linux-arm64@1.7.9", "", { "os": "linux", "cpu": "arm64" }, "sha512-3fgDejA0SjERTze1czZRejZiP1R2m2NBmH/cId0Om2ElTieKF8wo/tF3s92uo2YdfRwWSgXmWJzmQqtM2RKq0Q=="],
 
-    "@restatedev/restate-server-linux-x64": ["@restatedev/restate-server-linux-x64@1.7.8", "", { "os": "linux", "cpu": "x64" }, "sha512-PMlzmBgxGnOtWPTd0jLU5SIwZxvEDkYFxwfSMFqXILr4mGlOOmnZZz4djL5V+uQIKtmRUrW+1djJiABcuooo/g=="],
+    "@restatedev/restate-server-linux-x64": ["@restatedev/restate-server-linux-x64@1.7.9", "", { "os": "linux", "cpu": "x64" }, "sha512-z7qIbLZqhMCPMqE6Dk6TwhmY9QlGBnOMrEMk7FpJ6qZyAe5JJ8BAhg9Y/MMIHNhLxjXPRwzm6RsnMaNFXmknaw=="],
 
     "@scarf/scarf": ["@scarf/scarf@1.4.0", "", {}, "sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ=="],
 
@@ -972,7 +972,7 @@
 
     "fast-uri": ["fast-uri@3.1.6", "", {}, "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q=="],
 
-    "fastify": ["fastify@5.12.1", "", { "dependencies": { "@fastify/ajv-compiler": "^4.0.5", "@fastify/error": "^4.0.0", "@fastify/fast-json-stringify-compiler": "^5.0.0", "@fastify/proxy-addr": "^5.0.0", "abstract-logging": "^2.0.1", "avvio": "^9.0.0", "fast-json-stringify": "^7.0.0", "find-my-way": "^9.6.0", "light-my-request": "^6.0.0", "pino": "^9.14.0 || ^10.1.0", "process-warning": "^5.1.0", "rfdc": "^1.3.1", "secure-json-parse": "^4.0.0", "semver": "^7.6.0", "toad-cache": "^3.7.0" } }, "sha512-FWi+tQvwxR/PeRX7Z2mhfEF5ozJ3jn9asiiclzKXNSzJRHAYcU924aIOKAdHFJ+YIKieh3cqr1IwCOvTr41B3Q=="],
+    "fastify": ["fastify@5.12.3", "", { "dependencies": { "@fastify/ajv-compiler": "^4.0.5", "@fastify/error": "^4.0.0", "@fastify/fast-json-stringify-compiler": "^5.0.0", "@fastify/proxy-addr": "^5.0.0", "abstract-logging": "^2.0.1", "avvio": "^9.0.0", "fast-json-stringify": "^7.0.0", "find-my-way": "^9.6.0", "light-my-request": "^6.0.0", "pino": "^9.14.0 || ^10.1.0", "process-warning": "^5.1.0", "rfdc": "^1.3.1", "secure-json-parse": "^4.0.0", "semver": "^7.6.0", "toad-cache": "^3.7.0" } }, "sha512-reZ8wce5VNCcufIt9AVtzZa3L4u1j8esikn7OEgHWLVpRpL5R7Y2+Xzj70OUkv5zDfzUAxXZT6cu4Rt0zr3EKA=="],
 
     "fastify-plugin": ["fastify-plugin@6.0.0", "", {}, "sha512-fZOty7z3O7vOliF6d8bHE3wiEh1KcNnKEQensSgTk9C1DvN6nRLS++XVd86v33Hw/8u9Un8A1zDrQ8ujcQDHEg=="],
 
@@ -1148,7 +1148,7 @@
 
     "@langchain/core/p-queue": ["p-queue@6.6.2", "", { "dependencies": { "eventemitter3": "^4.0.4", "p-timeout": "^3.2.0" } }, "sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ=="],
 
-    "@langchain/langgraph-sdk/@langchain/protocol": ["@langchain/protocol@0.0.19", "", {}, "sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q=="],
+    "@nestjs/platform-fastify/fastify": ["fastify@5.12.1", "", { "dependencies": { "@fastify/ajv-compiler": "^4.0.5", "@fastify/error": "^4.0.0", "@fastify/fast-json-stringify-compiler": "^5.0.0", "@fastify/proxy-addr": "^5.0.0", "abstract-logging": "^2.0.1", "avvio": "^9.0.0", "fast-json-stringify": "^7.0.0", "find-my-way": "^9.6.0", "light-my-request": "^6.0.0", "pino": "^9.14.0 || ^10.1.0", "process-warning": "^5.1.0", "rfdc": "^1.3.1", "secure-json-parse": "^4.0.0", "semver": "^7.6.0", "toad-cache": "^3.7.0" } }, "sha512-FWi+tQvwxR/PeRX7Z2mhfEF5ozJ3jn9asiiclzKXNSzJRHAYcU924aIOKAdHFJ+YIKieh3cqr1IwCOvTr41B3Q=="],
 
     "fast-json-stringify/fast-uri": ["fast-uri@4.1.3", "", {}, "sha512-7+72G6vLt7jjNas8SmSATx2qeyRIjxeqO3i4IkmDTxlqYZRKANhOe1bnovcp4WZmvsYrp60WyqPyHqgRiX0yXw=="],
 
