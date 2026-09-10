@@ -560,11 +560,11 @@ function normalizeReport(input: unknown): RuntimeHealthReport {
     ...report,
     capabilitySnapshot: {
       ...report.capabilitySnapshot,
-      capabilities: [...report.capabilitySnapshot.capabilities].sort((left, right) =>
+      capabilities: [...report.capabilitySnapshot.capabilities].toSorted((left, right) =>
         left.name.localeCompare(right.name)
       ),
     },
-    diagnostics: [...report.diagnostics].sort(),
+    diagnostics: [...report.diagnostics].toSorted(),
   }
 }
 

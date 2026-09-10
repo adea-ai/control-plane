@@ -61,7 +61,7 @@ export function negotiateContractVersion(
   const remote = highestMinorByMajor(remoteVersions)
   const commonMajor = [...local.keys()]
     .filter((major) => remote.has(major))
-    .sort((left, right) => right - left)[0]
+    .toSorted((left, right) => right - left)[0]
 
   if (commonMajor === undefined) return undefined
   return {

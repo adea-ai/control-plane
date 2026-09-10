@@ -162,7 +162,7 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
       .map((record) => [record.logicalId, record.value])
   )
   for (const record of manifest.records.filter(
-    (record) => record.category === 'context-authoring-command'
+    (candidateRecord) => candidateRecord.category === 'context-authoring-command'
   )) {
     const command = ContextAuthoringCommandRecordSchema.parse(record.value)
     if (
@@ -186,7 +186,7 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
       .map((record) => [record.logicalId, record.value])
   )
   for (const record of manifest.records.filter(
-    (record) => record.category === 'execution-validation-command'
+    (candidateRecord) => candidateRecord.category === 'execution-validation-command'
   )) {
     const command = ExecutionValidationCommandRecordSchema.parse(record.value)
     if (
@@ -217,20 +217,22 @@ function normalizeManifestInput(
   return {
     ...input,
     componentVersions: Object.fromEntries(
-      Object.entries(input.componentVersions).sort(([left], [right]) => left.localeCompare(right))
+      Object.entries(input.componentVersions).toSorted(([left], [right]) =>
+        left.localeCompare(right)
+      )
     ),
     compatibility: {
       ...input.compatibility,
-      requiredCapabilities: [...new Set(input.compatibility.requiredCapabilities)].sort(),
+      requiredCapabilities: [...new Set(input.compatibility.requiredCapabilities)].toSorted(),
     },
-    records: [...input.records].sort(compareRecord),
-    artifacts: [...input.artifacts].sort((left, right) => left.key.localeCompare(right.key)),
-    secretReferences: [...input.secretReferences].sort((left, right) =>
+    records: [...input.records].toSorted(compareRecord),
+    artifacts: [...input.artifacts].toSorted((left, right) => left.key.localeCompare(right.key)),
+    secretReferences: [...input.secretReferences].toSorted((left, right) =>
       `${left.provider}:${left.key}:${left.version ?? ''}`.localeCompare(
         `${right.provider}:${right.key}:${right.version ?? ''}`
       )
     ),
-    unsupportedReferences: [...new Set(input.unsupportedReferences)].sort(),
+    unsupportedReferences: [...new Set(input.unsupportedReferences)].toSorted(),
   }
 }
 
@@ -244,7 +246,7 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (typeof value === 'object' && value !== null) {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
       .join(',')}}`
   }

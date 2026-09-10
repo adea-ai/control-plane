@@ -46,7 +46,7 @@ describe('managed cloud configuration', () => {
     expect(managedCloudEnvironmentManifest()['control-api']).toContain(
       'CONTROL_PLANE_SERVICE_AUTH_TRUSTED_KEYS'
     )
-    expect(Object.keys(managedCloudEnvironmentManifest()).sort()).toEqual([
+    expect(Object.keys(managedCloudEnvironmentManifest()).toSorted()).toEqual([
       'control-api',
       'workflow-worker',
     ])

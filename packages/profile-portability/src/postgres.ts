@@ -235,7 +235,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       activeWorkIds: executionRows
         .filter(({ state }) => !terminal.has(state))
         .map(({ executionId }) => executionId)
-        .sort(),
+        .toSorted(),
       unsupportedReferences: this.#unsupportedReferences,
     }
   }
@@ -310,7 +310,7 @@ export class PostgresPortableStateDestination implements PortableStateDestinatio
         const committedProvenance = provenance
         await this.#database.transaction(
           async (transaction) => {
-            for (const record of [...records].sort(byWriteOrder)) {
+            for (const record of [...records].toSorted(byWriteOrder)) {
               await writeRecord(transaction, record)
             }
             const [existing] = await transaction

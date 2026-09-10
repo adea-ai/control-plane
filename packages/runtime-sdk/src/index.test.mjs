@@ -45,9 +45,9 @@ describe('runtime capability vocabulary', () => {
       missingOptional: ['output.structured'],
       degradedOptional: ['session.history'],
     })
-    expect(evaluateCapabilities([...capabilities].reverse(), [...requirements].reverse())).toEqual(
-      evaluateCapabilities(capabilities, requirements)
-    )
+    expect(
+      evaluateCapabilities([...capabilities].toReversed(), [...requirements].toReversed())
+    ).toEqual(evaluateCapabilities(capabilities, requirements))
     expect(
       evaluateCapabilities([], [{ capability: 'tool.call', necessity: 'required' }])
     ).toMatchObject({ eligible: false, mode: 'ineligible', missingRequired: ['tool.call'] })
@@ -193,7 +193,7 @@ describe('runtime compatibility', () => {
   test('compares normalized capability sets and definitions independent of capability order', () => {
     const reversed = {
       ...RuntimeFixtures.futurePi,
-      capabilities: [...RuntimeFixtures.futurePi.capabilities].reverse(),
+      capabilities: [...RuntimeFixtures.futurePi.capabilities].toReversed(),
     }
     expect(
       runtimeCapabilitiesEqual(RuntimeFixtures.futurePi.capabilities, reversed.capabilities)

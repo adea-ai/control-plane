@@ -133,7 +133,7 @@ export class ReleaseGateRegistry {
       candidateRunId: candidateRun.evalRunId,
       baselineRunId: baselineRun.evalRunId,
       status: reasons.length === 0 ? 'passed' : 'blocked',
-      reasons: [...new Set(reasons)].sort(),
+      reasons: [...new Set(reasons)].toSorted(),
       evaluatedAt: this.#now(),
     }
     const promoted = this.#gates.get(input.releaseGateId)?.promoted

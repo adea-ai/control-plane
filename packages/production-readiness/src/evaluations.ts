@@ -215,8 +215,8 @@ export const EvalRunSchema = z
             required && !passesThreshold(result.metrics[metric], direction, threshold)
         )
         .map(({ metric }) => metric)
-        .sort()
-      if (!sameValue([...result.failedRequiredMetrics].sort(), expectedFailures)) {
+        .toSorted()
+      if (!sameValue([...result.failedRequiredMetrics].toSorted(), expectedFailures)) {
         context.addIssue({
           code: 'custom',
           message: 'Failed required metrics do not match case thresholds',

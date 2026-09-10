@@ -118,7 +118,7 @@ async function inventory(
 ): Promise<FilesystemCheckpointEntry[]> {
   const entries: FilesystemCheckpointEntry[] = []
   async function visit(directory: string): Promise<void> {
-    const children = (await readdir(directory)).sort()
+    const children = (await readdir(directory)).toSorted()
     for (const name of children) {
       const path = join(directory, name)
       const logicalPath = relative(root, path)

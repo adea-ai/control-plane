@@ -15,7 +15,10 @@ describe('Runtime Gateway reconnect reconciliation', () => {
     const result = await fixture.service.reconcile(hello(3, []), source())
     expect(result.redelivered).toBe(2)
     expect(fixture.sent).toHaveLength(2)
-    expect(fixture.sent.map(({ commandId }) => commandId)).toEqual([commandId('A'), commandId('B')])
+    expect(fixture.sent.map(({ commandId: sentCommandId }) => sentCommandId)).toEqual([
+      commandId('A'),
+      commandId('B'),
+    ])
   })
 
   test('reuses cloud terminal outcomes and applies retained node terminal outcomes once', async () => {

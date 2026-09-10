@@ -110,7 +110,7 @@ export function projectRuntimeConnectionDiscovery(
     capabilities: connection.capabilities
       .filter((capability) => capability.support !== 'unsupported')
       .map((capability) => capability.name)
-      .sort(),
+      .toSorted(),
     capabilityDetails: connection.capabilities
       .map((capability) => ({
         name: capability.name,
@@ -119,7 +119,7 @@ export function projectRuntimeConnectionDiscovery(
           ? {}
           : { limitations: uniqueCodes(capability.limitations) }),
       }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
+      .toSorted((left, right) => left.name.localeCompare(right.name)),
     compatibility: {
       state: connection.compatibilityState,
       limitations: uniqueCodes([
@@ -295,12 +295,12 @@ function remediationFor(reasons: readonly string[]) {
     add('CONTACT_ADMINISTRATOR', 'Contact a workspace administrator')
   }
   return [...remediation]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([code, label]) => ({ code, label }))
 }
 
 function uniqueCodes(values: readonly string[]): string[] {
-  return [...new Set(values.map(normalizeCode))].sort()
+  return [...new Set(values.map(normalizeCode))].toSorted()
 }
 
 function normalizeCode(value: string): string {

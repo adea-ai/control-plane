@@ -126,7 +126,7 @@ export class InMemoryDelegationRepository implements DelegationRepository {
   async listByParent(parentExecutionId: string): Promise<readonly DelegationRecord[]> {
     return [...this.#records.values()]
       .filter((record) => record.parentExecutionId === parentExecutionId)
-      .sort((left, right) => left.delegationId.localeCompare(right.delegationId))
+      .toSorted((left, right) => left.delegationId.localeCompare(right.delegationId))
       .map((record) => structuredClone(record))
   }
 
@@ -683,7 +683,7 @@ function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   }

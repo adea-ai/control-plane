@@ -91,7 +91,7 @@ export function evaluateCapabilities(
     }
   }
 
-  const sort = (values: RuntimeCapabilityName[]) => values.sort()
+  const sort = (values: RuntimeCapabilityName[]) => values.toSorted()
   const eligible = missingRequired.length === 0 && insufficientRequired.length === 0
   const degraded = missingOptional.length > 0 || degradedOptional.length > 0
   return {
@@ -115,6 +115,6 @@ export function capabilityFingerprint(capabilities: readonly RuntimeCapability[]
   return JSON.stringify(
     capabilities
       .map((capability) => RuntimeCapabilitySchema.parse(capability))
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .toSorted((left, right) => left.name.localeCompare(right.name))
   )
 }

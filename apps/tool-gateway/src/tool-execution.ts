@@ -59,7 +59,7 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
   async listByExecution(executionId: string): Promise<readonly ToolCall[]> {
     return [...this.#calls.values()]
       .filter((call) => call.executionId === executionId)
-      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+      .toSorted((left, right) => left.requestedAt.localeCompare(right.requestedAt))
       .map(clone)
   }
 }
@@ -540,7 +540,7 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   }

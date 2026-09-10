@@ -10,7 +10,7 @@ test('validation identity hashes the parsed semantic payload independently of re
       ...request,
       issuedAt: '2026-09-07T12:00:00.000Z',
       payloadHash: '0'.repeat(64),
-      payload: Object.fromEntries(Object.entries(request.payload).reverse()),
+      payload: Object.fromEntries(Object.entries(request.payload).toReversed()),
     })
   ).toBe(expected)
   for (const payload of [

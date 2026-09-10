@@ -38,7 +38,7 @@ const profiles = [
     Array.from({ length: 16 }, (_, index) => ({
       id: `runtime-${index}`,
       priority: (sequence + index) % 7,
-    })).sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))
+    })).toSorted((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))
   ),
   profile(
     'model-tool-stream',

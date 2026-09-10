@@ -236,7 +236,7 @@ export function assessRuntimeCompatibility(
       ? []
       : ['ADAPTER_MAJOR_MISMATCH']),
     ...(major(definition.driverVersion) === expected.driverMajor ? [] : ['DRIVER_MAJOR_MISMATCH']),
-  ].sort()
+  ].toSorted()
   if (versionReasons.length > 0) return { state: 'incompatible', reasons: versionReasons }
 
   const capability = evaluateCapabilities(definition.capabilities, expected.capabilities)
@@ -246,7 +246,7 @@ export function assessRuntimeCompatibility(
       reasons: [
         ...capability.missingRequired.map((name) => `MISSING_REQUIRED:${name}`),
         ...capability.insufficientRequired.map((name) => `INSUFFICIENT_REQUIRED:${name}`),
-      ].sort(),
+      ].toSorted(),
     }
   }
   if (definition.compatibility.status === 'untested') {
@@ -259,7 +259,7 @@ export function assessRuntimeCompatibility(
         ...(definition.health === 'degraded' ? ['RUNTIME_HEALTH_DEGRADED'] : []),
         ...capability.missingOptional.map((name) => `MISSING_OPTIONAL:${name}`),
         ...capability.degradedOptional.map((name) => `DEGRADED_OPTIONAL:${name}`),
-      ].sort(),
+      ].toSorted(),
     }
   }
   return { state: 'compatible', reasons: [] }
@@ -273,7 +273,7 @@ function normalizeDefinition(input: unknown): RuntimeDefinition {
   const definition = RuntimeDefinitionSchema.parse(input)
   return {
     ...definition,
-    capabilities: [...definition.capabilities].sort((left, right) =>
+    capabilities: [...definition.capabilities].toSorted((left, right) =>
       left.name.localeCompare(right.name)
     ),
   }

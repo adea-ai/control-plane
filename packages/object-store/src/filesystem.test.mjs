@@ -18,7 +18,7 @@ import { FilesystemObjectStore } from './filesystem.ts'
 
 const stores = []
 afterEach(() => {
-  for (const store of stores.splice(0)) store.close()
+  for (const activeStore of stores.splice(0)) activeStore.close()
 })
 
 async function store() {

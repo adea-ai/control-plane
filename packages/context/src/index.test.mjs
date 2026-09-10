@@ -301,7 +301,7 @@ describe('reproducible ContextPackage compilation', () => {
     await expect(repository.put({ ...package_, objective: 'tampered' })).rejects.toThrow(
       'CONTEXT_PACKAGE_INTEGRITY_ERROR'
     )
-    expect(Object.keys(contextPackageSerializationFixtures).sort()).toEqual([
+    expect(Object.keys(contextPackageSerializationFixtures).toSorted()).toEqual([
       'futureAcp',
       'futureLangGraph',
       'futurePi',

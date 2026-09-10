@@ -153,7 +153,7 @@ function configurationError(
     code: 'INVALID_CONFIGURATION',
     environment,
     serviceName,
-    invalid: [...invalid].sort(),
-    missing: [...missing].sort(),
+    invalid: [...invalid].toSorted(),
+    missing: [...missing].toSorted(),
   })
 }

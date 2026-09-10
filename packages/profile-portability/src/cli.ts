@@ -122,7 +122,7 @@ async function activeWork(provider: SqlitePersistenceProvider): Promise<readonly
         return activeStates.has(String(value['state'] ?? value['status'] ?? ''))
       })
       .map(({ id }) => id)
-      .sort()
+      .toSorted()
   )
 }
 

@@ -69,6 +69,6 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
     }
     return (await this.profiles.listAgentProfileVersions(profileId))
       .filter((profile) => profile.lifecycle === 'published')
-      .sort((left, right) => right.version - left.version || right.revision - left.revision)[0]
+      .toSorted((left, right) => right.version - left.version || right.revision - left.revision)[0]
   }
 }

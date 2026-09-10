@@ -284,12 +284,12 @@ describe('M8 multi-agent orchestration acceptance', () => {
     ).toHaveLength(1)
 
     const duplicateFixture = await createFixture()
-    const [branch] = await duplicateFixture.parallel.fanOut({
+    const [duplicateBranch] = await duplicateFixture.parallel.fanOut({
       ...fanOutInput(duplicateFixture.parentPlan),
       branches: [fanOutInput(duplicateFixture.parentPlan).branches[0]],
     })
     const duplicateDispatch = await duplicateFixture.delegations.dispatchChild({
-      delegationId: branch.record.delegationId,
+      delegationId: duplicateBranch.record.delegationId,
       childAttemptId: ids.researchAttemptId,
       runtime: { runtimeConnectionId: 'rtc_01JABCDEF0123456789ABCDEFG' },
       dispatchedAt: '2026-08-25T20:00:00.000Z',

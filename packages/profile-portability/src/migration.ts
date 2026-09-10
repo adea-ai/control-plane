@@ -84,7 +84,7 @@ export async function exportPortableState(
   options: PortableExportOptions
 ): Promise<PortableExportManifest> {
   const snapshot = await source.snapshot()
-  const active = [...(snapshot.activeWorkIds ?? [])].sort()
+  const active = [...(snapshot.activeWorkIds ?? [])].toSorted()
   if (active.length > 0) throw new PortableMigrationError('PORTABLE_ACTIVE_WORK', active)
   const records = snapshot.records
     .filter(
@@ -208,7 +208,7 @@ export async function planPortableImport(
   const conflicts = records
     .filter(({ state }) => state === 'conflict')
     .map(({ record }) => `${record.category}:${record.logicalId}:${record.revision}`)
-    .sort()
+    .toSorted()
   const unresolvedSecretReferences = manifest.secretReferences.filter(
     (reference) => !destination.secretProviders.has(reference.provider)
   )

@@ -60,6 +60,7 @@ test.each(['shutdown', 'replacement'])(
     })
     let native
     let socket
+    let replacementRecord
     const frames = []
     const server = new RuntimeGatewayWebSocketServer({
       lifecycle,
@@ -105,6 +106,19 @@ test.each(['shutdown', 'replacement'])(
         workspaceId: expectation.workspaceId,
         channelGeneration: 1,
       })
+      if (closeMode === 'replacement') {
+        const current = await coordination.lookup(expectation.nodeId)
+        replacementRecord = {
+          ...current,
+          channelGeneration: 2,
+          connectionId: 'replacement',
+          gatewayInstanceId: 'other-gateway',
+        }
+        await coordination.claim(replacementRecord)
+        // Claim before revoking credentials so the timer cannot release the
+        // original owner before the replacement scenario is established.
+        await until(() => socket.readyState === WebSocket.OPEN)
+      }
       authority.revokeCredential(issued.claims.credentialId)
       await expect(lifecycle.send(golden.command)).rejects.toThrow()
       expect(frames).toHaveLength(2)
@@ -116,18 +130,10 @@ test.each(['shutdown', 'replacement'])(
         ).status
       ).toBe(401)
       if (closeMode === 'replacement') {
-        const current = await coordination.lookup(expectation.nodeId)
-        const replacement = {
-          ...current,
-          channelGeneration: 2,
-          connectionId: 'replacement',
-          gatewayInstanceId: 'other-gateway',
-        }
-        await coordination.claim(replacement)
         // No explicit sweep or push subscription: the server timer must close the stale socket.
         await until(() => socket.readyState === WebSocket.CLOSED)
-        expect(await coordination.lookup(expectation.nodeId)).toEqual(replacement)
-        await coordination.release(replacement)
+        expect(await coordination.lookup(expectation.nodeId)).toEqual(replacementRecord)
+        await coordination.release(replacementRecord)
       }
       await server.close()
       await until(() => socket.readyState === WebSocket.CLOSED)

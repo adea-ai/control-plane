@@ -318,7 +318,7 @@ function canonical(value: unknown): string {
   if (value && typeof value === 'object')
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   return JSON.stringify(value)

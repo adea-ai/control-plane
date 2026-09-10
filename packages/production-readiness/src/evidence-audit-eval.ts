@@ -310,7 +310,7 @@ function digest(input: unknown): string {
       : value !== null && typeof value === 'object'
         ? Object.fromEntries(
             Object.entries(value)
-              .sort(([a], [b]) => a.localeCompare(b))
+              .toSorted(([a], [b]) => a.localeCompare(b))
               .map(([key, child]) => [key, canonical(child)])
           )
         : value

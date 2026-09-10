@@ -79,7 +79,7 @@ describe('revisioned ProjectState and promotion proposals', () => {
       concurrent.service.applyMutation(input),
       concurrent.service.applyMutation(input),
     ])
-    expect(attempts.map((attempt) => attempt.applied).sort()).toEqual([false, true])
+    expect(attempts.map((attempt) => attempt.applied).toSorted()).toEqual([false, true])
     expect(concurrent.events.events).toHaveLength(1)
   })
 

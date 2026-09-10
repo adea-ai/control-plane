@@ -295,7 +295,7 @@ function degradeConnection(
         }
       : {}),
     compatibilityState,
-    limitations: [...new Set([...connection.limitations, ...addedLimitations])].sort(),
+    limitations: [...new Set([...connection.limitations, ...addedLimitations])].toSorted(),
   }
 }
 
@@ -306,7 +306,7 @@ function limitations(
 ): string[] {
   return [
     ...new Set([...connection.limitations, ...certification.limitations, ...additional]),
-  ].sort()
+  ].toSorted()
 }
 
 function certificationIdentity(certification: RuntimeCertification): string {

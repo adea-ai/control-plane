@@ -47,12 +47,14 @@ for (const { file, evidenceText } of recoveryEvidence.filter(
   }
 }
 
-const files = [...new Set(testEvidence.map(({ file }) => `./${file}`))].sort()
+const files = [...new Set(testEvidence.map(({ file }) => `./${file}`))].toSorted()
 run(process.execPath, ['test', ...files])
 await withGuaranteedCleanup(
   () => {
     for (const command of new Set(
-      recoveryEvidence.filter(({ kind }) => kind === 'integration').map(({ command }) => command)
+      recoveryEvidence
+        .filter(({ kind }) => kind === 'integration')
+        .map(({ command: commandText }) => commandText)
     )) {
       const [program, ...arguments_] = command.split(' ')
       const output = run(program, arguments_, true, recoveryEnvironment)

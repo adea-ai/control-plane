@@ -965,7 +965,7 @@ function canonicalValue(value: z.util.JSONType): z.util.JSONType {
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => left.localeCompare(right))
         .map(([key, child]) => [key, canonicalValue(child)])
     )
   }

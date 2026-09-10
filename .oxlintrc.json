@@ -5,6 +5,12 @@
     "suspicious": "warn"
   },
   "ignorePatterns": ["node_modules/**", "**/dist/**", "**/.turbo/**", "**/coverage/**"],
+  "rules": {
+    "no-underscore-dangle": ["error", { "allow": ["_event", "_meta", "case_", "package_"] }],
+    "no-unmodified-loop-condition": "off",
+    "typescript/no-extraneous-class": ["error", { "allowWithDecorator": true }],
+    "unicorn/consistent-function-scoping": "off"
+  },
   "overrides": [
     {
       "files": ["apps/control-api/src/**/*.controller.ts"],

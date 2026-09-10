@@ -163,7 +163,10 @@ describe('Runtime Gateway event ingestion', () => {
       fixture.ingestion.ingestResult(golden.result, source),
       fixture.ingestion.ingestResult(cancelResult, source),
     ])
-    expect(outcomes.map(({ outcome }) => outcome).sort()).toEqual(['applied', 'terminal_conflict'])
+    expect(outcomes.map(({ outcome }) => outcome).toSorted()).toEqual([
+      'applied',
+      'terminal_conflict',
+    ])
     const execution = await fixture.lifecycle.getExecution(golden.command.executionId)
     expect(['completed', 'cancelled']).toContain(execution.state)
     expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toHaveLength(1)

@@ -23,10 +23,12 @@ describe('managed-cloud operational policy', () => {
   test('ignores object insertion order at every level', () => {
     const reordered = Object.fromEntries(
       Object.entries(managedCloudOperationalPolicy)
-        .reverse()
+        .toReversed()
         .map(([key, value]) => [
           key,
-          typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse()) : value,
+          typeof value === 'object'
+            ? Object.fromEntries(Object.entries(value).toReversed())
+            : value,
         ])
     )
     expect(operationalPolicyDigest(reordered)).toBe(

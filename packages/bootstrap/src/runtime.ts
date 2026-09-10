@@ -123,7 +123,7 @@ export class ServiceRuntime<Service extends ServiceName> {
       metadata: this.metadata,
       details: { reason },
     })
-    for (const resource of [...this.#resources].reverse()) {
+    for (const resource of [...this.#resources].toReversed()) {
       try {
         await resource.close()
       } catch (error) {

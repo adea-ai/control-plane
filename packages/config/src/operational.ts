@@ -108,7 +108,7 @@ export function operationalPolicyDigest(policy: OperationalPolicyConfig): `sha25
   const canonical = JSON.stringify(policy, (_key, value: unknown) =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
       ? Object.fromEntries(
-          Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+          Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
         )
       : value
   )

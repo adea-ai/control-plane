@@ -81,8 +81,8 @@ export function assessDeployment(input: DeploymentAssessment): {
     compatibilityReasons.add('mutable_image')
   }
   if (
-    JSON.stringify(Object.keys(assessment.candidate.images).sort()) !==
-    JSON.stringify(Object.keys(assessment.current.images).sort())
+    JSON.stringify(Object.keys(assessment.candidate.images).toSorted()) !==
+    JSON.stringify(Object.keys(assessment.current.images).toSorted())
   ) {
     compatibilityReasons.add('image_set_mismatch')
   }
@@ -112,7 +112,7 @@ export function assessDeployment(input: DeploymentAssessment): {
     canaryReasons.add('canary_latency')
   }
 
-  const reasons = [...compatibilityReasons, ...canaryReasons].sort()
+  const reasons = [...compatibilityReasons, ...canaryReasons].toSorted()
   if (compatibilityReasons.size > 0) return { decision: 'block', reasons }
   if (canaryReasons.size > 0) return { decision: 'rollback', reasons }
   return { decision: 'promote', reasons }

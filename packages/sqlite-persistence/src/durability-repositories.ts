@@ -115,7 +115,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             event.sequence > afterSequence &&
             event.archivedAt === undefined
         )
-        .sort((left, right) => left.sequence - right.sequence)
+        .toSorted((left, right) => left.sequence - right.sequence)
         .slice(0, limit)
     )
   }
@@ -134,7 +134,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
               event.publication.nextAttemptAt === undefined ||
               event.publication.nextAttemptAt <= dueAt)
         )
-        .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+        .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
         .slice(0, limit)
     )
   }
@@ -408,7 +408,7 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
             command.nodeId === nodeId &&
             ['queued', 'dispatched', 'acknowledged'].includes(command.status)
         )
-        .sort((left, right) =>
+        .toSorted((left, right) =>
           left.issuedAt === right.issuedAt
             ? left.commandId.localeCompare(right.commandId)
             : left.issuedAt.localeCompare(right.issuedAt)

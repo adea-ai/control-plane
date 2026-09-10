@@ -705,8 +705,8 @@ function createFixture(options = {}) {
       this.runtimeConnections.push({ workspaceId: scope.workspaceId, model: structuredClone(next) })
       return true
     },
-    async putRuntimeConnection(workspaceId, model) {
-      this.runtimeConnections.push({ workspaceId, model })
+    async putRuntimeConnection(connectionWorkspaceId, model) {
+      this.runtimeConnections.push({ workspaceId: connectionWorkspaceId, model })
     },
   }
   return {

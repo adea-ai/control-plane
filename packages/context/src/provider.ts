@@ -219,7 +219,7 @@ export class ContextProviderResolver {
             request.policy.providerIds.includes(definition.providerId))
         )
       })
-      .sort((left, right) => {
+      .toSorted((left, right) => {
         const leftRank =
           connectionPreference.get(left.readModel.connection.connectionId) ??
           Number.MAX_SAFE_INTEGER
@@ -290,7 +290,7 @@ export class ContextProviderResolver {
     }
     if (tokens > request.policy.maximumTokens)
       throw new ContextProviderResolutionError('PROVIDER_BUDGET_EXCEEDED')
-    return normalized.sort(
+    return normalized.toSorted(
       (left, right) =>
         left.kind.localeCompare(right.kind) ||
         left.contributionId.localeCompare(right.contributionId)

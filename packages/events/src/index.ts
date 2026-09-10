@@ -113,7 +113,7 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
         (event) =>
           event.executionId === executionId && event.sequence > afterSequence && !event.archivedAt
       )
-      .sort((left, right) => left.sequence - right.sequence)
+      .toSorted((left, right) => left.sequence - right.sequence)
       .slice(0, limit)
       .map(clone)
   }
@@ -128,7 +128,7 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
             !event.publication.nextAttemptAt ||
             Date.parse(event.publication.nextAttemptAt) <= Date.parse(dueAt))
       )
-      .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+      .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
       .slice(0, limit)
       .map(clone)
   }
@@ -325,7 +325,7 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
       .join(',')}}`
   }

@@ -337,7 +337,7 @@ export class ManagedPiGatewayClient implements ManagedPiClient {
       runtimeConnectionId: this.#runtimeConnectionId,
       executionId: this.#executionId,
       attemptId: input.attemptId,
-      requiredCapabilities: [...new Set(input.requiredCapabilities)].sort(),
+      requiredCapabilities: [...new Set(input.requiredCapabilities)].toSorted(),
       payload,
     })
     try {

@@ -34,6 +34,8 @@ export function gatewayJsonSchema() {
             required: [family],
           })),
         },
+        // JSON Schema's conditional keyword is intentionally named `then`.
+        // oxlint-disable-next-line unicorn/no-thenable
         then: { properties: { protocolVersion: { properties: { minor: { minimum: 6 } } } } },
       },
     ],

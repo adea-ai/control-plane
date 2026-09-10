@@ -134,7 +134,7 @@ ${result.stderr ?? ''}`
     if (output.includes('cannot publish over the previously published versions')) {
       let converged = false
       for (let attempt = 1; attempt <= 6 && !converged; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10_000))
+        await new Promise((sleepResolve) => setTimeout(sleepResolve, 10_000))
         converged = (await publishedVersion(publishedAs)) === version
       }
       if (converged) {

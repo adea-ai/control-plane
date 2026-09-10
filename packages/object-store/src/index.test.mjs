@@ -29,8 +29,8 @@ describe('R2ObjectStore', () => {
       },
       {
         maxObjectBytes: 1024,
-        createClient: (configuration) => {
-          configurations.push(configuration)
+        createClient: (clientOptions) => {
+          configurations.push(clientOptions)
           return { send: async () => ({}) }
         },
       }

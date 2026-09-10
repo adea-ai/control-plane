@@ -70,7 +70,7 @@ export async function discoverTestFiles(group) {
       (path) => path.endsWith('.test.mjs') && isIntegrationTest(path) === (group === 'integration')
     )
     .map((path) => relative(repositoryRoot, path))
-    .sort()
+    .toSorted()
 
   if (files.length === 0) throw new Error(`No ${group} tests were discovered.`)
   return files
@@ -85,7 +85,7 @@ export async function discoverTestInventory() {
   )
   const inventory = groups
     .flatMap(({ primaryLane, files }) => files.map((path) => ({ path, primaryLane })))
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .toSorted((left, right) => left.path.localeCompare(right.path))
   const duplicates = inventory.filter(
     ({ path }, index) => inventory.findIndex((candidate) => candidate.path === path) !== index
   )
@@ -100,7 +100,7 @@ export async function discoverTestInventory() {
     .flat()
     .filter((path) => path.endsWith('.test.mjs'))
     .map((path) => relative(repositoryRoot, path))
-    .sort()
+    .toSorted()
   const assigned = new Set(inventory.map(({ path }) => path))
   const discoveredSet = new Set(discovered)
   const unowned = discovered.filter((path) => !assigned.has(path))

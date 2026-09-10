@@ -180,12 +180,12 @@ export function routeRuntimeConnections(inputValue: unknown): RuntimeRoutingDeci
     .filter(({ eligibility }) => !eligibility.eligible)
     .map((candidate) => ({
       runtimeConnectionId: candidate.runtimeConnectionId,
-      eligibilityReasons: candidate.eligibility.reasons.map(({ code }) => code).sort(),
+      eligibilityReasons: candidate.eligibility.reasons.map(({ code }) => code).toSorted(),
     }))
-    .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+    .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
   const ranked = eligible
     .map((candidate) => scoreCandidate(input, candidate))
-    .sort(
+    .toSorted(
       (left, right) =>
         right.score - left.score ||
         left.runtimeConnectionId.localeCompare(right.runtimeConnectionId)
@@ -261,7 +261,7 @@ export function toAttemptRoutingDecision(decisionValue: unknown) {
     decisionDigest: decision.audit.decisionDigest,
     selectedRank: decision.selected.rank,
     candidateCount: decision.ranked.length,
-    reasonCodes: decision.selected.reasons.map(({ code }) => code).sort(),
+    reasonCodes: decision.selected.reasons.map(({ code }) => code).toSorted(),
   }
 }
 
@@ -347,11 +347,11 @@ function normalizeRoutingInput(input: RuntimeRoutingInput) {
         ...candidate,
         eligibility: {
           ...candidate.eligibility,
-          reasons: [...candidate.eligibility.reasons].sort(compareCoded),
-          degradations: [...candidate.eligibility.degradations].sort(compareCoded),
+          reasons: [...candidate.eligibility.reasons].toSorted(compareCoded),
+          degradations: [...candidate.eligibility.degradations].toSorted(compareCoded),
         },
       }))
-      .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId)),
+      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId)),
   }
 }
 

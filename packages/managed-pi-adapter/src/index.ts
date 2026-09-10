@@ -115,11 +115,11 @@ export function translateExecutionPlanToManagedPi(
     executionPlanId: executionPlan.executionPlanId,
     executionPlanDigest: executionPlan.contentDigest,
     profile: executionPlan.profile,
-    skills: [...executionPlan.skills].sort((left, right) =>
+    skills: [...executionPlan.skills].toSorted((left, right) =>
       left.skillVersionId.localeCompare(right.skillVersionId)
     ),
     contextPackage: executionPlan.contextPackage,
-    runtimeRequirements: [...executionPlan.runtimeRequirements].sort((left, right) =>
+    runtimeRequirements: [...executionPlan.runtimeRequirements].toSorted((left, right) =>
       left.capability.localeCompare(right.capability)
     ),
     contextPolicy: constraints.context,
@@ -500,17 +500,17 @@ function canonicalConstraints(
     ...constraints,
     context: {
       ...constraints.context,
-      allowedClassifications: [...constraints.context.allowedClassifications].sort(),
+      allowedClassifications: [...constraints.context.allowedClassifications].toSorted(),
     },
     tools: {
       ...constraints.tools,
       grants: constraints.tools.grants
         .map((grant) => ({
           ...grant,
-          operations: [...grant.operations].sort(),
-          requiredCapabilities: [...grant.requiredCapabilities].sort(),
+          operations: [...grant.operations].toSorted(),
+          requiredCapabilities: [...grant.requiredCapabilities].toSorted(),
         }))
-        .sort((left, right) =>
+        .toSorted((left, right) =>
           `${left.tool.toolId}:${left.tool.versionRange}`.localeCompare(
             `${right.tool.toolId}:${right.tool.versionRange}`
           )
@@ -519,20 +519,20 @@ function canonicalConstraints(
     models: constraints.models
       .map((model) => ({
         ...model,
-        requiredCapabilities: [...model.requiredCapabilities].sort(),
+        requiredCapabilities: [...model.requiredCapabilities].toSorted(),
         providerPolicy: {
           ...model.providerPolicy,
-          allowedClasses: [...model.providerPolicy.allowedClasses].sort(),
-          deniedProviders: [...model.providerPolicy.deniedProviders].sort(),
-          dataResidency: [...model.providerPolicy.dataResidency].sort(),
+          allowedClasses: [...model.providerPolicy.allowedClasses].toSorted(),
+          deniedProviders: [...model.providerPolicy.deniedProviders].toSorted(),
+          dataResidency: [...model.providerPolicy.dataResidency].toSorted(),
         },
       }))
-      .sort((left, right) => left.alias.localeCompare(right.alias)),
+      .toSorted((left, right) => left.alias.localeCompare(right.alias)),
     runtime: {
       ...constraints.runtime,
-      allowedFamilies: [...constraints.runtime.allowedFamilies].sort(),
-      allowedLocations: [...constraints.runtime.allowedLocations].sort(),
-      requiredCapabilities: [...constraints.runtime.requiredCapabilities].sort(),
+      allowedFamilies: [...constraints.runtime.allowedFamilies].toSorted(),
+      allowedLocations: [...constraints.runtime.allowedLocations].toSorted(),
+      requiredCapabilities: [...constraints.runtime.requiredCapabilities].toSorted(),
     },
   })
 }

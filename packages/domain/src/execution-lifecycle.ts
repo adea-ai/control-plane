@@ -244,7 +244,7 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
   async listAttempts(executionId: string): Promise<readonly ExecutionAttempt[]> {
     return [...this.#attempts.values()]
       .filter((attempt) => attempt.executionId === executionId)
-      .sort((left, right) => left.sequence - right.sequence)
+      .toSorted((left, right) => left.sequence - right.sequence)
       .map(clone)
   }
 

@@ -27,7 +27,7 @@ const database = new SqlitePersistenceProvider({ path })
 const samples = { writeMs: [], replayReadMs: [] }
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 const percentile = (values, fraction) =>
-  [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * fraction) - 1)]
+  [...values].toSorted((a, b) => a - b)[Math.max(0, Math.ceil(values.length * fraction) - 1)]
 const summarize = (values) => ({
   p50: percentile(values, 0.5),
   p95: percentile(values, 0.95),
