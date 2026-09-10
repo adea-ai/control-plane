@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/runtime-gateway-protocol",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Versioned wire protocol between the Control Plane and external runtimes: schemas, emulator, fixtures, and authentication.",
   "keywords": [
     "agents",

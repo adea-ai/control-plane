@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/runtime-sdk",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "SDK for building Control Plane runtimes: adapters, capabilities, conformance, discovery, eligibility, health, sessions, transport, and routing.",
   "keywords": [
     "adapter",
