@@ -87,7 +87,7 @@
     "@control-plane/sqlite-persistence": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
-    "@langchain/langgraph": "1.4.13",
+    "@langchain/langgraph": "1.4.14",
     "@types/node": "26.4.1",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.81.0",
