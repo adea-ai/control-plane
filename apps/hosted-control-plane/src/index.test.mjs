@@ -78,7 +78,7 @@ describe('Hosted server composition', () => {
     const workflow = {
       profile: 'hosted-server',
       start: async () => calls.push('workflow:start'),
-      health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
+      health: async () => ({ ready: true, component: 'restate', version: '1.7.9' }),
       stop: async () => calls.push('workflow:stop'),
     }
     const composition = new HostedServerControlPlaneComposition({
@@ -190,7 +190,7 @@ describe('Hosted server composition', () => {
       workflowRuntime: {
         profile: 'hosted-server',
         start: async () => undefined,
-        health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
+        health: async () => ({ ready: true, component: 'restate', version: '1.7.9' }),
         stop: async () => undefined,
       },
       endpointFactory: {
@@ -224,7 +224,7 @@ describe('Hosted server composition', () => {
       workflowRuntime: {
         profile: 'hosted-server',
         start: async () => undefined,
-        health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
+        health: async () => ({ ready: true, component: 'restate', version: '1.7.9' }),
         stop: async () => undefined,
       },
       runtimeActivityPort: {

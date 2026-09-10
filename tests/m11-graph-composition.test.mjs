@@ -128,7 +128,7 @@ test('Local and Hosted Simple resume graph approval from their own SQLite databa
         workflowRuntime: {
           start: async () => {},
           stop: async () => {},
-          health: async () => ({ ready: true, component: 'restate', version: '1.7.8' }),
+          health: async () => ({ ready: true, component: 'restate', version: '1.7.9' }),
         },
         endpointFactory: {
           create: async () => ({ run: async () => {}, shutdown: async () => {} }),

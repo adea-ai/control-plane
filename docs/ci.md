@@ -1,6 +1,6 @@
 # Continuous integration
 
-Code Foundry v1.9.11 is the CI runtime pinned by the generated callers under
+Code Foundry v1.28.6 is the CI runtime pinned by the generated callers under
 `.github/workflows/`. Feature branches target `main`; Railway staging is an
 on-demand reference environment, not a Git promotion branch.
 
