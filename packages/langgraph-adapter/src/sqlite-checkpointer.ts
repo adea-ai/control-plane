@@ -51,7 +51,7 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
           row.ns === ns &&
           (checkpointId === undefined || row.checkpointId === checkpointId)
       )
-      .sort((a, b) => b.checkpointId.localeCompare(a.checkpointId))[0]
+      .toSorted((a, b) => b.checkpointId.localeCompare(a.checkpointId))[0]
     return checkpoint === undefined ? undefined : this.#tuple(checkpoint, rows)
   }
 
@@ -64,8 +64,8 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
       throw new Error('GRAPH_CHECKPOINT_LIMIT_INVALID')
     const rows = await this.#rows(thread)
     for (const row of rows
-      .filter((row) => row.kind === 'checkpoint')
-      .sort((a, b) => b.checkpointId.localeCompare(a.checkpointId))) {
+      .filter((candidateRow) => candidateRow.kind === 'checkpoint')
+      .toSorted((a, b) => b.checkpointId.localeCompare(a.checkpointId))) {
       if (remaining === 0) break
       if (explicitNs !== undefined && row.ns !== explicitNs) continue
       if (checkpointId !== undefined && row.checkpointId !== checkpointId) continue
@@ -197,7 +197,7 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
         (item) =>
           item.kind === 'write' && item.ns === row.ns && item.checkpointId === row.checkpointId
       )
-      .sort(
+      .toSorted(
         (a, b) => (a.task ?? '').localeCompare(b.task ?? '') || (a.index ?? 0) - (b.index ?? 0)
       )) {
       if (write.task === undefined || write.channel === undefined)

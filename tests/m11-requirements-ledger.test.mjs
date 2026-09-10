@@ -69,12 +69,12 @@ describe('M11.1 requirements ledger', () => {
     })
 
     expect(result.errors).toEqual([])
-    expect(ledger.sources.map(({ title }) => title).sort()).toEqual(normativeSources.sort())
+    expect(ledger.sources.map(({ title }) => title).toSorted()).toEqual(normativeSources.toSorted())
     expect(new Set(ledger.requirements.map(({ sourceId }) => sourceId))).toEqual(
       new Set(ledger.sources.map(({ id }) => id))
     )
     expect(
-      [...new Set(ledger.priorMilestoneAudits.map(({ milestone }) => milestone))].sort()
+      [...new Set(ledger.priorMilestoneAudits.map(({ milestone }) => milestone))].toSorted()
     ).toEqual(['M1', 'M10', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9'])
     expect(ledger.priorMilestoneAudits.some(({ issue }) => issue === 73)).toBe(true)
     for (const issue of Array.from({ length: 18 }, (_, index) => 200 + index)) {
@@ -212,7 +212,7 @@ describe('M11.1 requirements ledger', () => {
   })
 
   test('identifies all deployment profiles and verification evidence', () => {
-    expect(ledger.deploymentProfiles.map(({ id }) => id).sort()).toEqual([
+    expect(ledger.deploymentProfiles.map(({ id }) => id).toSorted()).toEqual([
       'cloud',
       'hosted-server',
       'hosted-simple',

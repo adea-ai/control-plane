@@ -193,7 +193,7 @@ describe('tool, model, policy, and execution constraints', () => {
     })
 
     expect(decision.policySnapshot.version).toBe(3)
-    expect(Object.keys(executionConstraintFixtures).sort()).toEqual([
+    expect(Object.keys(executionConstraintFixtures).toSorted()).toEqual([
       'budgetConstrained',
       'privileged',
       'readOnly',

@@ -406,7 +406,7 @@ function decide(observation: ReconciliationObservation, staleAfterMs: number): D
     observation.execution.state
   )
   if (terminal && observation.delivery.pendingCount > 0) {
-    return decision('terminal_undelivered', 'replay_events', 'remediated', false, [
+    return makeDecision('terminal_undelivered', 'replay_events', 'remediated', false, [
       `pending_events=${observation.delivery.pendingCount}`,
     ])
   }
@@ -415,25 +415,35 @@ function decide(observation: ReconciliationObservation, staleAfterMs: number): D
     !observation.attempt &&
     observation.workflow.status === 'missing'
   ) {
-    return decision('accepted_unstarted', 'resume_existing_workflow', 'remediated', true, [
+    return makeDecision('accepted_unstarted', 'resume_existing_workflow', 'remediated', true, [
       `command_status=${observation.command.status}`,
       'attempt=missing',
       'workflow=missing',
     ])
   }
   if (!terminal && isRuntimeTerminal(observation.runtime.status)) {
-    return decision('runtime_terminal_unrecorded', 'apply_runtime_terminal', 'remediated', true, [
-      `runtime_status=${observation.runtime.status}`,
-      `runtime_observed_at=${observation.runtime.observedAt}`,
-    ])
+    return makeDecision(
+      'runtime_terminal_unrecorded',
+      'apply_runtime_terminal',
+      'remediated',
+      true,
+      [
+        `runtime_status=${observation.runtime.status}`,
+        `runtime_observed_at=${observation.runtime.observedAt}`,
+      ]
+    )
   }
   if (!terminal && observation.runtime.status === 'disconnected') {
-    return decision('runtime_disconnected', 'manual_intervention', 'manual_intervention', true, [
-      'runtime_status=disconnected',
-    ])
+    return makeDecision(
+      'runtime_disconnected',
+      'manual_intervention',
+      'manual_intervention',
+      true,
+      ['runtime_status=disconnected']
+    )
   }
   if (!terminal && observation.runtime.status === 'not_found') {
-    return decision('runtime_disappeared', 'manual_intervention', 'manual_intervention', true, [
+    return makeDecision('runtime_disappeared', 'manual_intervention', 'manual_intervention', true, [
       'runtime_status=not_found',
     ])
   }
@@ -443,21 +453,21 @@ function decide(observation: ReconciliationObservation, staleAfterMs: number): D
     isStale(observation.workflow.lastProgressAt, observation.checkedAt, staleAfterMs) &&
     !isStale(observation.execution.updatedAt, observation.checkedAt, staleAfterMs)
   ) {
-    return decision('workflow_stalled', 'wait_for_runtime', 'waiting', true, [
+    return makeDecision('workflow_stalled', 'wait_for_runtime', 'waiting', true, [
       `workflow_last_progress_at=${observation.workflow.lastProgressAt ?? 'missing'}`,
       `runtime_status=${observation.runtime.status}`,
     ])
   }
   if (!terminal && isStale(observation.attempt?.updatedAt, observation.checkedAt, staleAfterMs)) {
-    return decision('stale_heartbeat', 'wait_for_runtime', 'waiting', true, [
+    return makeDecision('stale_heartbeat', 'wait_for_runtime', 'waiting', true, [
       `attempt_updated_at=${observation.attempt?.updatedAt ?? 'missing'}`,
       `runtime_status=${observation.runtime.status}`,
     ])
   }
-  return decision('healthy', 'none', 'resolved', false, ['no_reconciliation_required'])
+  return makeDecision('healthy', 'none', 'resolved', false, ['no_reconciliation_required'])
 }
 
-function decision(
+function makeDecision(
   reason: Decision['reason'],
   action: Decision['action'],
   state: Decision['state'],
@@ -502,7 +512,7 @@ function canonicalJson(value: unknown): string {
   if (value && typeof value === 'object') {
     return `{${Object.entries(value)
       .filter(([, nested]) => nested !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
       .join(',')}}`
   }

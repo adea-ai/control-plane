@@ -26,7 +26,7 @@ const apps = [
 const packages = readdirSync(new URL('../packages/', import.meta.url), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
   .map(({ name }) => name)
-  .sort()
+  .toSorted()
 const publicPackages = new Set([
   'contracts',
   'control-sdk',
@@ -163,7 +163,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.equal(new Set(owned).size, owned.length)
   assert.deepEqual(
     inventory.map(({ path }) => path),
-    [...owned].sort()
+    [...owned].toSorted()
   )
   assert.ok(
     inventory.every(({ primaryLane }) =>
@@ -454,9 +454,9 @@ test('tracks every workspace for coordinated stable release automation', async (
   for (const [path, packageName] of [
     ['.', 'workspace'],
     ...apps.map((app) => [`apps/${app}`, app]),
-    ...packages.map((packageName) => [
-      `packages/${packageName}`,
-      packageName === 'control-sdk' ? 'sdk' : packageName,
+    ...packages.map((workspacePackageName) => [
+      `packages/${workspacePackageName}`,
+      workspacePackageName === 'control-sdk' ? 'sdk' : workspacePackageName,
     ]),
   ]) {
     assert.equal(config.packages[path]['package-name'], `@control-plane/${packageName}`)

@@ -78,8 +78,8 @@ export class GithubReleaseVerifier implements MarketplaceReleaseVerifier {
       if (totalBytes > this.#maxBytes) return false
       files.set(relativePath, new Uint8Array(bytes))
     }
-    const expectedPaths = [...input.release.fileIndex].sort()
-    const actualPaths = [...files.keys()].sort()
+    const expectedPaths = [...input.release.fileIndex].toSorted()
+    const actualPaths = [...files.keys()].toSorted()
     if (
       expectedPaths.length !== actualPaths.length ||
       expectedPaths.some((path, index) => path !== actualPaths[index])

@@ -1378,7 +1378,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     }
     const effects = [terminal, cancelledTerminal]
     const terminalOutcomes = await Promise.all(effects.map((effect) => sink.applyTerminal(effect)))
-    expect(terminalOutcomes.map(({ outcome }) => outcome).sort()).toEqual([
+    expect(terminalOutcomes.map(({ outcome }) => outcome).toSorted()).toEqual([
       'applied',
       'terminal_conflict',
     ])
@@ -1537,7 +1537,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const pending = await readPending()
     expect(pending).toHaveLength(2)
     expect(pending.every((row) => row.status === 'pending')).toBe(true)
-    expect(pending.map((row) => row.payload.currentState).sort()).toEqual(['healthy', 'stale'])
+    expect(pending.map((row) => row.payload.currentState).toSorted()).toEqual(['healthy', 'stale'])
     expect(
       await restarted.refresh({
         runtimeConnectionId,
@@ -2770,7 +2770,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         type: 'execution.progressed',
       }),
     ])
-    expect(events.map(({ sequence }) => sequence).sort()).toEqual([2, 3])
+    expect(events.map(({ sequence }) => sequence).toSorted()).toEqual([2, 3])
     expect(
       (await repository.queryAfter(executionId, 1, 10)).map(({ sequence }) => sequence)
     ).toEqual([2, 3])

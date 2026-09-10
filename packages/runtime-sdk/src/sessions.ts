@@ -202,7 +202,7 @@ export class InMemoryExternalSessionRepository implements ExternalSessionReposit
           (scope.runtimeConnectionId === undefined ||
             session.runtimeConnectionId === scope.runtimeConnectionId)
       )
-      .sort((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
       .map(clone)
   }
 
@@ -505,13 +505,13 @@ function normalizeRegistration(
 function normalizeSnapshot(
   snapshot: z.output<typeof ExternalSessionCapabilitySnapshotSchema>
 ): z.output<typeof ExternalSessionCapabilitySnapshotSchema> {
-  return { ...snapshot, operations: [...snapshot.operations].sort() }
+  return { ...snapshot, operations: [...snapshot.operations].toSorted() }
 }
 
 function normalizeSafeMetadata(
   metadata: z.output<typeof ExternalSessionSafeMetadataSchema>
 ): z.output<typeof ExternalSessionSafeMetadataSchema> {
-  return { ...metadata, limitations: [...metadata.limitations].sort() }
+  return { ...metadata, limitations: [...metadata.limitations].toSorted() }
 }
 
 function sameRegistration(

@@ -276,7 +276,7 @@ export class SandboxCoordinator {
         destroyed.push(handle.sandboxId)
       }
     }
-    return destroyed.sort()
+    return destroyed.toSorted()
   }
 
   #record(sandboxId: string): SandboxRecord {

@@ -76,7 +76,7 @@ export function negotiateGatewayProtocolVersion(
   const remote = highestMinor(remoteValues)
   const major = [...local.keys()]
     .filter((candidate) => remote.has(candidate))
-    .sort((left, right) => right - left)[0]
+    .toSorted((left, right) => right - left)[0]
   return major === undefined
     ? undefined
     : { major, minor: Math.min(local.get(major) ?? 0, remote.get(major) ?? 0) }

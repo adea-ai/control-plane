@@ -214,7 +214,7 @@ export async function runExecutionLifecycle(
     validateInteractionResponse(response)
     if (input.graph) {
       if (!('checkpointId' in runtimeOutcome)) throw new Error('GRAPH_RESUME_ACTIVITY_REQUIRED')
-      const raced = await raceActivity(
+      const graphOutcomeRace = await raceActivity(
         activities.resumeGraphSegment({
           executionId: input.executionId,
           attemptId,
@@ -228,12 +228,12 @@ export async function runExecutionLifecycle(
         }),
         control
       )
-      if (raced.type === 'terminal') {
-        return finishTerminal(input, activities, raced.control, key, attemptId)
+      if (graphOutcomeRace.type === 'terminal') {
+        return finishTerminal(input, activities, graphOutcomeRace.control, key, attemptId)
       }
-      runtimeOutcome = raced.value
+      runtimeOutcome = graphOutcomeRace.value
     } else {
-      const raced = await raceActivity(
+      const interactionOutcomeRace = await raceActivity(
         activities.applyInteraction({
           executionId: input.executionId,
           attemptId,
@@ -242,10 +242,10 @@ export async function runExecutionLifecycle(
         }),
         control
       )
-      if (raced.type === 'terminal') {
-        return finishTerminal(input, activities, raced.control, key, attemptId)
+      if (interactionOutcomeRace.type === 'terminal') {
+        return finishTerminal(input, activities, interactionOutcomeRace.control, key, attemptId)
       }
-      runtimeOutcome = raced.value
+      runtimeOutcome = interactionOutcomeRace.value
     }
   }
   const terminal = await control.checkTerminal?.()

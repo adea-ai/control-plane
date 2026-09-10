@@ -305,7 +305,7 @@ function uniqueSorted<Value extends { code: string; capability?: string | undefi
   values: readonly Value[]
 ): Value[] {
   const unique = new Map(values.map((value) => [`${value.code}:${value.capability ?? ''}`, value]))
-  return [...unique.values()].sort((left, right) =>
+  return [...unique.values()].toSorted((left, right) =>
     `${left.code}:${left.capability ?? ''}`.localeCompare(`${right.code}:${right.capability ?? ''}`)
   )
 }
@@ -315,7 +315,7 @@ function digestEligibilityInput(input: RuntimeEligibilityInput): string {
     ...input,
     executionPlan: {
       ...input.executionPlan,
-      runtimeRequirements: [...input.executionPlan.runtimeRequirements].sort((left, right) =>
+      runtimeRequirements: [...input.executionPlan.runtimeRequirements].toSorted((left, right) =>
         left.capability.localeCompare(right.capability)
       ),
     },
@@ -323,18 +323,18 @@ function digestEligibilityInput(input: RuntimeEligibilityInput): string {
       ...input.candidate,
       connection: {
         ...input.candidate.connection,
-        capabilities: [...input.candidate.connection.capabilities].sort((left, right) =>
+        capabilities: [...input.candidate.connection.capabilities].toSorted((left, right) =>
           left.name.localeCompare(right.name)
         ),
-        limitations: [...input.candidate.connection.limitations].sort(),
-        diagnostics: [...(input.candidate.connection.diagnostics ?? [])].sort(),
+        limitations: [...input.candidate.connection.limitations].toSorted(),
+        diagnostics: [...(input.candidate.connection.diagnostics ?? [])].toSorted(),
       },
     },
     policy: {
       ...input.policy,
-      allowedFamilies: [...input.policy.allowedFamilies].sort(),
-      allowedLocations: [...input.policy.allowedLocations].sort(),
-      deniedRuntimeConnectionIds: [...input.policy.deniedRuntimeConnectionIds].sort(),
+      allowedFamilies: [...input.policy.allowedFamilies].toSorted(),
+      allowedLocations: [...input.policy.allowedLocations].toSorted(),
+      deniedRuntimeConnectionIds: [...input.policy.deniedRuntimeConnectionIds].toSorted(),
     },
   }
   return `sha256:${createHash('sha256').update(JSON.stringify(normalized)).digest('hex')}`

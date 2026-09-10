@@ -182,7 +182,7 @@ export class ModelRouteRegistry {
           deployment.alias === alias &&
           this.#health.get(deployment.deploymentId) !== 'unhealthy'
       )
-      .sort(compareDeployments)
+      .toSorted(compareDeployments)
       .map(clone)
   }
 }

@@ -147,7 +147,7 @@ function flattenValidationErrors(errors: ValidationError[], parent = ''): Valida
   return errors.flatMap((error) => {
     const field = parent ? `${parent}.${error.property}` : error.property
     const current = error.constraints
-      ? [{ codes: Object.keys(error.constraints).sort(), field }]
+      ? [{ codes: Object.keys(error.constraints).toSorted(), field }]
       : []
     return [...current, ...flattenValidationErrors(error.children ?? [], field)]
   })

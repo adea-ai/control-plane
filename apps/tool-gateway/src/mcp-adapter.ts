@@ -292,9 +292,9 @@ function assertBoundedDiscovery(discovered: readonly McpDiscoveredTool[]): void 
       const capabilities = new Set<string>()
       for (const capability of tool.capabilities) {
         assertBoundedString(capability, mcpDiscoveryLimits.maxCapabilityBytes)
-        const canonical = canonicalName(capability)
-        if (capabilities.has(canonical)) failDiscovery()
-        capabilities.add(canonical)
+        const canonicalCapability = canonicalName(capability)
+        if (capabilities.has(canonicalCapability)) failDiscovery()
+        capabilities.add(canonicalCapability)
       }
     }
 
@@ -373,11 +373,13 @@ function failDiscovery(): never {
 }
 
 function canonicalName(value: string): string {
-  const canonical = value
+  const normalizedName = value
     .toLowerCase()
     .replace(/[^a-z0-9.-]+/g, '.')
     .replace(/^\.+|\.+$/g, '')
-  return (/^[a-z]/.test(canonical) ? canonical : `tool.${canonical || 'unnamed'}`).slice(0, 128)
+  return (
+    /^[a-z]/.test(normalizedName) ? normalizedName : `tool.${normalizedName || 'unnamed'}`
+  ).slice(0, 128)
 }
 
 function digest(value: unknown): `sha256:${string}` {
@@ -390,7 +392,7 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   }

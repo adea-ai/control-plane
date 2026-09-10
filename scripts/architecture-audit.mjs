@@ -163,8 +163,8 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
                 ...manifest.dependencies,
                 ...manifest.optionalDependencies,
                 ...manifest.peerDependencies,
-              }).sort()
-              const developmentDependencies = Object.keys(manifest.devDependencies ?? {}).sort()
+              }).toSorted()
+              const developmentDependencies = Object.keys(manifest.devDependencies ?? {}).toSorted()
               return {
                 name: manifest.name,
                 path,
@@ -193,7 +193,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
     )
   )
     .flat()
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .toSorted((left, right) => left.name.localeCompare(right.name))
   const { ControlApiOperations } = await import(
     pathToFileURL(resolve(root, 'packages/control-sdk/src/operations.ts')).href
   )
@@ -204,7 +204,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
       method: value.method,
       path: value.path,
     }))
-    .sort((left, right) => left.operation.localeCompare(right.operation))
+    .toSorted((left, right) => left.operation.localeCompare(right.operation))
   const { PublicContractManifest } = await import(
     pathToFileURL(resolve(root, 'packages/contracts/src/versioning.ts')).href
   )
@@ -223,13 +223,13 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
         path,
         method: method.toUpperCase(),
         operationId: operation.operationId,
-        responseStatuses: Object.keys(operation.responses ?? {}).sort(),
+        responseStatuses: Object.keys(operation.responses ?? {}).toSorted(),
         secured: Array.isArray(operation.security) && operation.security.length > 0,
         hasRequestSchema:
           operation.requestBody?.content?.['application/json']?.schema !== undefined,
       }))
     )
-    .sort((left, right) => left.operationId.localeCompare(right.operationId))
+    .toSorted((left, right) => left.operationId.localeCompare(right.operationId))
   const controllerFiles = (await walk(resolve(root, 'apps/control-api/src'))).filter((path) =>
     path.endsWith('.controller.ts')
   )
@@ -237,7 +237,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
     await Promise.all(controllerFiles.map((path) => discoverControllerPaths(path)))
   )
     .flat()
-    .sort()
+    .toSorted()
   const profileSourceDigests = Object.fromEntries(
     await Promise.all(
       [
@@ -356,7 +356,7 @@ export async function validateArchitectureAudit(audit, options = {}) {
   if (JSON.stringify(auditedOperations) !== JSON.stringify(operationDiscovery)) {
     errors.push('operation inventory drifted from SDK declarations')
   }
-  const actualProfiles = (audit.profiles ?? []).map(({ id }) => id).sort()
+  const actualProfiles = (audit.profiles ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(actualProfiles) !== JSON.stringify(profileIds)) {
     errors.push('profiles must contain cloud, local, hosted-simple, and hosted-server')
   }
@@ -371,7 +371,7 @@ export async function validateArchitectureAudit(audit, options = {}) {
       'sourceDigest',
       'evidence',
     ])
-    if (JSON.stringify(Object.keys(profile.ports ?? {}).sort()) !== JSON.stringify(portIds)) {
+    if (JSON.stringify(Object.keys(profile.ports ?? {}).toSorted()) !== JSON.stringify(portIds)) {
       errors.push(`${profile.id}: infrastructure port inventory is incomplete`)
     }
     if (JSON.stringify(profile.ports) !== JSON.stringify(profilePorts[profile.id])) {
@@ -381,19 +381,19 @@ export async function validateArchitectureAudit(audit, options = {}) {
       errors.push(`${profile.id}: composition source digest drifted`)
     }
   }
-  const parityIds = (audit.persistenceParity ?? []).map(({ id }) => id).sort()
+  const parityIds = (audit.persistenceParity ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(parityIds) !== JSON.stringify(persistenceIds)) {
     errors.push('persistence parity inventory drifted')
   }
-  const actualCompatibility = (audit.compatibilityMatrix ?? []).map(({ id }) => id).sort()
+  const actualCompatibility = (audit.compatibilityMatrix ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(actualCompatibility) !== JSON.stringify(compatibilityIds)) {
     errors.push('compatibility matrix inventory drifted')
   }
-  const actualOwnership = (audit.ownership ?? []).map(({ entity }) => entity).sort()
+  const actualOwnership = (audit.ownership ?? []).map(({ entity }) => entity).toSorted()
   if (JSON.stringify(actualOwnership) !== JSON.stringify(ownershipEntities)) {
     errors.push('ownership inventory drifted')
   }
-  const actualLifecycle = (audit.lifecycleCoverage ?? []).map(({ concern }) => concern).sort()
+  const actualLifecycle = (audit.lifecycleCoverage ?? []).map(({ concern }) => concern).toSorted()
   if (JSON.stringify(actualLifecycle) !== JSON.stringify(lifecycleConcerns)) {
     errors.push('lifecycle inventory drifted')
   }
@@ -417,8 +417,8 @@ export async function validateArchitectureAudit(audit, options = {}) {
   for (const operation of audit.operations ?? []) {
     requireFields(errors, operation, ['trace', 'assessment'])
     if (
-      JSON.stringify(Object.keys(operation.trace ?? {}).sort()) !==
-      JSON.stringify([...traceStages].sort())
+      JSON.stringify(Object.keys(operation.trace ?? {}).toSorted()) !==
+      JSON.stringify([...traceStages].toSorted())
     ) {
       errors.push(`${operation.id}: operation trace stages are incomplete`)
     }
@@ -561,7 +561,7 @@ export async function renderArchitectureReport(audit) {
 
 function exportKeys(exports) {
   if (exports === undefined) return []
-  return typeof exports === 'string' ? ['.'] : Object.keys(exports).sort()
+  return typeof exports === 'string' ? ['.'] : Object.keys(exports).toSorted()
 }
 
 async function discoverControllerPaths(path) {
@@ -589,7 +589,7 @@ async function walk(directory) {
 
 async function digestFiles(root, paths) {
   const digest = createHash('sha256')
-  for (const path of [...paths].sort()) {
+  for (const path of [...paths].toSorted()) {
     digest.update(path)
     digest.update('\0')
     digest.update(await readFile(resolve(root, path)))

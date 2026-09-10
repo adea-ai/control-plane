@@ -47,7 +47,7 @@ describe('ExecutionEvent log', () => {
     const events = await Promise.all(inputs.map((input) => service.append(input)))
     const replay = await repository.queryAfter(executionId, 0, 100)
 
-    expect(events.map(({ sequence }) => sequence).sort((a, b) => a - b)).toEqual([
+    expect(events.map(({ sequence }) => sequence).toSorted((a, b) => a - b)).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8,
     ])
     expect(replay.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])

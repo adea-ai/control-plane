@@ -299,7 +299,7 @@ export class ManagedPiRemoteCommandFactory implements RemoteRuntimeCommandFactor
       runtimeConnectionId: input.runtime.runtimeConnectionId,
       executionId: input.executionId,
       attemptId: input.attempt.attemptId,
-      requiredCapabilities: [...new Set(input.requiredCapabilities)].sort(),
+      requiredCapabilities: [...new Set(input.requiredCapabilities)].toSorted(),
       payload,
     })
   }

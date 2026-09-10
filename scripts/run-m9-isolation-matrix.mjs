@@ -28,7 +28,7 @@ for (const { file, testName } of isolationEvidence) {
     throw new Error(`ISOLATION_EVIDENCE_MISSING:${file}:${testName}`)
 }
 
-const files = [...new Set(isolationEvidence.map(({ file }) => `./${file}`))].sort()
+const files = [...new Set(isolationEvidence.map(({ file }) => `./${file}`))].toSorted()
 const result = spawnSync(process.execPath, ['test', ...files], {
   cwd: repositoryRoot,
   stdio: 'inherit',

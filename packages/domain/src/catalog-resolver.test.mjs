@@ -59,12 +59,13 @@ describe('deterministic catalog resolution', () => {
       publishedAt: now,
     })
     const resolved = await resolveCatalogManifest({ profile, skills: repository })
-    expect(resolved.skills.map((skill) => skill.skillVersionId)).toEqual([
+    expect(resolved.skills.map((resolvedSkill) => resolvedSkill.skillVersionId)).toEqual([
       ids.depV2,
       ids.rootVersion,
     ])
     expect(
-      resolved.provenance.selected.find((skill) => skill.skillId === ids.dep).requestedRanges
+      resolved.provenance.selected.find((selectedSkill) => selectedSkill.skillId === ids.dep)
+        .requestedRanges
     ).toEqual(['^1.0.0'])
     expect(resolved.provenance.digest).toMatch(/^sha256:/)
   })

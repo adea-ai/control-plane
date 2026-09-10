@@ -356,7 +356,7 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       (await transaction.list(namespaces.projectStateHistory))
         .map((record) => ProjectStateSchema.parse(record.value))
         .filter((state) => state.workspaceId === workspaceId && state.projectId === projectId)
-        .sort((left, right) => left.revision - right.revision)
+        .toSorted((left, right) => left.revision - right.revision)
     )
   }
 

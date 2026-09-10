@@ -55,7 +55,7 @@ export class RuntimeDiscoveryService {
           },
         ]
       })
-      .sort((left, right) => left.runtimeNodeRefId.localeCompare(right.runtimeNodeRefId))
+      .toSorted((left, right) => left.runtimeNodeRefId.localeCompare(right.runtimeNodeRefId))
     return RuntimeListResponseSchema.parse({
       ...responseContext(input),
       data: { runtimes: models },
@@ -68,7 +68,7 @@ export class RuntimeDiscoveryService {
     const models = (await this.repository.listRuntimeConnections(scope))
       .map((model) => RuntimeConnectionDiscoveryReadModelSchema.parse(model))
       .filter((model) => matchesRuntimeFilters(model, input.parameters))
-      .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
     const page = paginate(models, input.parameters.cursor, input.parameters.limit, (model) =>
       String(model.runtimeConnectionId)
     )
@@ -102,7 +102,7 @@ export class RuntimeDiscoveryService {
             model.runtimeConnectionId === input.parameters.runtimeConnectionId) &&
           (input.parameters.states.length === 0 || input.parameters.states.includes(model.state))
       )
-      .sort((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
     const page = paginate(models, input.parameters.cursor, input.parameters.limit, (model) =>
       String(model.externalSessionId)
     )

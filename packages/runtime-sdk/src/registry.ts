@@ -308,7 +308,7 @@ export class InMemoryRuntimeConnectionRepository
   async listByRuntimeNode(runtimeNodeRefId: string): Promise<readonly RuntimeConnection[]> {
     return [...this.#connections.values()]
       .filter((connection) => connection.runtimeNodeRefId === runtimeNodeRefId)
-      .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
       .map(clone)
   }
 
@@ -393,7 +393,7 @@ function mutableUpdate(
 }
 
 function latest(...timestamps: string[]): string {
-  const [value] = [...timestamps].sort((left, right) => Date.parse(right) - Date.parse(left))
+  const [value] = [...timestamps].toSorted((left, right) => Date.parse(right) - Date.parse(left))
   if (!value) throw new Error('RUNTIME_CONNECTION_TIMESTAMP_REQUIRED')
   return value
 }

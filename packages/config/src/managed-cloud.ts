@@ -86,8 +86,8 @@ export function loadManagedCloudConfiguration(
     throw new ConfigurationError({
       code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
       service,
-      invalid: [...new Set(invalid)].sort(),
-      missing: [...new Set(missing)].sort(),
+      invalid: [...new Set(invalid)].toSorted(),
+      missing: [...new Set(missing)].toSorted(),
     })
   }
 

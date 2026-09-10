@@ -202,7 +202,7 @@ export class ExecutionPlanCompiler {
           semanticVersion: skill.manifest.semanticVersion,
           contentDigest: skill.manifest.contentDigest,
         }))
-        .sort((left, right) => left.skillVersionId.localeCompare(right.skillVersionId)),
+        .toSorted((left, right) => left.skillVersionId.localeCompare(right.skillVersionId)),
       contextPackage: contextPin(contextPackage),
       runtimeRequirements,
       constraints: normalizeConstraints(constraints),
@@ -529,7 +529,7 @@ function compileRuntimeRequirements(
 }
 
 function normalizeRuntimeRequirements(requirements: readonly CapabilityRequirement[]) {
-  return CapabilityRequirementSetSchema.parse(requirements).sort((left, right) =>
+  return CapabilityRequirementSetSchema.parse(requirements).toSorted((left, right) =>
     left.capability.localeCompare(right.capability)
   )
 }
@@ -574,7 +574,7 @@ function normalizeConstraints(constraints: ExecutionConstraintSet): ExecutionCon
     ...constraints,
     context: {
       ...constraints.context,
-      allowedClassifications: [...constraints.context.allowedClassifications].sort(),
+      allowedClassifications: [...constraints.context.allowedClassifications].toSorted(),
     },
     tools: {
       default: 'deny',
@@ -582,10 +582,10 @@ function normalizeConstraints(constraints: ExecutionConstraintSet): ExecutionCon
         .map((grant) => ({
           ...grant,
           tool: { ...grant.tool },
-          operations: [...grant.operations].sort(),
-          requiredCapabilities: [...grant.requiredCapabilities].sort(),
+          operations: [...grant.operations].toSorted(),
+          requiredCapabilities: [...grant.requiredCapabilities].toSorted(),
         }))
-        .sort((left, right) =>
+        .toSorted((left, right) =>
           `${left.tool.toolId}@${left.tool.versionRange}`.localeCompare(
             `${right.tool.toolId}@${right.tool.versionRange}`
           )
@@ -594,18 +594,18 @@ function normalizeConstraints(constraints: ExecutionConstraintSet): ExecutionCon
     models: constraints.models
       .map((model) => ({
         ...model,
-        requiredCapabilities: [...model.requiredCapabilities].sort(),
+        requiredCapabilities: [...model.requiredCapabilities].toSorted(),
         providerPolicy: {
-          allowedClasses: [...model.providerPolicy.allowedClasses].sort(),
-          deniedProviders: [...model.providerPolicy.deniedProviders].sort(),
-          dataResidency: [...model.providerPolicy.dataResidency].sort(),
+          allowedClasses: [...model.providerPolicy.allowedClasses].toSorted(),
+          deniedProviders: [...model.providerPolicy.deniedProviders].toSorted(),
+          dataResidency: [...model.providerPolicy.dataResidency].toSorted(),
         },
       }))
-      .sort((left, right) => left.alias.localeCompare(right.alias)),
+      .toSorted((left, right) => left.alias.localeCompare(right.alias)),
     runtime: {
-      allowedFamilies: [...constraints.runtime.allowedFamilies].sort(),
-      allowedLocations: [...constraints.runtime.allowedLocations].sort(),
-      requiredCapabilities: [...constraints.runtime.requiredCapabilities].sort(),
+      allowedFamilies: [...constraints.runtime.allowedFamilies].toSorted(),
+      allowedLocations: [...constraints.runtime.allowedLocations].toSorted(),
+      requiredCapabilities: [...constraints.runtime.requiredCapabilities].toSorted(),
     },
     limits: normalize(constraints.limits),
     interaction: normalize(constraints.interaction),
@@ -672,7 +672,7 @@ function normalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => left.localeCompare(right))
         .map(([key, entry]) => [key, normalize(entry)])
     )
   }

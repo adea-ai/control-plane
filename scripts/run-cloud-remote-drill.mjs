@@ -505,8 +505,8 @@ try {
       commands,
       factory: cancellationFactory,
       waiter: {
-        wait: async ({ command }) => {
-          cancellationRecords.push(command)
+        wait: async ({ command: cancellationCommand }) => {
+          cancellationRecords.push(cancellationCommand)
           return { outcome: 'cancelled' }
         },
       },

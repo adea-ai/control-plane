@@ -9,7 +9,7 @@ const providers = []
 const directories = []
 
 afterEach(async () => {
-  for (const provider of providers.splice(0)) provider.close()
+  for (const activeProvider of providers.splice(0)) activeProvider.close()
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
 })

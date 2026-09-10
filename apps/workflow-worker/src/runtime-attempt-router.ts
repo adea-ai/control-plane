@@ -40,19 +40,19 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
     const candidates = discovered
       .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))
       .filter((value) => value !== undefined)
-      .sort(compareCandidates)
+      .toSorted(compareCandidates)
     const selected = candidates[0]
     if (selected === undefined) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE')
     const inputDigest = digest({
       executionId: input.execution.executionId,
       executionPlanId: input.executionPlan.executionPlanId,
       executionPlanDigest: input.executionPlan.contentDigest,
-      runtimeRequirements: [...input.executionPlan.runtimeRequirements].sort((left, right) =>
+      runtimeRequirements: [...input.executionPlan.runtimeRequirements].toSorted((left, right) =>
         left.capability.localeCompare(right.capability)
       ),
       constraints: {
-        allowedFamilies: [...input.executionPlan.constraints.runtime.allowedFamilies].sort(),
-        allowedLocations: [...input.executionPlan.constraints.runtime.allowedLocations].sort(),
+        allowedFamilies: [...input.executionPlan.constraints.runtime.allowedFamilies].toSorted(),
+        allowedLocations: [...input.executionPlan.constraints.runtime.allowedLocations].toSorted(),
       },
       candidates: candidates.map(({ connection, degraded }) => ({
         runtimeConnectionId: connection.runtimeConnectionId,

@@ -110,7 +110,7 @@ export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   const object = value as JsonObject
   return `{${Object.keys(object)
-    .sort()
+    .toSorted()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
     .join(',')}}`
 }
@@ -121,7 +121,7 @@ export function digest(value: unknown): string {
 
 export function bytesDigest(files: ReadonlyMap<string, Uint8Array>): string {
   const hash = createHash('sha256')
-  for (const [path, bytes] of [...files.entries()].sort(([left], [right]) =>
+  for (const [path, bytes] of [...files.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right)
   )) {
     hash.update(`${path.length}:${path}:${bytes.byteLength}:`)
@@ -320,10 +320,10 @@ export function verifyArtifacts(artifacts: MarketplaceArtifacts): MarketplaceCat
   const integrityFiles = isStringRecord(integrity.files) ? integrity.files : undefined
   if (integrityFiles === undefined)
     throw verificationError('Marketplace integrity file set is invalid')
-  const integrityKeys = Object.keys(integrityFiles).sort()
+  const integrityKeys = Object.keys(integrityFiles).toSorted()
   if (
     integrityKeys.length !== integrityArtifactNames.length ||
-    integrityKeys.join('|') !== [...integrityArtifactNames].sort().join('|')
+    integrityKeys.join('|') !== [...integrityArtifactNames].toSorted().join('|')
   )
     throw verificationError('Marketplace integrity file set is invalid')
   for (const name of integrityArtifactNames) {
@@ -360,7 +360,7 @@ export function parseCatalog(value: unknown): MarketplaceCatalog {
     !Array.isArray(candidate.plugins)
   )
     throw verificationError('Marketplace catalog schema is invalid')
-  const plugins = candidate.plugins.map((value, index) => parsePlugin(value, index))
+  const plugins = candidate.plugins.map((pluginValue, index) => parsePlugin(pluginValue, index))
   if (new Set(plugins.map((plugin) => plugin.pluginId)).size !== plugins.length)
     throw verificationError('Marketplace catalog contains duplicate plugin IDs')
   return {

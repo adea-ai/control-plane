@@ -127,7 +127,7 @@ export async function resolveCatalogManifest(input: {
   const visiting = new Set<string>()
   const visit = async (skillId: string): Promise<void> => {
     if (visiting.has(skillId))
-      throw new CatalogResolutionError('SKILL_DEPENDENCY_CYCLE', [...visiting, skillId].sort())
+      throw new CatalogResolutionError('SKILL_DEPENDENCY_CYCLE', [...visiting, skillId].toSorted())
     if (selected.has(skillId)) return
     const constraints = requests.get(skillId) ?? []
     if (constraints.length === 0)
@@ -143,7 +143,7 @@ export async function resolveCatalogManifest(input: {
           satisfies(version.manifest.semanticVersion, request.versionRange)
         )
       )
-      .sort(
+      .toSorted(
         (left, right) =>
           compareVersions(right.manifest.semanticVersion, left.manifest.semanticVersion) ||
           left.skillVersionId.localeCompare(right.skillVersionId)
@@ -152,7 +152,7 @@ export async function resolveCatalogManifest(input: {
     if (!version)
       throw new CatalogResolutionError(
         'SKILL_VERSION_UNSATISFIED',
-        constraints.map((item) => `${skillId}:${item.versionRange}`).sort()
+        constraints.map((item) => `${skillId}:${item.versionRange}`).toSorted()
       )
     selected.set(skillId, version)
     const reason =
@@ -160,7 +160,7 @@ export async function resolveCatalogManifest(input: {
       constraints[0]?.source
     if (!reason) throw new CatalogResolutionError('SKILL_REQUEST_MISSING', [skillId])
     reasons.set(skillId, reason)
-    for (const dependency of [...version.manifest.dependencies].sort(
+    for (const dependency of [...version.manifest.dependencies].toSorted(
       (a, b) => a.skillId.localeCompare(b.skillId) || a.versionRange.localeCompare(b.versionRange)
     )) {
       const dependencyRequests = requests.get(dependency.skillId) ?? []
@@ -174,7 +174,7 @@ export async function resolveCatalogManifest(input: {
     }
     visiting.delete(skillId)
   }
-  for (const skillId of [...requests.keys()].sort()) await visit(skillId)
+  for (const skillId of [...requests.keys()].toSorted()) await visit(skillId)
 
   const selectedVersions = [...selected.values()]
   for (const version of selectedVersions) {
@@ -189,7 +189,7 @@ export async function resolveCatalogManifest(input: {
       if (!supersedes)
         throw new CatalogResolutionError(
           'SKILL_CONFLICT',
-          [version.skillVersionId, other.skillVersionId].sort()
+          [version.skillVersionId, other.skillVersionId].toSorted()
         )
     }
   }
@@ -201,7 +201,7 @@ export async function resolveCatalogManifest(input: {
     semanticVersion: version.manifest.semanticVersion,
     contentDigest: version.manifest.contentDigest,
     dependencies: [...version.manifest.dependencies]
-      .sort(
+      .toSorted(
         (a, b) => a.skillId.localeCompare(b.skillId) || a.versionRange.localeCompare(b.versionRange)
       )
       .map((dependency) => ({ ...dependency, source: 'dependency' as const })),
@@ -220,11 +220,11 @@ export async function resolveCatalogManifest(input: {
       ...skill,
       requestedRanges: (requests.get(skill.skillId) ?? [])
         .map((request) => request.versionRange)
-        .sort(),
+        .toSorted(),
       reason: reasons.get(skill.skillId) ?? 'dependency',
     })),
     decisions: [...selected.keys()]
-      .sort()
+      .toSorted()
       .map((skillId) => `SELECTED:${skillId}:${selected.get(skillId)?.skillVersionId}`),
   }
   return {
@@ -243,13 +243,13 @@ function topologicalOrder(selected: Map<string, SkillVersion>): SkillVersion[] {
     visited.add(skillId)
     const version = selected.get(skillId)
     if (!version) return
-    for (const dependency of [...version.manifest.dependencies].sort((a, b) =>
+    for (const dependency of [...version.manifest.dependencies].toSorted((a, b) =>
       a.skillId.localeCompare(b.skillId)
     ))
       visit(dependency.skillId)
     result.push(version)
   }
-  for (const skillId of [...selected.keys()].sort()) visit(skillId)
+  for (const skillId of [...selected.keys()].toSorted()) visit(skillId)
   return result
 }
 

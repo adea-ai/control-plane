@@ -284,7 +284,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       (await transaction.list(namespaces.attempts))
         .map((record) => ExecutionAttemptSchema.parse(record.value))
         .filter((attempt) => attempt.executionId === executionId)
-        .sort((left, right) => left.sequence - right.sequence)
+        .toSorted((left, right) => left.sequence - right.sequence)
     )
   }
 

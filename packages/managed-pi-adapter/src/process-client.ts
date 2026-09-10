@@ -143,7 +143,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       (_key, value: unknown) => {
         if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
           return Object.fromEntries(
-            Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+            Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
           )
         }
         return value

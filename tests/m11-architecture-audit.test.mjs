@@ -58,10 +58,10 @@ describe('M11.2 architecture audit', () => {
     expect(
       discovered.packages.every(({ path, version }) => discovered.releaseManifest[path] === version)
     ).toBe(true)
-    expect(audit.operations.map(({ operation }) => operation).sort()).toEqual(publicOperations)
-    expect(audit.profiles.map(({ id }) => id).sort()).toEqual(profileIds)
+    expect(audit.operations.map(({ operation }) => operation).toSorted()).toEqual(publicOperations)
+    expect(audit.profiles.map(({ id }) => id).toSorted()).toEqual(profileIds)
     for (const profile of audit.profiles) {
-      expect(Object.keys(profile.ports).sort(), profile.id).toEqual(infrastructurePorts)
+      expect(Object.keys(profile.ports).toSorted(), profile.id).toEqual(infrastructurePorts)
       expect(profile.sourceDigest, profile.id).toMatch(/^sha256:[0-9a-f]{64}$/)
     }
   })
@@ -149,7 +149,7 @@ describe('M11.2 architecture audit', () => {
         'events',
       ])
     )
-    expect(audit.lifecycleCoverage.map(({ concern }) => concern).sort()).toEqual([
+    expect(audit.lifecycleCoverage.map(({ concern }) => concern).toSorted()).toEqual([
       'approval-and-interaction',
       'cancellation-and-timeout',
       'idempotency-and-inbox',

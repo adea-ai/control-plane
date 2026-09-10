@@ -48,8 +48,8 @@ function databaseConfigurationError(
 ): ConfigurationError {
   return new ConfigurationError({
     code: 'INVALID_DATABASE_CONFIGURATION',
-    invalid: [...invalid].sort(),
-    missing: [...missing].sort(),
+    invalid: [...invalid].toSorted(),
+    missing: [...missing].toSorted(),
     role,
   })
 }

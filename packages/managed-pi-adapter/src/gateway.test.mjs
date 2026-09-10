@@ -130,7 +130,7 @@ describe('non-co-located Managed Pi through Runtime Gateway', () => {
       },
     })
     expect(certification.verifiedCapabilities).toEqual(
-      inspection.capabilities.map(({ name }) => name).sort()
+      inspection.capabilities.map(({ name }) => name).toSorted()
     )
   })
 

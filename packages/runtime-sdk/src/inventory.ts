@@ -49,7 +49,7 @@ export class InMemoryRuntimeInventoryCheckpointRepository
     const { afterNodeId, limit } = RuntimeInventoryScanSchema.parse(input)
     return [...this.#checkpoints.values()]
       .filter((record) => afterNodeId === undefined || record.runtimeNodeRefId > afterNodeId)
-      .sort((left, right) =>
+      .toSorted((left, right) =>
         left.runtimeNodeRefId < right.runtimeNodeRefId
           ? -1
           : left.runtimeNodeRefId > right.runtimeNodeRefId

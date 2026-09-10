@@ -256,7 +256,7 @@ function composeTools(left: ToolAccessPolicy, right: ToolAccessPolicy): ToolAcce
     return [
       {
         tool: leftGrant.tool,
-        operations: operations.sort(),
+        operations: operations.toSorted(),
         requiredCapabilities: union(
           leftGrant.requiredCapabilities,
           rightGrant.requiredCapabilities
@@ -354,13 +354,13 @@ function intersection<Value extends string>(
   right: readonly Value[],
   path: string
 ): Value[] {
-  const result = [...new Set(left.filter((value) => right.includes(value)))].sort()
+  const result = [...new Set(left.filter((value) => right.includes(value)))].toSorted()
   if (result.length === 0) conflict(path)
   return result
 }
 
 function union<Value extends string>(left: readonly Value[], right: readonly Value[]): Value[] {
-  return [...new Set([...left, ...right])].sort()
+  return [...new Set([...left, ...right])].toSorted()
 }
 
 function stricter<Value extends string>(left: Value, right: Value, order: readonly Value[]): Value {

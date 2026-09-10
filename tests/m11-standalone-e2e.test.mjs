@@ -730,20 +730,22 @@ describe('M11 standalone execution composition', () => {
         })
         if (mode === 'cancel') {
           await waitForNativePiPrompt(realExecutable, promptRecord)
-          const command = {
+          const requestCommand = {
             ...ControlApiFixtures.executionAcceptance.request,
             commandId: 'cmd_01JABCDEF0123456789ABCDEFH',
             operation: 'execution.cancel',
             issuedAt: new Date().toISOString(),
             payload: { executionId: response.data.executionId },
           }
-          await expect(sdk.cancelExecution(command)).rejects.toThrow('M11_LOST_CANCELLATION_ACK')
+          await expect(sdk.cancelExecution(requestCommand)).rejects.toThrow(
+            'M11_LOST_CANCELLATION_ACK'
+          )
           const replay = await sdk.cancelExecution({
-            ...command,
+            ...requestCommand,
             commandId: 'cmd_01JABCDEF0123456789ABCDEFJ',
           })
           expect(replay.data).toMatchObject({
-            commandId: command.commandId,
+            commandId: requestCommand.commandId,
             replayed: true,
             status: 'accepted',
           })
@@ -925,10 +927,10 @@ async function waitForNativePiPrompt(realExecutable, promptRecord) {
   throw new Error('M11_NATIVE_PI_PROMPT_NOT_STARTED')
 }
 
-async function waitForTerminalExecution(composition, executionId) {
+async function waitForTerminalExecution(runtimeComposition, executionId) {
   const deadline = Date.now() + 15_000
   while (Date.now() < deadline) {
-    const execution = await composition.executions.getExecution(executionId)
+    const execution = await runtimeComposition.executions.getExecution(executionId)
     if (['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)) {
       return execution
     }
@@ -1110,10 +1112,10 @@ class CompletedManagedPiClient {
     }
   }
 
-  async start(command) {
+  async start(startCommand) {
     const handle = {
-      handleId: `managed-pi:${command.attemptId}`,
-      attemptId: command.attemptId,
+      handleId: `managed-pi:${startCommand.attemptId}`,
+      attemptId: startCommand.attemptId,
       startedAt: observedAt,
     }
     this.executions.set(handle.handleId, handle)

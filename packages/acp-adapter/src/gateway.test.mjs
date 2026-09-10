@@ -210,7 +210,7 @@ describe('non-co-located ACP through Runtime Gateway', () => {
       },
     })
     expect(certification.verifiedCapabilities).toEqual(
-      inspection.capabilities.map(({ name }) => name).sort()
+      inspection.capabilities.map(({ name }) => name).toSorted()
     )
   })
 

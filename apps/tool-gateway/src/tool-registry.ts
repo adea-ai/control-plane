@@ -151,13 +151,13 @@ export class ToolRegistry {
     const scope = IdentifierSchemas.workspaceId.parse(workspaceId)
     const definitions = (await this.repository.listDefinitions())
       .filter((definition) => hasScope(definition, scope))
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .toSorted((left, right) => left.name.localeCompare(right.name))
     return Promise.all(
       definitions.map(async (definition) => ({
         definition: clone(definition),
         versions: (await this.repository.listVersions(definition.toolDefinitionId))
           .filter(({ lifecycle }) => lifecycle !== 'revoked')
-          .sort((left, right) => left.semanticVersion.localeCompare(right.semanticVersion))
+          .toSorted((left, right) => left.semanticVersion.localeCompare(right.semanticVersion))
           .map(clone),
       }))
     )
@@ -403,7 +403,7 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   }

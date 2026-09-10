@@ -70,7 +70,7 @@ test('SQLite benchmark emits raw measured samples and explicitly does not certif
   ]) {
     expect(report.samples[sample]).toHaveLength(8)
     expect(report.samples[sample].every((value) => Number.isFinite(value) && value >= 0)).toBe(true)
-    const sorted = [...report.samples[sample]].sort((a, b) => a - b)
+    const sorted = [...report.samples[sample]].toSorted((a, b) => a - b)
     expect(report.measurements[metric].p50).toBe(sorted[3])
     expect(report.measurements[metric].max).toBe(sorted[7])
   }

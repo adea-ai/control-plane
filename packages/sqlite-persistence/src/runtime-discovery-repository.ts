@@ -120,7 +120,7 @@ export class SqliteRuntimeDiscoveryRepository {
             record.runtimeNodeRefId === scope.runtimeNodeRefId)
       )
       .map((record) => structuredClone(record.model))
-      .sort((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
   }
 
   async getRuntimeConnection(
@@ -155,7 +155,7 @@ export class SqliteRuntimeDiscoveryRepository {
             record.runtimeNodeRefId === scope.runtimeNodeRefId)
       )
       .map((record) => structuredClone(record.model))
-      .sort((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
   }
 
   async getExternalSession(

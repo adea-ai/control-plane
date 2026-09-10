@@ -442,7 +442,7 @@ export class AcpGatewayClient implements AcpTransport {
       runtimeConnectionId: this.#runtimeConnectionId,
       executionId: this.#executionId,
       attemptId: input.attemptId ?? this.#defaultAttemptId,
-      requiredCapabilities: [...new Set(input.requiredCapabilities)].sort(),
+      requiredCapabilities: [...new Set(input.requiredCapabilities)].toSorted(),
       payload,
     })
     try {

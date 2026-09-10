@@ -134,7 +134,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   }
 
   const expectedProfiles = ['cloud', 'hosted-server', 'hosted-simple', 'local']
-  const actualProfiles = (ledger.deploymentProfiles ?? []).map(({ id }) => id).sort()
+  const actualProfiles = (ledger.deploymentProfiles ?? []).map(({ id }) => id).toSorted()
   if (JSON.stringify(actualProfiles) !== JSON.stringify(expectedProfiles)) {
     errors.push('deploymentProfiles must contain cloud, local, hosted-simple, and hosted-server')
   }
@@ -207,10 +207,10 @@ export async function validateRequirementsLedger(ledger, options = {}) {
 
   const inventoryRequirements = (ledger.requirementInventory ?? [])
     .map(({ id, sourceId }) => `${id}:${sourceId}`)
-    .sort()
+    .toSorted()
   const requirementRows = (ledger.requirements ?? [])
     .map(({ id, sourceId }) => `${id}:${sourceId}`)
-    .sort()
+    .toSorted()
   if (JSON.stringify(inventoryRequirements) !== JSON.stringify(requirementRows)) {
     errors.push(
       'requirementInventory and requirements must contain the same stable IDs and sources'
@@ -223,8 +223,12 @@ export async function validateRequirementsLedger(ledger, options = {}) {
       errors.push(`${audit.id}: invalid milestone ${audit.milestone}`)
     }
   }
-  const inventoryIssues = (ledger.priorIssueInventory ?? []).map(({ issue }) => issue).sort(numeric)
-  const auditIssues = (ledger.priorMilestoneAudits ?? []).map(({ issue }) => issue).sort(numeric)
+  const inventoryIssues = (ledger.priorIssueInventory ?? [])
+    .map(({ issue }) => issue)
+    .toSorted(numeric)
+  const auditIssues = (ledger.priorMilestoneAudits ?? [])
+    .map(({ issue }) => issue)
+    .toSorted(numeric)
   if (JSON.stringify(inventoryIssues) !== JSON.stringify(auditIssues)) {
     errors.push('priorIssueInventory and priorMilestoneAudits must contain the same issue IDs')
   }
@@ -288,7 +292,7 @@ export function refreshPriorMilestoneAudits(ledger, issues) {
       closedAt: issue.closedAt,
       url: issue.url,
     }))
-    .sort((left, right) => left.issue - right.issue)
+    .toSorted((left, right) => left.issue - right.issue)
   const audits = new Map(ledger.priorMilestoneAudits.map((row) => [row.issue, row]))
   const missing = inventory.filter(({ issue }) => !audits.has(issue))
   const removed = [...audits.keys()].filter(
@@ -438,7 +442,7 @@ function countBy(rows, key) {
 
 function formatCounts(counts) {
   return Object.entries(counts)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${value} ${key}`)
     .join(', ')
 }

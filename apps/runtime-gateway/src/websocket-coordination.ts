@@ -198,7 +198,7 @@ export class RecordingGatewayMetrics implements GatewayMetrics {
 
 function metricKey(name: string, labels: Readonly<Record<string, string>>): string {
   const suffix = Object.entries(labels)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${value}`)
     .join(',')
   return `${name}{${suffix}}`

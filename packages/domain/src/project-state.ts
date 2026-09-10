@@ -334,14 +334,16 @@ export class ProjectStateError extends Error {
 
 export class ProjectStateConflict extends Error {
   readonly code = 'STALE_REVISION'
+  readonly conflictingItemIds: readonly string[]
 
   constructor(
     readonly expectedRevision: number,
     readonly currentRevision: number,
-    readonly conflictingItemIds: readonly string[]
+    conflicts: readonly string[]
   ) {
     super('STALE_REVISION')
     this.name = 'ProjectStateConflict'
+    this.conflictingItemIds = conflicts
   }
 }
 
@@ -452,7 +454,7 @@ export class ProjectStateService {
         mutationId: mutation.mutationId,
         inputDigest,
         resultingRevision: next.revision,
-        touchedItemIds: mutation.operations.map(operationItemId).sort(),
+        touchedItemIds: mutation.operations.map(operationItemId).toSorted(),
       }
       if (!(await this.repository.compareAndSet(current.revision, next, record))) {
         const winner = await this.repository.getMutation(
@@ -708,7 +710,7 @@ function applyOperations(
   return ProjectStateSchema.parse({
     ...current,
     revision: current.revision + 1,
-    items: [...items.values()].sort(
+    items: [...items.values()].toSorted(
       (left, right) => left.key.localeCompare(right.key) || left.itemId.localeCompare(right.itemId)
     ),
     updatedAt: at,
@@ -741,7 +743,7 @@ function conflictingItemIds(
       return canonical(baseItem) !== canonical(currentItem)
     })
     .map(operationItemId)
-    .sort()
+    .toSorted()
 }
 
 function operationItemId(operation: ProjectStateOperation): ProjectStateItem['itemId'] {
@@ -790,7 +792,7 @@ function normalize(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => left.localeCompare(right))
         .map(([key, entry]) => [key, normalize(entry)])
     )
   }

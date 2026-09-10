@@ -200,7 +200,7 @@ describe('runtime eligibility', () => {
       input({
         policy: {
           ...input().policy,
-          allowedFamilies: [...input().policy.allowedFamilies].reverse(),
+          allowedFamilies: [...input().policy.allowedFamilies].toReversed(),
         },
       })
     )

@@ -227,7 +227,7 @@ export class InMemoryRuntimeCommandRepository implements RuntimeCommandRepositor
           record.nodeId === nodeId &&
           ['queued', 'dispatched', 'acknowledged'].includes(record.status)
       )
-      .sort((left, right) =>
+      .toSorted((left, right) =>
         left.issuedAt === right.issuedAt
           ? left.commandId.localeCompare(right.commandId)
           : left.issuedAt.localeCompare(right.issuedAt)

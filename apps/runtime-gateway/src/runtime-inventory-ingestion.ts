@@ -291,7 +291,7 @@ export class RuntimeInventoryIngestionService {
     prepared?: PreparedInventory
   ): Promise<RuntimeInventoryIngestionResult> {
     this.#assertSource(inventory, source)
-    const digest = hashInventory(inventory)
+    const inventoryDigest = hashInventory(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {
       fail('INVENTORY_SCOPE_MISMATCH')
@@ -300,7 +300,7 @@ export class RuntimeInventoryIngestionService {
       return this.#ignored('stale', inventory.snapshotVersion)
     }
     if (current && inventory.snapshotVersion === current.snapshotVersion) {
-      if (current.snapshotDigest !== digest) fail('INVENTORY_VERSION_CONFLICT')
+      if (current.snapshotDigest !== inventoryDigest) fail('INVENTORY_VERSION_CONFLICT')
       return this.#ignored('duplicate', inventory.snapshotVersion)
     }
     const mode = inventory.mode ?? 'snapshot'
@@ -323,9 +323,9 @@ export class RuntimeInventoryIngestionService {
       runtimeNodeRefId: inventory.nodeId,
       workspaceId: inventory.workspaceId,
       snapshotVersion: inventory.snapshotVersion,
-      snapshotDigest: digest,
+      snapshotDigest: inventoryDigest,
       observedAt: inventory.observedAt,
-      activeRuntimeRefs: [...activeRefs].sort(),
+      activeRuntimeRefs: [...activeRefs].toSorted(),
       revision: (current?.revision ?? 0) + 1,
     })
     const normalized = prepared ?? (await this.#normalize(inventory, nodeStatus))
@@ -369,7 +369,7 @@ export class RuntimeInventoryIngestionService {
       const winner = await this.#checkpoints.get(inventory.nodeId)
       if (
         winner?.snapshotVersion === inventory.snapshotVersion &&
-        winner.snapshotDigest === digest
+        winner.snapshotDigest === inventoryDigest
       ) {
         return this.#ignored('duplicate', inventory.snapshotVersion)
       }
@@ -527,17 +527,17 @@ function hashInventory(inventory: GatewayInventoryEnvelope): string {
     drivers
       .map((driver) => ({
         ...driver,
-        capabilities: [...driver.capabilities].sort(),
-        limitations: [...driver.limitations].sort(),
+        capabilities: [...driver.capabilities].toSorted(),
+        limitations: [...driver.limitations].toSorted(),
       }))
-      .sort((left, right) => left.opaqueRef.localeCompare(right.opaqueRef))
+      .toSorted((left, right) => left.opaqueRef.localeCompare(right.opaqueRef))
   const canonical = {
     ...inventory,
     runtimeDrivers: normalizeDrivers(inventory.runtimeDrivers),
     contextProviders: normalizeDrivers(inventory.contextProviders),
     ...(inventory.removedRuntimeRefs === undefined
       ? {}
-      : { removedRuntimeRefs: [...inventory.removedRuntimeRefs].sort() }),
+      : { removedRuntimeRefs: [...inventory.removedRuntimeRefs].toSorted() }),
   }
   return `sha256:${createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`
 }

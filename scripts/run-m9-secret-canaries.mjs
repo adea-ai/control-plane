@@ -22,7 +22,7 @@ for (const { file, testName } of secretCanaryEvidence) {
   }
 }
 
-const files = [...new Set(secretCanaryEvidence.map(({ file }) => `./${file}`))].sort()
+const files = [...new Set(secretCanaryEvidence.map(({ file }) => `./${file}`))].toSorted()
 const result = spawnSync(process.execPath, ['test', ...files], {
   cwd: repositoryRoot,
   stdio: 'inherit',

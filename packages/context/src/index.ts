@@ -185,7 +185,7 @@ export class ContextPackageCompiler {
     const excluded: ContextPackage['truncation']['excluded'] = []
     let bytes = 0
     let tokens = 0
-    const candidates = [...parsed.candidates].sort(
+    const candidates = [...parsed.candidates].toSorted(
       (left, right) =>
         Number(right.required) - Number(left.required) ||
         right.priority - left.priority ||
@@ -236,12 +236,12 @@ export class ContextPackageCompiler {
         projectId: parsed.projectState.projectId,
         revision: parsed.projectState.revision,
       },
-      stateItems: selected.sort((left, right) => left.itemId.localeCompare(right.itemId)),
-      artifactRefs: [...selectedArtifacts.values()].sort((left, right) =>
+      stateItems: selected.toSorted((left, right) => left.itemId.localeCompare(right.itemId)),
+      artifactRefs: [...selectedArtifacts.values()].toSorted((left, right) =>
         left.artifactId.localeCompare(right.artifactId)
       ),
       constraints: normalizeConstraints(parsed.constraints),
-      permissions: [...parsed.permissions].sort(),
+      permissions: [...parsed.permissions].toSorted(),
       successCriteria: parsed.successCriteria,
       returnContract: parsed.returnContract,
       budgets: parsed.budgets,
@@ -306,8 +306,8 @@ export function deriveContextPackage(parentInput: unknown, input: unknown): Cont
     artifactRefs,
     constraints: {
       allowedSensitivities: parent.constraints.allowedSensitivities,
-      allowedStateItemIds: [...parsed.allowedStateItemIds].sort(),
-      allowedArtifactIds: [...parsed.allowedArtifactIds].sort(),
+      allowedStateItemIds: [...parsed.allowedStateItemIds].toSorted(),
+      allowedArtifactIds: [...parsed.allowedArtifactIds].toSorted(),
     },
     successCriteria: parsed.successCriteria,
     returnContract: parsed.returnContract,
@@ -343,7 +343,7 @@ export function composeProviderContextPackage(
     composition.contributions.length
   )
     fail('CONTRADICTORY_CONTEXT_REFERENCE', 'provider-contribution')
-  const contributions = [...composition.contributions].sort(
+  const contributions = [...composition.contributions].toSorted(
     (left, right) =>
       left.providerId.localeCompare(right.providerId) ||
       left.kind.localeCompare(right.kind) ||
@@ -358,8 +358,8 @@ export function composeProviderContextPackage(
     contentDigest: undefined,
     usage,
     providerComposition: {
-      callerContextRefs: [...composition.callerContextRefs].sort(),
-      localProjectGrantRefs: [...composition.localProjectGrantRefs].sort(),
+      callerContextRefs: [...composition.callerContextRefs].toSorted(),
+      localProjectGrantRefs: [...composition.localProjectGrantRefs].toSorted(),
       contributions,
     },
   })
@@ -569,7 +569,7 @@ export class ContextPackageAuthoringService {
           })
           .flatMap((item) => item.provenance.artifactRefs)
       ),
-    ].sort()
+    ].toSorted()
     const artifacts: z.output<typeof ArtifactCandidateSchema>[] = []
     for (const artifactId of artifactIds) {
       if (!decision.constraints.allowedArtifactIds.includes(artifactId))
@@ -746,9 +746,9 @@ function normalizeConstraints(
   constraints: ContextPackage['constraints']
 ): ContextPackage['constraints'] {
   return {
-    allowedSensitivities: [...constraints.allowedSensitivities].sort(),
-    allowedStateItemIds: [...constraints.allowedStateItemIds].sort(),
-    allowedArtifactIds: [...constraints.allowedArtifactIds].sort(),
+    allowedSensitivities: [...constraints.allowedSensitivities].toSorted(),
+    allowedStateItemIds: [...constraints.allowedStateItemIds].toSorted(),
+    allowedArtifactIds: [...constraints.allowedArtifactIds].toSorted(),
   }
 }
 function assertSubset<Value extends string>(
@@ -810,7 +810,7 @@ function normalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => left.localeCompare(right))
         .map(([key, entry]) => [key, normalize(entry)])
     )
   return value

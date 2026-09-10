@@ -423,7 +423,7 @@ describe('opaque delivery and durable command idempotency', () => {
       processor.process(envelope, observedAt),
       processor.process(envelope, observedAt),
     ])
-    expect([first.outcome, duplicate.outcome].sort()).toEqual(['accepted', 'duplicate'])
+    expect([first.outcome, duplicate.outcome].toSorted()).toEqual(['accepted', 'duplicate'])
     expect(first.result).toEqual(duplicate.result)
     expect(acceptCount).toBe(1)
     expect(observedPlaintext).toEqual(new Uint8Array(canary.length))
@@ -632,7 +632,7 @@ describe('opaque delivery and durable command idempotency', () => {
       processor.process(command, observedAt),
       processor.process(command, observedAt),
     ])
-    expect([first.outcome, second.outcome].sort()).toEqual(['accepted', 'duplicate'])
+    expect([first.outcome, second.outcome].toSorted()).toEqual(['accepted', 'duplicate'])
     expect(effects).toBe(1)
     await expect(
       processor.process({ ...command, commandId: 'metadata-expired' }, new Date(expiresAt))
