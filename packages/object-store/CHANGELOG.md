@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/adea-ai/control-plane/compare/object-store-v1.2.2...object-store-v1.2.3) (2026-09-10)
+
+
+### Maintenance
+
+* roll up dependencies and Code Foundry v1.28.6 ([#442](https://github.com/adea-ai/control-plane/issues/442)) ([09a245a](https://github.com/adea-ai/control-plane/commit/09a245abf2ed325d9dfc7f900851389745c83e3e))
+
 ## [1.2.2](https://github.com/adea-ai/control-plane/compare/object-store-v1.2.1...object-store-v1.2.2) (2026-09-07)
 
 
