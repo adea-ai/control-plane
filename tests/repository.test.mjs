@@ -228,7 +228,6 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   for (const runner of [
     'runner',
     'ci_runner',
-    'test_runner',
     'unit_runner',
     'security_runner',
     'pr_runner',
@@ -236,6 +235,7 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   ]) {
     assert.match(config, new RegExp(`^${runner}: ubuntu-slim$`, 'm'))
   }
+  assert.match(config, /^test_runner: ubuntu-latest$/m)
   assert.match(config, /^codeql_runner: ubuntu-latest$/m)
 })
 
