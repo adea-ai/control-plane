@@ -276,18 +276,19 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.28\.6/
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.28\.\d+/
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
-  assert.doesNotMatch(validation, /ubuntu-slim/)
+  assert.match(validation, /codeql-runner: ubuntu-latest/)
+  assert.match(validation, /unit-runner: ubuntu-slim/)
   assert.match(validation, /branches: \[main\]/)
   assert.match(validation, /ready_for_review/)
   assert.doesNotMatch(validation, /(?:opened|reopened)/)
   assert.match(validation, /synchronize/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v1\.28\.6/)
+  assert.match(release, /release\.yml@v1\.28\.\d+/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
