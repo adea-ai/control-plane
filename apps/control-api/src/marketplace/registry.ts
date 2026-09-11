@@ -78,6 +78,7 @@ export type MarketplaceRegistryServiceOptions = Readonly<{
   fetchImpl?: typeof fetch
   immutableReleaseBaseUrl?: string
   latestUrl?: string
+  refreshIntervalMs?: number
   token?: string
   releaseVerifier?: MarketplaceReleaseVerifier
   requestTimeoutMs?: number
@@ -139,6 +140,10 @@ export class MarketplaceRegistryService {
   readonly #requestTimeoutMs: number
   readonly #maxArtifactBytes: number
   #cache: MarketplaceCatalogSnapshot | undefined
+  #refreshing: Promise<MarketplaceCatalogSnapshot> | undefined
+  #nextRefreshAt = 0
+  #lastRefreshFailed = false
+  readonly #refreshIntervalMs: number
 
   constructor(options: MarketplaceRegistryServiceOptions = {}) {
     this.#fetchImpl = options.fetchImpl ?? fetch
@@ -150,9 +155,38 @@ export class MarketplaceRegistryService {
     this.#releaseVerifier = options.releaseVerifier
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 15_000
     this.#maxArtifactBytes = options.maxArtifactBytes ?? 12 * 1024 * 1024
+    this.#refreshIntervalMs = options.refreshIntervalMs ?? 60_000
   }
 
+  /**
+   * A full refresh downloads every immutable artifact (~50 MB for the current
+   * catalog), so once a verified snapshot exists it is served immediately and
+   * the registry refreshes in the background. Without a snapshot — cold start,
+   * or after a verification failure — the refresh blocks the caller.
+   */
+  /**
+   * A full refresh downloads every immutable artifact (~50 MB for the current
+   * catalog), so a verified snapshot is always served immediately: the first
+   * caller blocks on the download, later callers get the cached snapshot and
+   * a single background refresh per interval keeps it current. After a failed
+   * refresh the snapshot is reported as `stale` until a refresh succeeds.
+   */
   async getCatalog(): Promise<MarketplaceCatalogSnapshot> {
+    const cached = this.#cache
+    if (cached === undefined) return this.#refresh()
+
+    if (this.#refreshing === undefined && Date.now() >= this.#nextRefreshAt) {
+      this.#refreshing = this.#refresh()
+        .catch(() => cached)
+        .finally(() => {
+          this.#refreshing = undefined
+        })
+    }
+    return this.#lastRefreshFailed ? { ...cached, state: 'stale' } : cached
+  }
+
+  async #refresh(): Promise<MarketplaceCatalogSnapshot> {
+    this.#nextRefreshAt = Date.now() + this.#refreshIntervalMs
     try {
       const latestText = await this.#fetchArtifact(this.#latestUrl)
       const latest = parseCatalog(parseJson(latestText, 'catalog-latest.v1.json'))
@@ -161,6 +195,7 @@ export class MarketplaceRegistryService {
       if (snapshot.catalogId !== latest.catalogId)
         throw verificationError('Latest catalog pointer changed during refresh')
       this.#cache = snapshot
+      this.#lastRefreshFailed = false
       return snapshot
     } catch (error) {
       if (
@@ -168,11 +203,14 @@ export class MarketplaceRegistryService {
         error.code === 'MARKETPLACE_CATALOG_VERIFICATION_FAILED'
       )
         throw error
-      if (this.#cache) return { ...this.#cache, state: 'stale' }
-      throw new ServiceUnavailableException({
-        code: 'MARKETPLACE_REGISTRY_UNAVAILABLE',
-        message: 'The marketplace registry is unavailable',
-      })
+      const cached = this.#cache
+      if (cached === undefined)
+        throw new ServiceUnavailableException({
+          code: 'MARKETPLACE_REGISTRY_UNAVAILABLE',
+          message: 'The marketplace registry is unavailable',
+        })
+      this.#lastRefreshFailed = true
+      return { ...cached, state: 'stale' }
     }
   }
 
