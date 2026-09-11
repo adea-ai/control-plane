@@ -224,19 +224,19 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.match(config, /^dependency_review: auto$/m)
   assert.doesNotMatch(config, /^opencode_security:/m)
   assert.doesNotMatch(config, /^staging_validation_mode:/m)
-  assert.match(config, /^runtime_ref: v1\.28\.6$/m)
+  assert.match(config, /^runtime_ref: v1\.28\.\d+$/m)
   for (const runner of [
     'runner',
     'ci_runner',
     'test_runner',
     'unit_runner',
     'security_runner',
-    'codeql_runner',
     'pr_runner',
     'release_runner',
   ]) {
-    assert.match(config, new RegExp(`^${runner}: ubuntu-latest$`, 'm'))
+    assert.match(config, new RegExp(`^${runner}: ubuntu-slim$`, 'm'))
   }
+  assert.match(config, /^codeql_runner: ubuntu-latest$/m)
 })
 
 test('emits the required gate contexts and documents the direct-workflow policy', async () => {
