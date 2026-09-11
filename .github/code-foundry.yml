@@ -8,21 +8,12 @@ codeql: auto
 dependency_review: auto
 package_manager: bun
 runtime_repository: 0xPlayerOne/code-foundry
-<<<<<<< HEAD
 runtime_ref: v1.28.11
-runner: ubuntu-latest
-ci_runner: ubuntu-latest
-test_runner: ubuntu-latest
-unit_runner: ubuntu-latest
-security_runner: ubuntu-latest
-=======
-runtime_ref: v1.28.6
 runner: ubuntu-slim
 ci_runner: ubuntu-slim
 test_runner: ubuntu-slim
 unit_runner: ubuntu-slim
 security_runner: ubuntu-slim
->>>>>>> 10fb984 (chore(config): right-size runner lanes and drop default shard overrides)
 codeql_runner: ubuntu-latest
 pr_runner: ubuntu-slim
 release_runner: ubuntu-slim
@@ -52,3 +43,6 @@ required_capabilities:
 coverage_enforcement: auto
 coverage_metrics: lines
 coverage_report:
+codeql_rust_shards: '["all"]'
+codeql_rust_threads: 1
+codeql_rust_max_parallel: 1

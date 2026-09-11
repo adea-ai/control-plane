@@ -30,7 +30,7 @@ jobs:
     uses: 0xPlayerOne/code-foundry/.github/workflows/release.yml@v1.28.11
     with:
       billing-pause-bypass: ${{ github.event_name == 'workflow_dispatch' && inputs['release-while-paused'] == true }}
-      runner: ubuntu-latest
+      runner: ubuntu-slim
       runtime-repository: 0xPlayerOne/code-foundry
       runtime-ref: v1.28.11
       git-workflow: direct

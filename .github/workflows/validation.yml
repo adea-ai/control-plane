@@ -25,7 +25,7 @@ jobs:
     # use the dedicated default-branch CodeQL lane below; draft updates do not
     # allocate a validation runner.
     if: vars.CI_BILLING_PAUSED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     permissions:
       contents: read
@@ -85,12 +85,12 @@ jobs:
       # manually dispatched audits use a separate default-branch-pinned caller,
       # so this caller-selected ref never runs with default-branch cache access.
       runtime-ref: v1.28.11
-      ci-runner: ubuntu-latest
-      test-runner: ubuntu-latest
-      unit-runner: ubuntu-latest
+      ci-runner: ubuntu-slim
+      test-runner: ubuntu-slim
+      unit-runner: ubuntu-slim
       performance-runner: ubuntu-latest
-      security-runner: ubuntu-latest
-      eval-runner: ubuntu-latest
+      security-runner: ubuntu-slim
+      eval-runner: ubuntu-slim
       codeql-runner: ubuntu-latest
       rust-shards: '["all"]'
       rust-threads: '1'
