@@ -121,9 +121,16 @@ describe('Control Plane marketplace contract', () => {
       },
       latestUrl: 'https://registry.example/releases/latest/download/catalog-latest.v1.json',
       immutableReleaseBaseUrl: 'https://registry.example/releases/{catalogId}',
+      refreshIntervalMs: 0,
     })
     expect((await registry.getCatalog()).catalogId).toBe(fixture.catalog.catalogId)
     fail = true
+    // The snapshot is served immediately while the registry refreshes in the
+    // background; once the failed refresh settles the snapshot reads stale.
+    const served = await registry.getCatalog()
+    expect(served.catalogId).toBe(fixture.catalog.catalogId)
+    // Let the background refresh settle before asserting the stale marker.
+    await new Promise((resolve) => setTimeout(resolve, 5))
     expect((await registry.getCatalog()).state).toBe('stale')
   })
 
