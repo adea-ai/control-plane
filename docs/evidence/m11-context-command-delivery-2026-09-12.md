@@ -393,3 +393,92 @@ permanent revocation, restart lookup, malformed/oversized input, symlink input a
 generic error output. The CLI does not synthesize health, replicate grants between
 stores, or activate a production composition root. PostgreSQL CLI execution against
 a live branch and production operator credential review remain external gates.
+
+## Production composition roots
+
+The runtime gateway and runtime worker now compose their context-command stacks from
+explicitly configured stores instead of test-only construction. `composeRuntimeGateway`
+builds the command, grant, registration, sequence and coordination repositories over an
+explicitly configured SQLite path (idempotent migrate) or PostgreSQL credentials (no
+migration; migration authority stays separate). It wires the delivery service,
+grant-backed recovery authorization, the WebSocket lifecycle and server, and a provider
+resolver whose bindings read the operator CLI's registration store at request time.
+Host-provided ports (object store, upgrade authentication, metrics, reachability,
+trace IDs) are validated at composition time; absent ports refuse startup. Unrelated
+message families (inventory, delivery acknowledgements, events) fail closed with
+RUNTIME_GATEWAY_ROUTE_NOT_COMPOSED until their own composition exists. `start()` no
+longer starts an empty shell in any environment: without injected components it
+composes from explicit environment configuration or refuses. `composeContextNode`
+wires the node handler with grant enforcement over the explicitly configured node-local
+store plus a transport current-channel assertion; PostgreSQL grant stores require an
+injected durable node inbox (no adapter exists) and fail closed otherwise.
+
+Focused E2E passes five tests / 40 assertions: provisioning strictly through
+ContextProviderAdministration into both stores, signed-channel delivery and execution,
+a dropped result recovered durably across a gateway restart with deliveryAttempts 2 and
+no repeated provider read, revocation in both stores denying gateway recovery and
+node-side authorization, a second restart keeping revocation denied, and fail-closed
+start() for gateway and worker. SQLite composition coordination is single-instance by
+documented limitation (no SQLite durable channel ownership adapter exists); the
+PostgreSQL composition uses the durable ownership repository. Reconnects honor the
+durable ledger's strictly increasing (generation, sequence) contract.
+
+## Grants-backed authoring authority
+
+`GrantsBackedContextAuthoringAuthority` derives every authorizing decision from a
+current, unexpired, active grant reachable through an active registration plus an
+explicitly validated composition policy. Construction parses the policy; there are no
+permissive defaults. Provider requests are clamped by the grant and cross-checked
+against the registration's advertised capabilities and execution locations; any
+ineligibility degrades authoring to the documented no-provider path by omitting the
+provider request. Artifact authorization heads the composition's object store and maps
+lifecycle metadata markers to the port's state enum fail-closed; health and state are
+never synthesized. Local and hosted compositions construct this authority by default
+over their own stores with explicit bounded policies whose provider mode is `disabled`
+(provider content composes at the runtime gateway); injected authoring options keep
+precedence. The managed-cloud composition still accepts injection only. Validation:
+15 authority unit tests plus one composition test provisioning strictly through
+ContextProviderAdministration, authoring a real package through the default authority,
+denying other principals and denying after operator revocation.
+
+## Consistency observability and reconciliation scheduling
+
+A bounded consistency-metric emitter (allowlisted label sets with a fixed fallback,
+per-emission exporter isolation, redaction) is emitted from command-inbox acceptance,
+reconciliation checkpoints, provider resolution, memory-write decisions and event
+quarantine; labels cannot carry objective text, digests or identifiers. Local and
+hosted compositions gain explicit completion-scheduled, rate-limited reconciliation
+sweeps with validated bounds and clean drain; absent configuration runs nothing. The
+sweeps require an injected reconciliation source/effects; no production observation
+projection exists yet, so scheduling is reachable only where a host supplies one —
+recorded as an open composition obligation, not silently defaulted. Loopback endpoints
+and filesystem paths are now redacted; the secret-canary matrix (7 sinks) still passes.
+Provider-resolution, memory-write and event-quarantine hooks exist but their producing
+gateway/workflow compositions are not yet wired to production sinks.
+
+## Integrated candidate validation
+
+Candidate 46c146d (composition 7f25cff, authority f3bd7fd, ledger 6a9c829,
+observability 950093b, foundation 46c146d). One integrated full suite passed:
+1,404 tests (1,187 unit / 137 E2E / 80 smoke), coverage 86.61% lines / 84.38%
+functions against the unchanged 80% thresholds, with build (41 packages), lint,
+format and architecture checks green. The first integrated run caught one real
+regression: the foundation smoke test still encoded the gateway's removed empty-shell
+startup; it now boots through the injected channel server per the fail-closed contract.
+
+## Live PostgreSQL CLI validation
+
+The operator administration CLI was executed against a disposable Neon PostgreSQL 18
+branch (child of staging, --no-secrets, expiry set, deleted and verified absent after
+the run). Migrations 0042 through 0044 were applied to the live branch; operator
+privilege configuration granted the application role access to exactly the grant and
+registration tables; role membership replicated the preview workflow's ownership
+preparation with the documented deviation that migrations ran through the owner
+connection holding migrator membership rather than the CI migrator-role password. The
+CLI then provisioned a scoped grant (and accepted its exact idempotent replay), failed
+closed on a wrong expected host, registered a matching snapshot through expected-version
+CAS, revoked the grant, and the revoked status was read back durably through the
+application-role connection. No connection strings, passwords or branch names beyond
+the disposable branch were recorded; staging and production branches were untouched.
+Live PostgreSQL CLI evidence now exists; the separate external gates — deployed-profile
+acceptance and independent review — remain open.
