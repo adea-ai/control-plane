@@ -41,6 +41,14 @@ export interface ContextCommandGrantRepository {
   revoke(workspaceId: string, authorizationRef: string): Promise<void>
 }
 
+/** A definitive authorization denial, distinct from an unavailable authority/store. */
+export class ContextCommandGrantDeniedError extends Error {
+  constructor() {
+    super('CONTEXT_GRANT_DENIED')
+    this.name = 'ContextCommandGrantDeniedError'
+  }
+}
+
 export class ContextCommandGrantAuthority {
   constructor(
     readonly repository: Pick<ContextCommandGrantRepository, 'get'>,
@@ -55,7 +63,7 @@ export class ContextCommandGrantAuthority {
       String(envelope['authorizationRef'])
     )
     const parsed = ContextCommandGrantSchema.safeParse(raw)
-    if (!parsed.success) throw new Error('CONTEXT_GRANT_DENIED')
+    if (!parsed.success) throw new ContextCommandGrantDeniedError()
     const grant = parsed.data
     const parameters = (envelope['payload'] as { parameters: Record<string, unknown> }).parameters
     const now = this.now().getTime()
@@ -83,6 +91,6 @@ export class ContextCommandGrantAuthority {
       (parameters['includeEvidence'] && !grant.includeEvidence) ||
       (parameters['includeMemory'] && !grant.includeMemory)
     )
-      throw new Error('CONTEXT_GRANT_DENIED')
+      throw new ContextCommandGrantDeniedError()
   }
 }

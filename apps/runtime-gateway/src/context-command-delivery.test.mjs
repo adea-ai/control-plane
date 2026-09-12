@@ -18,7 +18,11 @@ import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
 } from '@control-plane/sqlite-persistence'
-import { InMemoryContextCommandRepository, contextCommandSemanticHash } from '@control-plane/domain'
+import {
+  ContextCommandGrantDeniedError,
+  InMemoryContextCommandRepository,
+  contextCommandSemanticHash,
+} from '@control-plane/domain'
 import { ContextCommandDeliveryService } from './context-command-delivery.ts'
 import { ContextCommandRecoveryService } from './context-command-recovery.ts'
 import { RuntimeGatewayMessageRouter } from './runtime-message-handler.ts'
@@ -31,7 +35,7 @@ test('context recovery rechecks grants after reservation and preserves denied in
   const recovery = new ContextCommandRecoveryService(
     f.service,
     async () => {
-      if (!permitted) throw new Error('GRANT_REVOKED')
+      if (!permitted) throw new ContextCommandGrantDeniedError()
     },
     1
   )
@@ -40,10 +44,14 @@ test('context recovery rechecks grants after reservation and preserves denied in
     permitted = false
     return 2
   }
-  await expect(recovery.recover(f.source, allocate)).rejects.toThrow('GRANT_REVOKED')
+  expect(await recovery.recover(f.source, allocate)).toEqual({
+    nextAfterCommandId: f.command.commandId,
+  })
   expect(reservations).toBe(0)
   permitted = true
-  await expect(recovery.recover(f.source, allocate)).rejects.toThrow('GRANT_REVOKED')
+  expect(await recovery.recover(f.source, allocate)).toEqual({
+    nextAfterCommandId: f.command.commandId,
+  })
   expect(reservations).toBe(1)
   expect(f.sent).toEqual([])
   expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
@@ -63,6 +71,44 @@ test('context recovery rechecks grants after reservation and preserves denied in
   expect(() => new ContextCommandRecoveryService(f.service, async () => {}, 129)).toThrow(
     'LIMIT_INVALID'
   )
+})
+
+test('recovery skips definitive grant denial but propagates authority and allocator failures', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  const second = structuredClone(f.command)
+  second.commandId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+  second.idempotencyKey = 'context-read:delivery-second'
+  second.payload.parameters.operationId = 'context-author:delivery-second'
+  second.payloadHash = contextCommandSemanticHash(second)
+  await f.service.enqueue(second)
+  let reservations = 0
+  const recovery = new ContextCommandRecoveryService(
+    f.service,
+    async (record) => {
+      if (record.commandId === f.command.commandId) throw new ContextCommandGrantDeniedError()
+    },
+    2
+  )
+  expect(await recovery.recover(f.source, async () => ++reservations)).toEqual({
+    nextAfterCommandId: second.commandId,
+  })
+  expect(reservations).toBe(1)
+  expect(f.sent.map((frame) => frame.commandId)).toEqual([second.commandId])
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
+  const unavailable = new ContextCommandRecoveryService(f.service, async () => {
+    throw new Error('AUTHORITY_UNAVAILABLE')
+  })
+  await expect(unavailable.recover(f.source, async () => ++reservations)).rejects.toThrow(
+    'AUTHORITY_UNAVAILABLE'
+  )
+  expect(reservations).toBe(1)
+  const allocationFailure = new ContextCommandRecoveryService(f.service, async () => {})
+  await expect(
+    allocationFailure.recover(f.source, async () => {
+      throw new ContextCommandGrantDeniedError()
+    })
+  ).rejects.toThrow('CONTEXT_GRANT_DENIED')
 })
 
 function fixture(repository = new InMemoryContextCommandRepository()) {
@@ -116,7 +162,7 @@ function fixture(repository = new InMemoryContextCommandRepository()) {
     coordination: { lookup: async () => structuredClone(active) },
     sender: {
       send: async (envelope) => {
-        expect((await repository.get(source.workspaceId, command.commandId)).status).toBe(
+        expect((await repository.get(source.workspaceId, envelope.commandId)).status).toBe(
           'dispatched'
         )
         sent.push(envelope)

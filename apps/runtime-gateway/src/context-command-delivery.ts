@@ -5,6 +5,7 @@ import {
 import {
   ContextCommandRecordSchema,
   ContextCommandPendingQuerySchema,
+  ContextCommandGrantDeniedError,
   createQueuedContextCommandRecord,
   type ContextCommandRecord,
   type ContextCommandRepository,
@@ -82,9 +83,20 @@ export class ContextCommandDeliveryService {
     )
     const records: ContextCommandRecord[] = []
     for (const record of pending) {
-      await input.authorize(structuredClone(record))
-      const sequence = await input.nextSequence()
-      await input.authorize(structuredClone(record))
+      let sequence: number
+      try {
+        await input.authorize(structuredClone(record))
+      } catch (error) {
+        if (error instanceof ContextCommandGrantDeniedError) continue
+        throw error
+      }
+      sequence = await input.nextSequence()
+      try {
+        await input.authorize(structuredClone(record))
+      } catch (error) {
+        if (error instanceof ContextCommandGrantDeniedError) continue
+        throw error
+      }
       records.push((await this.deliver(source, record.commandId, sequence)).record)
     }
     const last = pending.at(-1)

@@ -327,3 +327,21 @@ Coverage was 86.94% lines / 84.47% functions. Production grant provisioning and
 revocation propagation, trusted provider administration/health publication, recovery
 fairness under denied grants and composition-root activation remain open. These
 repository tests do not establish production administration or deployment acceptance.
+
+## Recovery isolation for denied grants
+
+The grant authority now exposes a typed definitive denial. Recovery catches only
+that denial around each authorization check and continues through the bounded
+page, including when permission is revoked after sequence reservation. Denied
+intent remains durable and unsent; the cursor advances across denied records so
+eligible later commands are not starved. Any reserved sequence stays consumed.
+Authority/store errors, allocator errors (even a denial-shaped allocator error),
+and delivery failures still propagate. No string-message matching or authorization
+bypass is used, and no denied command is falsely marked completed or cancelled.
+
+Focused validation passes 24 tests / 152 assertions, including mixed denied/eligible
+commands, both grant-check positions, preservation of queued intent, and failure
+propagation. Full validation passes 1,355 tests (1,144 unit, 131 E2E, 80 smoke),
+build, types, lint/boundaries and formatting. Coverage is 86.94% lines / 84.45%
+functions. Recovery deadline/cancellation, production administration and deployment
+activation remain required; this fixes denial isolation, not all recovery gates.
