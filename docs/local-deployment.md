@@ -13,6 +13,10 @@ termination signal before desktop exit or upgrade, and restart the whole composi
 unexpected Control Plane or Restate failure. A failed component makes readiness false; the desktop
 must not silently move work to Cloud. Host sleep/wake preserves the process and data directory; on
 wake the desktop rechecks `/ready` and restarts the composition if Restate did not recover.
+If the owned Restate child exits while startup is polling readiness, startup reports
+`RESTATE_PROCESS_EXITED` and cleans up through the captured process handle. A health
+response received after that child exits does not establish readiness. This is a child
+liveness check, not cryptographic authentication of a service listening on the selected port.
 
 Co-located compositions must use separate private data directories and distinct ports.
 `LocalControlPlaneComposition` accepts `restateAdminPort` (default 9070),

@@ -17,6 +17,7 @@ export type RestateRuntimeErrorCode =
   | 'RESTATE_ALREADY_RUNNING'
   | 'RESTATE_NOT_RUNNING'
   | 'RESTATE_READINESS_TIMEOUT'
+  | 'RESTATE_PROCESS_EXITED'
   | 'RESTATE_DEPLOYMENT_REGISTRATION_FAILED'
 
 export class RestateRuntimeError extends Error {
@@ -170,21 +171,24 @@ export class LocalRestateRuntime implements WorkflowRuntime {
       },
     })
     this.#process = process
-    void process.wait().then(() => {
+    const clearExitedProcess = () => {
       if (this.#process === process) this.#process = undefined
-    })
+    }
+    void process.wait().then(clearExitedProcess, clearExitedProcess)
     try {
       await this.#waitUntilReady()
+      if (this.#process !== process) throw new RestateRuntimeError('RESTATE_PROCESS_EXITED')
       if (this.#deploymentUri !== undefined) await this.#registerDeployment(this.#deploymentUri)
     } catch (error) {
-      await this.#process.stop().catch(() => undefined)
-      this.#process = undefined
+      await process.stop().catch(() => undefined)
+      if (this.#process === process) this.#process = undefined
       throw error
     }
   }
 
   async health(): Promise<DeploymentComponentHealth> {
-    if (this.#process === undefined) {
+    const process = this.#process
+    if (process === undefined) {
       return { ready: false, component: 'restate', version: RESTATE_SERVER_VERSION }
     }
     try {
@@ -192,12 +196,12 @@ export class LocalRestateRuntime implements WorkflowRuntime {
         signal: AbortSignal.timeout(2_000),
       })
       return {
-        ready: response.ok,
+        ready: response.ok && this.#process === process,
         component: 'restate',
         version: RESTATE_SERVER_VERSION,
         details: {
           profile: this.profile,
-          pid: this.#process.pid,
+          pid: process.pid,
           ...(this.#deploymentId === undefined ? {} : { deploymentId: this.#deploymentId }),
         },
       }
@@ -206,7 +210,7 @@ export class LocalRestateRuntime implements WorkflowRuntime {
         ready: false,
         component: 'restate',
         version: RESTATE_SERVER_VERSION,
-        details: { profile: this.profile, pid: this.#process.pid },
+        details: { profile: this.profile, pid: process.pid },
       }
     }
   }
@@ -226,7 +230,9 @@ export class LocalRestateRuntime implements WorkflowRuntime {
   async #waitUntilReady(): Promise<void> {
     const deadline = Date.now() + this.#readinessTimeoutMs
     while (Date.now() <= deadline) {
+      if (this.#process === undefined) throw new RestateRuntimeError('RESTATE_PROCESS_EXITED')
       if ((await this.health()).ready) return
+      if (this.#process === undefined) throw new RestateRuntimeError('RESTATE_PROCESS_EXITED')
       await new Promise((resolveDelay) => setTimeout(resolveDelay, this.#pollIntervalMs))
     }
     throw new RestateRuntimeError('RESTATE_READINESS_TIMEOUT')
