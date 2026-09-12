@@ -28,6 +28,7 @@ import {
   ContextCommandDeliveryService,
   ContextCommandRecoveryService,
   ContextGatewayReadClient,
+  ContextRuntimeNodeReadBinder,
   ContextCommandArtifactStore,
   RuntimeGatewayMessageRouter,
   RuntimeGatewayWebSocketLifecycle,
@@ -90,8 +91,8 @@ for (const loseFirstResult of [false, true]) {
       })
       const workspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
         nodeId = 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV'
-      const providerRef = 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        commandId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      const providerRef = 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      let commandId
       const traceId = 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
         principalRef = 'principal://test/user'
       let httpReads = 0
@@ -331,26 +332,23 @@ for (const loseFirstResult of [false, true]) {
         kind: 'evidence',
         tokenCount: 1,
       }).readModel
+      const binder = new ContextRuntimeNodeReadBinder({
+        workspaceId,
+        providerRef,
+        mappedProjectRef: 'fixture-project',
+        authorizationRef: grant.authorizationRef,
+        grants,
+        coordination,
+        nextSequence: (source) => lifecycle.nextSequence(source),
+        traceId: () => traceId,
+      })
       const adapter = new CortanaContextProviderAdapter({
         readModel,
         providerRef,
         mappedProjectRef: 'fixture-project',
         transport: 'runtime_node',
         maximumRetries: 0,
-        bindRuntimeNodeRead: async ({ request }) => ({
-          nodeId,
-          workspaceId,
-          traceId,
-          channelGeneration: 1,
-          sequence: 1,
-          commandId,
-          idempotencyKey: 'context-read:transport-test',
-          authorizationRef: 'authz:context-transport-test',
-          providerRef,
-          principalRef,
-          scopeDigest: request.scopeDigest,
-          expiresAt: new Date(Date.now() + 10000).toISOString(),
-        }),
+        bindRuntimeNodeRead: (input, signal) => binder.bind(input, signal),
         client: new ContextGatewayReadClient({
           delivery,
           artifacts,
@@ -358,6 +356,7 @@ for (const loseFirstResult of [false, true]) {
           nextSequence: (source) => lifecycle.nextSequence(source),
           authorize: async (record) => {
             captured = record.commandEnvelope
+            commandId = record.commandId
             await grantAuthority.authorize(record)
             await guard(record.commandEnvelope)
           },

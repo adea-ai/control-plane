@@ -11,6 +11,7 @@ import {
 } from './context-result-store.ts'
 import { contextCommandResultDigest } from './context-result-integrity.ts'
 import { ContextGatewayReadClient } from './context-read-client.ts'
+import { ContextRuntimeNodeReadBinder } from './context-read-binding.ts'
 import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
@@ -198,6 +199,89 @@ function clientFixture() {
   }
   return { f, request, options, client: new ContextGatewayReadClient(options) }
 }
+
+test('read binder authorizes current grants and fences cancellation, revocation and channel replacement', async () => {
+  const { f } = clientFixture()
+  const request = {
+    workspaceId: f.source.workspaceId,
+    principalRef: 'service:author',
+    scopeDigest: f.command.payload.parameters.scopeDigest,
+    executionLocation: 'runtime_node',
+    capability: 'evidenceSearch',
+    objective: 'Read bounded evidence',
+    operationId: 'context-author:binder-test',
+    now: f.command.issuedAt,
+    policy: {
+      mode: 'required',
+      maximumTokens: 100,
+      maximumAgeSeconds: 60,
+      maximumLatencyMs: 5000,
+      includeEvidence: true,
+      includeMemory: false,
+      providerIds: [],
+      connectionIds: [],
+      maximumProviderHealthAgeSeconds: 60,
+      failureBehavior: 'fail',
+    },
+  }
+  const grant = {
+    authorizationRef: f.command.authorizationRef,
+    workspaceId: f.source.workspaceId,
+    nodeId: f.source.nodeId,
+    providerRef: f.command.providerRef,
+    principalRef: request.principalRef,
+    mappedProjectRef: 'project:client',
+    scopeDigest: request.scopeDigest,
+    capabilities: ['evidenceSearch'],
+    maximumTokens: 100,
+    includeEvidence: true,
+    includeMemory: false,
+    issuedAt: request.now,
+    expiresAt: f.command.expiresAt,
+    status: 'active',
+  }
+  let sequence = 0
+  const options = {
+    workspaceId: grant.workspaceId,
+    providerRef: grant.providerRef,
+    mappedProjectRef: grant.mappedProjectRef,
+    authorizationRef: grant.authorizationRef,
+    grants: { get: async () => structuredClone(grant) },
+    coordination: f.options.coordination,
+    nextSequence: async () => ++sequence,
+    traceId: () => f.command.traceId,
+  }
+  const binder = new ContextRuntimeNodeReadBinder(options)
+  const input = { providerRef: grant.providerRef, request }
+  const signal = new AbortController().signal
+  const first = await binder.bind(input, signal)
+  const second = await binder.bind(input, signal)
+  expect(first.commandId).toMatch(/^cmd_[0-9A-HJKMNP-TV-Z]{26}$/)
+  expect(second.commandId).not.toBe(first.commandId)
+  expect([first.sequence, second.sequence]).toEqual([1, 2])
+  expect(first.idempotencyKey).toBe(request.operationId)
+  await expect(
+    binder.bind({ ...input, request: { ...request, principalRef: 'service:other' } }, signal)
+  ).rejects.toThrow('GRANT_DENIED')
+  expect(sequence).toBe(2)
+  const controller = new AbortController()
+  options.nextSequence = async () => {
+    controller.abort()
+    return ++sequence
+  }
+  await expect(binder.bind(input, controller.signal)).rejects.toThrow()
+  options.nextSequence = async () => {
+    grant.status = 'revoked'
+    return ++sequence
+  }
+  await expect(binder.bind(input, signal)).rejects.toThrow('GRANT_DENIED')
+  grant.status = 'active'
+  options.nextSequence = async () => {
+    f.replace({ ...f.source, channelGeneration: 2 })
+    return ++sequence
+  }
+  await expect(binder.bind(input, signal)).rejects.toThrow('CHANNEL_REPLACED')
+})
 
 test('gateway client rejects mismatched requests before authorization or persistence', async () => {
   const { f, request, options, client } = clientFixture()

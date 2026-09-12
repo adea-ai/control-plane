@@ -234,7 +234,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
     return {
       ...base,
       deadline,
-      gatewayCommand: runtimeNodeCommand(
+      gatewayCommand: createRuntimeNodeContextCommand(
         request,
         binding,
         deadline,
@@ -394,7 +394,7 @@ function normalizeBundle(
   ]
 }
 
-function runtimeNodeCommand(
+export function createRuntimeNodeContextCommand(
   request: ContextProviderRequest,
   binding: RuntimeNodeContextReadBinding,
   deadline: string,

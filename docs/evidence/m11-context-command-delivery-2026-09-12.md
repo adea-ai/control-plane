@@ -239,3 +239,24 @@ and migration-schema checks; coverage is 87.06% lines / 84.57% functions.
 No parent database is modified. This still does not provide production grant administration, propagation
 to remote nodes, provider selection or composition-root activation. Rollback preserves
 grant rows, especially revocations; dropping the table is not a safe live rollback.
+
+## Authoritative read binding
+
+ContextRuntimeNodeReadBinder replaces hand-built binding metadata in the composed
+transport tests. It selects the node from the configured stored grant, checks the
+requested provider/project/workspace and current channel, constructs the same
+command as the adapter for authorization, then reserves a durable sequence and
+rechecks grant and channel ownership. Cancellation checkpoints prevent late binding
+work from returning usable metadata. Command IDs use 128 random bits; the caller's
+operation ID remains the deduplication key, and trace identity comes from trusted
+invocation context. A zero sequence exists only in local preflight validation and
+is never returned or sent; failed reservations are not reused. Command admission
+and operation deduplication remain owned by the durable delivery ledger.
+Focused validation passes 22 tests / 131 assertions, including grant revocation,
+cancellation and channel replacement during allocation, distinct command IDs,
+stable operation keys and both real transport cases. Full local suite passes
+1,352 tests (1,141 unit, 131 E2E, 80 smoke), build, types, lint/boundaries and
+formatting. Coverage is 87.09% lines / 84.59% functions.
+Provider selection, trusted grant provisioning/replication, remote identity
+deployment and supported composition-root activation remain required. No production
+resources or database migrations changed in this binding step.
