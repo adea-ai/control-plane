@@ -225,3 +225,17 @@ provider registry and production composition remain required.
 Focused validation: 25 tests / 184 assertions. Full suite: 1,351 passing tests
 (1,140 unit, 131 E2E, 80 smoke), build, types, lint/boundaries and formatting.
 Coverage: 87.16% lines / 84.70% functions; thresholds unchanged.
+
+PostgresContextCommandGrantRepository adds the same create-once and permanently
+revocable contract with a composite workspace/reference primary key and row-locked
+revocation. Migration 0043 creates the additive grant table; apply it and the
+deployment's normal application-role table permissions before activation. Repository
+reads validate the stored scope against projected lookup keys. The isolated Neon
+focused test passes nine assertions for concurrent creation, concurrent revocation,
+repository reconstruction, cross-workspace separation and denied reactivation.
+The full isolated PostgreSQL suite passes 34 tests / 425 assertions in 253.1 seconds.
+Local validation passes 1,351 tests (1,140 unit, 131 E2E, 80 smoke), build, types
+and migration-schema checks; coverage is 87.06% lines / 84.57% functions.
+No parent database is modified. This still does not provide production grant administration, propagation
+to remote nodes, provider selection or composition-root activation. Rollback preserves
+grant rows, especially revocations; dropping the table is not a safe live rollback.

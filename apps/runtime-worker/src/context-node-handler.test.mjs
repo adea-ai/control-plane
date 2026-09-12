@@ -48,8 +48,8 @@ test('node WebSocket bridge ACKs durable acceptance and replays a lost result wi
     const server = Bun.serve({
       hostname: '127.0.0.1',
       port: 0,
-      fetch: (request, server) =>
-        server.upgrade(request) ? undefined : new Response('upgrade required', { status: 400 }),
+      fetch: (request, listener) =>
+        listener.upgrade(request) ? undefined : new Response('upgrade required', { status: 400 }),
       websocket: {
         open: (socket) => {
           peer = socket

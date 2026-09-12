@@ -122,3 +122,4 @@ export { PostgresInteractionCommandRepository } from './interaction-command-repo
 export { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.js'
 export { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.js'
 export { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.js'
+export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'

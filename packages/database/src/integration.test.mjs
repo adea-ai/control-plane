@@ -67,6 +67,7 @@ import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.ts'
 import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
 import { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
+import { PostgresContextCommandGrantRepository } from './context-command-grant-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
 import {
   commandInbox,
@@ -113,6 +114,47 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   afterAll(async () => {
     await isolated?.dispose()
+  })
+
+  test('persists immutable context grants and permanent revocation across repositories', async () => {
+    const grant = {
+      authorizationRef: 'authz:postgres-context-test',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      principalRef: 'service:author',
+      mappedProjectRef: 'project-1',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      capabilities: ['evidenceSearch'],
+      maximumTokens: 100,
+      includeEvidence: true,
+      includeMemory: false,
+      issuedAt: '2026-09-12T12:00:00.000Z',
+      expiresAt: '2026-09-12T12:01:00.000Z',
+      status: 'active',
+    }
+    const first = new PostgresContextCommandGrantRepository(isolated.application)
+    const second = new PostgresContextCommandGrantRepository(isolated.application)
+    const results = await Promise.allSettled([first.create(grant), second.create(grant)])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(await second.get(grant.workspaceId, grant.authorizationRef)).toEqual(grant)
+    const otherWorkspace = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+    expect(await first.get(otherWorkspace, grant.authorizationRef)).toBeUndefined()
+    await expect(first.revoke(otherWorkspace, grant.authorizationRef)).rejects.toThrow('NOT_FOUND')
+    await Promise.all([
+      first.revoke(grant.workspaceId, grant.authorizationRef),
+      second.revoke(grant.workspaceId, grant.authorizationRef),
+    ])
+    const restarted = new PostgresContextCommandGrantRepository(isolated.application)
+    expect(await restarted.get(grant.workspaceId, grant.authorizationRef)).toEqual({
+      ...grant,
+      status: 'revoked',
+    })
+    await expect(restarted.create(grant)).rejects.toThrow('ALREADY_EXISTS')
+    await restarted.create({ ...grant, workspaceId: otherWorkspace })
+    expect((await restarted.get(otherWorkspace, grant.authorizationRef)).status).toBe('active')
+    expect((await restarted.get(grant.workspaceId, grant.authorizationRef)).status).toBe('revoked')
   })
 
   test('reserves durable channel sequences across concurrent repositories and ambiguous commits', async () => {
