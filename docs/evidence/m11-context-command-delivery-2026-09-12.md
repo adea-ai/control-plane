@@ -345,3 +345,31 @@ propagation. Full validation passes 1,355 tests (1,144 unit, 131 E2E, 80 smoke),
 build, types, lint/boundaries and formatting. Coverage is 86.94% lines / 84.45%
 functions. Recovery deadline/cancellation, production administration and deployment
 activation remain required; this fixes denial isolation, not all recovery gates.
+
+## Bounded recovery and partial progress
+
+Recovery now races a configurable page deadline (10 seconds by default, validated
+between 1 ms and five minutes) and the connection's cancellation signal. Timers
+and listeners are cleaned up on every exit. Delivery checks cancellation between
+asynchronous boundaries, including after sequence reservation and dispatch-state
+persistence, and forwards the signal to the authenticated lifecycle sender. That
+sender rechecks cancellation after channel lookup and authorization before the
+synchronous socket write. Replacement/disconnect/shutdown abort the connection's
+recovery signal. The foreground read client forwards cancellation to delivery too.
+
+On a deadline after partial progress, recovery returns the last fully visited
+command as the next cursor and marks the page timed out. It never advances past
+the in-flight ambiguous command. This permits later pages without repeatedly
+starting at the first already-visited record. A timeout before any progress still
+fails. Cancellation does not undo committed state, consumed sequences or a send
+already initiated, and arbitrary dependencies must honor the supplied signal if
+they perform their own delayed side effects.
+
+Focused validation passes 44 tests / 255 assertions: late authority/allocator
+completion, committed dispatch with a delayed persistence response and no send,
+partial-page continuation, and connection replacement/shutdown signal propagation.
+Both signed transport E2Es pass. Full validation passes 1,358 tests (1,147 unit,
+131 E2E, 80 smoke), build, types, lint/boundaries and formatting; coverage is
+86.96% lines / 84.45% functions. No production service was activated. Trusted
+administration, cross-host revocation, health publication and deployment acceptance
+remain required.

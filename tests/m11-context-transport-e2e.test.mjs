@@ -148,10 +148,10 @@ for (const loseFirstResult of [false, true]) {
         coordination,
         results: artifacts,
         sender: {
-          send: (command) => {
+          send: (command, signal) => {
             captured = command
             commandId = command.commandId
-            return lifecycle.send(command)
+            return lifecycle.send(command, signal)
           },
         },
       })

@@ -27,6 +27,124 @@ import { ContextCommandDeliveryService } from './context-command-delivery.ts'
 import { ContextCommandRecoveryService } from './context-command-recovery.ts'
 import { RuntimeGatewayMessageRouter } from './runtime-message-handler.ts'
 
+test('recovery deadlines fence late authority and sequence results without sending', async () => {
+  for (const stage of ['authority', 'sequence']) {
+    const f = fixture()
+    await f.service.enqueue(f.command)
+    let release, entered
+    const started = new Promise((resolve) => {
+      entered = resolve
+    })
+    const held = new Promise((resolve) => {
+      release = resolve
+    })
+    let reservations = 0
+    const recovery = new ContextCommandRecoveryService(
+      f.service,
+      async () => {
+        if (stage === 'authority') {
+          entered()
+          await held
+        }
+      },
+      1,
+      30
+    )
+    const operation = recovery.recover(f.source, async () => {
+      reservations++
+      if (stage === 'sequence') {
+        entered()
+        await held
+      }
+      return 2
+    })
+    await started
+    await expect(operation).rejects.toThrow('CONTEXT_RECOVERY_TIMEOUT')
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(reservations).toBe(stage === 'sequence' ? 1 : 0)
+    expect(f.sent).toEqual([])
+    expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
+  }
+  const f = fixture()
+  const controller = new AbortController()
+  controller.abort()
+  const recovery = new ContextCommandRecoveryService(f.service, async () => {
+    throw new Error('UNEXPECTED_AUTHORITY')
+  })
+  await expect(
+    recovery.recover(f.source, async () => 1, undefined, controller.signal)
+  ).rejects.toThrow()
+  expect(f.sent).toEqual([])
+  expect(() => new ContextCommandRecoveryService(f.service, async () => {}, 1, 0)).toThrow(
+    'TIMEOUT_INVALID'
+  )
+})
+
+test('recovery timeout after a committed dispatch does not send when persistence returns late', async () => {
+  const repository = new InMemoryContextCommandRepository()
+  const f = fixture(repository)
+  await f.service.enqueue(f.command)
+  const save = repository.compareAndSet.bind(repository)
+  let release, entered
+  const started = new Promise((resolve) => {
+    entered = resolve
+  })
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  repository.compareAndSet = async (...args) => {
+    const result = await save(...args)
+    entered()
+    await held
+    return result
+  }
+  const recovery = new ContextCommandRecoveryService(f.service, async () => {}, 1, 30)
+  const operation = recovery.recover(f.source, async () => 2)
+  await started
+  await expect(operation).rejects.toThrow('CONTEXT_RECOVERY_TIMEOUT')
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  expect(f.sent).toEqual([])
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('dispatched')
+})
+
+test('recovery timeout preserves completed page progress without skipping the blocked command', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  const second = structuredClone(f.command)
+  second.commandId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+  second.idempotencyKey = 'context-read:partial-second'
+  second.payload.parameters.operationId = 'context-author:partial-second'
+  second.payloadHash = contextCommandSemanticHash(second)
+  await f.service.enqueue(second)
+  let release
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  let block = true,
+    sequence = 0
+  const recovery = new ContextCommandRecoveryService(
+    f.service,
+    async (record) => {
+      if (block && record.commandId === second.commandId) await held
+    },
+    2,
+    30
+  )
+  const page = await recovery.recover(f.source, async () => ++sequence)
+  expect(page).toEqual({ nextAfterCommandId: f.command.commandId, timedOut: true })
+  expect(f.sent.map((frame) => frame.commandId)).toEqual([f.command.commandId])
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  expect(sequence).toBe(1)
+  block = false
+  expect(await recovery.recover(f.source, async () => ++sequence, page.nextAfterCommandId)).toEqual(
+    {}
+  )
+  expect(f.sent.map((frame) => frame.commandId)).toEqual([f.command.commandId, second.commandId])
+})
+
 test('context recovery rechecks grants after reservation and preserves denied intent', async () => {
   const f = fixture()
   await f.service.enqueue(f.command)

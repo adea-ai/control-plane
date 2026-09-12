@@ -68,7 +68,8 @@ export interface RuntimeGatewayWebSocketLifecycleOptions {
     recover(
       record: ActiveRuntimeNodeChannelRecord,
       nextSequence: () => Promise<number>,
-      afterCommandId?: string
+      afterCommandId?: string,
+      signal?: AbortSignal
     ): Promise<{ nextAfterCommandId?: string }>
   }
   readonly sequences?: RuntimeChannelSequenceRepository
@@ -104,6 +105,7 @@ interface LocalConnection {
   degraded: boolean
   nextOutboundSequence: number
   pendingDispatch: boolean
+  recoveryController: AbortController
   contextAfterCommandId?: string
 }
 
@@ -173,6 +175,7 @@ export class RuntimeGatewayWebSocketLifecycle {
       degraded: false,
       nextOutboundSequence: 1,
       pendingDispatch: false,
+      recoveryController: new AbortController(),
     })
     return true
   }
@@ -210,9 +213,11 @@ export class RuntimeGatewayWebSocketLifecycle {
     if (connection !== undefined) await this.#disconnect(connection, 1000, reason)
   }
 
-  async send(commandValue: GatewayCommandEnvelope): Promise<void> {
+  async send(commandValue: GatewayCommandEnvelope, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
     const command = GatewayCommandEnvelopeSchema.parse(commandValue)
     const coordinated = await this.#coordination.lookup(command.nodeId)
+    signal?.throwIfAborted()
     const connection =
       coordinated?.gatewayInstanceId === this.#instanceId
         ? this.#connections.get(coordinated.connectionId)
@@ -226,6 +231,7 @@ export class RuntimeGatewayWebSocketLifecycle {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE')
     }
     await connection.authenticatedChannel.assertCommandAllowed(command)
+    signal?.throwIfAborted()
     const serialized = JSON.stringify(command)
     if (Buffer.byteLength(serialized) > this.#limits.maxFrameBytes) {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_COMMAND_TOO_LARGE')
@@ -440,7 +446,8 @@ export class RuntimeGatewayWebSocketLifecycle {
       const page = await this.#contextRecovery?.recover(
         record,
         () => this.nextSequence(record),
-        connection.contextAfterCommandId
+        connection.contextAfterCommandId,
+        connection.recoveryController.signal
       )
       if (page?.nextAfterCommandId) connection.contextAfterCommandId = page.nextAfterCommandId
       else delete connection.contextAfterCommandId
@@ -459,6 +466,7 @@ export class RuntimeGatewayWebSocketLifecycle {
     if (connection.state === 'closed') return
     const record = connection.record
     connection.state = 'closed'
+    connection.recoveryController.abort()
     this.#connections.delete(connection.connectionId)
     if (closeSocket) connection.socket.close(code, reason)
     let released = false

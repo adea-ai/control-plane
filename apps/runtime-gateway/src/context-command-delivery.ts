@@ -27,7 +27,7 @@ export interface ContextCommandDeliveryOptions {
   readonly repository: ContextCommandRepository
   readonly coordination: Pick<RuntimeNodeCoordinationPort, 'lookup'>
   /** Use the authenticated lifecycle sender, which rechecks current ownership and capability policy. */
-  readonly sender: { send(command: GatewayCommandEnvelope): Promise<void> }
+  readonly sender: { send(command: GatewayCommandEnvelope, signal?: AbortSignal): Promise<void> }
   /** Must verify scope/content and durably store the result, idempotently by command and digest. */
   readonly results: {
     persist(
@@ -69,10 +69,14 @@ export class ContextCommandDeliveryService {
       /** Composition-owned allocator for the authenticated channel, not a locally invented sequence. */
       readonly nextSequence: () => Promise<number>
       readonly authorize: (record: ContextCommandRecord) => Promise<void>
+      readonly signal?: AbortSignal
+      readonly onVisited?: (commandId: string) => void
     }
   ): Promise<{ records: ContextCommandRecord[]; nextAfterCommandId?: string }> {
     const source = structuredClone(sourceInput)
+    input.signal?.throwIfAborted()
     await this.#active(source)
+    input.signal?.throwIfAborted()
     const pending = await this.options.repository.listPending(
       ContextCommandPendingQuerySchema.parse({
         workspaceId: source.workspaceId,
@@ -82,23 +86,39 @@ export class ContextCommandDeliveryService {
       })
     )
     const records: ContextCommandRecord[] = []
+    const visited = (commandId: string) => {
+      input.signal?.throwIfAborted()
+      input.onVisited?.(commandId)
+    }
     for (const record of pending) {
+      input.signal?.throwIfAborted()
       let sequence: number
       try {
         await input.authorize(structuredClone(record))
       } catch (error) {
-        if (error instanceof ContextCommandGrantDeniedError) continue
+        if (error instanceof ContextCommandGrantDeniedError) {
+          visited(record.commandId)
+          continue
+        }
         throw error
       }
+      input.signal?.throwIfAborted()
       sequence = await input.nextSequence()
+      input.signal?.throwIfAborted()
       try {
         await input.authorize(structuredClone(record))
       } catch (error) {
-        if (error instanceof ContextCommandGrantDeniedError) continue
+        if (error instanceof ContextCommandGrantDeniedError) {
+          visited(record.commandId)
+          continue
+        }
         throw error
       }
-      records.push((await this.deliver(source, record.commandId, sequence)).record)
+      input.signal?.throwIfAborted()
+      records.push((await this.deliver(source, record.commandId, sequence, input.signal)).record)
+      visited(record.commandId)
     }
+    input.signal?.throwIfAborted()
     const last = pending.at(-1)
     return {
       records,
@@ -109,11 +129,15 @@ export class ContextCommandDeliveryService {
   async deliver(
     sourceInput: ActiveRuntimeNodeChannelRecord,
     commandId: string,
-    sequence: number
+    sequence: number,
+    signal?: AbortSignal
   ): Promise<{ record: ContextCommandRecord; sent: boolean }> {
     const source = structuredClone(sourceInput)
+    signal?.throwIfAborted()
     await this.#active(source)
+    signal?.throwIfAborted()
     const current = await this.#required(source, commandId)
+    signal?.throwIfAborted()
     if (terminal(current)) return { record: current, sent: false }
     const now = this.#now().toISOString()
     if (Date.parse(current.expiresAt) <= Date.parse(now)) {
@@ -141,9 +165,11 @@ export class ContextCommandDeliveryService {
       lastDelivery: { channelGeneration: source.channelGeneration, sequence, at: now },
     })
     // Recheck after persistence: a replacement channel must not receive stale-generation work.
+    signal?.throwIfAborted()
     await this.#active(source)
+    signal?.throwIfAborted()
     try {
-      await this.options.sender.send(envelope)
+      await this.options.sender.send(envelope, signal)
     } catch {
       fail('SEND_FAILED')
     }

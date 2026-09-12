@@ -17,9 +17,11 @@ const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 describe('Runtime Gateway WebSocket lifecycle', () => {
   test('recovers bounded context pages on connection and heartbeat and resets cursor on replacement', async () => {
     const calls = []
+    const signals = []
     let next = 1
     const contextRecovery = {
-      recover: async (source, allocate, cursor) => {
+      recover: async (source, allocate, cursor, signal) => {
+        signals.push(signal)
         calls.push([source.channelGeneration, await allocate(), cursor])
         return cursor ? {} : { nextAfterCommandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
       },
@@ -60,9 +62,12 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
         [1, 2, 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV'],
         [2, 3, undefined],
       ])
+      expect(signals[0].aborted).toBe(true)
+      expect(signals[2].aborted).toBe(false)
     } finally {
       await f.gateway.close()
     }
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
   })
   test('shares durable sequence reservations across reconnect, direct reads and pending runtime dispatch', async () => {
     let next = 100
