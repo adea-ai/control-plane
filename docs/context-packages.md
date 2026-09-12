@@ -95,11 +95,13 @@ supported entrypoints across profiles; fixture injection is not proof of that pr
 Managed-cloud `start({ contextAuthoring })` forwards it to the cloud composition. Local and Hosted
 Simple accept `compositionOptions.contextAuthoring`, and Hosted Server forwards the same option
 through its launcher configuration. Each composition constructs the authoring service with its own
-package, ProjectState and atomic authoring-command repositories. Omitting the option keeps new
-inline requests unavailable; recorded validation results can still replay after authentication.
-These are server-side embedding options, never request fields or self-authorizing environment flags.
-The bundled launchers do not invent an adapter: product authorization and Artifact lifecycle mapping
-remain an explicit deployment integration obligation.
+package, ProjectState and atomic authoring-command repositories. When the option is omitted, the
+Local and Hosted compositions construct a default grants-backed authority over their own grant and
+registration stores with an explicit bounded policy whose provider mode is `disabled`: authoring
+degrades to the documented no-provider path, only operator-provisioned grants authorize context,
+and artifact authorization resolves through the composition's own object store. An injected option
+always takes precedence over that default. These are server-side embedding options, never request
+fields or self-authorizing environment flags.
 
 The cloud PostgreSQL HTTP integration test now authors inline context through this option and
 replays it after application/connection reconstruction without the option. Local SQLite tests use

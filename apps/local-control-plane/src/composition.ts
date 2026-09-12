@@ -30,7 +30,11 @@ import {
   EnvironmentSecretsProvider,
   PrivateFileSecretsProvider,
 } from '@control-plane/secrets'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import {
+  SqliteContextCommandGrantRepository,
+  SqliteContextProviderRegistrationRepository,
+  SqlitePersistenceProvider,
+} from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
   type ExecutionLifecycleActivities,
@@ -46,11 +50,44 @@ import {
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
-import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
+import {
+  GrantsBackedContextAuthoringAuthority,
+  type ContextAuthoringCompositionOptions,
+  type ContextAuthoringPolicy,
+} from '@control-plane/context'
 
 const require = createRequire(import.meta.url)
 const COMPONENT_VERSION = '1.0.0'
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+/**
+ * Explicit authoring policy for the supported local default authority. Provider content is
+ * composed at the runtime gateway, so the control plane itself never requests provider
+ * composition (mode disabled): authoring degrades to the documented no-provider path, and
+ * only grants provisioned through the operator administration can authorize context.
+ */
+const LOCAL_CONTEXT_AUTHORING_POLICY: ContextAuthoringPolicy = {
+  allowedSensitivities: ['public', 'internal'],
+  allowedCapabilities: ['boundedRetrieval', 'evidenceSearch', 'memoryRecall'],
+  executionLocation: 'runtime_node',
+  allowedArtifactIds: [],
+  permissions: [],
+  maximumBytes: 1_048_576,
+  maximumTokens: 32_768,
+  maximumContextTtlSeconds: 3_600,
+  providerPolicy: {
+    mode: 'disabled',
+    providerIds: [],
+    connectionIds: [],
+    includeEvidence: false,
+    includeMemory: false,
+    maximumTokens: 0,
+    maximumAgeSeconds: 3_600,
+    maximumProviderHealthAgeSeconds: 60,
+    maximumLatencyMs: 10_000,
+    failureBehavior: 'continue_without',
+  },
+}
 
 export interface LocalComponentManifest {
   readonly schemaVersion: 1
@@ -184,10 +221,22 @@ export class LocalControlPlaneComposition {
     if (options.runtimeTransport !== undefined && options.runtimeFactory !== undefined) {
       throw new Error('LOCAL_RUNTIME_CONFIGURATION_CONFLICT')
     }
+    // The supported default authorizes authoring from this composition's own SQLite grant
+    // and registration stores; an explicit injection always takes precedence.
+    const contextAuthoring =
+      options.contextAuthoring ??
+      ({
+        authority: new GrantsBackedContextAuthoringAuthority({
+          grants: new SqliteContextCommandGrantRepository(this.persistence),
+          registrations: new SqliteContextProviderRegistrationRepository(this.persistence),
+          artifacts: this.objectStore,
+          policy: LOCAL_CONTEXT_AUTHORING_POLICY,
+        }),
+      } satisfies ContextAuthoringCompositionOptions)
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,
-      options.contextAuthoring
+      contextAuthoring
     )
     const runtimeTransport =
       options.runtimeTransport ??

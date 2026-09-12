@@ -2,7 +2,9 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   ContextPackageAuthoringService,
+  GrantsBackedContextAuthoringAuthority,
   type ContextAuthoringCompositionOptions,
+  type ContextAuthoringPolicy,
 } from '@control-plane/context'
 import {
   DurableExecutionAcceptanceService,
@@ -19,6 +21,8 @@ import {
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
   PostgresContextAuthoringCommandRepository,
+  PostgresContextCommandGrantRepository,
+  PostgresContextProviderRegistrationRepository,
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
@@ -80,6 +84,35 @@ import {
 
 const COMPONENT_VERSION = '1.0.0'
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+/**
+ * Explicit authoring policy for the supported hosted default authority. Provider content is
+ * composed at the runtime gateway, so the control plane itself never requests provider
+ * composition (mode disabled): authoring degrades to the documented no-provider path, and
+ * only grants provisioned through the operator administration can authorize context.
+ */
+const HOSTED_CONTEXT_AUTHORING_POLICY: ContextAuthoringPolicy = {
+  allowedSensitivities: ['public', 'internal'],
+  allowedCapabilities: ['boundedRetrieval', 'evidenceSearch', 'memoryRecall'],
+  executionLocation: 'runtime_node',
+  allowedArtifactIds: [],
+  permissions: [],
+  maximumBytes: 1_048_576,
+  maximumTokens: 32_768,
+  maximumContextTtlSeconds: 3_600,
+  providerPolicy: {
+    mode: 'disabled',
+    providerIds: [],
+    connectionIds: [],
+    includeEvidence: false,
+    includeMemory: false,
+    maximumTokens: 0,
+    maximumAgeSeconds: 3_600,
+    maximumProviderHealthAgeSeconds: 60,
+    maximumLatencyMs: 10_000,
+    failureBehavior: 'continue_without',
+  },
+}
 
 export interface HostedServerManifest {
   readonly schemaVersion: 1
@@ -197,27 +230,37 @@ export class HostedServerControlPlaneComposition {
     }
     this.remoteControl =
       options.remoteControl ?? options.remoteControlFactory?.(this.executionAcceptanceService)
+    // The supported default authorizes authoring from this composition's own PostgreSQL
+    // grant and registration stores; an explicit injection always takes precedence.
+    const contextAuthoring =
+      options.contextAuthoring ??
+      ({
+        authority: new GrantsBackedContextAuthoringAuthority({
+          grants: new PostgresContextCommandGrantRepository(this.connection.database),
+          registrations: new PostgresContextProviderRegistrationRepository(
+            this.connection.database
+          ),
+          artifacts: this.objectStore,
+          policy: HOSTED_CONTEXT_AUTHORING_POLICY,
+        }),
+      } satisfies ContextAuthoringCompositionOptions)
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: COMPONENT_VERSION,
       contextPackages,
       commands: new PostgresExecutionValidationCommandRepository(this.connection.database),
-      ...(options.contextAuthoring === undefined
-        ? {}
-        : {
-            contextAuthoring: new ContextPackageAuthoringService({
-              compilerVersion: COMPONENT_VERSION,
-              packages: contextPackages,
-              projectStates,
-              commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
-              authority: options.contextAuthoring.authority,
-              ...(options.contextAuthoring.providerResolver === undefined
-                ? {}
-                : {
-                    providerResolver: options.contextAuthoring.providerResolver,
-                  }),
-              now: options.contextAuthoring.now ?? (() => new Date()),
+      contextAuthoring: new ContextPackageAuthoringService({
+        compilerVersion: COMPONENT_VERSION,
+        packages: contextPackages,
+        projectStates,
+        commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
+        authority: contextAuthoring.authority,
+        ...(contextAuthoring.providerResolver === undefined
+          ? {}
+          : {
+              providerResolver: contextAuthoring.providerResolver,
             }),
-          }),
+        now: contextAuthoring.now ?? (() => new Date()),
+      }),
       profiles: catalog,
       projectStates,
       skills: catalog,

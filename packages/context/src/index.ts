@@ -904,3 +904,4 @@ export const contextPackageSerializationFixtures = {
 
 export const packageName = 'context'
 export * from './provider.js'
+export * from './authority.js'
