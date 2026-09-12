@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.2...workspace-v1.14.3) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** package Linux native Codex with retained debug symbols ([#456](https://github.com/adea-ai/control-plane/issues/456)) ([3768aad](https://github.com/adea-ai/control-plane/commit/3768aaddef61a2dc5b5dd0303ebe4e3819de86d6))
+
 ## [1.14.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.1...workspace-v1.14.2) (2026-09-12)
 
 
