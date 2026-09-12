@@ -15,6 +15,55 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test('recovers bounded context pages on connection and heartbeat and resets cursor on replacement', async () => {
+    const calls = []
+    let next = 1
+    const contextRecovery = {
+      recover: async (source, allocate, cursor) => {
+        calls.push([source.channelGeneration, await allocate(), cursor])
+        return cursor ? {} : { nextAfterCommandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
+      },
+    }
+    const sequences = { reserve: async () => next++ }
+    expect(() =>
+      setup(
+        'missing-sequences',
+        undefined,
+        undefined,
+        {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        contextRecovery
+      )
+    ).toThrow('DURABLE_SEQUENCE_REQUIRED')
+    const f = setup(
+      'context-pages',
+      undefined,
+      undefined,
+      {},
+      undefined,
+      undefined,
+      sequences,
+      undefined,
+      contextRecovery
+    )
+    try {
+      f.gateway.open(connection('first', channel(1), new FakeSocket()))
+      await f.gateway.receive('first', JSON.stringify(hello(1)))
+      await f.gateway.receive('first', JSON.stringify(golden.heartbeat))
+      f.gateway.open(connection('second', channel(2), new FakeSocket()))
+      await f.gateway.receive('second', JSON.stringify(hello(2)))
+      expect(calls).toEqual([
+        [1, 1, undefined],
+        [1, 2, 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV'],
+        [2, 3, undefined],
+      ])
+    } finally {
+      await f.gateway.close()
+    }
+  })
   test('shares durable sequence reservations across reconnect, direct reads and pending runtime dispatch', async () => {
     let next = 100
     const reserved = []
@@ -409,7 +458,8 @@ function setup(
   messages,
   pending,
   sequences,
-  reconnect
+  reconnect,
+  contextRecovery
 ) {
   const reachability = new RecordingRuntimeNodeReachabilityPublisher()
   const metrics = new RecordingGatewayMetrics()
@@ -423,6 +473,7 @@ function setup(
     pending,
     sequences,
     reconnect,
+    contextRecovery,
     limits: {
       maxConnections: 8,
       maxConnectionsPerWorkspace: 8,

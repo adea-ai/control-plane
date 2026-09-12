@@ -67,6 +67,7 @@ export class ContextCommandDeliveryService {
       readonly afterCommandId?: string
       /** Composition-owned allocator for the authenticated channel, not a locally invented sequence. */
       readonly nextSequence: () => Promise<number>
+      readonly authorize: (record: ContextCommandRecord) => Promise<void>
     }
   ): Promise<{ records: ContextCommandRecord[]; nextAfterCommandId?: string }> {
     const source = structuredClone(sourceInput)
@@ -80,10 +81,12 @@ export class ContextCommandDeliveryService {
       })
     )
     const records: ContextCommandRecord[] = []
-    for (const record of pending)
-      records.push(
-        (await this.deliver(source, record.commandId, await input.nextSequence())).record
-      )
+    for (const record of pending) {
+      await input.authorize(structuredClone(record))
+      const sequence = await input.nextSequence()
+      await input.authorize(structuredClone(record))
+      records.push((await this.deliver(source, record.commandId, sequence)).record)
+    }
     const last = pending.at(-1)
     return {
       records,

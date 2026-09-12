@@ -21,6 +21,7 @@ import {
 } from '../apps/runtime-worker/src/index.ts'
 import {
   ContextCommandDeliveryService,
+  ContextCommandRecoveryService,
   ContextGatewayReadClient,
   ContextCommandArtifactStore,
   RuntimeGatewayMessageRouter,
@@ -133,6 +134,9 @@ for (const loseFirstResult of [false, true]) {
         events: { ingestProgress: unexpected, ingestResult: unexpected, ingestError: unexpected },
       })
       lifecycle = new RuntimeGatewayWebSocketLifecycle({
+        contextRecovery: new ContextCommandRecoveryService(delivery, (record) =>
+          guard(record.commandEnvelope)
+        ),
         sequences: new SqliteRuntimeChannelSequenceRepository(gatewayDb),
         instanceId: 'context-test-gateway',
         coordination,
@@ -238,8 +242,22 @@ for (const loseFirstResult of [false, true]) {
             if (dropped && !redelivered) {
               redelivered = true
               await deadline(acknowledged.promise)
-              const source = await coordination.lookup(nodeId)
-              await delivery.deliver(source, commandId, await lifecycle.nextSequence(source))
+              const sentAt = new Date().toISOString()
+              socket.send(
+                JSON.stringify({
+                  type: 'heartbeat',
+                  schemaVersion: 1,
+                  protocolVersion: { major: 1, minor: 5 },
+                  sequence: sequence++,
+                  nodeId,
+                  workspaceId,
+                  traceId,
+                  channelGeneration: 1,
+                  sentAt,
+                  observedAt: sentAt,
+                  status: 'online',
+                })
+              )
             }
           })
           .catch((error) => completed.reject(error))

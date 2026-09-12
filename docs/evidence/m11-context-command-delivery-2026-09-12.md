@@ -120,9 +120,9 @@ provider call; the lost case records two gateway delivery attempts. Credential
 revocation rejects subsequent gateway sends. Full suite: 1,338 passing tests
 (1,129 unit, 129 E2E, 80 smoke); lint/boundaries and formatting pass.
 The identity authority and compatible HTTP endpoint are test fixtures. The test
-now uses the concrete gateway read client described below; redelivery orchestration
-is still explicit. Production authoring composition, sequence allocation, policy authority, automatic reconnect and
-multi-profile deployment acceptance remain unproven.
+now uses the concrete gateway read client and heartbeat-driven context recovery
+described below. Production authoring composition, policy authority and multi-profile
+deployment acceptance remain unproven.
 
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
@@ -185,3 +185,21 @@ The local suite passes 1,346 tests (1,136 unit, 130 E2E, 80 smoke), with 87.20% 
 and 84.69% function coverage. Build, types and migration-schema checks pass.
 No staging or production database was migrated, and production composition remains
 unactivated. Migration-generated JSON is normalized by the repository formatter.
+
+## Lifecycle-driven context recovery
+
+ContextCommandRecoveryService runs one bounded page on channel activation and on
+each heartbeat. The lifecycle retains the cursor only for that connection, resets
+it on replacement, and requires a durable sequence repository when recovery is
+configured. Context and runtime recovery share the allocator. Recovery reauthorizes
+each pending command before and after sequence reservation; denial leaves durable
+intent untouched and sends nothing. A failed recovery page is not advanced.
+The signed WebSocket E2E lost-result case now sends a heartbeat instead of directly
+calling delivery, and recovers the stored result with exactly one HTTP provider
+call. Focused tests also cover replacement cursor reset, missing allocator rejection,
+paging and grant revocation during reservation: 37 tests, 198 assertions.
+Full local validation passes 1,349 tests (1,138 unit, 131 E2E, 80 smoke), build,
+types, lint/boundaries and formatting; coverage is 87.21% lines / 84.71% functions.
+The configured authorizer is still a fixture in E2E. This is not production wiring,
+a full socket-reconnect matrix, or evidence that an uncertain external HTTP call
+can safely be repeated. Production composition and multi-profile acceptance remain.

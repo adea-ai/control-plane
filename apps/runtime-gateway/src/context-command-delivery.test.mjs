@@ -17,7 +17,50 @@ import {
 } from '@control-plane/sqlite-persistence'
 import { InMemoryContextCommandRepository, contextCommandSemanticHash } from '@control-plane/domain'
 import { ContextCommandDeliveryService } from './context-command-delivery.ts'
+import { ContextCommandRecoveryService } from './context-command-recovery.ts'
 import { RuntimeGatewayMessageRouter } from './runtime-message-handler.ts'
+
+test('context recovery rechecks grants after reservation and preserves denied intent', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  let permitted = false,
+    reservations = 0
+  const recovery = new ContextCommandRecoveryService(
+    f.service,
+    async () => {
+      if (!permitted) throw new Error('GRANT_REVOKED')
+    },
+    1
+  )
+  const allocate = async () => {
+    reservations++
+    permitted = false
+    return 2
+  }
+  await expect(recovery.recover(f.source, allocate)).rejects.toThrow('GRANT_REVOKED')
+  expect(reservations).toBe(0)
+  permitted = true
+  await expect(recovery.recover(f.source, allocate)).rejects.toThrow('GRANT_REVOKED')
+  expect(reservations).toBe(1)
+  expect(f.sent).toEqual([])
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
+  permitted = true
+  const page = await recovery.recover(f.source, async () => 3)
+  expect(page.nextAfterCommandId).toBe(f.command.commandId)
+  expect(f.sent).toHaveLength(1)
+  expect(
+    await recovery.recover(
+      f.source,
+      async () => {
+        throw new Error('NO_RESERVATION')
+      },
+      page.nextAfterCommandId
+    )
+  ).toEqual({})
+  expect(() => new ContextCommandRecoveryService(f.service, async () => {}, 129)).toThrow(
+    'LIMIT_INVALID'
+  )
+})
 
 function fixture(repository = new InMemoryContextCommandRepository()) {
   let now = '2026-09-12T12:00:00.000Z'
@@ -562,6 +605,7 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
     f.options.sender.send = async (envelope) => f.sent.push(envelope)
     const restarted = new ContextCommandDeliveryService(f.options)
     const batch = await restarted.redeliverPending(f.source, {
+      authorize: async () => {},
       limit: 1,
       nextSequence: async () => 2,
     })
@@ -571,6 +615,7 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
     expect(
       (
         await restarted.redeliverPending(f.source, {
+          authorize: async () => {},
           limit: 1,
           afterCommandId: batch.nextAfterCommandId,
           nextSequence: async () => {
@@ -600,6 +645,7 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
     expect(
       (
         await terminal.redeliverPending(f.source, {
+          authorize: async () => {},
           limit: 1,
           nextSequence: async () => {
             throw new Error('NO_SEQUENCE_EXPECTED')

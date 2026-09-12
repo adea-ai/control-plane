@@ -64,6 +64,13 @@ export interface RuntimeGatewayPendingCommandHandler {
 }
 
 export interface RuntimeGatewayWebSocketLifecycleOptions {
+  readonly contextRecovery?: {
+    recover(
+      record: ActiveRuntimeNodeChannelRecord,
+      nextSequence: () => Promise<number>,
+      afterCommandId?: string
+    ): Promise<{ nextAfterCommandId?: string }>
+  }
   readonly sequences?: RuntimeChannelSequenceRepository
   readonly instanceId: string
   readonly coordination: RuntimeNodeCoordinationPort
@@ -97,9 +104,11 @@ interface LocalConnection {
   degraded: boolean
   nextOutboundSequence: number
   pendingDispatch: boolean
+  contextAfterCommandId?: string
 }
 
 export class RuntimeGatewayWebSocketLifecycle {
+  readonly #contextRecovery: RuntimeGatewayWebSocketLifecycleOptions['contextRecovery']
   readonly #sequences: RuntimeChannelSequenceRepository | undefined
   readonly #connections = new Map<string, LocalConnection>()
   readonly #coordination: RuntimeNodeCoordinationPort
@@ -115,6 +124,9 @@ export class RuntimeGatewayWebSocketLifecycle {
   #draining = false
 
   constructor(options: RuntimeGatewayWebSocketLifecycleOptions) {
+    if (options.contextRecovery && !options.sequences)
+      throw new Error('RUNTIME_GATEWAY_DURABLE_SEQUENCE_REQUIRED')
+    this.#contextRecovery = options.contextRecovery
     this.#sequences = options.sequences
     this.#instanceId = options.instanceId
     this.#coordination = options.coordination
@@ -351,6 +363,7 @@ export class RuntimeGatewayWebSocketLifecycle {
       )
       if (!this.#sequences)
         connection.nextOutboundSequence += (recovery?.redelivered ?? 0) + (recovery?.expired ?? 0)
+      await this.#dispatchPending(connection, true)
     } catch {
       await this.#disconnect(connection, 1011, 'reconnect_reconciliation_failed')
     }
@@ -402,9 +415,9 @@ export class RuntimeGatewayWebSocketLifecycle {
     await this.#dispatchPending(connection)
   }
 
-  async #dispatchPending(connection: LocalConnection): Promise<void> {
+  async #dispatchPending(connection: LocalConnection, contextOnly = false): Promise<void> {
     if (
-      this.#pending === undefined ||
+      (this.#pending === undefined && this.#contextRecovery === undefined) ||
       connection.record === undefined ||
       connection.pendingDispatch
     ) {
@@ -413,15 +426,24 @@ export class RuntimeGatewayWebSocketLifecycle {
     connection.pendingDispatch = true
     try {
       const record = connection.record
-      const delivered = await this.#pending.dispatch(
-        record,
-        connection.nextOutboundSequence,
-        this.#sequences ? () => this.nextSequence(record) : undefined
-      )
+      const delivered = contextOnly
+        ? 0
+        : ((await this.#pending?.dispatch(
+            record,
+            connection.nextOutboundSequence,
+            this.#sequences ? () => this.nextSequence(record) : undefined
+          )) ?? 0)
       if (!Number.isSafeInteger(delivered) || delivered < 0 || delivered > 1_000) {
         throw new Error('RUNTIME_GATEWAY_PENDING_DISPATCH_INVALID')
       }
       if (!this.#sequences) connection.nextOutboundSequence += delivered
+      const page = await this.#contextRecovery?.recover(
+        record,
+        () => this.nextSequence(record),
+        connection.contextAfterCommandId
+      )
+      if (page?.nextAfterCommandId) connection.contextAfterCommandId = page.nextAfterCommandId
+      else delete connection.contextAfterCommandId
     } finally {
       connection.pendingDispatch = false
     }
