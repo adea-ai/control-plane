@@ -280,3 +280,24 @@ gateway-to-context workspace dependency is reflected in the lockfile and archite
 inventory; no external package version changed. Registry snapshots and grant
 provisioning are still fixture-owned. A production registry source, administrative
 authorization/replication and composition-root activation remain necessary.
+
+## Durable provider registry
+
+ContextProviderRegistration defines versioned provider snapshots and optional
+revision/output pins. SqliteContextProviderRegistrationRepository atomically writes
+the registration and its workspace/principal active index. Updates use expected
+versions, preserve provider/connection/principal/scope/grant identity, and reject
+backwards health observations. Revocation removes only the active index entry;
+the retained revoked record prevents recreation or reactivation. This retains the
+current revoked registration, not a full historical revision audit trail. Active
+registrations are capped at 32 per workspace/principal, enforced in the same write
+transaction. Reads are bounded and validate index-to-record scope consistency.
+Both composed E2Es now load bindings from SQLite rather than an array callback.
+Focused tests pass seven tests / 131 assertions, including failed index-write
+rollback, concurrent creates, stale updates, scoped lookup, pin persistence,
+reopen, revocation and the active-capacity bound. Full validation passes 1,354 tests
+(1,143 unit, 131 E2E, 80 smoke), build, types, lint/boundaries and formatting.
+Coverage is 87.11% lines / 84.55% functions. No SQL migration or external resources
+changed in this step. PostgreSQL registry storage, trusted administrative/health
+publication and deployment composition are still required. Fixture-owned writes
+are not production administration evidence, and rollback must retain revoked records.

@@ -14,6 +14,7 @@ import {
   SqliteContextNodeInboxRepository,
   SqliteRuntimeChannelSequenceRepository,
   SqliteContextCommandGrantRepository,
+  SqliteContextProviderRegistrationRepository,
 } from '@control-plane/sqlite-persistence'
 import { createContextBundle } from '../packages/cortana-context-adapter/src/index.ts'
 import {
@@ -335,6 +336,14 @@ for (const loseFirstResult of [false, true]) {
         tokenCount: 1,
       }).readModel
       readModel.health.checkedAt = new Date().toISOString()
+      const registrations = new SqliteContextProviderRegistrationRepository(gatewayDb)
+      await registrations.save(0, {
+        version: 1,
+        readModel,
+        providerRef,
+        mappedProjectRef: 'fixture-project',
+        authorizationRef: grant.authorizationRef,
+      })
       const resolver = new GatewayContextProviderResolver({
         delivery,
         artifacts,
@@ -342,14 +351,7 @@ for (const loseFirstResult of [false, true]) {
         coordination,
         nextSequence: (source) => lifecycle.nextSequence(source),
         traceId: () => traceId,
-        readBindings: async () => [
-          {
-            readModel,
-            providerRef,
-            mappedProjectRef: 'fixture-project',
-            authorizationRef: grant.authorizationRef,
-          },
-        ],
+        readBindings: (scope) => registrations.list(scope),
       })
       const { contributions, status } = await resolver.resolve({
         workspaceId,

@@ -10,8 +10,97 @@ import { SqliteRuntimeChannelSequenceRepository } from './runtime-channel-sequen
 import { createContextNodeInboxRecord } from '@control-plane/domain'
 import { ContextCommandGrantAuthority } from '@control-plane/domain'
 import { SqliteContextCommandGrantRepository } from './context-command-grant-repository.ts'
+import { SqliteContextProviderRegistrationRepository } from './context-provider-registration-repository.ts'
+import { createFakeContextProvider } from '@control-plane/context'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('SQLite provider registry atomically indexes scoped snapshots and retains irreversible revocation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-provider-registry-'))
+  const path = join(directory, 'registry.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const readModel = createFakeContextProvider({
+      suffix: 'A',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      health: 'healthy',
+      state: 'active',
+      capabilities: { evidenceSearch: true },
+      kind: 'evidence',
+      tokenCount: 1,
+    }).readModel
+    const record = {
+      version: 1,
+      readModel,
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      mappedProjectRef: 'project-1',
+      authorizationRef: 'authz:registry-test',
+      expectedCorpusRevision: 'corpus:1',
+      maximumOutputBytes: 262144,
+    }
+    const scope = {
+      workspaceId: readModel.connection.workspaceId,
+      principalRef: readModel.connection.principalRef,
+    }
+    let repository = new SqliteContextProviderRegistrationRepository(provider)
+    let writes = 0
+    const failing = new SqliteContextProviderRegistrationRepository({
+      transaction: (operation) =>
+        provider.transaction((tx) =>
+          operation({
+            ...tx,
+            get: tx.get.bind(tx),
+            scan: tx.scan.bind(tx),
+            put: async (write) => {
+              if (++writes === 2) throw new Error('INDEX_FAILURE')
+              return tx.put(write)
+            },
+          })
+        ),
+    })
+    await expect(failing.save(0, record)).rejects.toThrow('INDEX_FAILURE')
+    expect(await repository.list(scope)).toEqual([])
+    expect(await Promise.all([repository.save(0, record), repository.save(0, record)])).toEqual([
+      true,
+      false,
+    ])
+    const refreshed = { ...structuredClone(record), version: 2 }
+    refreshed.readModel.health.checkedAt = now
+    expect(await repository.save(1, refreshed)).toBe(true)
+    expect(await repository.save(1, refreshed)).toBe(false)
+    const moved = { ...structuredClone(refreshed), version: 3 }
+    moved.readModel.connection.principalRef = 'principal:other'
+    expect(await repository.save(2, moved)).toBe(false)
+    expect(await repository.save(2, { ...record, version: 3 })).toBe(false)
+    expect(await repository.list({ ...scope, principalRef: 'principal:other' })).toEqual([])
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteContextProviderRegistrationRepository(provider)
+    expect(await repository.list(scope)).toEqual([refreshed])
+    const revoked = { ...structuredClone(refreshed), version: 3 }
+    revoked.readModel.connection.state = 'revoked'
+    expect(await repository.save(2, revoked)).toBe(true)
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteContextProviderRegistrationRepository(provider)
+    expect(await repository.list(scope)).toEqual([])
+    expect(await repository.save(3, { ...refreshed, version: 4 })).toBe(false)
+    expect(await repository.save(0, record)).toBe(false)
+    for (let number = 1; number <= 33; number++) {
+      const addition = structuredClone(record)
+      addition.readModel.connection.connectionId = `ctc_${String(number).padStart(26, '0')}`
+      expect(await repository.save(0, addition)).toBe(number <= 32)
+    }
+    expect(await repository.list(scope)).toHaveLength(32)
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('SQLite context grants enforce scope and budgets and preserve revocation across reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-context-grants-'))

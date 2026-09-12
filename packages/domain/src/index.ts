@@ -18,3 +18,4 @@ export * from './versioned-catalog.js'
 
 export const packageName = 'domain'
 export * from './context-command-grant.js'
+export * from './context-provider-registration.js'
