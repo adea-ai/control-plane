@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-12 14:17:54 UTC",
+  "ledgerCandidate": "d3e449471d02f791c52196ea296a5a8a653a4dd4",
+  "scope": "Drive metadata comparison only; not content retrieval, atomic extraction, or implementation acceptance.",
+  "gapIssues": [186, 195],
+  "sourceCount": 15,
+  "driftedSources": 10,
+  "sources": [
+    {
+      "sourceId": "project-index",
+      "documentId": "1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI",
+      "title": "00 - Project Index",
+      "ledgerModifiedTime": "2026-08-20T18:01:00.532Z",
+      "currentModifiedTime": "2026-08-28T07:21:46.770Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "agent-hq-prd",
+      "documentId": "1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q",
+      "title": "01 - Agent HQ PRD",
+      "ledgerModifiedTime": "2026-08-24T21:16:00.149Z",
+      "currentModifiedTime": "2026-08-28T07:36:11.776Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "control-plane-prd",
+      "documentId": "1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0",
+      "title": "02 - Control Plane PRD",
+      "ledgerModifiedTime": "2026-08-28T07:15:36.403Z",
+      "currentModifiedTime": "2026-09-08T08:20:21.669Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "cortana-prd",
+      "documentId": "1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY",
+      "title": "03 - Cortana PRD",
+      "ledgerModifiedTime": "2026-08-28T04:57:08.721Z",
+      "currentModifiedTime": "2026-08-28T04:57:08.721Z",
+      "status": "metadata_matches",
+      "requiredAction": "Current content and requirement coverage still require acceptance audit."
+    },
+    {
+      "sourceId": "system-architecture",
+      "documentId": "1Bdck8tMJQ_o9C1cPnxpEI9fe39csTmynllRgj-gbTxI",
+      "title": "04 - System Architecture Overview",
+      "ledgerModifiedTime": "2026-08-24T21:16:16.793Z",
+      "currentModifiedTime": "2026-08-28T07:21:39.659Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "control-plane-tdd",
+      "documentId": "1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg",
+      "title": "Control Plane TDD",
+      "ledgerModifiedTime": "2026-08-24T20:34:22.096Z",
+      "currentModifiedTime": "2026-08-28T06:03:21.899Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "agent-skill-spec",
+      "documentId": "1YTNV1loWA34R-eZsYvEX5I_C6ecw3gWIfIWW0TvFnwg",
+      "title": "Agent & Skill Specification",
+      "ledgerModifiedTime": "2026-08-20T16:27:15.302Z",
+      "currentModifiedTime": "2026-08-28T04:42:28.680Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "data-api-spec",
+      "documentId": "1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM",
+      "title": "Data Model & API Specification",
+      "ledgerModifiedTime": "2026-08-20T16:35:26.925Z",
+      "currentModifiedTime": "2026-08-28T07:18:49.965Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "runtime-node-spec",
+      "documentId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
+      "title": "RuntimeNode & Desktop Protocol Specification",
+      "ledgerModifiedTime": "2026-08-28T07:21:06.166Z",
+      "currentModifiedTime": "2026-08-28T07:21:06.166Z",
+      "status": "metadata_matches",
+      "requiredAction": "Current content and requirement coverage still require acceptance audit."
+    },
+    {
+      "sourceId": "execution-consistency-spec",
+      "documentId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
+      "title": "Execution Consistency & Event Delivery Specification",
+      "ledgerModifiedTime": "2026-08-28T07:21:17.702Z",
+      "currentModifiedTime": "2026-08-28T07:21:17.702Z",
+      "status": "metadata_matches",
+      "requiredAction": "Current content and requirement coverage still require acceptance audit."
+    },
+    {
+      "sourceId": "artifact-storage-spec",
+      "documentId": "12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I",
+      "title": "Artifact Storage Specification",
+      "ledgerModifiedTime": "2026-08-28T07:05:15.684Z",
+      "currentModifiedTime": "2026-08-28T07:05:15.684Z",
+      "status": "metadata_matches",
+      "requiredAction": "Current content and requirement coverage still require acceptance audit."
+    },
+    {
+      "sourceId": "security-trust-model",
+      "documentId": "14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE",
+      "title": "Security & Trust Model",
+      "ledgerModifiedTime": "2026-08-28T07:20:45.361Z",
+      "currentModifiedTime": "2026-08-28T07:20:45.361Z",
+      "status": "metadata_matches",
+      "requiredAction": "Current content and requirement coverage still require acceptance audit."
+    },
+    {
+      "sourceId": "evaluation-plan",
+      "documentId": "1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo",
+      "title": "Evaluation & Benchmarking Plan",
+      "ledgerModifiedTime": "2026-08-20T16:27:28.377Z",
+      "currentModifiedTime": "2026-08-28T07:21:53.910Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "runtime-compatibility",
+      "documentId": "16dBpODPdXIbwlxNlaxSlQopIXSTVbS5mdfUqLsafwjc",
+      "title": "Runtime Compatibility Matrix",
+      "ledgerModifiedTime": "2026-08-20T16:35:47.965Z",
+      "currentModifiedTime": "2026-08-28T05:36:11.655Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    },
+    {
+      "sourceId": "architecture-decisions",
+      "documentId": "1K6JwlbSQIRvxmvSeTb5oNEQYc5SfoIJ4QPVTGtXPCbo",
+      "title": "Architecture Decision Records",
+      "ledgerModifiedTime": "2026-08-24T20:35:59.335Z",
+      "currentModifiedTime": "2026-08-28T07:20:59.775Z",
+      "status": "source_drift",
+      "requiredAction": "Retrieve current revision and reconcile atomic requirements before refreshing ledger evidence."
+    }
+  ]
+}
