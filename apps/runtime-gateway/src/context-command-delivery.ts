@@ -1,4 +1,7 @@
-import { createHash } from 'node:crypto'
+import {
+  contextCommandCompletionDigest as fingerprint,
+  contextCommandResultDigest,
+} from './context-result-integrity.js'
 import {
   ContextCommandRecordSchema,
   ContextCommandPendingQuerySchema,
@@ -184,13 +187,7 @@ export class ContextCommandDeliveryService {
     const result = GatewayResultEnvelopeSchema.parse(input)
     if (Buffer.byteLength(JSON.stringify(result)) > 262144) fail('RESULT_TOO_LARGE')
     const current = await this.#frame(source, result)
-    const digest = fingerprint({
-      type: 'result',
-      payloadHash: result.payloadHash,
-      status: result.status,
-      completedAt: result.completedAt,
-      result: result.result,
-    })
+    const digest = contextCommandResultDigest(result)
     if (terminal(current)) {
       if (current.completionDigest === digest) return { record: current, duplicate: true }
       fail('RESULT_CONFLICT')
@@ -320,16 +317,4 @@ function terminal(record: ContextCommandRecord): boolean {
 }
 function fail(code: string): never {
   throw new Error(`CONTEXT_COMMAND_${code}`)
-}
-function fingerprint(input: unknown): string {
-  return `sha256:${createHash('sha256').update(canonical(input)).digest('hex')}`
-}
-function canonical(input: unknown): string {
-  if (Array.isArray(input)) return `[${input.map(canonical).join(',')}]`
-  if (input && typeof input === 'object')
-    return `{${Object.entries(input)
-      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([key, value]) => `${JSON.stringify(key)}:${canonical(value)}`)
-      .join(',')}}`
-  return JSON.stringify(input) ?? 'undefined'
 }

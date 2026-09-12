@@ -46,8 +46,15 @@ digests from terminal records.
 
 ## Remaining acceptance
 
-The result-store port still needs its production implementation, including Artifact
-scope/content verification and idempotent storage by command and digest. Production
+The ObjectStore-backed result implementation now verifies command-scoped metadata,
+bounded JSON bytes, checksums, and completion digests before returning a deterministic
+Artifact ID. Readback is mandatory; uploaded references are resolved only through
+command-scoped keys. Real filesystem plus SQLite reconstruction, duplicate replay,
+cross-workspace metadata rejection, and semantic tampering are tested. All 1,321
+repository tests pass (1,114 unit, 127 E2E, 80 smoke), as do type, lint, boundary,
+and formatting checks. This is local provider evidence, not remote object-store
+or production activation evidence. Ambiguous-write and size-limit fault coverage
+and production upload credential scoping still need expanded validation. Production
 composition must provide the authenticated lifecycle sender, authoritative node
 coordination, and durable sequence allocation. RuntimeNode context-driver execution
 and node-side deduplication are not implemented here. Full socket transport,

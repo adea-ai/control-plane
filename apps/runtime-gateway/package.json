@@ -14,12 +14,14 @@
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/config": "workspace:*",
+    "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*"
   },
   "devDependencies": {
+    "@control-plane/object-store": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {

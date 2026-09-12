@@ -122,12 +122,14 @@
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
+        "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/events": "workspace:*",
         "@control-plane/runtime-gateway-protocol": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
       },
       "devDependencies": {
+        "@control-plane/object-store": "workspace:*",
         "@control-plane/sqlite-persistence": "workspace:*",
       },
     },
@@ -253,7 +255,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.10.2",
+      "version": "1.11.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -280,7 +282,7 @@
     },
     "packages/domain": {
       "name": "@control-plane/domain",
-      "version": "1.7.1",
+      "version": "1.8.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.5.4",
@@ -461,7 +463,7 @@
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.3.1",
+      "version": "1.4.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",

@@ -525,13 +525,17 @@
       "workspaceDependencies": [
         "@control-plane/bootstrap",
         "@control-plane/config",
+        "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/events",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/object-store",
+        "@control-plane/sqlite-persistence"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },

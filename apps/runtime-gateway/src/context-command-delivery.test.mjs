@@ -2,6 +2,14 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { FilesystemObjectStore } from '@control-plane/object-store'
+import {
+  ContextCommandArtifactStore,
+  contextCommandUploadKey,
+  contextCommandUploadMetadata,
+} from './context-result-store.ts'
+import { contextCommandResultDigest } from './context-result-integrity.ts'
 import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
@@ -283,13 +291,75 @@ test('context delivery rejects overlong grants, mismatched hashes and oversized 
   expect(f.stored).toHaveLength(0)
 })
 
+test('Artifact persistence verifies scoped uploaded bytes and detects semantic tampering', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-artifact-'))
+  const objects = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 262144 })
+  try {
+    const f = fixture()
+    await f.service.enqueue(f.command)
+    const command = await f.repository.get(f.source.workspaceId, f.command.commandId)
+    const body = new TextEncoder().encode('{ "evidence": "uploaded" }\n')
+    const artifactId = 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    const key = contextCommandUploadKey(command, artifactId)
+    const metadata = contextCommandUploadMetadata(command)
+    const frame = {
+      ...f.result,
+      result: {
+        artifact: {
+          artifactId,
+          sizeBytes: body.byteLength,
+          mediaType: 'application/json',
+          digest: `sha256:${createHash('sha256').update(body).digest('hex')}`,
+        },
+      },
+    }
+    const digest = contextCommandResultDigest(frame)
+    const store = new ContextCommandArtifactStore(objects)
+    await objects.put({
+      key,
+      body,
+      contentType: 'application/json',
+      metadata: { ...metadata, 'workspace-id': 'wrong-workspace' },
+    })
+    await expect(store.persist(command, frame, digest)).rejects.toThrow('SCOPE_MISMATCH')
+    await objects.put({ key, body, contentType: 'application/json', metadata })
+    const id = await store.persist(command, frame, digest)
+    expect(await store.persist(command, frame, digest)).toBe(id)
+    f.options.results = store
+    await f.service.deliver(f.source, f.command.commandId, 1)
+    await f.service.recordResult(f.source, frame)
+    const terminal = await f.repository.get(f.source.workspaceId, f.command.commandId)
+    expect(await store.read(terminal)).toEqual({ evidence: 'uploaded' })
+    const storedKey = `context-results/v1/stored/${command.scope.workspaceId}/${command.nodeId}/${command.commandId}/${id}`
+    const stored = await objects.get(storedKey)
+    await objects.put({
+      key: storedKey,
+      body: new TextEncoder().encode('{"evidence":"forged"}'),
+      contentType: stored.contentType,
+      metadata: stored.metadata,
+    })
+    await expect(store.read(terminal)).rejects.toThrow('INTEGRITY_FAILURE')
+  } finally {
+    objects.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('SQLite reconnect dispatch and terminal result replay survive database reconstruction', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-context-delivery-'))
   const path = join(directory, 'ledger.sqlite')
   let provider = new SqlitePersistenceProvider({ path })
+  let objects = new FilesystemObjectStore({
+    rootDirectory: join(directory, 'objects'),
+    maxObjectBytes: 262144,
+  })
   try {
     await provider.migrate()
     const f = fixture(new SqliteContextCommandRepository(provider))
+    f.options.results.persist = async (...args) => {
+      f.stored.push(args)
+      return new ContextCommandArtifactStore(objects).persist(...args)
+    }
     await f.service.enqueue(f.command)
     provider.close()
     provider = new SqlitePersistenceProvider({ path })
@@ -317,6 +387,11 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
       ).records
     ).toEqual([])
     await restarted.recordResult(f.source, f.result)
+    objects.close()
+    objects = new FilesystemObjectStore({
+      rootDirectory: join(directory, 'objects'),
+      maxObjectBytes: 262144,
+    })
     provider.close()
     provider = new SqlitePersistenceProvider({ path })
     await provider.migrate()
@@ -324,6 +399,11 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
     const terminal = new ContextCommandDeliveryService(f.options)
     expect((await terminal.recordResult(f.source, f.result)).duplicate).toBe(true)
     expect(f.stored).toHaveLength(1)
+    expect(
+      await new ContextCommandArtifactStore(objects).read(
+        await f.options.repository.get(f.source.workspaceId, f.command.commandId)
+      )
+    ).toEqual({ evidence: 'bounded' })
     expect(
       (
         await terminal.redeliverPending(f.source, {
@@ -335,6 +415,7 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
       ).records
     ).toEqual([])
   } finally {
+    objects.close()
     provider.close()
     await rm(directory, { recursive: true, force: true })
   }
