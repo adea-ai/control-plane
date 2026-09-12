@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/adea-ai/control-plane/compare/cortana-context-adapter-v1.2.0...cortana-context-adapter-v1.2.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **context:** require authorized RuntimeNode read bindings ([#472](https://github.com/adea-ai/control-plane/issues/472)) ([b553821](https://github.com/adea-ai/control-plane/commit/b553821e06a4a52367120be5913bddbee3c06798))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/cortana-context-adapter-v1.1.3...cortana-context-adapter-v1.2.0) (2026-09-12)
 
 
