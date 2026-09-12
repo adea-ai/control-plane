@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.4...workspace-v1.14.5) (2026-09-12)
+
+
+### Tests
+
+* **database:** separate setup and remote scenario deadlines ([#463](https://github.com/adea-ai/control-plane/issues/463)) ([b23f3bc](https://github.com/adea-ai/control-plane/commit/b23f3bc25a57983d7b68018a3bdcb9ec4899e6c7))
+
 ## [1.14.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.3...workspace-v1.14.4) (2026-09-12)
 
 
