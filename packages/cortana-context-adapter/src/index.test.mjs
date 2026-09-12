@@ -56,6 +56,7 @@ describe('Cortana-compatible context adapter', () => {
         sourceKind: 'provider_memory',
       })
       expect(server.requests[0].transport).toBe(transport)
+      expect(server.requests[0].objective).toBe(request().objective)
     }
   })
 
@@ -80,6 +81,7 @@ describe('Cortana-compatible context adapter', () => {
       driver: { family: 'context-provider', version: '1.0.0' },
     })
     expect(command).not.toHaveProperty('runtimeConnectionId')
+    expect(command.payload.parameters.objective).toBe(request().objective)
     expect(JSON.stringify(command)).not.toMatch(/cortana|credential|database|localPath/i)
   })
 
@@ -223,6 +225,7 @@ function request() {
     principalRef: 'principal://test/user',
     executionLocation: 'cloud',
     capability: 'evidenceSearch',
+    objective: 'Retrieve relevant test evidence',
     now,
     policy: {
       mode: 'preferred',

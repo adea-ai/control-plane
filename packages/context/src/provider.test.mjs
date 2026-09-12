@@ -228,6 +228,32 @@ describe('optional context provider resolution', () => {
     expect(locations).toEqual(['cloud', 'runtime_node'])
   })
 
+  test('retrieves and caches independently for each objective', async () => {
+    const provider = fake('K')
+    const objectives = []
+    const selected = resolver(
+      [
+        {
+          ...provider,
+          async retrieve(input) {
+            objectives.push(input.objective)
+            return provider.retrieve(input)
+          },
+        },
+      ],
+      { cache: new InMemoryContextContributionCache() }
+    )
+    for (const objective of [
+      'Investigate latency',
+      'Investigate failures',
+      'Investigate latency',
+    ]) {
+      await selected.resolve({ ...request(), objective })
+    }
+    expect(objectives).toEqual(['Investigate latency', 'Investigate failures'])
+    await expect(selected.resolve({ ...request(), objective: '' })).rejects.toThrow()
+  })
+
   test('ranks explicit connections before provider preference and reachability', async () => {
     const direct = fake('A', { reachability: 'direct', latencyClass: 'low', costClass: 'low' })
     const preferred = fake('B', {
@@ -294,6 +320,7 @@ function request(policy = {}) {
     principalRef: 'principal://test/user',
     executionLocation: 'cloud',
     capability: 'evidenceSearch',
+    objective: 'Retrieve relevant test evidence',
     now,
     policy: {
       mode: 'preferred',

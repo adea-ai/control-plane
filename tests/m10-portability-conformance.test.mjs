@@ -387,6 +387,7 @@ async function noProvider() {
     principalRef: 'principal://operator',
     executionLocation: 'runtime_node',
     capability: 'evidenceSearch',
+    objective: 'Verify no-provider portability',
     now: observedAt,
     policy: {
       mode: 'preferred',
