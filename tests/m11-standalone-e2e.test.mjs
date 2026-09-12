@@ -1,4 +1,29 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
+
+async function isolatedLocalPorts() {
+  const servers = []
+  const ports = {}
+  try {
+    for (const name of [
+      'restateAdminPort',
+      'restateIngressPort',
+      'restateNodePort',
+      'workflowEndpointPort',
+    ]) {
+      const server = createServer()
+      servers.push(server)
+      await new Promise((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      ports[name] = server.address().port
+    }
+    return ports
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
+  }
+}
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -128,6 +153,7 @@ describe('M11 standalone execution composition', () => {
     'resumes a graph approval after restarting real Local Restate and SQLite (%s)',
     async (recoveryMode) => {
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-graph-restate-'))
+      const ports = await isolatedLocalPorts()
       let dataDirectory = join(directory, 'original')
       const plan = createExecutionPlanTestFixture()
       let executionId, artifactId, resultKey
@@ -142,7 +168,7 @@ describe('M11 standalone execution composition', () => {
         new LocalControlPlaneComposition({
           dataDirectory,
           runtimeTransport: createDirectManagedPiAdapter(),
-          workflowEndpointPort: 19080,
+          ...ports,
           graphActivitiesFactory: ({ persistence }) =>
             new OrchestrationGraphSegmentActivities(
               new LangGraphOrchestrationAdapter({
@@ -184,12 +210,15 @@ describe('M11 standalone execution composition', () => {
         })
       let local = createLocal()
       const post = (path, body) =>
-        fetch(`http://127.0.0.1:8080/execution-lifecycle/${executionId}/${path}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(15000),
-        })
+        fetch(
+          `http://127.0.0.1:${ports.restateIngressPort}/execution-lifecycle/${executionId}/${path}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(15000),
+          }
+        )
       try {
         await local.start()
         await local.executionPlans.put(plan)
@@ -277,7 +306,7 @@ describe('M11 standalone execution composition', () => {
           JSON.parse(new TextDecoder().decode((await local.objectStore.get(resultKey)).body))
         ).toEqual({ decision: 'approve' })
         const result = await fetch(
-          `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${executionId}/attach`,
+          `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${executionId}/attach`,
           { signal: AbortSignal.timeout(15000) }
         )
         expect(result.ok).toBe(true)
@@ -403,12 +432,13 @@ describe('M11 standalone execution composition', () => {
     'accepts and settles Local execution through real Restate: %s',
     async (mode) => {
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-restate-'))
+      const ports = await isolatedLocalPorts()
       const client =
         mode === 'cancel' ? new PendingManagedPiClient() : new CompletedManagedPiClient()
       const local = new LocalControlPlaneComposition({
         dataDirectory: directory,
         runtimeTransport: createManagedPiAdapterWithClient(client),
-        workflowEndpointPort: 19080,
+        ...ports,
       })
       try {
         await local.start()
@@ -442,7 +472,7 @@ describe('M11 standalone execution composition', () => {
           while (!client.progressEntered && Date.now() < deadline) await delay(20)
           expect(client.progressEntered).toBe(true)
           const cancellation = await fetch(
-            `http://127.0.0.1:8080/execution-lifecycle/${response.data.executionId}/cancelExecution`,
+            `http://127.0.0.1:${ports.restateIngressPort}/execution-lifecycle/${response.data.executionId}/cancelExecution`,
             {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -452,7 +482,7 @@ describe('M11 standalone execution composition', () => {
           )
           expect(cancellation.ok).toBe(true)
           const attached = await fetch(
-            `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+            `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
             { signal: AbortSignal.timeout(5000) }
           )
           expect(attached.ok).toBe(true)
@@ -461,7 +491,7 @@ describe('M11 standalone execution composition', () => {
         }
         const execution = await waitForTerminalExecution(local, response.data.executionId)
         const attached = await fetch(
-          `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+          `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
           { signal: AbortSignal.timeout(5000) }
         )
         expect(attached.ok).toBe(true)
@@ -485,11 +515,12 @@ describe('M11 standalone execution composition', () => {
 
   test('SDK response settles a real Restate interaction and replays a lost HTTP ACK without another runtime input', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-http-interaction-'))
+    const ports = await isolatedLocalPorts()
     const runtime = new InputManagedPiClient()
     const local = new LocalControlPlaneComposition({
       dataDirectory: directory,
       runtimeTransport: createManagedPiAdapterWithClient(runtime),
-      workflowEndpointPort: 19080,
+      ...ports,
     })
     let application
     try {
@@ -582,7 +613,7 @@ describe('M11 standalone execution composition', () => {
         'completed'
       )
       const attached = await fetch(
-        `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${accepted.data.executionId}/attach`,
+        `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${accepted.data.executionId}/attach`,
         { signal: AbortSignal.timeout(5000) }
       )
       expect(attached.ok).toBe(true)
@@ -621,6 +652,7 @@ describe('M11 standalone execution composition', () => {
       if (Boolean(realExecutable) !== Boolean(realAgentDirectory))
         throw new Error('M11_REAL_PI_CONFIGURATION_INCOMPLETE')
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-pi-rpc-'))
+      const ports = await isolatedLocalPorts()
       const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
       const promptRecord = join(directory, 'prompt-record.json')
       if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
@@ -658,7 +690,7 @@ describe('M11 standalone execution composition', () => {
           }
           return runtime
         },
-        workflowEndpointPort: 19083,
+        ...ports,
       })
       const plan = createExecutionPlanTestFixture({
         profileCapabilityRequirements: ['stream.output'],
@@ -753,7 +785,7 @@ describe('M11 standalone execution composition', () => {
         const execution = await waitForTerminalExecution(local, response.data.executionId)
         {
           const attached = await fetch(
-            `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
+            `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
             { signal: AbortSignal.timeout(5000) }
           )
           expect(attached.ok).toBe(true)

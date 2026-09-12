@@ -33,6 +33,7 @@ export interface LocalRestateRuntimeOptions {
   readonly profile?: 'local' | 'hosted-simple' | 'hosted-server'
   readonly adminUrl?: string
   readonly ingressUrl?: string
+  readonly nodePort?: number
   readonly readinessTimeoutMs?: number
   readonly pollIntervalMs?: number
   readonly fetch?: typeof fetch
@@ -109,6 +110,7 @@ export class RemoteRestateRuntime implements WorkflowRuntime {
 }
 
 export class LocalRestateRuntime implements WorkflowRuntime {
+  readonly #nodePort: number
   readonly profile: 'local' | 'hosted-simple' | 'hosted-server'
   readonly adminUrl: URL
   readonly ingressUrl: URL
@@ -129,6 +131,7 @@ export class LocalRestateRuntime implements WorkflowRuntime {
     this.#processProvider = options.processProvider
     this.profile = options.profile ?? 'local'
     this.adminUrl = loopbackUrl(options.adminUrl ?? 'http://127.0.0.1:9070')
+    this.#nodePort = options.nodePort ?? 5122
     this.ingressUrl = loopbackUrl(options.ingressUrl ?? 'http://127.0.0.1:8080')
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 60_000
     this.#pollIntervalMs = options.pollIntervalMs ?? 250
@@ -158,6 +161,7 @@ export class LocalRestateRuntime implements WorkflowRuntime {
         RESTATE_DISABLE_TELEMETRY: 'true',
         RESTATE_LISTEN_MODE: 'tcp',
         RESTATE_BIND_IP: '127.0.0.1',
+        RESTATE_BIND_PORT: String(this.#nodePort),
         RESTATE_ADMIN__BIND_ADDRESS: hostPort(this.adminUrl),
         RESTATE_INGRESS__BIND_ADDRESS: hostPort(this.ingressUrl),
         RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE: '256 MiB',

@@ -9,8 +9,8 @@
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.5.3",
+      "lockVersion": "1.5.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -28,7 +28,7 @@
     {
       "name": "@control-plane/bootstrap",
       "path": "packages/bootstrap",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "lockVersion": "1.2.1",
       "kind": "package",
       "private": true,
@@ -43,8 +43,8 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.3.2",
-      "lockVersion": "1.3.2",
+      "version": "1.5.1",
+      "lockVersion": "1.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -58,8 +58,8 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.3.2",
-      "lockVersion": "1.3.2",
+      "version": "1.4.1",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -73,8 +73,8 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.5.2",
-      "lockVersion": "1.5.2",
+      "version": "1.8.1",
+      "lockVersion": "1.8.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -88,8 +88,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.3.2",
-      "lockVersion": "1.3.2",
+      "version": "1.7.0",
+      "lockVersion": "1.6.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -126,7 +126,7 @@
     {
       "name": "@control-plane/cortana-context-adapter",
       "path": "packages/cortana-context-adapter",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -160,8 +160,8 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.7.3",
-      "lockVersion": "1.7.3",
+      "version": "1.10.1",
+      "lockVersion": "1.10.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -188,8 +188,8 @@
     {
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
-      "version": "1.1.1",
-      "lockVersion": "1.1.1",
+      "version": "1.3.1",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -203,8 +203,8 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.5.2",
-      "lockVersion": "1.5.2",
+      "version": "1.7.1",
+      "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -218,7 +218,7 @@
     {
       "name": "@control-plane/events",
       "path": "packages/events",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
@@ -237,8 +237,8 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.4.1",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -257,8 +257,8 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.3.1",
+      "lockVersion": "1.3.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -287,8 +287,8 @@
     {
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.2.2",
+      "lockVersion": "1.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -311,8 +311,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.6.0",
+      "lockVersion": "1.5.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -345,8 +345,8 @@
     {
       "name": "@control-plane/managed-pi-adapter",
       "path": "packages/managed-pi-adapter",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.3.2",
+      "lockVersion": "1.3.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -379,7 +379,7 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -398,7 +398,7 @@
     {
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
-      "version": "1.2.2",
+      "version": "1.2.4",
       "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
@@ -413,7 +413,7 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -433,7 +433,7 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
@@ -448,8 +448,8 @@
     {
       "name": "@control-plane/production-readiness",
       "path": "packages/production-readiness",
-      "version": "1.1.3",
-      "lockVersion": "1.1.3",
+      "version": "1.2.1",
+      "lockVersion": "1.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -463,8 +463,8 @@
     {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.2.1",
+      "lockVersion": "1.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -486,7 +486,7 @@
     {
       "name": "@control-plane/remote-control-relay",
       "path": "packages/remote-control-relay",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -501,7 +501,7 @@
     {
       "name": "@control-plane/restate-runtime",
       "path": "packages/restate-runtime",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -516,8 +516,8 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.4.1",
+      "lockVersion": "1.4.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -538,8 +538,8 @@
     {
       "name": "@control-plane/runtime-gateway-protocol",
       "path": "packages/runtime-gateway-protocol",
-      "version": "1.2.2",
-      "lockVersion": "1.2.2",
+      "version": "1.4.1",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -553,8 +553,8 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.5.3",
-      "lockVersion": "1.5.3",
+      "version": "1.8.1",
+      "lockVersion": "1.8.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -568,8 +568,8 @@
     {
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
-      "version": "1.4.2",
-      "lockVersion": "1.4.2",
+      "version": "1.6.1",
+      "lockVersion": "1.6.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -590,7 +590,7 @@
     {
       "name": "@control-plane/sandbox",
       "path": "packages/sandbox",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -605,8 +605,8 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.3.3",
-      "lockVersion": "1.3.3",
+      "version": "1.6.1",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -635,8 +635,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.3.1",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -659,8 +659,8 @@
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.2.3",
-      "lockVersion": "1.2.3",
+      "version": "1.3.0",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -689,7 +689,7 @@
     {
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "lockVersion": "1.2.3",
       "kind": "application",
       "private": true,
@@ -711,8 +711,8 @@
     {
       "name": "@control-plane/tool-sdk",
       "path": "packages/tool-sdk",
-      "version": "1.2.3",
-      "lockVersion": "1.2.3",
+      "version": "1.3.0",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -726,7 +726,7 @@
     {
       "name": "@control-plane/usage-ledger",
       "path": "packages/usage-ledger",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -741,8 +741,8 @@
     {
       "name": "@control-plane/workflow-runtime",
       "path": "packages/workflow-runtime",
-      "version": "1.1.2",
-      "lockVersion": "1.1.2",
+      "version": "1.3.1",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -756,8 +756,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.4.2",
-      "lockVersion": "1.4.2",
+      "version": "1.6.1",
+      "lockVersion": "1.6.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -1130,9 +1130,18 @@
       },
       "assessment": "The authenticated plan operation verifies the immutable Agent Plugins package, negotiates tested harness evidence, and never grants activation; materialization and activation remain Control Plane-owned follow-up work.",
       "evidence": [
-        { "kind": "contract", "path": "packages/contracts/src/control-api.ts" },
-        { "kind": "implementation", "path": "apps/control-api/src/marketplace/agent-plugins.ts" },
-        { "kind": "test", "path": "apps/control-api/src/marketplace/agent-plugins.test.mjs" }
+        {
+          "kind": "contract",
+          "path": "packages/contracts/src/control-api.ts"
+        },
+        {
+          "kind": "implementation",
+          "path": "apps/control-api/src/marketplace/agent-plugins.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/marketplace/agent-plugins.test.mjs"
+        }
       ],
       "openApiOperationId": "marketplace.install.plan",
       "openApiResponseStatuses": ["200", "default"],
@@ -1470,7 +1479,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:bfbc4fbc7a08d9b7b5af7edc1a57215f8ddb0520864a6497378d34dd147ccd20"
+      "sourceDigest": "sha256:c9e82c9809141c388020ec75090facf5d8e2c8d25ea1f10101532c83614d016f"
     },
     {
       "id": "local",
@@ -1509,7 +1518,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:bfbc4fbc7a08d9b7b5af7edc1a57215f8ddb0520864a6497378d34dd147ccd20"
+      "sourceDigest": "sha256:c9e82c9809141c388020ec75090facf5d8e2c8d25ea1f10101532c83614d016f"
     }
   ],
   "ownership": [
