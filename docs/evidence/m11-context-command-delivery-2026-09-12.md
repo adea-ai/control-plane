@@ -93,6 +93,19 @@ an uncertain external HTTP operation is claimed. Full suite: 1,335 passing tests
 (1,128 unit, 127 E2E, 80 smoke); lint/boundaries and format pass. The node HTTP
 driver still requires production registry, grant-authority and socket composition.
 
+ContextNodeChannel now frames node acceptance/results for an authenticated socket
+composition. Admission is durable before ACK, results come from durable inbox state,
+and every outgoing frame requires current-channel and scoped-disclosure checks.
+Same-command calls are serialized locally to avoid treating a live call as crashed;
+in-flight receive calls are bounded at 128. Unknown effects produce no false terminal
+failure. A real local WebSocket test drops the first result, reconstructs SQLite,
+and verifies ACK/replayed ACK/result with exactly one provider invocation. It also
+rejects a replaced channel. This test injects channel authority and the provider;
+it does not prove production authentication or the complete gateway lifecycle.
+Full suite: 1,336 passing tests (1,129 unit, 127 E2E, 80 smoke), plus lint/boundaries
+and formatting. Production gateway composition and authoring wait/result retrieval
+remain necessary to connect this bridge to the complete workflow.
+
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
 Artifact ID. Readback is mandatory; uploaded references are resolved only through

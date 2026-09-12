@@ -48,7 +48,7 @@ export class ContextNodeHandler {
       fail('INVALID_TIMEOUT')
   }
 
-  async execute(input: unknown): Promise<ContextNodeInboxRecord> {
+  async accept(input: unknown): Promise<ContextNodeInboxRecord> {
     const command = this.#command(input)
     await this.#authorize(command, 'execute')
     let current = await this.options.repository.get(
@@ -67,8 +67,14 @@ export class ContextNodeHandler {
     }
     if (current.status !== 'accepted') {
       await this.#authorize(command, 'replay')
-      return structuredClone(current)
     }
+    return structuredClone(current)
+  }
+
+  async execute(input: unknown): Promise<ContextNodeInboxRecord> {
+    const command = this.#command(input)
+    const current = await this.accept(input)
+    if (current.status !== 'accepted') return current
     await this.#authorize(command, 'execute')
     const at = this.#now()
     if (Date.parse(at) >= Date.parse(current.command.expiresAt))

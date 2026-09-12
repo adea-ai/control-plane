@@ -8,10 +8,119 @@ import {
   SqliteContextNodeInboxRepository,
 } from '@control-plane/sqlite-persistence'
 import { ContextNodeHandler } from './context-node-handler.ts'
+import { ContextNodeChannel } from './context-node-channel.ts'
 import { ContextHttpProviderDriver } from './context-http-driver.ts'
 import { createContextBundle } from '@control-plane/cortana-context-adapter'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+async function socketDeadline(promise) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('SOCKET_TEST_DEADLINE')), 5000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+test('node WebSocket bridge ACKs durable acceptance and replays a lost result without another read', () =>
+  fixture(async (options, input, reopen) => {
+    let calls = 0,
+      peer,
+      firstDone,
+      resultReceived
+    const first = new Promise((resolve) => {
+      firstDone = resolve
+    })
+    const result = new Promise((resolve) => {
+      resultReceived = resolve
+    })
+    const frames = []
+    options.driver.execute = async () => {
+      calls++
+      return { status: 'succeeded', result: { evidence: 'socket result' } }
+    }
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: (request, server) =>
+        server.upgrade(request) ? undefined : new Response('upgrade required', { status: 400 }),
+      websocket: {
+        open: (socket) => {
+          peer = socket
+        },
+        message: (_, value) => {
+          const frame = JSON.parse(String(value))
+          frames.push(frame)
+          if (frame.type === 'result') resultReceived(frame)
+        },
+      },
+    })
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/node`)
+    try {
+      await socketDeadline(
+        new Promise((resolve, reject) => {
+          socket.addEventListener('open', resolve, { once: true })
+          socket.addEventListener('error', reject, { once: true })
+        })
+      )
+      let loseResult = true,
+        sequence = 2,
+        active = true
+      const bridge = new ContextNodeChannel({
+        handler: new ContextNodeHandler(options),
+        now: options.now,
+        assertCurrent: async () => {
+          if (!active) throw new Error('REPLACED')
+        },
+        nextSequence: async () => sequence++,
+        send: async (serialized) => {
+          const frame = JSON.parse(serialized)
+          if (frame.type === 'ack')
+            expect(
+              (await options.repository.get(input.workspaceId, input.nodeId, input.commandId))
+                .status
+            ).not.toBeUndefined()
+          if (frame.type === 'result' && loseResult) {
+            loseResult = false
+            throw new Error('LOST_RESULT')
+          }
+          socket.send(serialized)
+        },
+      })
+      const operations = []
+      socket.addEventListener('message', (event) => {
+        const operation = bridge.receive(String(event.data)).then(
+          () => firstDone(),
+          (error) => {
+            firstDone(error.message)
+          }
+        )
+        operations.push(operation)
+      })
+      peer.send(JSON.stringify(input))
+      expect(await socketDeadline(first)).toBe('LOST_RESULT')
+      await reopen()
+      peer.send(JSON.stringify(input))
+      const delivered = await socketDeadline(result)
+      await Promise.all(operations)
+      expect(delivered.result.data).toEqual({ evidence: 'socket result' })
+      expect(frames.map((frame) => frame.type)).toEqual(['ack', 'ack', 'result'])
+      expect(frames[1].disposition).toBe('replayed')
+      expect(calls).toBe(1)
+      active = false
+      await expect(bridge.receive(JSON.stringify(input))).rejects.toThrow('REPLACED')
+      expect(calls).toBe(1)
+    } finally {
+      socket.close()
+      await server.stop(true)
+    }
+  }))
 
 test('node handler uses a bound HTTP provider and replays its durable bundle after restart', () =>
   fixture(async (options, input, reopen) => {
