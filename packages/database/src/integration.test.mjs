@@ -103,14 +103,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       application: loadDatabaseCredentials(process.env, 'application'),
       migration: loadDatabaseCredentials(process.env, 'migration'),
     })
-  })
+    // Cold remote migrations have their own setup budget, not the child probes' deadline.
+    await isolated.migrate()
+  }, 60_000)
 
   afterAll(async () => {
     await isolated?.dispose()
   })
 
   test('survives backend transaction timeouts without late driver crashes or committed writes', async () => {
-    await isolated.migrate()
     const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
     applicationUrl.pathname = `/${isolated.name}`
     for (const mode of ['esm', 'cjs']) {
@@ -2025,7 +2026,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
       })
     ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-  }, 60_000)
+    // Includes two real 11-second stalls and the complete remote persistence/fencing path.
+    // This outer test budget does not change the production 10-second transaction limit.
+  }, 120_000)
 
   test('persists scoped external session references without native ownership transfer', async () => {
     await isolated.migrate()
