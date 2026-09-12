@@ -300,7 +300,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -323,7 +328,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -346,7 +356,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -369,7 +384,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -392,7 +412,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -415,7 +440,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "infrastructure/live-provider certification",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -438,7 +468,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -461,7 +496,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -484,7 +524,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -507,7 +552,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "integration",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -530,7 +580,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -553,7 +608,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -576,7 +636,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -599,7 +664,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -619,21 +689,34 @@
       "heading": "Verification-state consumption (sections 4 and 10)",
       "requirement": "Pending-verification, pending-scan, quarantined and failed product Artifacts are not delivered into model/runtime context; consumers must not equate upload finalization with ordinary availability.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-authoring-composition.test.mjs"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "GrantsBackedContextAuthoringAuthority is implemented and wired as the default authority in Local and Hosted compositions (operator-provisioned grants only, no-provider degradation, store-read artifact states); managed-cloud composition wiring, exact-candidate cross-profile evidence and adversarial unavailable-artifact probes remain."
       }
     },
     {
@@ -645,7 +728,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "recovery/chaos",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -668,7 +756,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -691,7 +784,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -714,7 +812,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "infrastructure/live-provider certification",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -737,7 +840,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "integration",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -760,7 +868,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -783,7 +896,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "recovery/chaos",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -806,7 +924,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -829,7 +952,12 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 194, 195],
+      "issueRefs": [
+        188,
+        190,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -852,7 +980,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -875,7 +1007,11 @@
       "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -904,7 +1040,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -927,7 +1067,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -950,7 +1094,11 @@
       "classification": "tbd",
       "owner": "execution-events",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -973,7 +1121,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -996,7 +1148,11 @@
       "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1025,7 +1181,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1048,7 +1208,11 @@
       "classification": "tbd",
       "owner": "project-state",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1071,7 +1235,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1094,7 +1262,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1117,7 +1289,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1140,7 +1316,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1163,7 +1343,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1186,7 +1370,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1209,7 +1397,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1232,7 +1424,11 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [188, 194, 195],
+      "issueRefs": [
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1255,7 +1451,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1278,7 +1479,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1301,7 +1507,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1324,7 +1535,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1347,7 +1563,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1370,7 +1591,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1393,7 +1619,12 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1416,7 +1647,12 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1439,7 +1675,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1462,7 +1703,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1485,7 +1731,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1508,7 +1759,12 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "integration",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1531,7 +1787,12 @@
       "classification": "tbd",
       "owner": "observability",
       "lane": "recovery/chaos",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1554,7 +1815,12 @@
       "classification": "tbd",
       "owner": "observability",
       "lane": "recovery/chaos",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1577,7 +1843,12 @@
       "classification": "tbd",
       "owner": "observability",
       "lane": "recovery/chaos",
-      "issueRefs": [186, 188, 194, 195],
+      "issueRefs": [
+        186,
+        188,
+        194,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1600,7 +1871,11 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1623,7 +1898,11 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1646,7 +1925,11 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1669,7 +1952,11 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "contract/schema",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1692,7 +1979,11 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1715,7 +2006,11 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "end-to-end",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1738,7 +2033,11 @@
       "classification": "tbd",
       "owner": "context-provider",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1761,7 +2060,11 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [188, 190, 195],
+      "issueRefs": [
+        188,
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1784,7 +2087,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1807,7 +2115,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1830,7 +2143,12 @@
       "classification": "partially_verified",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1859,7 +2177,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1882,7 +2205,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1905,7 +2233,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1928,7 +2261,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1951,7 +2289,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1974,7 +2317,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -1997,7 +2345,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2020,7 +2373,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2043,7 +2401,12 @@
       "classification": "tbd",
       "owner": "runtime-transport",
       "lane": "integration",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2066,7 +2429,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2089,7 +2457,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2112,7 +2485,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2135,7 +2513,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2158,7 +2541,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2178,21 +2566,30 @@
       "heading": "Opaque credential access (section 11)",
       "requirement": "Packaged Local secret values remain in OS-secure storage; Control Plane receives opaque handles or narrow authorized-use operations, and approved driver/provider executors never return credential values in responses.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/secrets/src/index.test.mjs"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "HostSecureHandleSecretsProvider adapter, bounded zeroizing leases, health and file/env providers are implemented and unit-tested; a concrete OS-secure host resolver and supported composition wiring remain open."
       }
     },
     {
@@ -2204,7 +2601,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2227,7 +2629,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2250,7 +2657,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2273,7 +2685,12 @@
       "classification": "tbd",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [186, 188, 190, 194],
+      "issueRefs": [
+        186,
+        188,
+        190,
+        194
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2296,7 +2713,9 @@
       "classification": "verified",
       "owner": "documentation-governance",
       "lane": "smoke/configuration",
-      "issueRefs": [186],
+      "issueRefs": [
+        186
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2313,7 +2732,9 @@
       "classification": "partially_verified",
       "owner": "documentation-governance",
       "lane": "smoke/configuration",
-      "issueRefs": [195],
+      "issueRefs": [
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2336,7 +2757,9 @@
       "classification": "verified",
       "owner": "documentation-governance",
       "lane": "smoke/configuration",
-      "issueRefs": [186],
+      "issueRefs": [
+        186
+      ],
       "evidence": [
         {
           "kind": "artifact",
@@ -2353,7 +2776,10 @@
       "classification": "verified",
       "owner": "architecture",
       "lane": "smoke/configuration",
-      "issueRefs": [1, 201],
+      "issueRefs": [
+        1,
+        201
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2374,7 +2800,11 @@
       "classification": "verified",
       "owner": "execution-policy",
       "lane": "end-to-end",
-      "issueRefs": [17, 32, 58],
+      "issueRefs": [
+        17,
+        32,
+        58
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2395,7 +2825,10 @@
       "classification": "verified",
       "owner": "context",
       "lane": "unit",
-      "issueRefs": [125, 212],
+      "issueRefs": [
+        125,
+        212
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2412,7 +2845,10 @@
       "classification": "verified",
       "owner": "runtime-adapters",
       "lane": "contract/schema",
-      "issueRefs": [44, 47],
+      "issueRefs": [
+        44,
+        47
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2429,7 +2865,11 @@
       "classification": "verified",
       "owner": "durable-execution",
       "lane": "recovery/chaos",
-      "issueRefs": [21, 26, 71],
+      "issueRefs": [
+        21,
+        26,
+        71
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2451,7 +2891,10 @@
       "classification": "verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
-      "issueRefs": [205, 206],
+      "issueRefs": [
+        205,
+        206
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2468,7 +2911,10 @@
       "classification": "tbd",
       "owner": "product-architecture",
       "lane": "smoke/configuration",
-      "issueRefs": [186, 195],
+      "issueRefs": [
+        186,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2491,7 +2937,10 @@
       "classification": "tbd",
       "owner": "context-integration",
       "lane": "smoke/configuration",
-      "issueRefs": [186, 195],
+      "issueRefs": [
+        186,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2514,7 +2963,9 @@
       "classification": "verified",
       "owner": "architecture",
       "lane": "contract/schema",
-      "issueRefs": [201],
+      "issueRefs": [
+        201
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2535,7 +2986,11 @@
       "classification": "verified",
       "owner": "control-api",
       "lane": "integration",
-      "issueRefs": [17, 21, 263],
+      "issueRefs": [
+        17,
+        21,
+        263
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2552,7 +3007,11 @@
       "classification": "verified",
       "owner": "context-domain",
       "lane": "unit",
-      "issueRefs": [15, 16, 63],
+      "issueRefs": [
+        15,
+        16,
+        63
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2573,7 +3032,10 @@
       "classification": "verified",
       "owner": "context",
       "lane": "security/adversarial",
-      "issueRefs": [125, 212],
+      "issueRefs": [
+        125,
+        212
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2590,7 +3052,9 @@
       "classification": "verified",
       "owner": "runtime-transport",
       "lane": "end-to-end",
-      "issueRefs": [205],
+      "issueRefs": [
+        205
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2611,7 +3075,10 @@
       "classification": "partially_verified",
       "owner": "profile-portability",
       "lane": "end-to-end",
-      "issueRefs": [201, 207],
+      "issueRefs": [
+        201,
+        207
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2634,7 +3101,10 @@
       "classification": "verified",
       "owner": "execution-policy",
       "lane": "end-to-end",
-      "issueRefs": [17, 263],
+      "issueRefs": [
+        17,
+        263
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2651,7 +3121,10 @@
       "classification": "verified",
       "owner": "runtime-routing",
       "lane": "unit",
-      "issueRefs": [31, 32],
+      "issueRefs": [
+        31,
+        32
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2668,7 +3141,9 @@
       "classification": "verified",
       "owner": "profile-resolution",
       "lane": "unit",
-      "issueRefs": [211],
+      "issueRefs": [
+        211
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2685,7 +3160,12 @@
       "classification": "verified",
       "owner": "workflow-runtime",
       "lane": "recovery/chaos",
-      "issueRefs": [24, 26, 200, 216],
+      "issueRefs": [
+        24,
+        26,
+        200,
+        216
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2707,7 +3187,10 @@
       "classification": "superseded",
       "owner": "workflow-runtime",
       "lane": "smoke/configuration",
-      "issueRefs": [216, 195],
+      "issueRefs": [
+        216,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2730,7 +3213,11 @@
       "classification": "verified",
       "owner": "orchestration",
       "lane": "end-to-end",
-      "issueRefs": [62, 63, 64],
+      "issueRefs": [
+        62,
+        63,
+        64
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2747,7 +3234,11 @@
       "classification": "verified",
       "owner": "runtime-sdk",
       "lane": "contract/schema",
-      "issueRefs": [28, 44, 47],
+      "issueRefs": [
+        28,
+        44,
+        47
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2764,7 +3255,9 @@
       "classification": "verified",
       "owner": "command-inbox",
       "lane": "integration",
-      "issueRefs": [21],
+      "issueRefs": [
+        21
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2781,7 +3274,10 @@
       "classification": "verified",
       "owner": "orchestration",
       "lane": "end-to-end",
-      "issueRefs": [65, 66],
+      "issueRefs": [
+        65,
+        66
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2798,7 +3294,11 @@
       "classification": "superseded",
       "owner": "deployment-architecture",
       "lane": "smoke/configuration",
-      "issueRefs": [8, 195, 215],
+      "issueRefs": [
+        8,
+        195,
+        215
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2821,7 +3321,10 @@
       "classification": "verified",
       "owner": "catalog",
       "lane": "unit",
-      "issueRefs": [12, 211],
+      "issueRefs": [
+        12,
+        211
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2838,7 +3341,9 @@
       "classification": "partially_verified",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [187],
+      "issueRefs": [
+        187
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2846,7 +3351,7 @@
         }
       ],
       "gap": {
-        "issue": 187,
+        "issue": 195,
         "severity": "medium",
         "owner": "catalog",
         "disposition": "Map every textual profile field and merge mode to the current split catalog and policy schemas."
@@ -2861,7 +3366,10 @@
       "classification": "verified",
       "owner": "catalog",
       "lane": "unit",
-      "issueRefs": [12, 211],
+      "issueRefs": [
+        12,
+        211
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2878,7 +3386,9 @@
       "classification": "partially_verified",
       "owner": "runtime-contracts",
       "lane": "contract/schema",
-      "issueRefs": [187],
+      "issueRefs": [
+        187
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2886,7 +3396,7 @@
         }
       ],
       "gap": {
-        "issue": 187,
+        "issue": 195,
         "severity": "medium",
         "owner": "runtime-contracts",
         "disposition": "Document and verify how rich capability metadata maps across catalog, policy, and RuntimeConnection schemas."
@@ -2901,7 +3411,10 @@
       "classification": "verified",
       "owner": "acp-adapter",
       "lane": "security/adversarial",
-      "issueRefs": [47, 48],
+      "issueRefs": [
+        47,
+        48
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2918,7 +3431,10 @@
       "classification": "verified",
       "owner": "contracts",
       "lane": "contract/schema",
-      "issueRefs": [10, 187],
+      "issueRefs": [
+        10,
+        187
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -2935,7 +3451,9 @@
       "classification": "verified",
       "owner": "contracts",
       "lane": "contract/schema",
-      "issueRefs": [10],
+      "issueRefs": [
+        10
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2952,7 +3470,10 @@
       "classification": "verified",
       "owner": "contracts-events",
       "lane": "integration",
-      "issueRefs": [21, 22],
+      "issueRefs": [
+        21,
+        22
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2969,7 +3490,10 @@
       "classification": "verified",
       "owner": "runtime-sdk",
       "lane": "contract/schema",
-      "issueRefs": [33, 48],
+      "issueRefs": [
+        33,
+        48
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -2986,7 +3510,10 @@
       "classification": "superseded",
       "owner": "public-contracts",
       "lane": "contract/schema",
-      "issueRefs": [210, 195],
+      "issueRefs": [
+        210,
+        195
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3009,7 +3536,10 @@
       "classification": "tbd",
       "owner": "runtime-protocol",
       "lane": "contract/schema",
-      "issueRefs": [187, 195],
+      "issueRefs": [
+        187,
+        195
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3032,7 +3562,10 @@
       "classification": "tbd",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [187, 195],
+      "issueRefs": [
+        187,
+        195
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3055,7 +3588,10 @@
       "classification": "tbd",
       "owner": "artifact-integration",
       "lane": "contract/schema",
-      "issueRefs": [187, 195],
+      "issueRefs": [
+        187,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -3078,7 +3614,10 @@
       "classification": "tbd",
       "owner": "security",
       "lane": "security/adversarial",
-      "issueRefs": [190, 195],
+      "issueRefs": [
+        190,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -3101,7 +3640,10 @@
       "classification": "partially_verified",
       "owner": "production-readiness",
       "lane": "eval",
-      "issueRefs": [69, 191],
+      "issueRefs": [
+        69,
+        191
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3124,7 +3666,10 @@
       "classification": "planned",
       "owner": "orchestration-evals",
       "lane": "eval",
-      "issueRefs": [69, 191],
+      "issueRefs": [
+        69,
+        191
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3147,7 +3692,10 @@
       "classification": "partially_verified",
       "owner": "production-readiness",
       "lane": "eval",
-      "issueRefs": [69, 191],
+      "issueRefs": [
+        69,
+        191
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3170,7 +3718,9 @@
       "classification": "not_implemented",
       "owner": "evaluation",
       "lane": "eval",
-      "issueRefs": [191],
+      "issueRefs": [
+        191
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -3193,7 +3743,10 @@
       "classification": "verified",
       "owner": "runtime-sdk",
       "lane": "unit",
-      "issueRefs": [31, 32],
+      "issueRefs": [
+        31,
+        32
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3210,7 +3763,11 @@
       "classification": "verified",
       "owner": "acp-adapter",
       "lane": "contract/schema",
-      "issueRefs": [47, 48, 50],
+      "issueRefs": [
+        47,
+        48,
+        50
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3227,7 +3784,9 @@
       "classification": "verified",
       "owner": "runtime-compatibility",
       "lane": "contract/schema",
-      "issueRefs": [50],
+      "issueRefs": [
+        50
+      ],
       "evidence": [
         {
           "kind": "artifact",
@@ -3244,7 +3803,9 @@
       "classification": "partially_verified",
       "owner": "runtime-certification",
       "lane": "infrastructure/live-provider certification",
-      "issueRefs": [188],
+      "issueRefs": [
+        188
+      ],
       "evidence": [
         {
           "kind": "artifact",
@@ -3267,7 +3828,10 @@
       "classification": "verified",
       "owner": "acp-adapter",
       "lane": "contract/schema",
-      "issueRefs": [47, 50],
+      "issueRefs": [
+        47,
+        50
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3284,7 +3848,11 @@
       "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
-      "issueRefs": [21, 22, 26],
+      "issueRefs": [
+        21,
+        22,
+        26
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3301,7 +3869,10 @@
       "classification": "superseded",
       "owner": "workflow-runtime",
       "lane": "smoke/configuration",
-      "issueRefs": [216, 195],
+      "issueRefs": [
+        216,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -3324,7 +3895,11 @@
       "classification": "superseded",
       "owner": "deployment-architecture",
       "lane": "smoke/configuration",
-      "issueRefs": [215, 217, 195],
+      "issueRefs": [
+        215,
+        217,
+        195
+      ],
       "evidence": [
         {
           "kind": "document",
@@ -3347,7 +3922,11 @@
       "classification": "verified",
       "owner": "policy-security",
       "lane": "security/adversarial",
-      "issueRefs": [55, 56, 70],
+      "issueRefs": [
+        55,
+        56,
+        70
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -3364,7 +3943,9 @@
       "classification": "verified",
       "owner": "sandbox",
       "lane": "security/adversarial",
-      "issueRefs": [59],
+      "issueRefs": [
+        59
+      ],
       "evidence": [
         {
           "kind": "test",
@@ -5195,35 +5776,55 @@
     {
       "id": "CONTRA-001",
       "topic": "Temporal versus Restate",
-      "sources": ["Control Plane TDD", "ADR-025", "docs/architecture.md"],
+      "sources": [
+        "Control Plane TDD",
+        "ADR-025",
+        "docs/architecture.md"
+      ],
       "resolution": "Restate is canonical; Temporal remains historical provenance only.",
       "issue": 195
     },
     {
       "id": "CONTRA-002",
       "topic": "AWS and pnpm versus Railway and Bun",
-      "sources": ["Control Plane TDD Appendix C", "ADR-027", "AGENTS.md", "docs/infrastructure.md"],
+      "sources": [
+        "Control Plane TDD Appendix C",
+        "ADR-027",
+        "AGENTS.md",
+        "docs/infrastructure.md"
+      ],
       "resolution": "Bun and Railway/Neon/R2 are current first-party choices; portable adapters preserve Hosted alternatives.",
       "issue": 195
     },
     {
       "id": "CONTRA-003",
       "topic": "PostgreSQL-only persistence versus profile portability",
-      "sources": ["Control Plane TDD", "System Architecture Overview", "docs/architecture.md"],
+      "sources": [
+        "Control Plane TDD",
+        "System Architecture Overview",
+        "docs/architecture.md"
+      ],
       "resolution": "Cloud and Hosted Server use PostgreSQL; Local and Hosted Simple use SQLite behind shared persistence semantics.",
       "issue": 187
     },
     {
       "id": "CONTRA-004",
       "topic": "Mandatory Local Runtime Gateway versus direct transport",
-      "sources": ["Agent HQ PRD", "System Architecture Overview", "docs/local-deployment.md"],
+      "sources": [
+        "Agent HQ PRD",
+        "System Architecture Overview",
+        "docs/local-deployment.md"
+      ],
       "resolution": "Co-located Local uses DirectLocalRuntimeTransport; Runtime Gateway remains for non-co-located nodes.",
       "issue": 195
     },
     {
       "id": "CONTRA-005",
       "topic": "Prose contract v1 versus machine contract 2.0",
-      "sources": ["Data Model & API Specification", "packages/contracts/src/control-api.ts"],
+      "sources": [
+        "Data Model & API Specification",
+        "packages/contracts/src/control-api.ts"
+      ],
       "resolution": "Machine-readable Control API 2.0 owns exact wire shape; prose retains semantic inventory pending reconciliation.",
       "issue": 195
     }
