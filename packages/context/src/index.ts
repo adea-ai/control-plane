@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   ContextContributionSchema,
+  ContextProviderPolicySchema,
   ContextAuthoringInputsSchema,
   IdentifierSchemas,
   type ContextContribution,
@@ -11,6 +12,7 @@ import {
   type ProjectStateRepository,
 } from '@control-plane/domain'
 import { z } from 'zod'
+import { ContextProviderResolver } from './provider.js'
 
 const TimestampSchema = z.iso.datetime()
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -98,6 +100,12 @@ export const ContextPackageSchema = z
         callerContextRefs: z.array(z.string().min(1).max(512)).max(128),
         localProjectGrantRefs: z.array(z.string().min(1).max(512)).max(128),
         contributions: z.array(ContextContributionSchema).max(128),
+        resolution: z
+          .object({
+            status: z.enum(['disabled', 'omitted', 'included', 'degraded']),
+            decisionReasons: z.array(z.string().min(1).max(256)).max(128),
+          })
+          .optional(),
       })
       .optional(),
     parentContextPackage: ContextPackageReferenceSchema.optional(),
@@ -151,6 +159,7 @@ export type ContextCompilationErrorCode =
   | 'REQUIRED_CONTEXT_EXCEEDS_BUDGET'
   | 'CHILD_SCOPE_EXPANSION'
   | 'CHILD_BUDGET_EXPANSION'
+  | 'CONTEXT_PROVIDER_INPUT_REQUIRED'
 
 export class ContextCompilationError extends Error {
   constructor(
@@ -327,6 +336,7 @@ export function composeProviderContextPackage(
     callerContextRefs: string[]
     localProjectGrantRefs: string[]
     contributions: ContextContribution[]
+    resolution?: NonNullable<ContextPackage['providerComposition']>['resolution']
   }
 ): ContextPackage {
   const package_ = ContextPackageSchema.parse(packageInput)
@@ -336,6 +346,7 @@ export function composeProviderContextPackage(
       callerContextRefs: z.array(z.string().min(1).max(512)).max(128),
       localProjectGrantRefs: z.array(z.string().min(1).max(512)).max(128),
       contributions: z.array(ContextContributionSchema).max(128),
+      resolution: ContextPackageSchema.shape.providerComposition.unwrap().shape.resolution,
     })
     .parse(input)
   if (
@@ -361,6 +372,7 @@ export function composeProviderContextPackage(
       callerContextRefs: [...composition.callerContextRefs].toSorted(),
       localProjectGrantRefs: [...composition.localProjectGrantRefs].toSorted(),
       contributions,
+      ...(composition.resolution === undefined ? {} : { resolution: composition.resolution }),
     },
   })
 }
@@ -427,6 +439,14 @@ const AuthoringDecisionSchema = z.object({
   constraints: ContextPackageSchema.shape.constraints,
   permissions: ContextPackageSchema.shape.permissions,
   budgets: ContextPackageSchema.shape.budgets,
+  providerRequest: z
+    .object({
+      scopeDigest: DigestSchema,
+      executionLocation: z.enum(['cloud', 'runtime_node']),
+      capability: z.enum(['boundedRetrieval', 'evidenceSearch', 'memoryRecall']),
+      policy: ContextProviderPolicySchema,
+    })
+    .optional(),
 })
 
 /** Composition-owned policy and Artifact adapters, never request payload fields. */
@@ -454,6 +474,7 @@ export interface ContextAuthoringAuthority {
 /** Pre-validation construction. The authenticated principal is supplied by the host. */
 export interface ContextAuthoringCompositionOptions {
   readonly authority: ContextAuthoringAuthority
+  readonly providerResolver?: Pick<ContextProviderResolver, 'resolve'>
   readonly now?: () => Date
 }
 
@@ -467,6 +488,7 @@ export class ContextPackageAuthoringService {
       packages: ContextPackageRepository
       commands?: ContextAuthoringCommandRepository
       authority: ContextAuthoringAuthority
+      providerResolver?: Pick<ContextProviderResolver, 'resolve'>
       now: () => Date
     }
   ) {
@@ -610,7 +632,24 @@ export class ContextPackageAuthoringService {
       },
       compiledAt,
     })
-    return package_
+    if (!decision.providerRequest) return package_
+    const resolution = await (
+      this.options.providerResolver ?? new ContextProviderResolver([])
+    ).resolve({
+      ...decision.providerRequest,
+      workspaceId: request.workspaceId,
+      principalRef,
+      objective: request.objective,
+      now: this.options.now().toISOString(),
+    })
+    if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')
+    if (resolution.status === 'awaiting_input') fail('CONTEXT_PROVIDER_INPUT_REQUIRED')
+    return composeProviderContextPackage(package_, {
+      callerContextRefs: [],
+      localProjectGrantRefs: [],
+      contributions: resolution.contributions,
+      resolution: { status: resolution.status, decisionReasons: resolution.decisionReasons },
+    })
   }
 }
 

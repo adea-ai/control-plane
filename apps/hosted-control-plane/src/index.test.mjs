@@ -70,6 +70,11 @@ describe('Hosted server composition', () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-'))
     const calls = []
     const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
+    const providerResolver = {
+      resolve: async () => {
+        throw new Error('UNEXPECTED_RETRIEVAL')
+      },
+    }
     const connection = {
       database: {},
       check: async () => calls.push('database:check'),
@@ -82,7 +87,7 @@ describe('Hosted server composition', () => {
       stop: async () => calls.push('workflow:stop'),
     }
     const composition = new HostedServerControlPlaneComposition({
-      contextAuthoring: { authority },
+      contextAuthoring: { authority, providerResolver },
       dataDirectory: directory,
       databaseUrl: 'postgresql://app:secret@postgres/control_plane',
       connection,
@@ -111,6 +116,9 @@ describe('Hosted server composition', () => {
       expect(
         composition.executionValidationService.options.contextAuthoring.options.authority
       ).toBe(authority)
+      expect(
+        composition.executionValidationService.options.contextAuthoring.options.providerResolver
+      ).toBe(providerResolver)
       await composition.start()
       expect(await composition.manifest()).toMatchObject({
         profile: 'hosted-server',

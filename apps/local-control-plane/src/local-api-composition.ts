@@ -118,6 +118,11 @@ export class LocalControlApiComposition {
               projectStates: this.projectStates,
               commands: new SqliteContextAuthoringCommandRepository(persistence),
               authority: contextAuthoring.authority,
+              ...(contextAuthoring.providerResolver === undefined
+                ? {}
+                : {
+                    providerResolver: contextAuthoring.providerResolver,
+                  }),
               now: contextAuthoring.now ?? (() => new Date()),
             }),
           }),

@@ -8,6 +8,7 @@ import {
 import { isDeepStrictEqual } from 'node:util'
 import {
   ContextCompilationError,
+  ContextProviderResolutionError,
   type ContextPackageAuthoringService,
   type ContextPackageRepository,
 } from '@control-plane/context'
@@ -177,7 +178,12 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       )
       return replayResponse(request, scope, payloadHash, record)
     } catch (error) {
-      if (error instanceof ExecutionPlanError || error instanceof ContextCompilationError) reject()
+      if (
+        error instanceof ExecutionPlanError ||
+        error instanceof ContextCompilationError ||
+        error instanceof ContextProviderResolutionError
+      )
+        reject()
       if (
         error instanceof Error &&
         ['EXECUTION_VALIDATION_COMMAND_CONFLICT', 'CONTEXT_AUTHORING_COMMAND_CONFLICT'].includes(

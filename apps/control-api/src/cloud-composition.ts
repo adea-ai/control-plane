@@ -158,6 +158,11 @@ export function createManagedCloudControlApiComposition(
               projectStates,
               commands: new PostgresContextAuthoringCommandRepository(connection.database),
               authority: contextAuthoring.authority,
+              ...(contextAuthoring.providerResolver === undefined
+                ? {}
+                : {
+                    providerResolver: contextAuthoring.providerResolver,
+                  }),
               now: contextAuthoring.now ?? (() => new Date()),
             }),
           }),
