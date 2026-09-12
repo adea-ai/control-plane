@@ -15,10 +15,7 @@ import {
   SqliteRuntimeChannelSequenceRepository,
   SqliteContextCommandGrantRepository,
 } from '@control-plane/sqlite-persistence'
-import {
-  CortanaContextProviderAdapter,
-  createContextBundle,
-} from '../packages/cortana-context-adapter/src/index.ts'
+import { createContextBundle } from '../packages/cortana-context-adapter/src/index.ts'
 import {
   ContextNodeHandler,
   ContextNodeChannel,
@@ -27,8 +24,7 @@ import {
 import {
   ContextCommandDeliveryService,
   ContextCommandRecoveryService,
-  ContextGatewayReadClient,
-  ContextRuntimeNodeReadBinder,
+  GatewayContextProviderResolver,
   ContextCommandArtifactStore,
   RuntimeGatewayMessageRouter,
   RuntimeGatewayWebSocketLifecycle,
@@ -150,7 +146,13 @@ for (const loseFirstResult of [false, true]) {
         repository,
         coordination,
         results: artifacts,
-        sender: { send: (command) => lifecycle.send(command) },
+        sender: {
+          send: (command) => {
+            captured = command
+            commandId = command.commandId
+            return lifecycle.send(command)
+          },
+        },
       })
       const unexpected = async () => {
         throw new Error('UNEXPECTED_RUNTIME_ROUTE')
@@ -332,37 +334,24 @@ for (const loseFirstResult of [false, true]) {
         kind: 'evidence',
         tokenCount: 1,
       }).readModel
-      const binder = new ContextRuntimeNodeReadBinder({
-        workspaceId,
-        providerRef,
-        mappedProjectRef: 'fixture-project',
-        authorizationRef: grant.authorizationRef,
+      readModel.health.checkedAt = new Date().toISOString()
+      const resolver = new GatewayContextProviderResolver({
+        delivery,
+        artifacts,
         grants,
         coordination,
         nextSequence: (source) => lifecycle.nextSequence(source),
         traceId: () => traceId,
-      })
-      const adapter = new CortanaContextProviderAdapter({
-        readModel,
-        providerRef,
-        mappedProjectRef: 'fixture-project',
-        transport: 'runtime_node',
-        maximumRetries: 0,
-        bindRuntimeNodeRead: (input, signal) => binder.bind(input, signal),
-        client: new ContextGatewayReadClient({
-          delivery,
-          artifacts,
-          coordination,
-          nextSequence: (source) => lifecycle.nextSequence(source),
-          authorize: async (record) => {
-            captured = record.commandEnvelope
-            commandId = record.commandId
-            await grantAuthority.authorize(record)
-            await guard(record.commandEnvelope)
+        readBindings: async () => [
+          {
+            readModel,
+            providerRef,
+            mappedProjectRef: 'fixture-project',
+            authorizationRef: grant.authorizationRef,
           },
-        }),
+        ],
       })
-      const contributions = await adapter.retrieve({
+      const { contributions, status } = await resolver.resolve({
         workspaceId,
         scopeDigest: bundle.scopeDigest,
         principalRef,
@@ -385,6 +374,7 @@ for (const loseFirstResult of [false, true]) {
         },
       })
       await Promise.all(operations)
+      expect(status).toBe('included')
       expect(contributions.map(({ kind }) => kind)).toEqual(['evidence', 'memory'])
       expect(httpReads).toBe(1)
       const terminal = await repository.get(workspaceId, commandId)

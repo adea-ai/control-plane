@@ -12,7 +12,7 @@ import { z } from 'zod'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const MAX_CONTRIBUTION_BYTES = 262_144
-const RequestSchema = z.object({
+export const ContextProviderRequestSchema = z.object({
   workspaceId: IdentifierSchemas.workspaceId,
   scopeDigest: DigestSchema,
   principalRef: z.string().min(1).max(256),
@@ -29,7 +29,7 @@ const RequestSchema = z.object({
   policy: ContextProviderPolicySchema,
 })
 
-export type ContextProviderRequest = z.output<typeof RequestSchema>
+export type ContextProviderRequest = z.output<typeof ContextProviderRequestSchema>
 
 export interface ContextProviderDriver {
   readonly readModel: ContextProviderReadModel
@@ -108,7 +108,7 @@ export class ContextProviderResolver {
   }
 
   async resolve(input: unknown): Promise<ContextProviderResolution> {
-    const request = RequestSchema.parse(input)
+    const request = ContextProviderRequestSchema.parse(input)
     if (request.policy.mode === 'disabled') return empty('disabled', ['POLICY_DISABLED'])
     const providers = this.#eligible(request)
     let lastError: ContextProviderResolutionError | undefined
@@ -436,7 +436,7 @@ export async function runContextProviderConformance(
   provider: ContextProviderDriver,
   requestInput: unknown
 ): Promise<{ bounded: boolean; deterministic: boolean; scopePreserved: boolean }> {
-  const request = RequestSchema.parse(requestInput)
+  const request = ContextProviderRequestSchema.parse(requestInput)
   const first = await provider.retrieve(request)
   const second = await provider.retrieve(request)
   const normalizedFirst = normalizeConformanceOutput(first)

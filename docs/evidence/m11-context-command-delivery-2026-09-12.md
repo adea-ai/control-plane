@@ -260,3 +260,23 @@ formatting. Coverage is 87.09% lines / 84.59% functions.
 Provider selection, trusted grant provisioning/replication, remote identity
 deployment and supported composition-root activation remain required. No production
 resources or database migrations changed in this binding step.
+
+## Gateway provider composition
+
+GatewayContextProviderResolver implements the existing authoring providerResolver
+port. Each resolution reads a trusted current registry snapshot, bounds it to 32
+entries, rejects wrong workspace/principal and duplicate connection identities,
+and composes the grant authority, binder, gateway client and existing provider
+selection/normalization. Registry reads and subsequent work share a bounded deadline;
+late registry completion cannot allocate or dispatch. Disabled policy skips the
+registry entirely. Empty and stale-provider snapshots retain existing omission
+semantics; the composition never fabricates fresh health timestamps. Transport
+retries are disabled here; durable recovery owns redelivery and uncertain effects.
+Both signed transport E2Es now resolve through this composition, including selection,
+grant checks and normalized contributions. Focused checks pass 23 tests / 144
+assertions. Full suite passes 1,353 tests (1,142 unit, 131 E2E, 80 smoke), build,
+types and formatting; coverage is 87.10% lines / 84.56% functions. The explicit
+gateway-to-context workspace dependency is reflected in the lockfile and architecture
+inventory; no external package version changed. Registry snapshots and grant
+provisioning are still fixture-owned. A production registry source, administrative
+authorization/replication and composition-root activation remain necessary.

@@ -525,6 +525,7 @@
       "workspaceDependencies": [
         "@control-plane/bootstrap",
         "@control-plane/config",
+        "@control-plane/context",
         "@control-plane/cortana-context-adapter",
         "@control-plane/deployment",
         "@control-plane/domain",

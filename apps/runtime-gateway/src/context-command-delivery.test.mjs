@@ -12,6 +12,8 @@ import {
 import { contextCommandResultDigest } from './context-result-integrity.ts'
 import { ContextGatewayReadClient } from './context-read-client.ts'
 import { ContextRuntimeNodeReadBinder } from './context-read-binding.ts'
+import { GatewayContextProviderResolver } from './context-provider-composition.ts'
+import { createFakeContextProvider } from '@control-plane/context'
 import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
@@ -199,6 +201,105 @@ function clientFixture() {
   }
   return { f, request, options, client: new ContextGatewayReadClient(options) }
 }
+
+test('provider composition bounds registry reads and preserves disabled, absent and stale-provider behavior', async () => {
+  const { f } = clientFixture()
+  const request = {
+    workspaceId: f.source.workspaceId,
+    principalRef: 'principal://test/user',
+    scopeDigest: f.command.payload.parameters.scopeDigest,
+    executionLocation: 'runtime_node',
+    capability: 'evidenceSearch',
+    objective: 'Read bounded evidence',
+    now: f.command.issuedAt,
+    policy: {
+      mode: 'preferred',
+      maximumTokens: 100,
+      maximumAgeSeconds: 60,
+      maximumLatencyMs: 100,
+      includeEvidence: true,
+      includeMemory: false,
+      providerIds: [],
+      connectionIds: [],
+      maximumProviderHealthAgeSeconds: 60,
+      failureBehavior: 'continue_without',
+    },
+  }
+  let registryCalls = 0,
+    authorityCalls = 0
+  const options = {
+    delivery: f.service,
+    artifacts: {
+      read: async () => {
+        throw new Error('UNEXPECTED_ARTIFACT_READ')
+      },
+    },
+    coordination: f.options.coordination,
+    nextSequence: async () => {
+      throw new Error('UNEXPECTED_ALLOCATION')
+    },
+    grants: {
+      get: async () => {
+        authorityCalls++
+        throw new Error('UNEXPECTED_GRANT_READ')
+      },
+    },
+    traceId: () => f.command.traceId,
+    readBindings: async () => {
+      registryCalls++
+      return []
+    },
+  }
+  const resolver = new GatewayContextProviderResolver(options)
+  expect(
+    (await resolver.resolve({ ...request, policy: { ...request.policy, mode: 'disabled' } })).status
+  ).toBe('disabled')
+  expect(registryCalls).toBe(0)
+  expect((await resolver.resolve(request)).status).toBe('omitted')
+  const readModel = createFakeContextProvider({
+    suffix: 'A',
+    workspaceId: request.workspaceId,
+    scopeDigest: request.scopeDigest,
+    health: 'healthy',
+    state: 'active',
+    capabilities: { evidenceSearch: true },
+    kind: 'evidence',
+    tokenCount: 1,
+  }).readModel
+  const binding = {
+    readModel,
+    providerRef: f.command.providerRef,
+    mappedProjectRef: 'project:client',
+    authorizationRef: f.command.authorizationRef,
+  }
+  options.readBindings = async () => [binding]
+  expect((await resolver.resolve(request)).status).toBe('omitted')
+  expect(authorityCalls).toBe(0)
+  options.readBindings = async () => [binding, binding]
+  await expect(resolver.resolve(request)).rejects.toThrow('REGISTRY_SCOPE_MISMATCH')
+  options.readBindings = async () => Array.from({ length: 33 }, () => structuredClone(binding))
+  await expect(resolver.resolve(request)).rejects.toThrow('REGISTRY_INVALID')
+  options.readBindings = async () => [
+    {
+      ...binding,
+      readModel: {
+        ...readModel,
+        connection: { ...readModel.connection, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      },
+    },
+  ]
+  await expect(resolver.resolve(request)).rejects.toThrow('REGISTRY_SCOPE_MISMATCH')
+  let release
+  options.readBindings = () =>
+    new Promise((resolve) => {
+      release = resolve
+    })
+  await expect(resolver.resolve(request)).rejects.toThrow('RESOLUTION_TIMEOUT')
+  release([binding])
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(authorityCalls).toBe(0)
+  expect(f.sent).toEqual([])
+})
 
 test('read binder authorizes current grants and fences cancellation, revocation and channel replacement', async () => {
   const { f } = clientFixture()
