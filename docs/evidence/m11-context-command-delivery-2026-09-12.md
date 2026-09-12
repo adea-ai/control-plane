@@ -106,6 +106,20 @@ Full suite: 1,336 passing tests (1,129 unit, 127 E2E, 80 smoke), plus lint/bound
 and formatting. Production gateway composition and authoring wait/result retrieval
 remain necessary to connect this bridge to the complete workflow.
 
+The root E2E lane now runs the composed path in
+`tests/m11-context-transport-e2e.test.mjs`: adapter-generated command, real gateway
+WebSocket upgrade/lifecycle/router, signed synthetic-device authentication,
+gateway/node SQLite repositories, node channel and concrete HTTP driver, and
+filesystem Artifact validation before adapter normalization. Both ordinary and
+deliberately lost first-result cases return evidence/memory with exactly one HTTP
+provider call; the lost case records two gateway delivery attempts. Credential
+revocation rejects subsequent gateway sends. Full suite: 1,338 passing tests
+(1,129 unit, 129 E2E, 80 smoke); lint/boundaries and formatting pass.
+The identity authority and compatible HTTP endpoint are test fixtures. The test
+also explicitly supplies dispatch/wait and redelivery orchestration, so production
+authoring client, sequence allocation, policy authority, automatic reconnect and
+multi-profile deployment acceptance remain unproven.
+
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
 Artifact ID. Readback is mandatory; uploaded references are resolved only through
