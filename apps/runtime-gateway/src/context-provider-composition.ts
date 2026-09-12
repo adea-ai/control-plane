@@ -2,6 +2,7 @@ import {
   ContextProviderRequestSchema,
   ContextProviderResolver,
   type ContextProviderRequest,
+  type ContextProviderResolutionMetrics,
 } from '@control-plane/context'
 import {
   CortanaContextProviderAdapter,
@@ -37,6 +38,8 @@ export interface GatewayContextProviderCompositionOptions extends Pick<
 > {
   readonly grants: Pick<ContextCommandGrantRepository, 'get'>
   readonly traceId: () => string
+  /** Bounded resolution-outcome metrics; absent means nothing is emitted. */
+  readonly metrics?: ContextProviderResolutionMetrics
   /** Trusted, current registry snapshots; never refresh stale health timestamps here. */
   readonly readBindings: (
     scope: { workspaceId: string; principalRef: string },
@@ -48,9 +51,15 @@ export interface GatewayContextProviderCompositionOptions extends Pick<
 export class GatewayContextProviderResolver {
   constructor(readonly options: GatewayContextProviderCompositionOptions) {}
 
+  /** Resolver options carry the optional metrics hook without inventing a default. */
+  #resolverOptions() {
+    return this.options.metrics === undefined ? {} : { metrics: this.options.metrics }
+  }
+
   async resolve(input: unknown) {
     const request = ContextProviderRequestSchema.parse(input)
-    if (request.policy.mode === 'disabled') return new ContextProviderResolver([]).resolve(request)
+    if (request.policy.mode === 'disabled')
+      return new ContextProviderResolver([], this.#resolverOptions()).resolve(request)
     const timeout = request.policy.maximumLatencyMs
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300000)
       throw new Error('CONTEXT_PROVIDER_DEADLINE_INVALID')
@@ -114,7 +123,9 @@ export class GatewayContextProviderResolver {
           binder.bind(value, AbortSignal.any([caller, signal])),
       })
     })
-    const result = await new ContextProviderResolver(providers).resolve(request)
+    const result = await new ContextProviderResolver(providers, this.#resolverOptions()).resolve(
+      request
+    )
     signal.throwIfAborted()
     return result
   }

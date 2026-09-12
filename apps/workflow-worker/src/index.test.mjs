@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { loadManagedCloudConfiguration } from '@control-plane/config'
+import { CommandInboxService } from '@control-plane/domain'
 import { DurableExecutionLifecycleActivities } from './cloud-execution-activities.ts'
 import { createManagedCloudWorkflowWorkerComposition, start } from './index.ts'
 import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.ts'
@@ -14,6 +15,16 @@ class FakeProcessAdapter {
     this.listeners.delete(event)
   }
   setExitCode() {}
+}
+
+class RecordingMetricAdapter {
+  emissions = []
+  add(name, value, attributes) {
+    this.emissions.push({ name, value, attributes })
+  }
+  record(name, value, attributes) {
+    this.emissions.push({ name, value, attributes })
+  }
 }
 
 describe('workflow worker telemetry', () => {
@@ -122,6 +133,98 @@ describe('workflow worker telemetry', () => {
     )
 
     expect(composition.activities).toBeInstanceOf(DurableExecutionLifecycleActivities)
+    expect(composition.commands).toBeInstanceOf(CommandInboxService)
+  })
+
+  test('passes the consistency emitter from an injected adapter into the composed command inbox', async () => {
+    const adapter = new RecordingMetricAdapter()
+    const composition = createManagedCloudWorkflowWorkerComposition(
+      loadManagedCloudConfiguration(managedCloudEnvironment(), 'workflow-worker'),
+      runtimePort(),
+      undefined,
+      () => ({ database: {}, check: async () => undefined, close: async () => undefined }),
+      adapter
+    )
+    expect(composition.commands).toBeInstanceOf(CommandInboxService)
+    // Swap the durable repository for a canned replay so the duplicate outcome is
+    // emitted through the injected adapter and nowhere else.
+    const record = {
+      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      payloadHash: 'a'.repeat(64),
+      retentionExpiresAt: new Date(Date.now() + 600000).toISOString(),
+    }
+    composition.commands.repository = {
+      get: async () => record,
+      getByExecutionId: async () => record,
+      getExecution: async () => ({ executionId: record.executionId }),
+      accept: async () => {
+        throw new Error('REPLAY_MUST_NOT_ACCEPT')
+      },
+      compareAndSet: async () => {
+        throw new Error('REPLAY_MUST_NOT_TRANSITION')
+      },
+    }
+    const receivedAt = new Date().toISOString()
+    await composition.commands.acceptExecution({
+      callerPrincipalId: 'svc_worker',
+      operation: 'execution.accept',
+      commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      idempotencyKey: 'consistency-metrics-replay-key-1',
+      payloadHash: record.payloadHash,
+      correlation: {
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      },
+      executionPlan: {
+        executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt,
+      retentionExpiresAt: new Date(Date.parse(receivedAt) + 600000).toISOString(),
+    })
+    expect(adapter.emissions).toEqual([
+      {
+        name: 'control.command_inbox.duplicate.count',
+        value: 1,
+        attributes: {
+          'service.name': 'workflow-worker',
+          outcome: 'duplicate',
+        },
+      },
+    ])
+  })
+
+  test('starts the managed Cloud worker with an explicit consistency metric adapter', async () => {
+    const adapter = new RecordingMetricAdapter()
+    const lifecycle = []
+    const endpoint = {
+      run: async () => undefined,
+      shutdown: async () => lifecycle.push('endpoint'),
+    }
+    const runtime = await start({
+      environment: managedCloudEnvironment(),
+      logger: { write: () => undefined },
+      processAdapter: new FakeProcessAdapter(),
+      workflowRuntime: runtimePort(),
+      restateEndpointFactory: { create: async () => endpoint },
+      postgresConnectionFactory: () => ({
+        database: {},
+        check: async () => lifecycle.push('checked'),
+        close: async () => lifecycle.push('postgres'),
+      }),
+      metricAdapter: adapter,
+    })
+
+    expect(runtime.readiness().status).toBe('ready')
+    await runtime.shutdown('test-complete')
+    expect(lifecycle).toEqual(['checked', 'endpoint', 'postgres'])
+    // Startup itself emits no consistency metric; the adapter stays reserved for
+    // command-inbox outcomes and must never be driven by unrelated spans.
+    expect(adapter.emissions).toEqual([])
   })
 
   test('probes and closes Neon around managed Cloud worker startup', async () => {

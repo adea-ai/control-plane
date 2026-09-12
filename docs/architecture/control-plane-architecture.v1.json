@@ -535,7 +535,8 @@
         "@control-plane/events",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk",
-        "@control-plane/sqlite-persistence"
+        "@control-plane/sqlite-persistence",
+        "@control-plane/telemetry"
       ],
       "externalDependencies": [],
       "developmentWorkspaceDependencies": ["@control-plane/object-store"],
@@ -1412,7 +1413,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:a6d107f2a1a139d8b7b693485ccd3ef2f4bdc9850c1c29b40aa482f544903203"
+      "sourceDigest": "sha256:17f88032f82572259301160c4ffd5c8aefdbf0d521a2cfecb882eb0616d438fb"
     },
     {
       "id": "hosted-server",

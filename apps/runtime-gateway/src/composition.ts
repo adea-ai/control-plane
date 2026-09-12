@@ -30,6 +30,7 @@ import {
   SqliteRuntimeChannelSequenceRepository,
 } from '@control-plane/sqlite-persistence'
 import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
+import { createConsistencyMetricEmitter, type MetricAdapter } from '@control-plane/telemetry'
 import type { RuntimeNodeChannel } from './authentication.js'
 import { ContextCommandDeliveryService } from './context-command-delivery.js'
 import { ContextCommandRecoveryService } from './context-command-recovery.js'
@@ -100,6 +101,11 @@ export interface RuntimeGatewayCompositionOptions {
   readonly reachability: RuntimeNodeReachabilityPublisher | undefined
   /** Supplied from the host's tracing context; never invented by the composition. */
   readonly traceId: (() => string) | undefined
+  /**
+   * Injected metric adapter for consistency observability. When absent, no
+   * consistency metrics are emitted; a no-op fallback is the only default.
+   */
+  readonly metricAdapter?: MetricAdapter | undefined
   readonly instanceId: string
   readonly hostname: string
   readonly port: number
@@ -185,6 +191,12 @@ export async function composeRuntimeGateway(
   }
 
   const artifacts = new ContextCommandArtifactStore(objectStore)
+  // Consistency metrics flow through the telemetry redaction pipeline with bounded
+  // label cardinality; without an injected metric adapter nothing is emitted.
+  const consistencyMetrics =
+    options.metricAdapter === undefined
+      ? undefined
+      : createConsistencyMetricEmitter(options.metricAdapter, 'runtime-gateway')
   let lifecycle: RuntimeGatewayWebSocketLifecycle
   const delivery = new ContextCommandDeliveryService({
     repository,
@@ -249,6 +261,7 @@ export async function composeRuntimeGateway(
       artifacts,
       grants,
       coordination,
+      ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
       nextSequence: (source) => lifecycle.nextSequence(source),
       traceId,
       // Provider bindings are read at request time from the registration store the CLI writes.

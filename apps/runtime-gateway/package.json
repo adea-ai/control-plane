@@ -22,7 +22,8 @@
     "@control-plane/events": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
-    "@control-plane/sqlite-persistence": "workspace:*"
+    "@control-plane/sqlite-persistence": "workspace:*",
+    "@control-plane/telemetry": "workspace:*"
   },
   "devDependencies": {
     "@control-plane/object-store": "workspace:*"
