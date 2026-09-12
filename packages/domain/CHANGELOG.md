@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/domain-v1.7.1...domain-v1.8.0) (2026-09-12)
+
+
+### Features
+
+* **context:** add durable SQLite and PostgreSQL command ledgers ([#474](https://github.com/adea-ai/control-plane/issues/474)) ([2d5bff7](https://github.com/adea-ai/control-plane/commit/2d5bff76e5d77f38b56e6de9a3193810094e34fc))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/domain-v1.7.0...domain-v1.7.1) (2026-09-10)
 
 

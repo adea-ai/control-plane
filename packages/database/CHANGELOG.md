@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/database-v1.10.2...database-v1.11.0) (2026-09-12)
+
+
+### Features
+
+* **context:** add durable SQLite and PostgreSQL command ledgers ([#474](https://github.com/adea-ai/control-plane/issues/474)) ([2d5bff7](https://github.com/adea-ai/control-plane/commit/2d5bff76e5d77f38b56e6de9a3193810094e34fc))
+
 ## [1.10.2](https://github.com/adea-ai/control-plane/compare/database-v1.10.1...database-v1.10.2) (2026-09-12)
 
 
