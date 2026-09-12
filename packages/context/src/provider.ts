@@ -18,6 +18,7 @@ const RequestSchema = z.object({
   principalRef: z.string().min(1).max(256),
   executionLocation: z.enum(['cloud', 'runtime_node']),
   capability: z.enum(['boundedRetrieval', 'evidenceSearch', 'memoryRecall']),
+  objective: z.string().min(1).max(16_384),
   now: z.iso.datetime(),
   policy: ContextProviderPolicySchema,
 })

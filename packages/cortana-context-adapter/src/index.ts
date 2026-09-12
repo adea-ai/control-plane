@@ -40,6 +40,7 @@ export type CortanaContextBundle = z.output<typeof CortanaContextBundleSchema>
 export type CortanaTransport = 'mcp' | 'http' | 'runtime_node'
 
 export interface CortanaClientRequest {
+  objective: string
   transport: CortanaTransport
   mappedProjectRef: string
   scopeDigest: string
@@ -125,6 +126,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
 
   #request(request: ContextProviderRequest): CortanaClientRequest {
     const base = {
+      objective: request.objective,
       transport: this.#options.transport,
       mappedProjectRef: this.#options.mappedProjectRef,
       scopeDigest: request.scopeDigest,
@@ -279,7 +281,14 @@ function runtimeNodeCommand(request: ContextProviderRequest, providerRef: string
     channelGeneration: 1,
     commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
     idempotencyKey: `context-read:${providerRef}`,
-    payloadHash: digest(`${providerRef}:${request.scopeDigest}:${request.policy.maximumTokens}`),
+    payloadHash: digest(
+      canonical({
+        providerRef,
+        objective: request.objective,
+        scopeDigest: request.scopeDigest,
+        maximumTokens: request.policy.maximumTokens,
+      })
+    ),
     issuedAt: request.now,
     expiresAt: new Date(Date.parse(request.now) + request.policy.maximumLatencyMs).toISOString(),
     family: 'context_provider',
@@ -291,6 +300,7 @@ function runtimeNodeCommand(request: ContextProviderRequest, providerRef: string
     payload: {
       version: 1,
       parameters: {
+        objective: request.objective,
         scopeDigest: request.scopeDigest,
         maximumTokens: request.policy.maximumTokens,
       },
