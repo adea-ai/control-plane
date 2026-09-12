@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { ContextProviderResolver, createFakeContextProvider } from './provider.ts'
 import {
   ContextCompilationError,
   ContextPackageCompiler,
@@ -18,7 +19,27 @@ const itemTwoId = 'psi_01JBBCDEF0123456789ABCDEFG'
 const artifactId = 'art_01JABCDEF0123456789ABCDEFG'
 
 describe('trusted pre-validation context authoring', () => {
-  function fixture() {
+  function providerRequest(policy = {}) {
+    return {
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      executionLocation: 'runtime_node',
+      capability: 'evidenceSearch',
+      policy: {
+        mode: 'preferred',
+        providerIds: [],
+        connectionIds: [],
+        includeEvidence: true,
+        includeMemory: false,
+        maximumTokens: 100,
+        maximumAgeSeconds: 60,
+        maximumLatencyMs: 1000,
+        failureBehavior: 'continue_without',
+        ...policy,
+      },
+    }
+  }
+
+  function fixture(options = {}) {
     const input = baseInput()
     const packages = new InMemoryContextPackageRepository()
     const decision = {
@@ -50,6 +71,7 @@ describe('trusted pre-validation context authoring', () => {
       },
     }
     const service = new ContextPackageAuthoringService({
+      ...options,
       compilerVersion: '1.0.0',
       packages,
       authority,
@@ -58,7 +80,7 @@ describe('trusted pre-validation context authoring', () => {
           return input.projectState
         },
       },
-      now: () => new Date(now),
+      now: options.now ?? (() => new Date(now)),
     })
     return { service, packages, request, decision, artifact, input, authority }
   }
@@ -73,15 +95,157 @@ describe('trusted pre-validation context authoring', () => {
     expect(package_.permissions).toEqual(['artifact:read', 'project-state:read'])
   })
 
+  test('resolves trusted provider policy and persists the omission decision', async () => {
+    const requests = []
+    const f = fixture({
+      providerResolver: {
+        async resolve(request) {
+          requests.push(request)
+          return {
+            status: 'omitted',
+            contributions: [],
+            pins: [],
+            decisionReasons: ['NO_ELIGIBLE_PROVIDER'],
+          }
+        },
+      },
+    })
+    f.decision.providerRequest = {
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      executionLocation: 'runtime_node',
+      capability: 'evidenceSearch',
+      policy: {
+        mode: 'preferred',
+        providerIds: [],
+        connectionIds: [],
+        includeEvidence: true,
+        includeMemory: false,
+        maximumTokens: 100,
+        maximumAgeSeconds: 60,
+        maximumLatencyMs: 1000,
+        failureBehavior: 'continue_without',
+      },
+    }
+    const reference = await f.service.create('service:reference-client', f.request)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      workspaceId,
+      principalRef: 'service:reference-client',
+      objective: f.request.objective,
+      ...f.decision.providerRequest,
+    })
+    expect((await f.packages.get(reference)).providerComposition.resolution).toEqual({
+      status: 'omitted',
+      decisionReasons: ['NO_ELIGIBLE_PROVIDER'],
+    })
+  })
+
   test('rejects caller-supplied authorization and policy fields', async () => {
     const f = fixture()
-    for (const extra of [{ permissions: ['admin'] }, { artifacts: [] }, { compiledAt: now }]) {
+    for (const extra of [
+      { permissions: ['admin'] },
+      { artifacts: [] },
+      { compiledAt: now },
+      { providerRequest: { policy: { mode: 'required' } } },
+    ]) {
       await expect(
         f.service.create('service:reference-client', { ...f.request, ...extra })
       ).rejects.toThrow()
     }
     f.request.candidates[0].authorized = true
     await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow()
+  })
+
+  test('records disabled and unavailable preferred policies with the real empty resolver', async () => {
+    for (const mode of ['disabled', 'preferred']) {
+      const f = fixture()
+      f.decision.providerRequest = providerRequest({ mode })
+      const reference = await f.service.create('service:reference-client', f.request)
+      const package_ = await f.packages.get(reference)
+      expect(package_.providerComposition.resolution.status).toBe(
+        mode === 'disabled' ? 'disabled' : 'omitted'
+      )
+      expect(package_.providerComposition.contributions).toEqual([])
+      expect(package_.permissions).toEqual(f.input.permissions.toSorted())
+    }
+  })
+
+  test('fails closed for missing required providers and explicit input requests', async () => {
+    for (const [failureBehavior, code] of [
+      ['fail', 'PROVIDER_UNAVAILABLE'],
+      ['await_input', 'CONTEXT_PROVIDER_INPUT_REQUIRED'],
+    ]) {
+      const f = fixture()
+      f.decision.providerRequest = providerRequest({ mode: 'required', failureBehavior })
+      await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(code)
+    }
+  })
+
+  test('retrieves and pins evidence through the real resolver without widening authority', async () => {
+    const provider = createFakeContextProvider({
+      suffix: 'A',
+      workspaceId,
+      scopeDigest: providerRequest().scopeDigest,
+      state: 'active',
+      health: 'healthy',
+      capabilities: { evidenceSearch: true },
+      kind: 'evidence',
+      tokenCount: 10,
+    })
+    provider.readModel.connection.principalRef = 'service:reference-client'
+    provider.readModel.health.checkedAt = now
+    const requests = []
+    const resolver = new ContextProviderResolver([
+      {
+        ...provider,
+        async retrieve(request) {
+          requests.push(request)
+          return (await provider.retrieve(request)).map((entry) => ({ ...entry, observedAt: now }))
+        },
+      },
+    ])
+    const f = fixture({ providerResolver: resolver })
+    const baseline = await f.packages.get(
+      await f.service.create('service:reference-client', f.request)
+    )
+    expect(requests).toHaveLength(0)
+    f.decision.providerRequest = providerRequest({ mode: 'disabled' })
+    await f.service.create('service:reference-client', f.request)
+    expect(requests).toHaveLength(0)
+    f.decision.providerRequest = providerRequest({ mode: 'required', failureBehavior: 'fail' })
+    const package_ = await f.packages.get(
+      await f.service.create('service:reference-client', f.request)
+    )
+    expect(requests).toHaveLength(1)
+    expect(requests[0].objective).toBe(f.request.objective)
+    expect(package_.providerComposition.resolution.status).toBe('included')
+    expect(package_.providerComposition.contributions[0]).toMatchObject({
+      revision: 'revision-A',
+      scopeDigest: providerRequest().scopeDigest,
+      providerId: provider.readModel.definition.providerId,
+    })
+    expect(package_.contentDigest).not.toBe(baseline.contentDigest)
+    expect(package_.permissions).toEqual(baseline.permissions)
+    expect(package_.constraints).toEqual(baseline.constraints)
+    expect(package_.projectState).toEqual(baseline.projectState)
+    expect(package_.stateItems).toEqual(baseline.stateItems)
+  })
+
+  test('rejects authority expiration while provider resolution is in flight', async () => {
+    let current = now
+    const f = fixture({
+      now: () => new Date(current),
+      providerResolver: {
+        async resolve() {
+          current = '2026-08-23T13:00:00.000Z'
+          return { status: 'omitted', contributions: [], pins: [], decisionReasons: [] }
+        },
+      },
+    })
+    f.decision.providerRequest = providerRequest()
+    await expect(f.service.create('service:reference-client', f.request)).rejects.toThrow(
+      'UNAUTHORIZED_CONTEXT'
+    )
   })
 
   test('excludes stale optional items without resolving their unavailable artifacts', async () => {

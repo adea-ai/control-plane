@@ -210,6 +210,11 @@ export class HostedServerControlPlaneComposition {
               projectStates,
               commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
               authority: options.contextAuthoring.authority,
+              ...(options.contextAuthoring.providerResolver === undefined
+                ? {}
+                : {
+                    providerResolver: options.contextAuthoring.providerResolver,
+                  }),
               now: options.contextAuthoring.now ?? (() => new Date()),
             }),
           }),

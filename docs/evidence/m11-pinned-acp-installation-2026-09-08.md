@@ -16,7 +16,11 @@ versions are checked. The release-tag lock normalization is hash-checked and doe
 not change external dependency versions. Tests run without retries; the native
 executable uses the upstream release profile. Git/npm/Cargo use private build
 state rather than caller credentials or Cargo configuration. Build commands have
-bounded process-group lifetimes (up to one hour per native command).
+bounded process-group lifetimes (up to one hour per native command, except Linux
+release compilation, which has a two-hour limit). A fresh one-job Linux build
+passed its 167 native tests but was terminated at the former one-hour release
+deadline on September 12. This limit change does not establish successful fresh
+installation; that still requires a completed build and verified receipt.
 
 Linux native builds use one Cargo compiler job; macOS retains four. A Linux ARM64
 four-job release build exceeded a 10 GiB container memory limit, so parallelism is

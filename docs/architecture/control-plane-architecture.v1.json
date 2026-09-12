@@ -311,7 +311,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "lockVersion": "1.5.2",
       "kind": "application",
       "private": true,
@@ -501,7 +501,7 @@
     {
       "name": "@control-plane/restate-runtime",
       "path": "packages/restate-runtime",
-      "version": "1.1.3",
+      "version": "1.1.5",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -1401,7 +1401,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:4fd1fa00d15e1a07d3b000ffa1baf6f15b07ba129edfd1b5872a2c03509b6551"
+      "sourceDigest": "sha256:a6d107f2a1a139d8b7b693485ccd3ef2f4bdc9850c1c29b40aa482f544903203"
     },
     {
       "id": "hosted-server",
@@ -1440,7 +1440,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:2601db420518094bc7ff7d267c72354441a65b7f8c826fe0ec4a0403068ed205"
+      "sourceDigest": "sha256:f88e0e63f72e83318bb4b654bb31335d884fa97a5c2686495d9dc74a4e554fff"
     },
     {
       "id": "hosted-simple",

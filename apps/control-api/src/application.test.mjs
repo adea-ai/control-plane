@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Buffer } from 'node:buffer'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { loadManagedCloudConfiguration } from '@control-plane/config'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import {
+  ContextProviderResolutionError,
+  contextPackageSerializationFixtures,
+} from '@control-plane/context'
 import { ControlApiFixtures, ErrorResponseEnvelopeSchema } from '@control-plane/contracts'
 import {
   CommandInboxService,
@@ -618,6 +621,16 @@ describe('Control API', () => {
     }
     await expect(service.validate(inline, request.caller.servicePrincipalId)).rejects.toMatchObject(
       { status: 503 }
+    )
+    service.options.contextAuthoring = {
+      createForCommand: async () => {
+        throw new ContextProviderResolutionError('PROVIDER_UNAVAILABLE')
+      },
+    }
+    await expect(service.validate(inline, request.caller.servicePrincipalId)).rejects.toMatchObject(
+      {
+        status: 422,
+      }
     )
     const authoringCalls = []
     service.options.contextAuthoring = {
@@ -1367,11 +1380,22 @@ describe('Control API', () => {
   })
 
   test('constructs the durable validator and signed authenticator from one Cloud composition', () => {
+    const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
+    const providerResolver = {
+      resolve: async () => {
+        throw new Error('UNEXPECTED_RETRIEVAL')
+      },
+    }
     const composition = createManagedCloudControlApiComposition(
       loadManagedCloudConfiguration(managedCloudEnvironment(), 'control-api'),
       { write: () => undefined },
-      () => ({ database: {}, check: async () => undefined, close: async () => undefined })
+      () => ({ database: {}, check: async () => undefined, close: async () => undefined }),
+      { authority, providerResolver }
     )
+
+    expect(
+      composition.executionValidationService.options.contextAuthoring.options.providerResolver
+    ).toBe(providerResolver)
 
     expect(composition.executionValidationService).toBeInstanceOf(DurableExecutionValidationService)
     expect(composition.executionAcceptanceService).toBeInstanceOf(DurableExecutionAcceptanceService)
