@@ -170,3 +170,18 @@ PostgreSQL allocation and production configuration remain required; no deployed
 composition is activated. Full suite: 1,346 passing tests (1,136 unit, 130 E2E,
 80 smoke), with build, type-check, lint/boundaries and formatting passing.
 Coverage is 87.26% lines and 84.75% functions against unchanged 80% thresholds.
+
+PostgresRuntimeChannelSequenceRepository adds the corresponding transaction-scoped
+advisory lock and durable counter. Migration 0042 creates only the new sequence
+table, with a database constraint bounding the next counter (including the exhausted
+sentinel). Apply the additive migration before configuring this repository. Rollback
+disables its use and preserves counters; dropping or resetting counters is not a safe
+rollback while a channel can still send. Scope identity includes workspace, node,
+gateway instance, connection and generation. A focused isolated Neon test passes
+nine assertions for eight concurrent allocations, lost commit acknowledgement,
+repository reconstruction, minimum advancement, generation isolation and exhaustion.
+The full isolated PostgreSQL suite passes 33 tests and 416 assertions in 258.6 seconds.
+The local suite passes 1,346 tests (1,136 unit, 130 E2E, 80 smoke), with 87.20% line
+and 84.69% function coverage. Build, types and migration-schema checks pass.
+No staging or production database was migrated, and production composition remains
+unactivated. Migration-generated JSON is normalized by the repository formatter.

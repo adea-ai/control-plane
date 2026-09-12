@@ -66,6 +66,7 @@ import { PostgresRuntimeCommandRepository } from './runtime-command-repository.t
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.ts'
 import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
+import { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
 import {
   commandInbox,
@@ -112,6 +113,43 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   afterAll(async () => {
     await isolated?.dispose()
+  })
+
+  test('reserves durable channel sequences across concurrent repositories and ambiguous commits', async () => {
+    const channel = {
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      gatewayInstanceId: 'sequence-test',
+      connectionId: 'sequence-test',
+      channelGeneration: 1,
+      protocolVersion: { major: 1, minor: 5 },
+      connectedAt: '2026-09-12T12:00:00.000Z',
+      lastHeartbeatAt: '2026-09-12T12:00:00.000Z',
+    }
+    const request = { channel, count: 1, minimum: 1 }
+    const reservations = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new PostgresRuntimeChannelSequenceRepository(isolated.application).reserve(request)
+      )
+    )
+    expect(reservations.toSorted((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    const ambiguous = new PostgresRuntimeChannelSequenceRepository({
+      transaction: async (operation) => {
+        await isolated.application.transaction(operation)
+        throw new Error('ACK_LOST_AFTER_COMMIT')
+      },
+    })
+    await expect(ambiguous.reserve(request)).rejects.toThrow('ACK_LOST_AFTER_COMMIT')
+    const restarted = new PostgresRuntimeChannelSequenceRepository(isolated.application)
+    expect(await restarted.reserve({ ...request, count: 3 })).toBe(10)
+    expect(await restarted.reserve(request)).toBe(13)
+    expect(await restarted.reserve({ ...request, minimum: 100 })).toBe(100)
+    expect(await restarted.reserve({ ...request, minimum: 2147483647 })).toBe(2147483647)
+    await expect(restarted.reserve(request)).rejects.toThrow('SEQUENCE_EXHAUSTED')
+    expect(
+      await restarted.reserve({ ...request, channel: { ...channel, channelGeneration: 2 } })
+    ).toBe(1)
+    await expect(restarted.reserve({ ...request, count: 1001 })).rejects.toThrow()
   })
 
   test('persists scoped context commands with racing allocation, conflict isolation and CAS', async () => {

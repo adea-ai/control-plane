@@ -295,6 +295,13 @@
       "when": 1789232484083,
       "tag": "0041_skinny_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1789239743960,
+      "tag": "0042_huge_nicolaos",
+      "breakpoints": true
     }
   ]
 }
