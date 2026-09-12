@@ -10,6 +10,7 @@ import {
   contextCommandUploadMetadata,
 } from './context-result-store.ts'
 import { contextCommandResultDigest } from './context-result-integrity.ts'
+import { ContextGatewayReadClient } from './context-read-client.ts'
 import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
@@ -120,6 +121,110 @@ function fixture(repository = new InMemoryContextCommandRepository()) {
     },
   }
 }
+
+function clientFixture() {
+  const f = fixture()
+  const at = new Date().toISOString()
+  f.setNow(at)
+  Object.assign(f.command, {
+    issuedAt: at,
+    sentAt: at,
+    expiresAt: new Date(Date.now() + 10000).toISOString(),
+  })
+  Object.assign(f.command.payload.parameters, {
+    mappedProjectRef: 'project:client',
+    maximumTokens: 100,
+    includeEvidence: true,
+    includeMemory: false,
+  })
+  f.command.payloadHash = contextCommandSemanticHash(f.command)
+  Object.assign(f.result, { payloadHash: f.command.payloadHash, completedAt: at, sentAt: at })
+  const request = {
+    ...f.command.payload.parameters,
+    transport: 'runtime_node',
+    gatewayCommand: f.command,
+    deadline: f.command.expiresAt,
+  }
+  const options = {
+    delivery: f.service,
+    coordination: f.options.coordination,
+    nextSequence: async () => 1,
+    authorize: async () => {},
+    artifacts: { read: async () => ({ evidence: 'bounded' }) },
+    pollIntervalMs: 10,
+  }
+  return { f, request, options, client: new ContextGatewayReadClient(options) }
+}
+
+test('gateway client rejects mismatched requests before authorization or persistence', async () => {
+  const { f, request, options, client } = clientFixture()
+  let calls = 0
+  options.authorize = async () => {
+    calls++
+  }
+  await expect(
+    client.read({ ...request, objective: 'different objective' }, new AbortController().signal)
+  ).rejects.toThrow('REQUEST_MISMATCH')
+  expect(calls).toBe(0)
+  expect(await f.repository.get(f.source.workspaceId, f.command.commandId)).toBeUndefined()
+})
+
+test('gateway client bounds an uncooperative authority without admitting a command', async () => {
+  const { f, request, options, client } = clientFixture()
+  options.authorize = () => new Promise(() => {})
+  await expect(
+    client.read(
+      { ...request, deadline: new Date(Date.now() + 100).toISOString() },
+      new AbortController().signal
+    )
+  ).rejects.toThrow('TIMEOUT')
+  expect(await f.repository.get(f.source.workspaceId, f.command.commandId)).toBeUndefined()
+})
+
+test('gateway client cancellation before send preserves queued work and never sends later', async () => {
+  const { f, request, options, client } = clientFixture()
+  const controller = new AbortController()
+  options.nextSequence = async () => {
+    controller.abort()
+    return 1
+  }
+  await expect(client.read(request, controller.signal)).rejects.toThrow('ABORTED')
+  expect(f.sent).toHaveLength(0)
+  expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
+})
+
+test('gateway client cancellation after send does not fabricate provider cancellation', async () => {
+  const { f, request, client } = clientFixture()
+  const controller = new AbortController()
+  f.options.sender.send = async () => {
+    controller.abort()
+  }
+  await expect(client.read(request, controller.signal)).rejects.toThrow('ABORTED')
+  expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe(
+    'dispatched'
+  )
+})
+
+test('gateway client rechecks authorization after Artifact read before disclosing output', async () => {
+  const { f, request, options, client } = clientFixture()
+  let revoked = false
+  options.authorize = async () => {
+    if (revoked) throw new Error('private-authority-details')
+  }
+  f.options.sender.send = async () => {
+    await f.service.recordResult(f.source, f.result)
+  }
+  options.artifacts.read = async () => {
+    revoked = true
+    return { private: 'do not disclose' }
+  }
+  await expect(client.read(request, new AbortController().signal)).rejects.toThrow(
+    'CONTEXT_GATEWAY_READ_FAILED'
+  )
+  expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe(
+    'succeeded'
+  )
+})
 
 test('context delivery persists first identity before send and recovers a failed send', async () => {
   const f = fixture()

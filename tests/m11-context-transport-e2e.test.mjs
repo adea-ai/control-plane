@@ -20,6 +20,7 @@ import {
 } from '../apps/runtime-worker/src/index.ts'
 import {
   ContextCommandDeliveryService,
+  ContextGatewayReadClient,
   ContextCommandArtifactStore,
   RuntimeGatewayMessageRouter,
   RuntimeGatewayWebSocketLifecycle,
@@ -293,14 +294,16 @@ for (const loseFirstResult of [false, true]) {
           scopeDigest: request.scopeDigest,
           expiresAt: new Date(Date.now() + 10000).toISOString(),
         }),
-        client: {
-          read: async (request) => {
-            captured = request.gatewayCommand
-            await delivery.enqueue(captured)
-            await delivery.deliver(await coordination.lookup(nodeId), commandId, 1)
-            return artifacts.read(await deadline(completed.promise))
+        client: new ContextGatewayReadClient({
+          delivery,
+          artifacts,
+          coordination,
+          nextSequence: async () => 1,
+          authorize: async (record) => {
+            captured = record.commandEnvelope
+            await guard(record.commandEnvelope)
           },
-        },
+        }),
       })
       const contributions = await adapter.retrieve({
         workspaceId,

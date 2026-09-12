@@ -3,6 +3,10 @@
 This service builds on the separate context-command ledger from #474. It does not
 fabricate an execution, attempt, or RuntimeConnection for a context read.
 
+Validation counts below record incremental snapshots. The latest gateway-client
+validation is 1,343 passing tests (1,134 unit, 129 E2E, 80 smoke), with type-check,
+lint/boundaries and formatting passing; coverage87.24% lines84.72% functions.
+
 Commands are persisted before sending. Send failure leaves a dispatched record for
 bounded reconnect enumeration; delivery requires a composition-owned sequence
 allocator and rechecks active channel ownership after the durable update. Expired
@@ -116,8 +120,8 @@ provider call; the lost case records two gateway delivery attempts. Credential
 revocation rejects subsequent gateway sends. Full suite: 1,338 passing tests
 (1,129 unit, 129 E2E, 80 smoke); lint/boundaries and formatting pass.
 The identity authority and compatible HTTP endpoint are test fixtures. The test
-also explicitly supplies dispatch/wait and redelivery orchestration, so production
-authoring client, sequence allocation, policy authority, automatic reconnect and
+now uses the concrete gateway read client described below; redelivery orchestration
+is still explicit. Production authoring composition, sequence allocation, policy authority, automatic reconnect and
 multi-profile deployment acceptance remain unproven.
 
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
@@ -133,7 +137,22 @@ oversized/non-object JSON/invalid UTF-8 uploads cannot settle delivery. Producti
 upload credential scoping still needs implementation and validation. Production
 composition must provide the authenticated lifecycle sender, authoritative node
 coordination, and durable sequence allocation. RuntimeNode context-driver execution
-and node-side deduplication are not implemented here. Full socket transport,
+and node-side deduplication are implemented as described above but not activated in
+production composition. Full multi-profile socket transport,
 revocation/reconnect races, multi-profile replay, and provider authoring integration
 remain required. These service/SQLite tests do not prove exactly-once external
 reads or complete M11.
+
+## Gateway read client
+
+ContextGatewayReadClient replaces inline dispatch/wait glue in both composed E2E
+cases. Shared request validation binds objective, operation, project, principal,
+scope and budgets to the command before admission. Required policy authority runs
+before dispatch and before/after Artifact reads. Polling is bounded by caller
+cancellation and the request/grant deadline. Cancellation stops waiting, not provider
+effects: queued or dispatched records are preserved. Signal checkpoints prevent
+late authorization or sequence allocation from causing a cancelled wait to send.
+Revocation during an Artifact read prevents disclosure without erasing terminal
+history. Focused tests and composed E2E pass 19 tests/108 assertions, including an
+uncooperative authority and cancellation before/after send. Production policy and
+durable sequence allocation remain required composition ports.

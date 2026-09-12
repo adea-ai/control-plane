@@ -1,7 +1,8 @@
 import { z } from 'zod'
+import { GatewayCommandEnvelopeSchema } from '@control-plane/runtime-gateway-protocol'
 import type { CortanaClientPort, CortanaClientRequest } from './index.js'
 
-const Request = z
+export const CortanaClientRequestSchema = z
   .object({
     objective: z.string().min(1).max(16384),
     operationId: z
@@ -10,7 +11,8 @@ const Request = z
       .max(128)
       .regex(/^[A-Za-z0-9._:-]+$/)
       .optional(),
-    transport: z.literal('http'),
+    transport: z.enum(['http', 'mcp', 'runtime_node']),
+    gatewayCommand: GatewayCommandEnvelopeSchema.optional(),
     mappedProjectRef: z.string().min(1).max(1024),
     scopeDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     principalRef: z.string().min(1).max(256),
@@ -19,6 +21,10 @@ const Request = z
     includeEvidence: z.boolean(),
     includeMemory: z.boolean(),
   })
+  .strict()
+
+const HttpRequest = CortanaClientRequestSchema.omit({ gatewayCommand: true })
+  .extend({ transport: z.literal('http') })
   .strict()
 
 export interface CortanaHttpClientOptions {
@@ -59,7 +65,7 @@ export class CortanaHttpClient implements CortanaClientPort {
   }
 
   async read(input: CortanaClientRequest, signal: AbortSignal): Promise<unknown> {
-    const request = Request.parse(input)
+    const request = HttpRequest.parse(input)
     const remaining = Date.parse(request.deadline) - Date.now()
     if (remaining <= 0 || remaining > 300000) fail('DEADLINE_INVALID')
     const controller = new AbortController()
