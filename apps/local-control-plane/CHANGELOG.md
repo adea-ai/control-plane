@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.6.0...local-control-plane-v1.6.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** isolate standalone Restate test listeners ([#454](https://github.com/adea-ai/control-plane/issues/454)) ([0ef96af](https://github.com/adea-ai/control-plane/commit/0ef96af56caf90fdd370d5875b0cb1ded30bc51d))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.5.3...local-control-plane-v1.6.0) (2026-09-12)
 
 

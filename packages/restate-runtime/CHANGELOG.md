@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.3...restate-runtime-v1.1.4) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** isolate standalone Restate test listeners ([#454](https://github.com/adea-ai/control-plane/issues/454)) ([0ef96af](https://github.com/adea-ai/control-plane/commit/0ef96af56caf90fdd370d5875b0cb1ded30bc51d))
+
 ## [1.1.3](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.2...restate-runtime-v1.1.3) (2026-09-10)
 
 
