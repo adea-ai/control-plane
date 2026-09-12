@@ -89,6 +89,175 @@ describe('Cortana-compatible context adapter', () => {
     expect(JSON.stringify(command)).not.toMatch(/cortana|credential|database|localPath/i)
   })
 
+  test('requires an explicit authorized RuntimeNode binding before sending a context command', async () => {
+    const server = new FakeCortanaCompatibleServer(bundle())
+    const adapter = createAdapter(server, {
+      transport: 'runtime_node',
+      bindRuntimeNodeRead: undefined,
+    })
+    await expect(adapter.retrieve(request())).rejects.toMatchObject({
+      code: 'CORTANA_RUNTIME_BINDING_REQUIRED',
+    })
+    expect(server.requests).toHaveLength(0)
+  })
+
+  test('rejects invalid, cross-scope, and expired RuntimeNode bindings before client access', async () => {
+    for (const [overrides, code] of [
+      [{ commandId: 'invalid' }, 'CORTANA_RUNTIME_BINDING_INVALID'],
+      [{ workspaceId: 'wsp_02JABCDEF0123456789ABCDEFG' }, 'CORTANA_RUNTIME_BINDING_SCOPE_MISMATCH'],
+      [{ principalRef: 'principal://other/user' }, 'CORTANA_RUNTIME_BINDING_SCOPE_MISMATCH'],
+      [{ scopeDigest: `sha256:${'f'.repeat(64)}` }, 'CORTANA_RUNTIME_BINDING_SCOPE_MISMATCH'],
+      [{ providerRef: 'pvr_02JABCDEF0123456789ABCDEFG' }, 'CORTANA_RUNTIME_BINDING_SCOPE_MISMATCH'],
+      [{ expiresAt: now }, 'CORTANA_RUNTIME_BINDING_EXPIRED'],
+    ]) {
+      const server = new FakeCortanaCompatibleServer(bundle())
+      const adapter = createAdapter(server, {
+        transport: 'runtime_node',
+        bindRuntimeNodeRead: async (input) => ({ ...runtimeBinding(input), ...overrides }),
+      })
+      await expect(adapter.retrieve(request())).rejects.toMatchObject({ code })
+      expect(server.requests).toHaveLength(0)
+    }
+  })
+
+  test('reuses one authorized command across retries and allocates distinct commands for new reads', async () => {
+    const server = new FakeCortanaCompatibleServer(bundle(), 1)
+    let bindings = 0
+    const adapter = createAdapter(server, {
+      transport: 'runtime_node',
+      bindRuntimeNodeRead: async (input) => runtimeBinding(input, ++bindings),
+    })
+    await adapter.retrieve(request())
+    expect(bindings).toBe(1)
+    expect(server.requests[0].gatewayCommand).toEqual(server.requests[1].gatewayCommand)
+    expect(server.requests[0].gatewayCommand).toMatchObject({
+      nodeId: 'rnr_02JABCDEF0123456789ABCDEFG',
+      channelGeneration: 7,
+      sequence: 1,
+      authorizationRef: 'authz:provider-read-policy-v1',
+    })
+    await adapter.retrieve(request())
+    expect(bindings).toBe(2)
+    expect(server.requests[2].gatewayCommand.commandId).not.toBe(
+      server.requests[0].gatewayCommand.commandId
+    )
+    expect(server.requests[2].gatewayCommand.idempotencyKey).not.toBe(
+      server.requests[0].gatewayCommand.idempotencyKey
+    )
+  })
+
+  test('bounds an uncooperative binding authority and never sends after its grant expires', async () => {
+    const server = new FakeCortanaCompatibleServer(bundle())
+    let signal
+    const hanging = createAdapter(server, {
+      transport: 'runtime_node',
+      bindRuntimeNodeRead: async (_input, inputSignal) => {
+        signal = inputSignal
+        return new Promise(() => {})
+      },
+    })
+    const short = request()
+    short.policy.maximumLatencyMs = 5
+    await expect(hanging.retrieve(short)).rejects.toMatchObject({
+      code: 'CORTANA_RUNTIME_BINDING_TIMEOUT',
+    })
+    expect(signal.aborted).toBe(true)
+    const expired = createAdapter(server, {
+      transport: 'runtime_node',
+      bindRuntimeNodeRead: async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return { ...runtimeBinding(input), expiresAt: new Date(Date.parse(now) + 5).toISOString() }
+      },
+    })
+    await expect(expired.retrieve(request())).rejects.toMatchObject({ code: 'CORTANA_TIMEOUT' })
+    expect(server.requests).toHaveLength(0)
+  })
+
+  test('does not let contribution caching bypass RuntimeNode authorization', async () => {
+    const server = new FakeCortanaCompatibleServer(bundle())
+    let bindings = 0
+    const adapter = createAdapter(server, {
+      transport: 'runtime_node',
+      bindRuntimeNodeRead: async (input) => runtimeBinding(input, ++bindings),
+    })
+    const resolver = new ContextProviderResolver([adapter], {
+      cache: new InMemoryContextContributionCache(),
+    })
+    await resolver.resolve(request())
+    await resolver.resolve(request())
+    expect(bindings).toBe(2)
+    expect(server.requests).toHaveLength(2)
+  })
+
+  test('binds all read semantics into the payload hash and caps the command deadline', async () => {
+    const calls = []
+    const full = bundle()
+    const client = {
+      read: async (input) => {
+        calls.push(input)
+        return bundle({
+          evidence: input.includeEvidence ? full.evidence : [],
+          memories: input.includeMemory ? full.memories : [],
+          tokenCount: (input.includeEvidence ? 4 : 0) + (input.includeMemory ? 4 : 0),
+        })
+      },
+    }
+    for (const change of [
+      {},
+      { objective: 'A different objective' },
+      { capability: 'memoryRecall' },
+      { policy: { includeMemory: false } },
+      { policy: { includeEvidence: false } },
+      { policy: { maximumAgeSeconds: 60 } },
+    ]) {
+      const input = { ...request(), ...change, policy: { ...request().policy, ...change.policy } }
+      await createAdapter(client, {
+        transport: 'runtime_node',
+        bindRuntimeNodeRead: async (value) => ({
+          ...runtimeBinding(value),
+          expiresAt: new Date(Date.parse(now) + 500).toISOString(),
+        }),
+      }).retrieve(input)
+    }
+    expect(new Set(calls.map((entry) => entry.gatewayCommand.payloadHash)).size).toBe(6)
+    expect(calls[0].gatewayCommand.payload.parameters).toMatchObject({
+      mappedProjectRef: 'provider-project-fixture',
+      principalRef: request().principalRef,
+      includeEvidence: true,
+      includeMemory: true,
+    })
+    expect(calls[0].gatewayCommand.expiresAt).toBe(new Date(Date.parse(now) + 500).toISOString())
+    expect(calls[0].deadline).toBe(calls[0].gatewayCommand.expiresAt)
+  })
+
+  test('sanitizes authority errors and bounds clients that ignore cancellation', async () => {
+    const adapter = createAdapter(
+      {
+        read: async () => {
+          throw new Error('UNEXPECTED_READ')
+        },
+      },
+      {
+        transport: 'runtime_node',
+        bindRuntimeNodeRead: async () => {
+          throw new Error('private authority details')
+        },
+      }
+    )
+    await expect(adapter.retrieve(request())).rejects.toMatchObject({ code: 'CORTANA_UNAVAILABLE' })
+    let signal
+    const hanging = createAdapter({
+      read: async (_input, value) => {
+        signal = value
+        return new Promise(() => {})
+      },
+    })
+    const short = request()
+    short.policy.maximumLatencyMs = 5
+    await expect(hanging.retrieve(short)).rejects.toMatchObject({ code: 'CORTANA_TIMEOUT' })
+    expect(signal.aborted).toBe(true)
+  })
+
   test('validates version, scope, revision, digest, budget, and evidence/memory separation', async () => {
     await expectFailure({ contractVersion: '2.0.0' }, 'CORTANA_BUNDLE_INVALID')
     await expectFailure({ scopeDigest: `sha256:${'d'.repeat(64)}` }, 'CORTANA_SCOPE_MISMATCH')
@@ -216,6 +385,7 @@ describe('Cortana-compatible context adapter', () => {
 })
 
 function createAdapter(server, overrides = {}) {
+  let sequence = 0
   return new CortanaContextProviderAdapter({
     readModel,
     providerRef: 'pvr_01JABCDEF0123456789ABCDEFG',
@@ -223,12 +393,30 @@ function createAdapter(server, overrides = {}) {
     transport: 'http',
     client: server,
     clientIdentity: 'fixture-client-v1',
+    bindRuntimeNodeRead: async (input) => runtimeBinding(input, ++sequence),
     expectedCorpusRevision: 'corpus-42',
     expectedMemoryRevision: 'memory-9',
     expectedEmbeddingVersion: 'embed-3',
     expectedRetrievalVersion: 'retrieve-2',
     ...overrides,
   })
+}
+
+function runtimeBinding({ request: input, providerRef }, sequence = 1) {
+  return {
+    nodeId: 'rnr_02JABCDEF0123456789ABCDEFG',
+    workspaceId: input.workspaceId,
+    traceId: 'trc_02JABCDEF0123456789ABCDEFG',
+    channelGeneration: 7,
+    sequence,
+    commandId: `cmd_${String(sequence).padStart(26, '0')}`,
+    idempotencyKey: `context-read-fixture:${sequence}`,
+    authorizationRef: 'authz:provider-read-policy-v1',
+    providerRef,
+    principalRef: input.principalRef,
+    scopeDigest: input.scopeDigest,
+    expiresAt: new Date(Date.parse(input.now) + 60000).toISOString(),
+  }
 }
 
 function bundle(overrides = {}) {

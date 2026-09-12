@@ -56,6 +56,25 @@ export interface CortanaClientPort {
   read(request: CortanaClientRequest, signal: AbortSignal): Promise<unknown>
 }
 
+const CommandFields = GatewayCommandEnvelopeSchema.shape
+export const RuntimeNodeContextReadBindingSchema = z
+  .object({
+    nodeId: CommandFields.nodeId,
+    workspaceId: CommandFields.workspaceId,
+    traceId: CommandFields.traceId,
+    channelGeneration: CommandFields.channelGeneration,
+    sequence: CommandFields.sequence,
+    commandId: CommandFields.commandId,
+    idempotencyKey: CommandFields.idempotencyKey,
+    authorizationRef: CommandFields.authorizationRef.unwrap(),
+    providerRef: CommandFields.providerRef.unwrap(),
+    principalRef: z.string().min(1).max(256),
+    scopeDigest: DigestSchema,
+    expiresAt: CommandFields.expiresAt,
+  })
+  .strict()
+export type RuntimeNodeContextReadBinding = z.output<typeof RuntimeNodeContextReadBindingSchema>
+
 export interface CortanaAdapterOptions {
   readModel: ContextProviderReadModel
   providerRef: string
@@ -64,6 +83,11 @@ export interface CortanaAdapterOptions {
   client: CortanaClientPort
   /** Non-secret identity of the configured endpoint and credential-policy binding. */
   clientIdentity?: string
+  /** Composition-owned authorization and durable command identity allocation. */
+  bindRuntimeNodeRead?: (
+    input: { providerRef: string; request: ContextProviderRequest },
+    signal: AbortSignal
+  ) => Promise<RuntimeNodeContextReadBinding | undefined>
   maximumOutputBytes?: number
   maximumRetries?: number
   circuitFailureThreshold?: number
@@ -102,13 +126,19 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
   async retrieve(request: ContextProviderRequest): Promise<ContextContribution[]> {
     if (this.#consecutiveFailures >= this.#options.circuitFailureThreshold)
       throw new CortanaContextAdapterError('CORTANA_CIRCUIT_OPEN')
-    const clientRequest = this.#request(request)
+    const startedAt = performance.now()
+    const clientRequest = await this.#request(request)
+    const remaining = () =>
+      Date.parse(clientRequest.deadline) - Date.parse(request.now) - (performance.now() - startedAt)
     let lastError: unknown
     for (let attempt = 0; attempt <= this.#options.maximumRetries; attempt += 1) {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), request.policy.maximumLatencyMs)
       try {
-        const raw = await this.#options.client.read(clientRequest, controller.signal)
+        const raw = await boundedOperation(
+          (signal) => this.#options.client.read(structuredClone(clientRequest), signal),
+          remaining(),
+          'CORTANA_TIMEOUT'
+        )
+        if (remaining() <= 0) throw new CortanaContextAdapterError('CORTANA_TIMEOUT')
         const bundle = this.#validateBundle(raw, request)
         this.#consecutiveFailures = 0
         return normalizeBundle(bundle, this.readModel)
@@ -118,8 +148,6 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
           code: normalizeAdapterError(error).code,
           transport: this.#options.transport,
         })
-      } finally {
-        clearTimeout(timeout)
       }
     }
     this.#consecutiveFailures += 1
@@ -130,6 +158,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
     const options = this.#options
     if (
       !options.clientIdentity ||
+      options.transport === 'runtime_node' ||
       !options.expectedCorpusRevision ||
       !options.expectedEmbeddingVersion ||
       !options.expectedRetrievalVersion ||
@@ -139,7 +168,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
       return undefined
     return digest(
       JSON.stringify({
-        adapterVersion: 'cortana-context-adapter/1',
+        adapterVersion: 'cortana-context-adapter/2',
         clientIdentity: options.clientIdentity,
         providerRef: options.providerRef,
         mappedProjectRef: options.mappedProjectRef,
@@ -155,7 +184,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
     )
   }
 
-  #request(request: ContextProviderRequest): CortanaClientRequest {
+  async #request(request: ContextProviderRequest): Promise<CortanaClientRequest> {
     const base = {
       objective: request.objective,
       transport: this.#options.transport,
@@ -168,7 +197,47 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
       includeMemory: request.policy.includeMemory,
     }
     if (this.#options.transport !== 'runtime_node') return base
-    return { ...base, gatewayCommand: runtimeNodeCommand(request, this.#options.providerRef) }
+    const bind = this.#options.bindRuntimeNodeRead
+    if (!bind) throw new CortanaContextAdapterError('CORTANA_RUNTIME_BINDING_REQUIRED')
+    let raw: unknown
+    try {
+      raw = await boundedOperation(
+        (signal) =>
+          bind(
+            { providerRef: this.#options.providerRef, request: structuredClone(request) },
+            signal
+          ),
+        request.policy.maximumLatencyMs,
+        'CORTANA_RUNTIME_BINDING_TIMEOUT'
+      )
+    } catch (error) {
+      throw normalizeAdapterError(error)
+    }
+    const parsed = RuntimeNodeContextReadBindingSchema.safeParse(raw)
+    if (!parsed.success) throw new CortanaContextAdapterError('CORTANA_RUNTIME_BINDING_INVALID')
+    const binding = parsed.data
+    if (
+      binding.workspaceId !== request.workspaceId ||
+      binding.principalRef !== request.principalRef ||
+      binding.scopeDigest !== request.scopeDigest ||
+      binding.providerRef !== this.#options.providerRef
+    )
+      throw new CortanaContextAdapterError('CORTANA_RUNTIME_BINDING_SCOPE_MISMATCH')
+    if (Date.parse(binding.expiresAt) <= Date.parse(request.now))
+      throw new CortanaContextAdapterError('CORTANA_RUNTIME_BINDING_EXPIRED')
+    const deadline = new Date(
+      Math.min(Date.parse(base.deadline), Date.parse(binding.expiresAt))
+    ).toISOString()
+    return {
+      ...base,
+      deadline,
+      gatewayCommand: runtimeNodeCommand(
+        request,
+        binding,
+        deadline,
+        this.#options.mappedProjectRef
+      ),
+    }
   }
 
   #validateBundle(raw: unknown, request: ContextProviderRequest): CortanaContextBundle {
@@ -299,44 +368,75 @@ function normalizeBundle(
   ]
 }
 
-function runtimeNodeCommand(request: ContextProviderRequest, providerRef: string) {
-  return GatewayCommandEnvelopeSchema.parse({
-    type: 'command',
-    schemaVersion: 1,
-    protocolVersion: { major: 1, minor: 5 },
-    sequence: 1,
-    nodeId: 'rnr_01JABCDEF0123456789ABCDEFG',
+function runtimeNodeCommand(
+  request: ContextProviderRequest,
+  binding: RuntimeNodeContextReadBinding,
+  deadline: string,
+  mappedProjectRef: string
+) {
+  const payload = {
+    version: 1,
+    parameters: {
+      mappedProjectRef,
+      objective: request.objective,
+      scopeDigest: request.scopeDigest,
+      principalRef: request.principalRef,
+      capability: request.capability,
+      maximumTokens: request.policy.maximumTokens,
+      maximumAgeSeconds: request.policy.maximumAgeSeconds,
+      includeEvidence: request.policy.includeEvidence,
+      includeMemory: request.policy.includeMemory,
+    },
+  }
+  const semantics = {
+    nodeId: binding.nodeId,
     workspaceId: request.workspaceId,
-    traceId: 'trc_01JABCDEF0123456789ABCDEFG',
-    sentAt: request.now,
-    channelGeneration: 1,
-    commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-    idempotencyKey: `context-read:${providerRef}`,
-    payloadHash: digest(
-      canonical({
-        providerRef,
-        objective: request.objective,
-        scopeDigest: request.scopeDigest,
-        maximumTokens: request.policy.maximumTokens,
-      })
-    ),
-    issuedAt: request.now,
-    expiresAt: new Date(Date.parse(request.now) + request.policy.maximumLatencyMs).toISOString(),
+    providerRef: binding.providerRef,
+    authorizationRef: binding.authorizationRef,
     family: 'context_provider',
     operation: 'context.read',
     driver: { family: 'context-provider', version: '1.0.0' },
-    providerRef,
-    authorizationRef: `authz:${request.scopeDigest.slice(7, 39)}`,
     requiredCapabilities: ['context.read'],
-    payload: {
-      version: 1,
-      parameters: {
-        objective: request.objective,
-        scopeDigest: request.scopeDigest,
-        maximumTokens: request.policy.maximumTokens,
-      },
-    },
+    payload,
+  }
+  return GatewayCommandEnvelopeSchema.parse({
+    ...semantics,
+    type: 'command',
+    schemaVersion: 1,
+    protocolVersion: { major: 1, minor: 5 },
+    sequence: binding.sequence,
+    traceId: binding.traceId,
+    sentAt: request.now,
+    channelGeneration: binding.channelGeneration,
+    commandId: binding.commandId,
+    idempotencyKey: binding.idempotencyKey,
+    payloadHash: digest(canonical(semantics)),
+    issuedAt: request.now,
+    expiresAt: deadline,
   })
+}
+
+async function boundedOperation<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  milliseconds: number,
+  code: string
+): Promise<T> {
+  if (milliseconds <= 0) throw new CortanaContextAdapterError(code)
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => operation(controller.signal)),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new CortanaContextAdapterError(code))
+          controller.abort()
+        }, milliseconds)
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function bundleDigest(bundle: CortanaContextBundle): string {
