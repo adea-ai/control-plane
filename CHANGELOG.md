@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.6...workspace-v1.15.0) (2026-09-12)
+
+
+### Features
+
+* integrate M11 provider authoring and native build fixes ([#470](https://github.com/adea-ai/control-plane/issues/470)) ([b195736](https://github.com/adea-ai/control-plane/commit/b195736c2fa5154b43dd82deeaa7fc1c26326f71))
+
 ## [1.14.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.5...workspace-v1.14.6) (2026-09-12)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.3.1...hosted-control-plane-v1.4.0) (2026-09-12)
+
+
+### Features
+
+* integrate M11 provider authoring and native build fixes ([#470](https://github.com/adea-ai/control-plane/issues/470)) ([b195736](https://github.com/adea-ai/control-plane/commit/b195736c2fa5154b43dd82deeaa7fc1c26326f71))
+
 ## [1.3.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.3.0...hosted-control-plane-v1.3.1) (2026-09-10)
 
 
