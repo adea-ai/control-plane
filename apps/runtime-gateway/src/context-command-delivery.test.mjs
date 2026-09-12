@@ -1,0 +1,341 @@
+import { expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import {
+  SqlitePersistenceProvider,
+  SqliteContextCommandRepository,
+} from '@control-plane/sqlite-persistence'
+import { InMemoryContextCommandRepository, contextCommandSemanticHash } from '@control-plane/domain'
+import { ContextCommandDeliveryService } from './context-command-delivery.ts'
+import { RuntimeGatewayMessageRouter } from './runtime-message-handler.ts'
+
+function fixture(repository = new InMemoryContextCommandRepository()) {
+  let now = '2026-09-12T12:00:00.000Z'
+  let active = {
+    nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    gatewayInstanceId: 'gateway-test',
+    connectionId: 'connection-test',
+    channelGeneration: 1,
+    protocolVersion: { major: 1, minor: 5 },
+    connectedAt: now,
+    lastHeartbeatAt: now,
+  }
+  const source = structuredClone(active)
+  const command = {
+    type: 'command',
+    schemaVersion: 1,
+    protocolVersion: source.protocolVersion,
+    commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    nodeId: source.nodeId,
+    workspaceId: source.workspaceId,
+    traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    channelGeneration: 1,
+    sequence: 1,
+    sentAt: now,
+    issuedAt: now,
+    expiresAt: '2026-09-12T12:01:00.000Z',
+    idempotencyKey: 'context-read:delivery-test',
+    providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    authorizationRef: 'authz:delivery-test-policy',
+    family: 'context_provider',
+    operation: 'context.read',
+    driver: { family: 'context-provider', version: '1.0.0' },
+    requiredCapabilities: ['context.read'],
+    payload: {
+      version: 1,
+      parameters: {
+        operationId: 'context-author:delivery-test',
+        principalRef: 'service:author',
+        scopeDigest: `sha256:${'a'.repeat(64)}`,
+        objective: 'Read bounded evidence',
+      },
+    },
+  }
+  command.payloadHash = contextCommandSemanticHash(command)
+  const sent = [],
+    stored = []
+  const options = {
+    repository,
+    coordination: { lookup: async () => structuredClone(active) },
+    sender: {
+      send: async (envelope) => {
+        expect((await repository.get(source.workspaceId, command.commandId)).status).toBe(
+          'dispatched'
+        )
+        sent.push(envelope)
+      },
+    },
+    results: {
+      persist: async (...args) => {
+        stored.push(args)
+        return 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      },
+    },
+    now: () => new Date(now),
+  }
+  const service = new ContextCommandDeliveryService(options)
+  const frame = {
+    schemaVersion: 1,
+    protocolVersion: source.protocolVersion,
+    nodeId: source.nodeId,
+    workspaceId: source.workspaceId,
+    traceId: command.traceId,
+    channelGeneration: 1,
+    sequence: 2,
+    sentAt: now,
+    commandId: command.commandId,
+    payloadHash: command.payloadHash,
+  }
+  return {
+    command,
+    source,
+    repository,
+    options,
+    service,
+    sent,
+    stored,
+    ack: { ...frame, type: 'ack', disposition: 'accepted' },
+    result: {
+      ...frame,
+      type: 'result',
+      status: 'succeeded',
+      completedAt: now,
+      result: { data: { evidence: 'bounded' } },
+    },
+    setNow: (value) => {
+      now = value
+    },
+    replace: (value) => {
+      active = value
+    },
+  }
+}
+
+test('context delivery persists first identity before send and recovers a failed send', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  const replay = await f.service.enqueue({
+    ...f.command,
+    commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+  })
+  expect(replay.replayed).toBe(true)
+  expect(replay.record.commandId).toBe(f.command.commandId)
+  const sender = f.options.sender.send
+  f.options.sender.send = async () => {
+    throw new Error('private transport detail')
+  }
+  await expect(f.service.deliver(f.source, f.command.commandId, 2)).rejects.toThrow(
+    'CONTEXT_COMMAND_SEND_FAILED'
+  )
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).deliveryAttempts).toBe(1)
+  f.options.sender.send = sender
+  const restarted = new ContextCommandDeliveryService(f.options)
+  await expect(restarted.deliver(f.source, f.command.commandId, 2)).rejects.toThrow(
+    'CONCURRENT_UPDATE'
+  )
+  expect((await restarted.deliver(f.source, f.command.commandId, 3)).sent).toBe(true)
+  expect(f.sent[0].payloadHash).toBe(f.command.payloadHash)
+  expect(f.sent[0]).not.toHaveProperty('executionId')
+})
+
+test('context delivery fences stale channels and expires pending work without sending', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await expect(
+    f.service.deliver({ ...f.source, connectionId: 'other' }, f.command.commandId, 2)
+  ).rejects.toThrow('STALE_CHANNEL')
+  expect(f.sent).toHaveLength(0)
+  f.setNow(f.command.expiresAt)
+  expect((await f.service.deliver(f.source, f.command.commandId, 2)).record.status).toBe('expired')
+  expect(f.sent).toHaveLength(0)
+  await expect(f.service.enqueue(f.command)).rejects.toThrow('EXPIRED')
+})
+
+test('authenticated ACK and result replay is idempotent and changed results conflict', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  await expect(f.service.acknowledge(f.source, { ...f.ack, sequence: 1 })).rejects.toThrow(
+    'STALE_SEQUENCE'
+  )
+  await expect(
+    f.service.acknowledge(f.source, { ...f.ack, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+  ).rejects.toThrow('SCOPE_MISMATCH')
+  expect((await f.service.acknowledge(f.source, f.ack)).duplicate).toBe(false)
+  expect(
+    (await f.service.acknowledge(f.source, { ...f.ack, disposition: 'replayed' })).duplicate
+  ).toBe(true)
+  const completed = await f.service.recordResult(f.source, f.result)
+  expect(completed.record.status).toBe('succeeded')
+  expect(completed.record.resultReference).toBe('art_01ARZ3NDEKTSV4RRFFQ69G5FAV')
+  expect(f.stored).toHaveLength(1)
+  expect((await f.service.recordResult(f.source, { ...f.result, sequence: 3 })).duplicate).toBe(
+    true
+  )
+  const lateAck = await f.service.acknowledge(f.source, f.ack)
+  expect(lateAck.duplicate).toBe(true)
+  expect(lateAck.record).toEqual(completed.record)
+  expect(f.stored).toHaveLength(1)
+  await expect(
+    f.service.recordResult(f.source, { ...f.result, result: { data: { evidence: 'changed' } } })
+  ).rejects.toThrow('RESULT_CONFLICT')
+  expect((await f.service.deliver(f.source, f.command.commandId, 4)).sent).toBe(false)
+})
+
+test('result storage failure and replacement during persistence cannot settle the command', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  f.options.results.persist = async () => {
+    throw new Error('private storage detail')
+  }
+  await expect(f.service.recordResult(f.source, f.result)).rejects.toThrow(
+    'CONTEXT_COMMAND_RESULT_STORE_FAILED'
+  )
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('dispatched')
+  f.options.results.persist = async () => {
+    f.replace({ ...f.source, channelGeneration: 2 })
+    return 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+  }
+  await expect(f.service.recordResult(f.source, f.result)).rejects.toThrow('STALE_CHANNEL')
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('dispatched')
+})
+
+test('classified error replay cannot replace a different terminal failure', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  const { disposition: _disposition, ...common } = f.ack
+  const error = { ...common, type: 'error', code: 'PROVIDER_UNAVAILABLE', retryable: true }
+  expect((await f.service.recordError(f.source, error)).record.errorCode).toBe(
+    'PROVIDER_UNAVAILABLE'
+  )
+  expect((await f.service.recordError(f.source, error)).duplicate).toBe(true)
+  await expect(
+    f.service.recordError(f.source, { ...error, code: 'PROVIDER_REVOKED' })
+  ).rejects.toThrow('RESULT_CONFLICT')
+})
+
+test('router classifies context frames from the durable ledger and preserves runtime routing', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  const runtime = []
+  const events = []
+  const router = new RuntimeGatewayMessageRouter({
+    context: f.service,
+    inventory: { handle: async () => {} },
+    delivery: {
+      acknowledge: async (frame) => runtime.push(frame),
+      recordResult: async () => {},
+      recordError: async () => {},
+    },
+    events: {
+      ingestProgress: async (frame) => events.push(frame),
+      ingestResult: async (frame) => events.push(frame),
+      ingestError: async (frame) => events.push(frame),
+    },
+  })
+  await router.handle(f.source, f.ack)
+  await router.handle(f.source, f.result)
+  expect((await f.service.get(f.source.workspaceId, f.command.commandId)).status).toBe('succeeded')
+  expect(runtime).toHaveLength(0)
+  expect(events).toHaveLength(0)
+  await router.handle(f.source, { ...f.ack, commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+  expect(runtime).toHaveLength(1)
+  await expect(
+    router.handle(f.source, { ...f.ack, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+  ).rejects.toThrow('SCOPE_MISMATCH')
+})
+
+test('channel replacement during command lookup fences ACK settlement', async () => {
+  const f = fixture()
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  const get = f.repository.get.bind(f.repository)
+  f.repository.get = async (...args) => {
+    const record = await get(...args)
+    f.replace({ ...f.source, channelGeneration: 2 })
+    return record
+  }
+  await expect(f.service.acknowledge(f.source, f.ack)).rejects.toThrow('STALE_CHANNEL')
+  expect((await get(f.source.workspaceId, f.command.commandId)).status).toBe('dispatched')
+})
+
+test('context delivery rejects overlong grants, mismatched hashes and oversized results', async () => {
+  const f = fixture()
+  await expect(
+    f.service.enqueue({ ...f.command, expiresAt: '2026-09-13T12:00:01.000Z' })
+  ).rejects.toThrow('EXPIRY_TOO_LONG')
+  await f.service.enqueue(f.command)
+  await f.service.deliver(f.source, f.command.commandId, 2)
+  await expect(
+    f.service.recordResult(f.source, { ...f.result, payloadHash: `sha256:${'b'.repeat(64)}` })
+  ).rejects.toThrow('PAYLOAD_MISMATCH')
+  await expect(
+    f.service.recordResult(f.source, {
+      ...f.result,
+      result: { data: { oversized: 'x'.repeat(262144) } },
+    })
+  ).rejects.toThrow('RESULT_TOO_LARGE')
+  expect(f.stored).toHaveLength(0)
+})
+
+test('SQLite reconnect dispatch and terminal result replay survive database reconstruction', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-delivery-'))
+  const path = join(directory, 'ledger.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const f = fixture(new SqliteContextCommandRepository(provider))
+    await f.service.enqueue(f.command)
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    f.options.repository = new SqliteContextCommandRepository(provider)
+    // The fixture sender inspected the original repository; replace it after closing that provider.
+    f.options.sender.send = async (envelope) => f.sent.push(envelope)
+    const restarted = new ContextCommandDeliveryService(f.options)
+    const batch = await restarted.redeliverPending(f.source, {
+      limit: 1,
+      nextSequence: async () => 2,
+    })
+    expect(batch.records).toHaveLength(1)
+    expect(batch.nextAfterCommandId).toBe(f.command.commandId)
+    expect(f.sent).toHaveLength(1)
+    expect(
+      (
+        await restarted.redeliverPending(f.source, {
+          limit: 1,
+          afterCommandId: batch.nextAfterCommandId,
+          nextSequence: async () => {
+            throw new Error('NO_SEQUENCE_EXPECTED')
+          },
+        })
+      ).records
+    ).toEqual([])
+    await restarted.recordResult(f.source, f.result)
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    f.options.repository = new SqliteContextCommandRepository(provider)
+    const terminal = new ContextCommandDeliveryService(f.options)
+    expect((await terminal.recordResult(f.source, f.result)).duplicate).toBe(true)
+    expect(f.stored).toHaveLength(1)
+    expect(
+      (
+        await terminal.redeliverPending(f.source, {
+          limit: 1,
+          nextSequence: async () => {
+            throw new Error('NO_SEQUENCE_EXPECTED')
+          },
+        })
+      ).records
+    ).toEqual([])
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

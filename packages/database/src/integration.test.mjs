@@ -156,7 +156,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const repository = new PostgresContextCommandRepository(isolated.application)
     const candidates = [queued(), queued({ commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })]
     const results = await Promise.all(candidates.map((record) => repository.create(record)))
-    expect(results.map(({ outcome }) => outcome).sort()).toEqual(['created', 'duplicate'])
+    expect(results.map(({ outcome }) => outcome).toSorted()).toEqual(['created', 'duplicate'])
     const first = results.find(({ outcome }) => outcome === 'created').record
     expect(results.every(({ record }) => record.commandId === first.commandId)).toBe(true)
     const restarted = new PostgresContextCommandRepository(isolated.application)
@@ -199,7 +199,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       restarted.compareAndSet(1, dispatched),
       restarted.compareAndSet(1, dispatched),
     ])
-    expect(updates.sort()).toEqual([false, true])
+    expect(updates.toSorted()).toEqual([false, true])
     expect(await restarted.compareAndSet(2, { ...first, version: 3 })).toBe(false)
     const completed = {
       ...dispatched,

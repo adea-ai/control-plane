@@ -174,6 +174,7 @@ describe('context command ledger', () => {
       { updatedAt: '2026-09-12T11:59:59.000Z' },
       { deliveryAttempts: 1 },
       { terminalAt: now },
+      { completionDigest: `sha256:${'a'.repeat(64)}` },
       { errorCode: 'UNEXPECTED_ERROR' },
       { resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
       {

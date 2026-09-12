@@ -19,6 +19,9 @@
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*"
   },
+  "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*"
+  },
   "engines": {
     "node": ">=24 <25"
   }

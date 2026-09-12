@@ -114,6 +114,7 @@ export const ContextCommandRecordSchema = z
       .strict()
       .optional(),
     resultReference: IdentifierSchemas.artifactId.optional(),
+    completionDigest: Digest.optional(),
     errorCode: z
       .string()
       .min(1)
@@ -168,6 +169,8 @@ export const ContextCommandRecordSchema = z
     )
       issue('Invalid delivery chronology')
     const terminal = isTerminal(record.status)
+    if (record.completionDigest !== undefined && !terminal)
+      issue('Completion digest requires terminal state')
     if (terminal !== (record.terminalAt !== undefined)) issue('Terminal metadata must match status')
     if (
       record.terminalAt &&
@@ -329,7 +332,7 @@ export class InMemoryContextCommandRepository implements ContextCommandRepositor
           !isTerminal(record.status) &&
           (query.afterCommandId === undefined || record.commandId > query.afterCommandId)
       )
-      .sort((a, b) => (a.commandId < b.commandId ? -1 : a.commandId > b.commandId ? 1 : 0))
+      .toSorted((a, b) => (a.commandId < b.commandId ? -1 : a.commandId > b.commandId ? 1 : 0))
       .slice(0, query.limit)
       .map((record) => structuredClone(record))
   }

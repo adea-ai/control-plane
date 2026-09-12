@@ -4,6 +4,7 @@ import type { RuntimeHealthDeliveryWorker } from './runtime-health-delivery-work
 
 export * from './authentication.js'
 export * from './runtime-command-delivery.js'
+export * from './context-command-delivery.js'
 export * from './reconnect-reconciliation.js'
 export * from './runtime-event-ingestion.js'
 export * from './runtime-inventory-ingestion.js'
