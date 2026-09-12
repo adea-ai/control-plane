@@ -181,6 +181,45 @@ describe('trusted pre-validation context authoring', () => {
     }
   })
 
+  test('correlates provider reads with the authoring command across retries', async () => {
+    const operations = []
+    const f = fixture({
+      commands: {
+        get: async () => undefined,
+        commit: async (record) => record,
+      },
+      providerResolver: {
+        resolve: async (input) => {
+          operations.push(input.operationId)
+          return { status: 'omitted', contributions: [], pins: [], decisionReasons: [] }
+        },
+      },
+    })
+    f.decision.providerRequest = providerRequest()
+    await f.service.createForCommand(
+      'service:reference-client',
+      'authoring-command-0001',
+      f.request
+    )
+    await f.service.createForCommand(
+      'service:reference-client',
+      'authoring-command-0001',
+      f.request
+    )
+    await f.service.createForCommand(
+      'service:reference-client',
+      'authoring-command-0002',
+      f.request
+    )
+    await f.service.create('service:reference-client', f.request)
+    await f.service.create('service:reference-client', f.request)
+    f.decision.principalRef = 'service:other-client'
+    await f.service.createForCommand('service:other-client', 'authoring-command-0001', f.request)
+    expect(operations[0]).toMatch(/^context-author:[a-f0-9]{64}$/)
+    expect(operations[1]).toBe(operations[0])
+    expect(new Set(operations).size).toBe(5)
+  })
+
   test('retrieves and pins evidence through the real resolver without widening authority', async () => {
     const provider = createFakeContextProvider({
       suffix: 'A',

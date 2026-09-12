@@ -89,6 +89,27 @@ describe('Cortana-compatible context adapter', () => {
     expect(JSON.stringify(command)).not.toMatch(/cortana|credential|database|localPath/i)
   })
 
+  test('forwards the stable operation identity through each transport and binding', async () => {
+    for (const transport of ['mcp', 'http', 'runtime_node']) {
+      const server = new FakeCortanaCompatibleServer(bundle())
+      const bindings = []
+      const adapter = createAdapter(server, {
+        transport,
+        bindRuntimeNodeRead: async (input) => {
+          bindings.push(input.request.operationId)
+          return runtimeBinding(input)
+        },
+      })
+      const operationId = 'context-author:operation-fixture-0001'
+      await new ContextProviderResolver([adapter]).resolve({ ...request(), operationId })
+      expect(server.requests[0].operationId).toBe(operationId)
+      if (transport === 'runtime_node') {
+        expect(bindings).toEqual([operationId])
+        expect(server.requests[0].gatewayCommand.payload.parameters.operationId).toBe(operationId)
+      }
+    }
+  })
+
   test('requires an explicit authorized RuntimeNode binding before sending a context command', async () => {
     const server = new FakeCortanaCompatibleServer(bundle())
     const adapter = createAdapter(server, {

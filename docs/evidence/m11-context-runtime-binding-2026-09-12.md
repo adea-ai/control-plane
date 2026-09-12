@@ -20,6 +20,16 @@ retrieval, reusing it for retries rather than allocating another command. Distin
 logical reads require distinct identities from that port; replay semantics belong
 to its durable implementation, not an adapter-local counter.
 
+Authoring supplies an opaque `operationId` to provider reads. `createForCommand`
+derives it from the existing principal/workspace/project/operation/idempotency scope
+key, so retries and concurrent attempts carry the same identity without exposing
+the raw client idempotency key. Ordinary `create` calls receive fresh identities.
+The optional field passes through the resolver, HTTP/MCP client, binding port, and
+gateway payload. Other callers may omit it, but then a durable binding cannot infer
+cross-call replay identity from an objective or scope digest. Correlation alone does
+not deduplicate retrieval; the durable binding/delivery implementation must enforce
+identity and payload-hash conflicts.
+
 The gateway payload includes project mapping, objective, principal, scope,
 capability, token/age bounds, and evidence/memory flags. Its digest also binds the
 node, workspace, provider, authorization reference, operation, driver, and required

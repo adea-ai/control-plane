@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
@@ -524,7 +524,11 @@ export class ContextPackageAuthoringService {
     }
     const existing = await repository.get(scope)
     if (existing) return replay(existing)
-    const package_ = await this.#compile(principalRef, request)
+    const package_ = await this.#compile(
+      principalRef,
+      request,
+      `context-author:${contextAuthoringCommandKey(scope)}`
+    )
     return replay(
       await repository.commit(
         {
@@ -540,7 +544,11 @@ export class ContextPackageAuthoringService {
     )
   }
 
-  async #compile(principalInput: string, input: unknown): Promise<ContextPackage> {
+  async #compile(
+    principalInput: string,
+    input: unknown,
+    operationId = `context-read:${randomUUID()}`
+  ): Promise<ContextPackage> {
     const principalRef = z.string().min(1).max(256).parse(principalInput)
     const request = ContextAuthoringRequestSchema.parse(input)
     const decisionInput = await this.options.authority.authorize(
@@ -640,6 +648,7 @@ export class ContextPackageAuthoringService {
       workspaceId: request.workspaceId,
       principalRef,
       objective: request.objective,
+      operationId,
       now: this.options.now().toISOString(),
     })
     if (!isAfter(decision.expiresAt, this.options.now().toISOString())) fail('UNAUTHORIZED_CONTEXT')

@@ -41,6 +41,7 @@ export type CortanaTransport = 'mcp' | 'http' | 'runtime_node'
 
 export interface CortanaClientRequest {
   objective: string
+  operationId?: string
   transport: CortanaTransport
   mappedProjectRef: string
   scopeDigest: string
@@ -187,6 +188,7 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
   async #request(request: ContextProviderRequest): Promise<CortanaClientRequest> {
     const base = {
       objective: request.objective,
+      ...(request.operationId === undefined ? {} : { operationId: request.operationId }),
       transport: this.#options.transport,
       mappedProjectRef: this.#options.mappedProjectRef,
       scopeDigest: request.scopeDigest,
@@ -378,6 +380,7 @@ function runtimeNodeCommand(
     version: 1,
     parameters: {
       mappedProjectRef,
+      ...(request.operationId === undefined ? {} : { operationId: request.operationId }),
       objective: request.objective,
       scopeDigest: request.scopeDigest,
       principalRef: request.principalRef,
