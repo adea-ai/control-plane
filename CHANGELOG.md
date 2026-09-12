@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.3...workspace-v1.14.4) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** fail readiness when the owned Restate child exits ([#458](https://github.com/adea-ai/control-plane/issues/458)) ([88ca302](https://github.com/adea-ai/control-plane/commit/88ca302db60556a3a28951250496f3cf1a3c8e41))
+
+
+### Documentation
+
+* **m11:** audit canonical source revision drift ([#457](https://github.com/adea-ai/control-plane/issues/457)) ([6742d16](https://github.com/adea-ai/control-plane/commit/6742d16fe07970819e6aafc7ec44ba4a1f357c2d))
+
 ## [1.14.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.2...workspace-v1.14.3) (2026-09-12)
 
 

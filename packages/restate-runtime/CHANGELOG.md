@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.5](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.4...restate-runtime-v1.1.5) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** fail readiness when the owned Restate child exits ([#458](https://github.com/adea-ai/control-plane/issues/458)) ([88ca302](https://github.com/adea-ai/control-plane/commit/88ca302db60556a3a28951250496f3cf1a3c8e41))
+
 ## [1.1.4](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.3...restate-runtime-v1.1.4) (2026-09-12)
 
 
