@@ -288,6 +288,13 @@
       "when": 1788974423674,
       "tag": "0040_amused_skreet",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789232484083,
+      "tag": "0041_skinny_calypso",
+      "breakpoints": true
     }
   ]
 }

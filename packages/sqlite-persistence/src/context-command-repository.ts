@@ -7,6 +7,8 @@ import type {
 import {
   ContextCommandRecordSchema,
   ContextCommandScopeSchema,
+  ContextCommandPendingQuerySchema,
+  type ContextCommandPendingQuery,
   contextCommandOperationKey,
   contextCommandTransitionAllowed,
   type ContextCommandCreateResult,
@@ -54,6 +56,11 @@ export class SqliteContextCommandRepository implements ContextCommandRepository 
         id: operationId(record.scope),
         value: record.commandId,
       })
+      await transaction.put({
+        namespace: pendingNamespace(record.scope.workspaceId, record.nodeId),
+        id: record.commandId,
+        value: record.commandId,
+      })
       return { outcome: 'created', record }
     })
   }
@@ -95,15 +102,52 @@ export class SqliteContextCommandRepository implements ContextCommandRepository 
         return false
       const index = await transaction.get(operations, operationId(current.scope))
       if (index?.value !== current.commandId) throw new Error('CONTEXT_COMMAND_INDEX_INCONSISTENT')
+      const namespace = pendingNamespace(current.scope.workspaceId, current.nodeId)
+      const pending = await transaction.get(namespace, current.commandId)
+      if (pending?.value !== current.commandId)
+        throw new Error('CONTEXT_COMMAND_INDEX_INCONSISTENT')
       await transaction.put({
         namespace: records,
         id: recordId(record.commandId),
         expectedRevision: stored.revision,
         value: json(record),
       })
+      if (!['queued', 'dispatched', 'acknowledged'].includes(record.status))
+        await transaction.delete(namespace, current.commandId, pending.revision)
       return true
     })
   }
+
+  async listPending(input: ContextCommandPendingQuery): Promise<ContextCommandRecord[]> {
+    const query = ContextCommandPendingQuerySchema.parse(input)
+    return this.provider.transaction(async (transaction) => {
+      const entries = await transaction.scan(pendingNamespace(query.workspaceId, query.nodeId), {
+        limit: query.limit,
+        ...(query.afterCommandId ? { afterId: query.afterCommandId } : {}),
+      })
+      const result: ContextCommandRecord[] = []
+      for (const entry of entries) {
+        const id = ContextCommandRecordSchema.shape.commandId.parse(entry.value)
+        const record = await load(transaction, id)
+        if (
+          !record ||
+          entry.id !== id ||
+          record.scope.workspaceId !== query.workspaceId ||
+          record.nodeId !== query.nodeId ||
+          !['queued', 'dispatched', 'acknowledged'].includes(record.status)
+        )
+          throw new Error('CONTEXT_COMMAND_INDEX_INCONSISTENT')
+        result.push(record)
+      }
+      return result
+    })
+  }
+}
+
+function pendingNamespace(workspaceId: string, nodeId: string): string {
+  return `context-pending-${createHash('sha256')
+    .update(JSON.stringify([workspaceId, nodeId]))
+    .digest('hex')}`
 }
 
 async function load(

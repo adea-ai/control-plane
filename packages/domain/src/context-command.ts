@@ -75,6 +75,16 @@ export const ContextCommandScopeSchema = z
   .strict()
 export type ContextCommandScope = z.output<typeof ContextCommandScopeSchema>
 
+export const ContextCommandPendingQuerySchema = z
+  .object({
+    workspaceId: IdentifierSchemas.workspaceId,
+    nodeId: IdentifierSchemas.runtimeNodeRefId,
+    afterCommandId: IdentifierSchemas.commandId.optional(),
+    limit: z.number().int().min(1).max(128),
+  })
+  .strict()
+export type ContextCommandPendingQuery = z.output<typeof ContextCommandPendingQuerySchema>
+
 export const ContextCommandRecordSchema = z
   .object({
     scope: ContextCommandScopeSchema,
@@ -181,6 +191,8 @@ export interface ContextCommandRepository {
   create(record: ContextCommandRecord): Promise<ContextCommandCreateResult>
   get(workspaceId: string, commandId: string): Promise<ContextCommandRecord | undefined>
   getByOperation(scope: ContextCommandScope): Promise<ContextCommandRecord | undefined>
+  /** Exclusive command-ID cursor; includes expired grants so the dispatcher can settle them. */
+  listPending(query: ContextCommandPendingQuery): Promise<ContextCommandRecord[]>
   compareAndSet(expectedVersion: number, record: ContextCommandRecord): Promise<boolean>
 }
 
@@ -305,6 +317,21 @@ export class InMemoryContextCommandRepository implements ContextCommandRepositor
       return false
     this.#records.set(record.commandId, structuredClone(record))
     return true
+  }
+
+  async listPending(input: ContextCommandPendingQuery): Promise<ContextCommandRecord[]> {
+    const query = ContextCommandPendingQuerySchema.parse(input)
+    return [...this.#records.values()]
+      .filter(
+        (record) =>
+          record.scope.workspaceId === query.workspaceId &&
+          record.nodeId === query.nodeId &&
+          !isTerminal(record.status) &&
+          (query.afterCommandId === undefined || record.commandId > query.afterCommandId)
+      )
+      .sort((a, b) => (a.commandId < b.commandId ? -1 : a.commandId > b.commandId ? 1 : 0))
+      .slice(0, query.limit)
+      .map((record) => structuredClone(record))
   }
 }
 

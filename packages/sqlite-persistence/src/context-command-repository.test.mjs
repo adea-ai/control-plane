@@ -52,22 +52,31 @@ test('SQLite context commands survive reopen with scoped operation deduplication
     await provider.migrate()
     let repository = new SqliteContextCommandRepository(provider)
     const record = queued()
-    let writes = 0
-    const failing = new SqliteContextCommandRepository({
-      transaction: (operation) =>
-        provider.transaction((transaction) =>
-          operation({
-            get: transaction.get.bind(transaction),
-            put: async (write) => {
-              if (++writes === 2) throw new Error('INJECTED_OPERATION_INDEX_FAILURE')
-              return transaction.put(write)
-            },
-          })
-        ),
-    })
-    await expect(failing.create(record)).rejects.toThrow('INJECTED_OPERATION_INDEX_FAILURE')
-    expect(await repository.get(record.scope.workspaceId, record.commandId)).toBeUndefined()
-    expect(await repository.getByOperation(record.scope)).toBeUndefined()
+    for (const failAt of [2, 3]) {
+      let writes = 0
+      const failing = new SqliteContextCommandRepository({
+        transaction: (operation) =>
+          provider.transaction((transaction) =>
+            operation({
+              get: transaction.get.bind(transaction),
+              put: async (write) => {
+                if (++writes === failAt) throw new Error('INJECTED_OPERATION_INDEX_FAILURE')
+                return transaction.put(write)
+              },
+            })
+          ),
+      })
+      await expect(failing.create(record)).rejects.toThrow('INJECTED_OPERATION_INDEX_FAILURE')
+      expect(await repository.get(record.scope.workspaceId, record.commandId)).toBeUndefined()
+      expect(await repository.getByOperation(record.scope)).toBeUndefined()
+      expect(
+        await repository.listPending({
+          workspaceId: record.scope.workspaceId,
+          nodeId: record.nodeId,
+          limit: 1,
+        })
+      ).toEqual([])
+    }
     const racing = queued('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW')
     const results = await Promise.all([repository.create(record), repository.create(racing)])
     expect(results.map((result) => result.outcome)).toEqual(['created', 'duplicate'])
@@ -77,6 +86,16 @@ test('SQLite context commands survive reopen with scoped operation deduplication
     await provider.migrate()
     repository = new SqliteContextCommandRepository(provider)
     expect(await repository.getByOperation(record.scope)).toEqual(record)
+    const query = { workspaceId: record.scope.workspaceId, nodeId: record.nodeId, limit: 1 }
+    expect(await repository.listPending(query)).toEqual([record])
+    expect(await repository.listPending({ ...query, afterCommandId: record.commandId })).toEqual([])
+    expect(
+      await repository.listPending({ ...query, nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    expect(
+      await repository.listPending({ ...query, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    await expect(repository.listPending({ ...query, limit: 129 })).rejects.toThrow()
     expect(await repository.get('wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW', record.commandId)).toBeUndefined()
     expect((await repository.create(queued(record.commandId, 'Changed objective'))).outcome).toBe(
       'conflict'
@@ -100,6 +119,17 @@ test('SQLite context commands survive reopen with scoped operation deduplication
         record.commandId
       )
     ).toEqual(dispatched)
+    repository = new SqliteContextCommandRepository(provider)
+    expect(
+      await repository.compareAndSet(2, {
+        ...dispatched,
+        version: 3,
+        status: 'cancelled',
+        terminalAt: now,
+      })
+    ).toBe(true)
+    expect(await repository.listPending(query)).toEqual([])
+    expect((await repository.getByOperation(record.scope)).status).toBe('cancelled')
   } finally {
     provider.close()
     await rm(directory, { recursive: true, force: true })

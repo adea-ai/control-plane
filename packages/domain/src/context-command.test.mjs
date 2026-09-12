@@ -44,6 +44,40 @@ function command(overrides = {}) {
 }
 
 describe('context command ledger', () => {
+  test('paginates pending work by node and workspace without skipping expired grants', async () => {
+    const repository = new InMemoryContextCommandRepository()
+    const first = createQueuedContextCommandRecord(command(), now)
+    const other = command({ commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    other.payload.parameters.operationId = 'context-author:second-operation'
+    other.payloadHash = contextCommandSemanticHash(other)
+    const second = createQueuedContextCommandRecord(other, now)
+    await repository.create(second)
+    await repository.create(first)
+    const query = { workspaceId, nodeId: first.nodeId, limit: 1 }
+    expect(await repository.listPending(query)).toEqual([first])
+    expect(await repository.listPending({ ...query, afterCommandId: first.commandId })).toEqual([
+      second,
+    ])
+    expect(await repository.listPending({ ...query, afterCommandId: second.commandId })).toEqual([])
+    expect(
+      await repository.listPending({ ...query, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    expect(
+      await repository.listPending({ ...query, nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    await expect(repository.listPending({ ...query, limit: 129 })).rejects.toThrow()
+    const later = '2026-09-12T12:02:00.000Z'
+    expect(
+      await repository.compareAndSet(1, {
+        ...first,
+        version: 2,
+        status: 'expired',
+        terminalAt: later,
+        updatedAt: later,
+      })
+    ).toBe(true)
+    expect(await repository.listPending(query)).toEqual([second])
+  })
   test('creates a bounded context-read record without fabricated runtime identities', () => {
     const record = createQueuedContextCommandRecord(command(), now)
     expect(record.scope).toEqual({
