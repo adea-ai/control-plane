@@ -8,6 +8,7 @@ import {
 } from '@control-plane/contracts'
 import { GatewayCommandEnvelopeSchema } from '@control-plane/runtime-gateway-protocol'
 import { z } from 'zod'
+export * from './http-client.js'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const SliceSchema = z.object({

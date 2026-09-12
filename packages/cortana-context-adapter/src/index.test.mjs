@@ -8,6 +8,7 @@ import {
 } from '@control-plane/context'
 import {
   CortanaContextProviderAdapter,
+  CortanaHttpClient,
   CortanaContextBundleSchema,
   FakeCortanaCompatibleServer,
   createContextBundle,
@@ -44,6 +45,35 @@ const readModel = {
 }
 
 describe('Cortana-compatible context adapter', () => {
+  test('normalizes a compatible bundle through the concrete HTTP client', async () => {
+    let reads = 0
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (incoming) => {
+        const input = await incoming.json()
+        expect(input.operationId).toBe('context-http:adapter-test')
+        reads++
+        return Response.json(bundle())
+      },
+    })
+    try {
+      const client = new CortanaHttpClient({
+        endpoint: `http://127.0.0.1:${server.port}/read`,
+        allowLoopbackHttp: true,
+      })
+      const adapter = createAdapter(client, { transport: 'http' })
+      const contributions = await adapter.retrieve({
+        ...request(),
+        now: new Date().toISOString(),
+        operationId: 'context-http:adapter-test',
+      })
+      expect(contributions.map(({ kind }) => kind)).toEqual(['evidence', 'memory'])
+      expect(reads).toBe(1)
+    } finally {
+      await server.stop(true)
+    }
+  })
   test('normalizes bounded evidence and memory over MCP and HTTP', async () => {
     for (const transport of ['mcp', 'http']) {
       const server = new FakeCortanaCompatibleServer(bundle())

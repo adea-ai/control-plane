@@ -68,6 +68,18 @@ passes 1,329 tests (1,122 unit, 127 E2E, 80 smoke), lint/boundaries and format.
 This remains component evidence: production transport and registry wiring, real
 provider reconciliation implementations and remote-profile acceptance are missing.
 
+The adapter now also exports a concrete CortanaHttpClient. It POSTs the existing
+adapter request shape to a trusted configured read endpoint, with explicit optional
+Authorization and no ambient credentials. HTTPS is required except explicitly
+enabled loopback HTTP for local composition/testing. Redirects, URL credentials,
+query strings and fragments are rejected; response JSON is streamed under a byte
+limit and caller/deadline cancellation. The client makes one request and does not
+claim server-side idempotency or reconciliation. Actual local HTTP tests verify
+operation correlation and adapter bundle normalization, redirect rejection,
+streaming bounds, malformed responses and an already-aborted caller. This does
+not establish a live Cortana API contract; endpoint compatibility, node-driver
+binding, scoped credentials and production composition still require validation.
+
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
 Artifact ID. Readback is mandatory; uploaded references are resolved only through
