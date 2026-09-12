@@ -22,6 +22,46 @@ function processProvider() {
 }
 
 describe('LocalRestateRuntime', () => {
+  test.each([true, false])(
+    'fails closed when the child exits during a health response (ok=%s)',
+    async (ok) => {
+      let exit
+      const exited = new Promise((resolve) => {
+        exit = resolve
+      })
+      const stops = []
+      const requests = []
+      const runtime = new LocalRestateRuntime({
+        executablePath: '/opt/control-plane/restate-server',
+        dataDirectory: '/tmp/control-plane-restate-exit-test',
+        deploymentUri: 'http://127.0.0.1:9080',
+        processProvider: {
+          launch: async () => ({
+            pid: 4001,
+            startedAt: '2026-09-12T00:00:00.000Z',
+            wait: () => exited,
+            stop: async () => {
+              stops.push('stop')
+            },
+          }),
+        },
+        inspectVersion: async () => RESTATE_SERVER_VERSION,
+        readinessTimeoutMs: 20,
+        pollIntervalMs: 1,
+        fetch: async (url) => {
+          requests.push(String(url))
+          exit(1)
+          await Promise.resolve()
+          return { ok }
+        },
+      })
+      await expect(runtime.start()).rejects.toMatchObject({ code: 'RESTATE_PROCESS_EXITED' })
+      expect(requests).toEqual(['http://127.0.0.1:9070/health'])
+      expect(stops).toEqual(['stop'])
+      expect(await runtime.health()).toMatchObject({ ready: false })
+    }
+  )
+
   test('keeps all three listeners on explicitly selected isolated ports', async () => {
     const process = processProvider()
     const runtime = new LocalRestateRuntime({
