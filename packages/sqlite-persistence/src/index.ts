@@ -32,6 +32,7 @@ export * from './interaction-repository.js'
 export * from './interaction-command-repository.js'
 export * from './execution-cancellation-repository.js'
 export * from './durability-repositories.js'
+export * from './context-command-repository.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 

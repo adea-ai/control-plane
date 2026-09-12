@@ -23,6 +23,8 @@ import {
   InteractionService,
   ProjectStateService,
   RecordingProjectStateEventPublisher,
+  createQueuedContextCommandRecord,
+  contextCommandSemanticHash,
 } from '@control-plane/domain'
 import { ExecutionEventDispatcher, ExecutionEventService } from '@control-plane/events'
 import {
@@ -34,6 +36,7 @@ import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-pla
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
+import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
 import { PostgresEncryptedSecretStore } from './credential-secret-store.ts'
 import { PostgresDelegationRepository } from './delegation-repository.ts'
@@ -109,6 +112,106 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   afterAll(async () => {
     await isolated?.dispose()
+  })
+
+  test('persists scoped context commands with racing allocation, conflict isolation and CAS', async () => {
+    const now = '2026-09-12T12:00:00.000Z'
+    const envelope = {
+      type: 'command',
+      schemaVersion: 1,
+      protocolVersion: { major: 1, minor: 5 },
+      commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      channelGeneration: 1,
+      sequence: 1,
+      sentAt: now,
+      issuedAt: now,
+      expiresAt: '2026-09-12T12:01:00.000Z',
+      idempotencyKey: 'context-read:postgres-test',
+      authorizationRef: 'authz:postgres-context-test',
+      family: 'context_provider',
+      operation: 'context.read',
+      driver: { family: 'context-provider', version: '1.0.0' },
+      requiredCapabilities: ['context.read'],
+      payload: {
+        version: 1,
+        parameters: {
+          operationId: 'context-author:postgres-test',
+          principalRef: 'service:author',
+          scopeDigest: `sha256:${'a'.repeat(64)}`,
+          objective: 'Read bounded evidence',
+        },
+      },
+    }
+    const queued = (change = {}) => {
+      const command = { ...envelope, ...change }
+      return createQueuedContextCommandRecord(
+        { ...command, payloadHash: contextCommandSemanticHash(command) },
+        now
+      )
+    }
+    const repository = new PostgresContextCommandRepository(isolated.application)
+    const candidates = [queued(), queued({ commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })]
+    const results = await Promise.all(candidates.map((record) => repository.create(record)))
+    expect(results.map(({ outcome }) => outcome).sort()).toEqual(['created', 'duplicate'])
+    const first = results.find(({ outcome }) => outcome === 'created').record
+    expect(results.every(({ record }) => record.commandId === first.commandId)).toBe(true)
+    const restarted = new PostgresContextCommandRepository(isolated.application)
+    expect(await restarted.getByOperation(first.scope)).toEqual(first)
+    const query = { workspaceId: first.scope.workspaceId, nodeId: first.nodeId, limit: 1 }
+    expect(await restarted.listPending(query)).toEqual([first])
+    expect(await restarted.listPending({ ...query, afterCommandId: first.commandId })).toEqual([])
+    expect(
+      await restarted.listPending({ ...query, nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    expect(
+      await restarted.listPending({ ...query, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toEqual([])
+    await expect(restarted.listPending({ ...query, limit: 129 })).rejects.toThrow()
+    expect(await restarted.get('wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW', first.commandId)).toBeUndefined()
+    const changed = queued({
+      commandId: first.commandId,
+      payload: {
+        version: 1,
+        parameters: {
+          ...envelope.payload.parameters,
+          objective: 'Different evidence',
+        },
+      },
+    })
+    expect((await restarted.create(changed)).outcome).toBe('conflict')
+    await expect(
+      restarted.create(
+        queued({ commandId: first.commandId, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+      )
+    ).rejects.toThrow('CONTEXT_COMMAND_ID_CONFLICT')
+    const dispatched = {
+      ...first,
+      status: 'dispatched',
+      version: 2,
+      deliveryAttempts: 1,
+      lastDelivery: { channelGeneration: 2, sequence: 1, at: now },
+    }
+    const updates = await Promise.all([
+      restarted.compareAndSet(1, dispatched),
+      restarted.compareAndSet(1, dispatched),
+    ])
+    expect(updates.sort()).toEqual([false, true])
+    expect(await restarted.compareAndSet(2, { ...first, version: 3 })).toBe(false)
+    const completed = {
+      ...dispatched,
+      status: 'succeeded',
+      version: 3,
+      terminalAt: now,
+      resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    }
+    expect(await restarted.compareAndSet(2, completed)).toBe(true)
+    expect(await restarted.compareAndSet(3, { ...dispatched, version: 4 })).toBe(false)
+    expect(await restarted.get(first.scope.workspaceId, first.commandId)).toEqual(completed)
+    expect(await restarted.listPending(query)).toEqual([])
   })
 
   test('survives backend transaction timeouts without late driver crashes or committed writes', async () => {
