@@ -587,7 +587,7 @@
         "@control-plane/runtime-sdk"
       ],
       "externalDependencies": ["zod"],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },

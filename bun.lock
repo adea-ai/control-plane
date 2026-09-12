@@ -145,6 +145,9 @@
         "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.5.4",
       },
+      "devDependencies": {
+        "@control-plane/sqlite-persistence": "workspace:*",
+      },
     },
     "apps/tool-gateway": {
       "name": "@control-plane/tool-gateway",

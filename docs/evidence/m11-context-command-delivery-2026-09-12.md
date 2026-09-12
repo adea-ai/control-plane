@@ -53,9 +53,20 @@ and uses versioned transitions. Executing calls can become reconciliation-requir
 they cannot return to execution after recovery. Terminal results cannot reopen.
 Accepted work may expire without starting a provider. SQLite close/reopen,
 concurrent admission, cross-workspace reads, index-write rollback and terminal
-replay are covered. This is persistence evidence only: no provider execution handler
-or production transport consumes the inbox yet, and no automatic reconciliation
-algorithm or remote-profile acceptance is claimed.
+replay are covered.
+
+The RuntimeWorker ContextNodeHandler now consumes that inbox through required
+authorization and provider-driver ports. It persists executing state before the
+provider call, caps execution by timeout and remaining grant lifetime, retains
+uncertainty after exceptions/timeouts, and exposes observational reconciliation
+without automatically executing again. Authorization is bounded and checked before
+admission, replay and result settlement; reconnect checks use the incoming channel
+while preserving the original durable provider command. Four SQLite-backed handler
+tests cover admission denial, concurrent redelivery, terminal replay, timeout and
+restart/reconciliation, and revocation before output disclosure. Full validation
+passes 1,329 tests (1,122 unit, 127 E2E, 80 smoke), lint/boundaries and format.
+This remains component evidence: production transport and registry wiring, real
+provider reconciliation implementations and remote-profile acceptance are missing.
 
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
