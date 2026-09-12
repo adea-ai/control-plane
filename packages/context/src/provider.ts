@@ -166,19 +166,14 @@ export class ContextProviderResolver {
   }
 
   #cacheKey(provider: ContextProviderDriver, request: ContextProviderRequest): string {
+    const { now, ...requestIdentity } = request
     return digest(
       JSON.stringify({
         provider: provider.readModel.definition,
         connection: provider.readModel.connection,
-        workspaceId: request.workspaceId,
-        scopeDigest: request.scopeDigest,
-        principalRef: request.principalRef,
-        capability: request.capability,
-        policy: request.policy,
-        nowBucket: Math.floor(
-          Date.parse(request.now) / (request.policy.maximumAgeSeconds * 1_000 || 1)
-        ),
-        adapterVersion: 'context-provider-resolver/2',
+        request: requestIdentity,
+        nowBucket: Math.floor(Date.parse(now) / (request.policy.maximumAgeSeconds * 1_000 || 1)),
+        adapterVersion: 'context-provider-resolver/3',
       })
     )
   }

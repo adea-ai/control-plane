@@ -202,6 +202,32 @@ describe('optional context provider resolution', () => {
     expect(retrievals).toBe(2)
   })
 
+  test('does not reuse a contribution across execution locations', async () => {
+    const provider = fake('K')
+    const locations = []
+    const selected = resolver(
+      [
+        {
+          ...provider,
+          async retrieve(input) {
+            locations.push(input.executionLocation)
+            return (await provider.retrieve(input)).map((entry) => ({
+              ...entry,
+              content: input.executionLocation,
+              contentDigest: contentDigest(input.executionLocation),
+            }))
+          },
+        },
+      ],
+      { cache: new InMemoryContextContributionCache() }
+    )
+    for (const executionLocation of ['cloud', 'runtime_node', 'cloud', 'runtime_node']) {
+      const result = await selected.resolve({ ...request(), executionLocation })
+      expect(result.contributions[0].content).toBe(executionLocation)
+    }
+    expect(locations).toEqual(['cloud', 'runtime_node'])
+  })
+
   test('ranks explicit connections before provider preference and reachability', async () => {
     const direct = fake('A', { reachability: 'direct', latencyClass: 'low', costClass: 'low' })
     const preferred = fake('B', {
