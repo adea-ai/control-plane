@@ -109,6 +109,8 @@ export class ContextGatewayReadClient implements CortanaClientPort {
       signal.throwIfAborted()
       const sequence = await this.options.nextSequence(structuredClone(channel))
       signal.throwIfAborted()
+      await this.options.authorize(structuredClone(record), 'dispatch')
+      signal.throwIfAborted()
       await this.options.delivery.deliver(channel, record.commandId, sequence)
     }
     while (true) {

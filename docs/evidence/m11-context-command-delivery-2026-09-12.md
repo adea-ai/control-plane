@@ -200,6 +200,28 @@ call. Focused tests also cover replacement cursor reset, missing allocator rejec
 paging and grant revocation during reservation: 37 tests, 198 assertions.
 Full local validation passes 1,349 tests (1,138 unit, 131 E2E, 80 smoke), build,
 types, lint/boundaries and formatting; coverage is 87.21% lines / 84.71% functions.
-The configured authorizer is still a fixture in E2E. This is not production wiring,
+The configured authorizer now uses the durable grants described below. This is not production wiring,
 a full socket-reconnect matrix, or evidence that an uncertain external HTTP call
 can safely be repeated. Production composition and multi-profile acceptance remain.
+
+## Durable context grants
+
+ContextCommandGrantAuthority reads current stored grants for each authorization,
+binding workspace, node, provider, principal, project and scope, allowed retrieval
+capabilities, token ceiling and evidence/memory permissions. It rejects absent,
+malformed, expired or revoked grants and commands outside the grant validity period.
+SqliteContextCommandGrantRepository supports trusted administrative creation and
+idempotent permanent revocation; an existing authorization reference cannot be
+recreated or broadened. Grant lookup is workspace-scoped. Reopen, concurrent revoke,
+scope mismatches, expiry and over-budget requests are tested. The gateway also
+reauthorizes after sequence allocation to catch revocation during reservation.
+Both composed transport cases use separate gateway/node SQLite grant stores and the
+real authority for dispatch, node execution/replay and result disclosure. Grant
+provisioning is fixture-owned; this is not authenticated production administration
+or proof of revocation propagation between hosts. No secrets are stored in grants.
+Rollback must preserve revoked records and disable activation, not erase grants
+or reuse their references. PostgreSQL grant storage, trusted provisioning/replication,
+provider registry and production composition remain required.
+Focused validation: 25 tests / 184 assertions. Full suite: 1,351 passing tests
+(1,140 unit, 131 E2E, 80 smoke), build, types, lint/boundaries and formatting.
+Coverage: 87.16% lines / 84.70% functions; thresholds unchanged.

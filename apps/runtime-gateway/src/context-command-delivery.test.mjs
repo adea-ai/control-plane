@@ -236,6 +236,21 @@ test('gateway client cancellation before send preserves queued work and never se
   expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
 })
 
+test('gateway client grant revocation during reservation prevents dispatch', async () => {
+  const { f, request, options, client } = clientFixture()
+  let revoked = false
+  options.authorize = async () => {
+    if (revoked) throw new Error('GRANT_REVOKED')
+  }
+  options.nextSequence = async () => {
+    revoked = true
+    return 1
+  }
+  await expect(client.read(request, new AbortController().signal)).rejects.toThrow('READ_FAILED')
+  expect(f.sent).toHaveLength(0)
+  expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe('queued')
+})
+
 test('gateway client cancellation after send does not fabricate provider cancellation', async () => {
   const { f, request, client } = clientFixture()
   const controller = new AbortController()

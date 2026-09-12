@@ -8,8 +8,101 @@ import { SqliteContextCommandRepository } from './context-command-repository.ts'
 import { SqliteContextNodeInboxRepository } from './context-node-inbox-repository.ts'
 import { SqliteRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
 import { createContextNodeInboxRecord } from '@control-plane/domain'
+import { ContextCommandGrantAuthority } from '@control-plane/domain'
+import { SqliteContextCommandGrantRepository } from './context-command-grant-repository.ts'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('SQLite context grants enforce scope and budgets and preserve revocation across reopen', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-grants-'))
+  const path = join(directory, 'grants.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const envelope = queued().commandEnvelope
+    Object.assign(envelope.payload.parameters, {
+      mappedProjectRef: 'project-1',
+      capability: 'evidenceSearch',
+      maximumTokens: 100,
+      includeEvidence: true,
+      includeMemory: false,
+    })
+    envelope.payloadHash = contextCommandSemanticHash(envelope)
+    const command = createQueuedContextCommandRecord(envelope, now)
+    const grant = {
+      authorizationRef: envelope.authorizationRef,
+      workspaceId: envelope.workspaceId,
+      nodeId: envelope.nodeId,
+      providerRef: envelope.providerRef,
+      principalRef: command.scope.principalRef,
+      mappedProjectRef: 'project-1',
+      scopeDigest: envelope.payload.parameters.scopeDigest,
+      capabilities: ['evidenceSearch'],
+      maximumTokens: 100,
+      includeEvidence: true,
+      includeMemory: false,
+      issuedAt: now,
+      expiresAt: envelope.expiresAt,
+      status: 'active',
+    }
+    let repository = new SqliteContextCommandGrantRepository(provider)
+    let authority = new ContextCommandGrantAuthority(repository, () => new Date(now))
+    await expect(authority.authorize(command)).rejects.toThrow('GRANT_DENIED')
+    await repository.create(grant)
+    await authority.authorize(command)
+    await expect(repository.create(grant)).rejects.toThrow('ALREADY_EXISTS')
+    for (const change of [
+      { mappedProjectRef: 'other' },
+      { principalRef: 'service:other' },
+      { maximumTokens: 101 },
+      { includeMemory: true },
+      { capability: 'memoryRecall' },
+      { scopeDigest: `sha256:${'b'.repeat(64)}` },
+    ]) {
+      const altered = structuredClone(envelope)
+      Object.assign(altered.payload.parameters, change)
+      altered.payloadHash = contextCommandSemanticHash(altered)
+      await expect(
+        authority.authorize(createQueuedContextCommandRecord(altered, now))
+      ).rejects.toThrow('GRANT_DENIED')
+    }
+    expect(
+      await repository.get('wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW', grant.authorizationRef)
+    ).toBeUndefined()
+    for (const change of [
+      { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { authorizationRef: 'authz:other-context-read' },
+    ]) {
+      const altered = { ...structuredClone(envelope), ...change }
+      altered.payloadHash = contextCommandSemanticHash(altered)
+      await expect(
+        authority.authorize(createQueuedContextCommandRecord(altered, now))
+      ).rejects.toThrow('GRANT_DENIED')
+    }
+    await expect(
+      new ContextCommandGrantAuthority(repository, () => new Date(grant.expiresAt)).authorize(
+        command
+      )
+    ).rejects.toThrow('GRANT_DENIED')
+    await Promise.all([
+      repository.revoke(grant.workspaceId, grant.authorizationRef),
+      repository.revoke(grant.workspaceId, grant.authorizationRef),
+    ])
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteContextCommandGrantRepository(provider)
+    authority = new ContextCommandGrantAuthority(repository, () => new Date(now))
+    expect((await repository.get(grant.workspaceId, grant.authorizationRef)).status).toBe('revoked')
+    await expect(authority.authorize(command)).rejects.toThrow('GRANT_DENIED')
+    await expect(repository.create(grant)).rejects.toThrow('ALREADY_EXISTS')
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('SQLite channel sequence reservations survive concurrency, ambiguous acknowledgement and reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-channel-sequence-'))

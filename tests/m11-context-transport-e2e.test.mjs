@@ -3,12 +3,17 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFakeContextProvider } from '@control-plane/context'
+import {
+  ContextCommandGrantAuthority,
+  createQueuedContextCommandRecord,
+} from '@control-plane/domain'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
   SqliteContextNodeInboxRepository,
   SqliteRuntimeChannelSequenceRepository,
+  SqliteContextCommandGrantRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   CortanaContextProviderAdapter,
@@ -114,6 +119,28 @@ for (const loseFirstResult of [false, true]) {
       const coordination = new InMemoryRuntimeNodeCoordination()
       const artifacts = new ContextCommandArtifactStore(objects)
       const repository = new SqliteContextCommandRepository(gatewayDb)
+      const grants = new SqliteContextCommandGrantRepository(gatewayDb)
+      const nodeGrants = new SqliteContextCommandGrantRepository(nodeDb)
+      const grant = {
+        authorizationRef: 'authz:context-transport-test',
+        workspaceId,
+        nodeId,
+        providerRef,
+        principalRef,
+        mappedProjectRef: 'fixture-project',
+        scopeDigest: bundle.scopeDigest,
+        capabilities: ['evidenceSearch'],
+        maximumTokens: 100,
+        includeEvidence: true,
+        includeMemory: true,
+        issuedAt: new Date(Date.now() - 1000).toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        status: 'active',
+      }
+      await grants.create(grant)
+      await nodeGrants.create(grant)
+      const grantAuthority = new ContextCommandGrantAuthority(grants)
+      const nodeGrantAuthority = new ContextCommandGrantAuthority(nodeGrants)
       const acknowledged = deferred(),
         completed = deferred(),
         hello = deferred()
@@ -134,9 +161,10 @@ for (const loseFirstResult of [false, true]) {
         events: { ingestProgress: unexpected, ingestResult: unexpected, ingestError: unexpected },
       })
       lifecycle = new RuntimeGatewayWebSocketLifecycle({
-        contextRecovery: new ContextCommandRecoveryService(delivery, (record) =>
-          guard(record.commandEnvelope)
-        ),
+        contextRecovery: new ContextCommandRecoveryService(delivery, async (record) => {
+          await grantAuthority.authorize(record)
+          await guard(record.commandEnvelope)
+        }),
         sequences: new SqliteRuntimeChannelSequenceRepository(gatewayDb),
         instanceId: 'context-test-gateway',
         coordination,
@@ -199,7 +227,10 @@ for (const loseFirstResult of [false, true]) {
         nodeId,
         timeoutMs: 5000,
         repository: new SqliteContextNodeInboxRepository(nodeDb),
-        authorize: (record) => guard(record.commandEnvelope),
+        authorize: async (record) => {
+          await nodeGrantAuthority.authorize(record)
+          await guard(record.commandEnvelope)
+        },
         driver: new ContextHttpProviderDriver({
           workspaceId,
           nodeId,
@@ -213,7 +244,12 @@ for (const loseFirstResult of [false, true]) {
         redelivered = false
       const bridge = new ContextNodeChannel({
         handler,
-        assertCurrent: guard,
+        assertCurrent: async (command) => {
+          await nodeGrantAuthority.authorize(
+            createQueuedContextCommandRecord(command, command.issuedAt)
+          )
+          await guard(command)
+        },
         nextSequence: async () => sequence++,
         send: async (value) => {
           if (loseFirstResult && !dropped && JSON.parse(value).type === 'result') {
@@ -322,6 +358,7 @@ for (const loseFirstResult of [false, true]) {
           nextSequence: (source) => lifecycle.nextSequence(source),
           authorize: async (record) => {
             captured = record.commandEnvelope
+            await grantAuthority.authorize(record)
             await guard(record.commandEnvelope)
           },
         }),

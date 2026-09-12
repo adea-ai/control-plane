@@ -17,3 +17,4 @@ export * from './context-node-inbox.js'
 export * from './versioned-catalog.js'
 
 export const packageName = 'domain'
+export * from './context-command-grant.js'
