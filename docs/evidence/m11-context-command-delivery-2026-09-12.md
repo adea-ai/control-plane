@@ -53,8 +53,10 @@ command-scoped keys. Real filesystem plus SQLite reconstruction, duplicate repla
 cross-workspace metadata rejection, and semantic tampering are tested. All 1,321
 repository tests pass (1,114 unit, 127 E2E, 80 smoke), as do type, lint, boundary,
 and formatting checks. This is local provider evidence, not remote object-store
-or production activation evidence. Ambiguous-write and size-limit fault coverage
-and production upload credential scoping still need expanded validation. Production
+or production activation evidence. Follow-up fault tests verify lost PUT acknowledgement
+leaves delivery unsettled, retry verifies existing bytes without another PUT, and
+oversized/non-object JSON/invalid UTF-8 uploads cannot settle delivery. Production
+upload credential scoping still needs implementation and validation. Production
 composition must provide the authenticated lifecycle sender, authoritative node
 coordination, and durable sequence allocation. RuntimeNode context-driver execution
 and node-side deduplication are not implemented here. Full socket transport,

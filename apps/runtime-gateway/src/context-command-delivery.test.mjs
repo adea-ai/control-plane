@@ -345,6 +345,94 @@ test('Artifact persistence verifies scoped uploaded bytes and detects semantic t
   }
 })
 
+test('lost Artifact PUT acknowledgement retries verified bytes without another write', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-ambiguous-put-'))
+  const objects = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 262144 })
+  try {
+    let writes = 0
+    const store = new ContextCommandArtifactStore({
+      head: (key) => objects.head(key),
+      get: (key) => objects.get(key),
+      put: async (input) => {
+        writes++
+        await objects.put(input)
+        throw new Error('ACK_LOST')
+      },
+    })
+    const f = fixture()
+    f.options.results = store
+    await f.service.enqueue(f.command)
+    await f.service.deliver(f.source, f.command.commandId, 1)
+    await expect(f.service.recordResult(f.source, f.result)).rejects.toThrow('RESULT_STORE_FAILED')
+    expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe(
+      'dispatched'
+    )
+    const completed = await f.service.recordResult(f.source, f.result)
+    expect(completed.record.status).toBe('succeeded')
+    expect(writes).toBe(1)
+    expect(await store.read(completed.record)).toEqual({ evidence: 'bounded' })
+  } finally {
+    objects.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Artifact result limits and invalid uploaded JSON fail before command settlement', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-invalid-upload-'))
+  const objects = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 262144 })
+  try {
+    const f = fixture()
+    await f.service.enqueue(f.command)
+    const command = await f.repository.get(f.source.workspaceId, f.command.commandId)
+    const artifactId = 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    let reads = 0
+    const store = new ContextCommandArtifactStore(
+      {
+        head: (key) => objects.head(key),
+        get: (key) => {
+          reads++
+          return objects.get(key)
+        },
+        put: (input) => objects.put(input),
+      },
+      32
+    )
+    f.options.results = store
+    await f.service.deliver(f.source, f.command.commandId, 1)
+    for (const body of [
+      new Uint8Array(33),
+      new TextEncoder().encode('[]'),
+      new Uint8Array([255]),
+    ]) {
+      const frame = {
+        ...f.result,
+        result: {
+          artifact: {
+            artifactId,
+            sizeBytes: body.byteLength,
+            mediaType: 'application/json',
+            digest: `sha256:${createHash('sha256').update(body).digest('hex')}`,
+          },
+        },
+      }
+      await objects.put({
+        key: contextCommandUploadKey(command, artifactId),
+        body,
+        contentType: 'application/json',
+        metadata: contextCommandUploadMetadata(command),
+      })
+      await expect(f.service.recordResult(f.source, frame)).rejects.toThrow('RESULT_STORE_FAILED')
+      if (body.byteLength > 32) expect(reads).toBe(0)
+    }
+    expect((await f.repository.get(f.source.workspaceId, f.command.commandId)).status).toBe(
+      'dispatched'
+    )
+  } finally {
+    objects.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('SQLite reconnect dispatch and terminal result replay survive database reconstruction', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-context-delivery-'))
   const path = join(directory, 'ledger.sqlite')
