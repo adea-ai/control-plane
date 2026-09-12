@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.6.1...local-control-plane-v1.7.0) (2026-09-12)
+
+
+### Features
+
+* integrate M11 provider authoring and native build fixes ([#470](https://github.com/adea-ai/control-plane/issues/470)) ([b195736](https://github.com/adea-ai/control-plane/commit/b195736c2fa5154b43dd82deeaa7fc1c26326f71))
+
 ## [1.6.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.6.0...local-control-plane-v1.6.1) (2026-09-12)
 
 
