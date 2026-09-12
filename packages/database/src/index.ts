@@ -123,3 +123,4 @@ export { PostgresExecutionCancellationRepository } from './execution-cancellatio
 export { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.js'
 export { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.js'
 export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'
+export { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.js'

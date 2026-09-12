@@ -309,6 +309,13 @@
       "when": 1789241039951,
       "tag": "0043_material_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1789243095557,
+      "tag": "0044_narrow_la_nuit",
+      "breakpoints": true
     }
   ]
 }

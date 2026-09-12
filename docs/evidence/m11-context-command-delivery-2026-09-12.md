@@ -301,3 +301,29 @@ Coverage is 87.11% lines / 84.55% functions. No SQL migration or external resour
 changed in this step. PostgreSQL registry storage, trusted administrative/health
 publication and deployment composition are still required. Fixture-owned writes
 are not production administration evidence, and rollback must retain revoked records.
+
+## PostgreSQL provider registry
+
+PostgresContextProviderRegistrationRepository stores the same versioned registrations
+in additive migration 0044_narrow_la_nuit. Workspace/connection primary identity and
+workspace/principal/state indexing support bounded active reads. Transaction-scoped
+advisory locks serialize identity creation and scoped capacity checks across repository
+instances. Updates preserve identity, reject stale versions and backwards health,
+and retain irreversible revocation. Stored JSON is checked against projected scope
+columns on reads and updates. No existing table or production data is rewritten.
+
+Live Neon verification on a disposable staging child passed the focused registry
+test (14 assertions), including 33 concurrent attempts with exactly 32 accepted,
+concurrent first creation, stale updates, scoped reads, repository reconstruction
+and permanent revocation. The complete PostgreSQL suite passed 35 tests / 439
+assertions in 292.88 seconds, including migrations and the existing transaction,
+execution, interaction, usage and recovery checks. The temporary branch was deleted
+and its absence verified; staging and production were not modified. Credentials
+were injected in memory, with no local environment-file changes.
+
+Local validation passed 1,354 tests (1,143 unit, 131 E2E, 80 smoke), all 41 package
+builds, type/migration/compatibility/architecture checks, lint and formatting.
+Coverage was 86.94% lines / 84.47% functions. Production grant provisioning and
+revocation propagation, trusted provider administration/health publication, recovery
+fairness under denied grants and composition-root activation remain open. These
+repository tests do not establish production administration or deployment acceptance.

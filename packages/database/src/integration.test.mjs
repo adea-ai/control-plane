@@ -9,6 +9,7 @@ import { ControlApiFixtures } from '@control-plane/contracts'
 import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
+  createFakeContextProvider,
 } from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
@@ -68,6 +69,7 @@ import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventor
 import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
 import { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
 import { PostgresContextCommandGrantRepository } from './context-command-grant-repository.ts'
+import { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
 import {
   commandInbox,
@@ -115,6 +117,69 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   afterAll(async () => {
     await isolated?.dispose()
   })
+
+  test('persists scoped provider registrations with concurrent capacity and permanent revocation', async () => {
+    const readModel = createFakeContextProvider({
+      suffix: 'A',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      health: 'healthy',
+      state: 'active',
+      capabilities: { evidenceSearch: true },
+      kind: 'evidence',
+      tokenCount: 1,
+    }).readModel
+    const record = {
+      version: 1,
+      readModel,
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      mappedProjectRef: 'project-1',
+      authorizationRef: 'authz:registry-test',
+      expectedCorpusRevision: 'corpus:1',
+      maximumOutputBytes: 262144,
+    }
+    const scope = {
+      workspaceId: readModel.connection.workspaceId,
+      principalRef: readModel.connection.principalRef,
+    }
+    const first = new PostgresContextProviderRegistrationRepository(isolated.application)
+    const second = new PostgresContextProviderRegistrationRepository(isolated.application)
+    expect((await Promise.all([first.save(0, record), second.save(0, record)])).toSorted()).toEqual(
+      [false, true]
+    )
+    const refreshed = { ...structuredClone(record), version: 2 }
+    refreshed.readModel.health.checkedAt = '2026-09-12T12:00:00.000Z'
+    expect(await second.save(1, refreshed)).toBe(true)
+    expect(await first.save(1, refreshed)).toBe(false)
+    const moved = { ...structuredClone(refreshed), version: 3 }
+    moved.readModel.connection.principalRef = 'principal:other'
+    expect(await first.save(2, moved)).toBe(false)
+    expect(await first.save(2, { ...record, version: 3 })).toBe(false)
+    expect(await first.list({ ...scope, principalRef: 'principal:other' })).toEqual([])
+    const restarted = new PostgresContextProviderRegistrationRepository(isolated.application)
+    expect(await restarted.list(scope)).toEqual([refreshed])
+    const revoked = { ...structuredClone(refreshed), version: 3 }
+    revoked.readModel.connection.state = 'revoked'
+    expect(await restarted.save(2, revoked)).toBe(true)
+    expect(await first.list(scope)).toEqual([])
+    expect(await first.save(3, { ...refreshed, version: 4 })).toBe(false)
+    expect(await first.save(0, record)).toBe(false)
+    const additions = await Promise.all(
+      Array.from({ length: 33 }, (_, number) => {
+        const addition = structuredClone(record)
+        addition.readModel.connection.connectionId = `ctc_${String(number + 1).padStart(26, '0')}`
+        return new PostgresContextProviderRegistrationRepository(isolated.application).save(
+          0,
+          addition
+        )
+      })
+    )
+    expect(additions.filter(Boolean)).toHaveLength(32)
+    expect(await first.list(scope)).toHaveLength(32)
+    expect(await first.list({ ...scope, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })).toEqual(
+      []
+    )
+  }, 60_000)
 
   test('persists immutable context grants and permanent revocation across repositories', async () => {
     const grant = {
