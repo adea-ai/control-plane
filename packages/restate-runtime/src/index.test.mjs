@@ -22,6 +22,30 @@ function processProvider() {
 }
 
 describe('LocalRestateRuntime', () => {
+  test('keeps all three listeners on explicitly selected isolated ports', async () => {
+    const process = processProvider()
+    const runtime = new LocalRestateRuntime({
+      executablePath: '/opt/control-plane/restate-server',
+      dataDirectory: '/tmp/control-plane-restate-isolated-test',
+      processProvider: process.provider,
+      inspectVersion: async () => RESTATE_SERVER_VERSION,
+      adminUrl: 'http://127.0.0.1:49070',
+      ingressUrl: 'http://127.0.0.1:48080',
+      nodePort: 45122,
+      fetch: async () => ({ ok: true }),
+    })
+    try {
+      await runtime.start()
+      expect(process.launches[0].environment).toMatchObject({
+        RESTATE_ADMIN__BIND_ADDRESS: '127.0.0.1:49070',
+        RESTATE_INGRESS__BIND_ADDRESS: '127.0.0.1:48080',
+        RESTATE_BIND_PORT: '45122',
+      })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   test('pins 1.7.9, loopback listeners, bounded memory, and durable data', async () => {
     const process = processProvider()
     const runtime = new LocalRestateRuntime({

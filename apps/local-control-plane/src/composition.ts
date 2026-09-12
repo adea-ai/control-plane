@@ -79,6 +79,9 @@ export interface LocalControlPlaneCompositionOptions {
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
   readonly workflowEndpointPort?: number
+  readonly restateAdminPort?: number
+  readonly restateIngressPort?: number
+  readonly restateNodePort?: number
   readonly processProvider?: ProcessRuntimeProvider
   readonly workflowRuntime?: WorkflowRuntime
   readonly endpointFactory?: RestateEndpointFactory
@@ -157,6 +160,8 @@ export class LocalControlPlaneComposition {
     this.profile = options.profile ?? 'local'
     const processProvider = options.processProvider ?? new NodeProcessRuntimeProvider()
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
+    const restateAdminUrl = `http://127.0.0.1:${options.restateAdminPort ?? 9070}`
+    const restateIngressUrl = `http://127.0.0.1:${options.restateIngressPort ?? 8080}`
     this.persistence = new SqlitePersistenceProvider({
       path: join(this.dataDirectory, 'control-plane.sqlite'),
       profile: this.profile,
@@ -181,7 +186,7 @@ export class LocalControlPlaneComposition {
     }
     const controlApi = new LocalControlApiComposition(
       this.persistence,
-      'http://127.0.0.1:8080',
+      restateIngressUrl,
       options.contextAuthoring
     )
     const runtimeTransport =
@@ -264,10 +269,13 @@ export class LocalControlPlaneComposition {
         dataDirectory: join(this.dataDirectory, 'restate'),
         profile: this.profile,
         processProvider,
+        adminUrl: restateAdminUrl,
+        ingressUrl: restateIngressUrl,
+        ...(options.restateNodePort === undefined ? {} : { nodePort: options.restateNodePort }),
         deploymentUri: `http://127.0.0.1:${workflowEndpointPort}`,
       })
     this.discovery = new StaticServiceDiscovery([
-      { service: 'restate', url: new URL('http://127.0.0.1:8080'), private: true },
+      { service: 'restate', url: new URL(restateIngressUrl), private: true },
       {
         service: 'workflow-runtime',
         url: new URL(`http://127.0.0.1:${workflowEndpointPort}`),

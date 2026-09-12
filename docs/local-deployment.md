@@ -14,6 +14,12 @@ unexpected Control Plane or Restate failure. A failed component makes readiness 
 must not silently move work to Cloud. Host sleep/wake preserves the process and data directory; on
 wake the desktop rechecks `/ready` and restarts the composition if Restate did not recover.
 
+Co-located compositions must use separate private data directories and distinct ports.
+`LocalControlPlaneComposition` accepts `restateAdminPort` (default 9070),
+`restateIngressPort` (8080), `restateNodePort` (5122), and `workflowEndpointPort` (9080).
+All four listeners remain loopback-only. Standalone E2E tests allocate their own ports so
+they do not register workflows or submit commands to an already running Local service.
+
 The supported runtime seams are the `runtimeTransport` and `runtimeFactory` options on
 `LocalControlPlaneComposition` (or the same fields under `start({ compositionOptions })`). The
 factory runs only after the SQLite catalog and ContextPackage repositories exist, so a packaged
