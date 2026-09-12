@@ -7,10 +7,7 @@ import {
   type StructuredLogger,
 } from '@control-plane/bootstrap'
 import type { RawEnvironment } from '@control-plane/config'
-import {
-  createControlApiApplication,
-  MarketplaceRegistryService,
-} from '@control-plane/control-api'
+import { createControlApiApplication, MarketplaceRegistryService } from '@control-plane/control-api'
 import {
   LocalControlPlaneComposition,
   type LocalControlPlaneCompositionOptions,
@@ -75,7 +72,8 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
       // custom MARKETPLACE_REGISTRY_LATEST_URL), otherwise the local profile
       // reports the marketplace as unavailable, matching the cloud default.
       const marketplaceRegistryService =
-        process.env['MARKETPLACE_REGISTRY_ENABLED'] === '1' || process.env['MARKETPLACE_REGISTRY_LATEST_URL']
+        process.env['MARKETPLACE_REGISTRY_ENABLED'] === '1' ||
+        process.env['MARKETPLACE_REGISTRY_LATEST_URL']
           ? new MarketplaceRegistryService({
               // Full plugin catalogs exceed the default 12 MiB artifact cap.
               maxArtifactBytes: 64 * 1024 * 1024,
