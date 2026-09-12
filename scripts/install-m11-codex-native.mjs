@@ -19,6 +19,11 @@ export function nativeBuildJobCount(platform) {
   if (platform === 'darwin') return '4'
   throw new Error('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
 }
+export function nativeReleaseBuildTimeoutMs(platform) {
+  if (platform === 'linux') return 7_200_000
+  if (platform === 'darwin') return 3_600_000
+  throw new Error('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
+}
 export function normalizeCodexReleaseLock(input) {
   if (digest(input) !== pinnedCodexNativeBuild.lockSha256)
     throw new Error('CODEX_NATIVE_LOCK_MISMATCH')
@@ -85,7 +90,7 @@ export async function installPinnedCodexNative(destinationInput, rustBin, testBi
     ['test', '-p', 'codex-api', '--locked', '--retries', '0'],
     workspace
   )
-  await run(
+  await createPinnedBuildCommand(environment, nativeReleaseBuildTimeoutMs(process.platform))(
     join(rustBin, 'cargo'),
     ['build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex'],
     workspace

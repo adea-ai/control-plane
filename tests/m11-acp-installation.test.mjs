@@ -12,6 +12,7 @@ import {
 import { pinnedCodexNativeBuild } from '../packages/acp-adapter/src/pinned-codex-build.ts'
 import {
   nativeBuildJobCount,
+  nativeReleaseBuildTimeoutMs,
   normalizeCodexReleaseLock,
 } from '../scripts/install-m11-codex-native.mjs'
 import { createPinnedBuildCommand } from '../scripts/pinned-build-command.mjs'
@@ -20,6 +21,12 @@ test('native Linux builds serialize compiler jobs without changing the macOS def
   expect(nativeBuildJobCount('linux')).toBe('1')
   expect(nativeBuildJobCount('darwin')).toBe('4')
   expect(() => nativeBuildJobCount('win32')).toThrow('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
+})
+
+test('native release compilation has a bounded platform-specific deadline', () => {
+  expect(nativeReleaseBuildTimeoutMs('linux')).toBe(7_200_000)
+  expect(nativeReleaseBuildTimeoutMs('darwin')).toBe(3_600_000)
+  expect(() => nativeReleaseBuildTimeoutMs('win32')).toThrow('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
 })
 
 test('native installer verifies its cancellation patch and rejects unpinned source locks', async () => {
