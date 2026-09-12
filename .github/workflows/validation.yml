@@ -1,4 +1,4 @@
-name: Code Foundry
+name: Code Foundry Validation
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
     # use the dedicated default-branch CodeQL lane below; draft updates do not
     # allocate a validation runner.
     if: vars.CI_BILLING_PAUSED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     permissions:
       contents: read
@@ -43,7 +43,7 @@ jobs:
         with:
           persist-credentials: false
           repository: 0xPlayerOne/code-foundry
-          ref: v1.28.6
+          ref: v1.28.13
           path: .github/.code-foundry
           sparse-checkout: |
             src/lib
@@ -77,20 +77,20 @@ jobs:
       contents: read
       packages: read
       security-events: write
-    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@v1.28.6
+    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@v1.28.13
     with:
       mode: ${{ needs.mode.outputs.mode }}
       runtime-repository: 0xPlayerOne/code-foundry
       # Pull requests validate the proposed runtime commit. Scheduled and
       # manually dispatched audits use a separate default-branch-pinned caller,
       # so this caller-selected ref never runs with default-branch cache access.
-      runtime-ref: v1.28.6
-      ci-runner: ubuntu-latest
+      runtime-ref: v1.28.13
+      ci-runner: ubuntu-slim
       test-runner: ubuntu-latest
-      unit-runner: ubuntu-latest
+      unit-runner: ubuntu-slim
       performance-runner: ubuntu-latest
-      security-runner: ubuntu-latest
-      eval-runner: ubuntu-latest
+      security-runner: ubuntu-slim
+      eval-runner: ubuntu-slim
       codeql-runner: ubuntu-latest
       rust-shards: '["all"]'
       rust-threads: '1'
@@ -110,10 +110,10 @@ jobs:
       contents: read
       packages: read
       security-events: write
-    uses: 0xPlayerOne/code-foundry/.github/workflows/codeql.yml@v1.28.6
+    uses: 0xPlayerOne/code-foundry/.github/workflows/codeql.yml@v1.28.13
     with:
       runtime-repository: 0xPlayerOne/code-foundry
-      runtime-ref: v1.28.6
+      runtime-ref: v1.28.13
       runner: ubuntu-latest
       rust-shards: '["all"]'
       rust-threads: '1'

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.13.2...workspace-v1.13.3) (2026-09-12)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade to v1.28.11 ([#447](https://github.com/adea-ai/control-plane/issues/447)) ([df07997](https://github.com/adea-ai/control-plane/commit/df07997f4d40be6aa23d2e2e48a6bce170747546))
+
 ## [1.13.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.13.1...workspace-v1.13.2) (2026-09-10)
 
 
