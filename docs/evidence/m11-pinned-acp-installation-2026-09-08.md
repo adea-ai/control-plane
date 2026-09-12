@@ -18,6 +18,21 @@ executable uses the upstream release profile. Git/npm/Cargo use private build
 state rather than caller credentials or Cargo configuration. Build commands have
 bounded process-group lifetimes (up to one hour per native command).
 
+Linux native builds use one Cargo compiler job; macOS retains four. A Linux ARM64
+four-job release build exceeded a 10 GiB container memory limit, so parallelism is
+not a safe default for the Linux builder. This does not change the release profile,
+optimization, source pins, or tests, and is not a guarantee that any particular
+memory ceiling is sufficient. Linux also requires `libcap-dev` for the bundled
+bubblewrap build; do not disable that build to avoid installing its dependency.
+
+Linux packaging also requires `/usr/bin/objcopy` reporting
+`GNU objcopy (GNU Binutils for Debian) 2.40`. Upstream retains release debug information;
+the installer preserves it in private `symbols/codex.debug`, strips debug information
+from the installed executable without changing the compiler output, and records source
+and symbols hashes plus the packaging tool version. macOS still copies the release bytes
+unchanged. The final executable must pass the existing 512 MiB bound and hash verifier
+before a ready build receipt is written. Keep the symbol sidecar with the native installation.
+
 The ACP installer verifies the native receipt and bytes before copying, then
 verifies the copied bytes again before writing its manifest. Both installations
 must remain owner-protected: the receipt detects unexpected artifact changes but

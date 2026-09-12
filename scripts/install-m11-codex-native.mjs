@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { pinnedCodexNativeBuild } from '../packages/acp-adapter/src/pinned-codex-build.ts'
@@ -10,8 +10,15 @@ import {
   validateInstallDestination,
 } from './install-m11-codex-acp.mjs'
 import { createPinnedBuildCommand } from './pinned-build-command.mjs'
+import { packageNativeExecutable } from './package-m11-codex-native.mjs'
+import { verifyPinnedCodexNativeBinary } from '../packages/acp-adapter/src/native-installation.ts'
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+export function nativeBuildJobCount(platform) {
+  if (platform === 'linux') return '1'
+  if (platform === 'darwin') return '4'
+  throw new Error('CODEX_NATIVE_PLATFORM_UNSUPPORTED')
+}
 export function normalizeCodexReleaseLock(input) {
   if (digest(input) !== pinnedCodexNativeBuild.lockSha256)
     throw new Error('CODEX_NATIVE_LOCK_MISMATCH')
@@ -39,7 +46,7 @@ export async function installPinnedCodexNative(destinationInput, rustBin, testBi
   environment.RUSTC = join(rustBin, 'rustc')
   environment.RUSTDOC = join(rustBin, 'rustdoc')
   environment.CARGO_HOME = join(destination, '.cargo')
-  environment.CARGO_BUILD_JOBS = '4'
+  environment.CARGO_BUILD_JOBS = nativeBuildJobCount(process.platform)
   const run = createPinnedBuildCommand(environment, 3600000)
   const source = join(destination, 'source')
   for (const [command, expected] of [
@@ -83,10 +90,13 @@ export async function installPinnedCodexNative(destinationInput, rustBin, testBi
     ['build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex'],
     workspace
   )
-  await mkdir(join(destination, 'bin'), { mode: 0o700 })
+  const packaging = await packageNativeExecutable({
+    source: join(workspace, 'target/release/codex'),
+    destination,
+    platform: process.platform,
+    run,
+  })
   const executable = join(destination, 'bin/codex')
-  await copyFile(join(workspace, 'target/release/codex'), executable)
-  await chmod(executable, 0o700)
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(executable)) hash.update(chunk)
   if ((await run(executable, ['--version'], destination)) !== 'codex-cli 0.148.0')
@@ -100,8 +110,10 @@ export async function installPinnedCodexNative(destinationInput, rustBin, testBi
     profile: 'release',
     executable: 'bin/codex',
     executableSha256: hash.digest('hex'),
+    packaging,
     nativeCertification: 'required-before-promotion',
   }
+  await verifyPinnedCodexNativeBinary(executable, manifest)
   await writeFile(
     join(destination, 'installation.json'),
     `${JSON.stringify(manifest, null, 2)}\n`,
