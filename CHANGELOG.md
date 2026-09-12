@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.1...workspace-v1.14.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* **local:** isolate standalone Restate test listeners ([#454](https://github.com/adea-ai/control-plane/issues/454)) ([0ef96af](https://github.com/adea-ai/control-plane/commit/0ef96af56caf90fdd370d5875b0cb1ded30bc51d))
+
 ## [1.14.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.14.0...workspace-v1.14.1) (2026-09-12)
 
 
