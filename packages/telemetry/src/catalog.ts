@@ -19,6 +19,8 @@ export const executionTraceSpans = [
 export const operationalMetrics = [
   'control.api.request.duration',
   'control.api.error.count',
+  'control.command_inbox.duplicate.count',
+  'control.command_inbox.conflict.count',
   'workflow.backlog.count',
   'workflow.replay.count',
   'runtime.available.count',
@@ -30,6 +32,9 @@ export const operationalMetrics = [
   'tool.call.error.count',
   'execution.reconciliation.count',
   'execution.manual_intervention.count',
+  'context.provider_resolution.count',
+  'memory.write.decision.count',
+  'control.event.quarantine.count',
   'usage.cost.usd',
 ] as const
 

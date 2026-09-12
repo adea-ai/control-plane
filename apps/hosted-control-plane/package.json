@@ -27,6 +27,7 @@
     "@control-plane/remote-control-relay": "workspace:*",
     "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/secrets": "workspace:*",
+    "@control-plane/telemetry": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*"
   },

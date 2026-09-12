@@ -31,6 +31,7 @@ import {
   PostgresInteractionCommandRepository,
   PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
+  PostgresReconciliationCheckpointRepository,
   PostgresRuntimeCommandRepository,
   PostgresRuntimeDiscoveryRepository,
   type PostgresConnection,
@@ -53,7 +54,14 @@ import {
   DurableInteractionCommandService,
   DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
+  ExecutionReconciliationService,
+  type CommandInboxMetrics,
+  type ReconciliationEffects,
+  type ReconciliationRateLimit,
+  type ReconciliationSource,
 } from '@control-plane/domain'
+import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
+import type { MetricAdapter } from '@control-plane/telemetry'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { RemoteRestateRuntime, RESTATE_SERVER_VERSION } from '@control-plane/restate-runtime'
@@ -72,6 +80,7 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
+import { ReconciliationScheduler } from './reconciliation-scheduler.js'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
@@ -130,6 +139,23 @@ export interface HostedServerManifest {
   }
 }
 
+/**
+ * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
+ * composition: absent configuration enables nothing, and invalid bounds fail
+ * closed at composition construction. The observation source and remediation
+ * effects must be supplied by the composition caller.
+ */
+export interface HostedReconciliationConfiguration {
+  readonly source: ReconciliationSource
+  readonly effects: ReconciliationEffects
+  /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
+  readonly intervalMs: number
+  /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
+  readonly batchLimit: number
+  readonly staleAfterMs?: number
+  readonly rateLimit?: ReconciliationRateLimit
+}
+
 export interface HostedServerCompositionOptions {
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
@@ -151,6 +177,8 @@ export interface HostedServerCompositionOptions {
   ) => RemoteControlHostAdapter<unknown>
   readonly runtimeActivityPort?: WorkflowRuntimeActivityPort
   readonly graphActivities?: GraphSegmentActivityPort
+  readonly metricAdapter?: MetricAdapter
+  readonly reconciliation?: HostedReconciliationConfiguration
 }
 
 export class HostedServerControlPlaneComposition {
@@ -175,8 +203,10 @@ export class HostedServerControlPlaneComposition {
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
   readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
+  readonly reconciliationService: ExecutionReconciliationService | undefined
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
+  readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -213,6 +243,13 @@ export class HostedServerControlPlaneComposition {
         }),
       })
     const restateIngressUrl = options.restateIngressUrl ?? 'http://restate:8080'
+    // Consistency metrics flow through the telemetry redaction pipeline with bounded
+    // label cardinality; without an injected metric adapter every hook is a no-op.
+    const consistencyMetrics =
+      options.metricAdapter === undefined
+        ? undefined
+        : createConsistencyMetricEmitter(options.metricAdapter, 'hosted-control-plane')
+    const inboxMetrics: CommandInboxMetrics | undefined = consistencyMetrics
     const plans = new PostgresExecutionPlanRepository(this.connection.database)
     const catalog = new PostgresCatalogRepository(this.connection.database)
     const projectStates = new PostgresProjectStateRepository(this.connection.database)
@@ -222,6 +259,7 @@ export class HostedServerControlPlaneComposition {
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: createExecutionId,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
       dispatcher: new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl }),
     })
@@ -323,9 +361,30 @@ export class HostedServerControlPlaneComposition {
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: unavailableExecutionIdFactory,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
     })
     this.executionLifecycleActivities = activities
+    // Reconciliation scheduling is explicit composition configuration: absent
+    // configuration enables nothing, and invalid bounds fail closed above.
+    if (options.reconciliation !== undefined) {
+      const reconciliation = options.reconciliation
+      this.reconciliationService = new ExecutionReconciliationService({
+        repository: new PostgresReconciliationCheckpointRepository(this.connection.database),
+        source: reconciliation.source,
+        effects: reconciliation.effects,
+        ...(reconciliation.staleAfterMs === undefined
+          ? {}
+          : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
+        ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
+        ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+      })
+      this.#reconciliationScheduler = new ReconciliationScheduler({
+        service: this.reconciliationService,
+        intervalMs: reconciliation.intervalMs,
+        batchLimit: reconciliation.batchLimit,
+      })
+    }
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??
@@ -368,7 +427,9 @@ export class HostedServerControlPlaneComposition {
     try {
       await this.workflow.start()
       await this.remoteControl?.start()
+      this.#reconciliationScheduler?.start()
     } catch (error) {
+      await this.#reconciliationScheduler?.close().catch(() => undefined)
       await this.remoteControl?.stop()
       await this.workflow.stop().catch(() => undefined)
       await this.#endpoint.shutdown().catch(() => undefined)
@@ -421,6 +482,8 @@ export class HostedServerControlPlaneComposition {
 
   async close(): Promise<void> {
     this.#started = false
+    // Drain the scheduler first: a clean close never abandons an in-flight pass.
+    await this.#reconciliationScheduler?.close()
     await this.remoteControl?.stop()
     await this.workflow.stop().catch(() => undefined)
     await this.#endpoint?.shutdown().catch(() => undefined)

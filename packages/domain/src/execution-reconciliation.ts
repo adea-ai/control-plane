@@ -212,11 +212,34 @@ export interface ReconciliationEffects {
   }): Promise<void>
 }
 
+/**
+ * Observability port for reconciliation outcomes. Implementations must isolate
+ * exporter failures; the service additionally isolates every hook call so a
+ * throwing metrics sink can never change a reconciliation result.
+ */
+export interface ReconciliationMetrics {
+  recordCheckpoint(input: {
+    readonly reason: z.output<typeof ReconciliationReasonSchema>
+    readonly state: z.output<typeof ReconciliationCheckpointStateSchema>
+    readonly created: boolean
+  }): void
+}
+
+export interface ReconciliationRateLimit {
+  /** Sliding-window length in milliseconds. Integer, 1..3_600_000. */
+  readonly windowMs: number
+  /** Maximum reconciliation operations started within the window. Integer, 1..10_000. */
+  readonly maximumPerWindow: number
+}
+
 export interface ExecutionReconciliationServiceOptions {
   readonly repository: ReconciliationCheckpointRepository
   readonly source: ReconciliationSource
   readonly effects: ReconciliationEffects
   readonly policy?: { readonly staleAfterMs: number }
+  readonly rateLimit?: ReconciliationRateLimit
+  readonly metrics?: ReconciliationMetrics
+  readonly clock?: () => number
 }
 
 interface Decision {
@@ -232,10 +255,14 @@ export class ExecutionReconciliationService {
   readonly #source: ReconciliationSource
   readonly #effects: ReconciliationEffects
   readonly #staleAfterMs: number
+  readonly #rateLimit: ReconciliationRateLimit | undefined
+  readonly #metrics: ReconciliationMetrics | undefined
+  readonly #clock: () => number
   readonly #inFlight = new Map<
     string,
     Promise<{ checkpoint: ReconciliationCheckpoint; created: boolean }>
   >()
+  readonly #windowStarts: number[] = []
 
   constructor(options: ExecutionReconciliationServiceOptions) {
     this.#repository = options.repository
@@ -245,6 +272,22 @@ export class ExecutionReconciliationService {
     if (!Number.isInteger(this.#staleAfterMs) || this.#staleAfterMs < 1) {
       throw new Error('INVALID_RECONCILIATION_STALE_POLICY')
     }
+    this.#rateLimit = options.rateLimit
+    if (this.#rateLimit !== undefined) {
+      const { windowMs, maximumPerWindow } = this.#rateLimit
+      if (
+        !Number.isSafeInteger(windowMs) ||
+        windowMs < 1 ||
+        windowMs > 3_600_000 ||
+        !Number.isSafeInteger(maximumPerWindow) ||
+        maximumPerWindow < 1 ||
+        maximumPerWindow > 10_000
+      ) {
+        throw new Error('INVALID_RECONCILIATION_RATE_LIMIT')
+      }
+    }
+    this.#metrics = options.metrics
+    this.#clock = options.clock ?? (() => Date.now())
   }
 
   async reconcile(executionId: string): Promise<ReconciliationCheckpoint> {
@@ -259,7 +302,12 @@ export class ExecutionReconciliationService {
     waiting: number
   }> {
     const limit = z.number().int().min(1).max(1_000).parse(input.limit)
-    const executionIds = await this.#source.listCandidates({ limit })
+    const effectiveLimit = this.#budgetedLimit(limit)
+    if (effectiveLimit < 1) {
+      return { examined: 0, reconciled: 0, remediated: 0, manualIntervention: 0, waiting: 0 }
+    }
+    const executionIds = await this.#source.listCandidates({ limit: effectiveLimit })
+    this.#recordWindowStarts(executionIds.length)
     const results = await Promise.all(
       executionIds.map((executionId) => this.#reconcile(executionId))
     )
@@ -274,13 +322,50 @@ export class ExecutionReconciliationService {
     }
   }
 
+  /** Bounds each scheduled batch to the reconciliation budget remaining in the sliding window. */
+  #budgetedLimit(limit: number): number {
+    if (this.#rateLimit === undefined) return limit
+    const now = this.#clock()
+    const { windowMs, maximumPerWindow } = this.#rateLimit
+    for (;;) {
+      const oldest = this.#windowStarts[0]
+      if (oldest === undefined || now - oldest < windowMs) break
+      this.#windowStarts.shift()
+    }
+    return Math.min(limit, maximumPerWindow - this.#windowStarts.length)
+  }
+
+  #recordWindowStarts(count: number): void {
+    if (this.#rateLimit === undefined || count < 1) return
+    const now = this.#clock()
+    for (let index = 0; index < count; index += 1) this.#windowStarts.push(now)
+  }
+
+  #emitCheckpoint(result: { checkpoint: ReconciliationCheckpoint; created: boolean }): void {
+    if (this.#metrics === undefined) return
+    try {
+      this.#metrics.recordCheckpoint({
+        reason: result.checkpoint.reason,
+        state: result.checkpoint.state,
+        created: result.created,
+      })
+    } catch {
+      // Metrics export is isolated per emission and can never fail reconciliation.
+    }
+  }
+
   async #reconcile(executionId: string): Promise<{
     checkpoint: ReconciliationCheckpoint
     created: boolean
   }> {
     const active = this.#inFlight.get(executionId)
     if (active) return active
-    const operation = this.#perform(executionId).finally(() => this.#inFlight.delete(executionId))
+    const operation = this.#perform(executionId)
+      .then((result) => {
+        this.#emitCheckpoint(result)
+        return result
+      })
+      .finally(() => this.#inFlight.delete(executionId))
     this.#inFlight.set(executionId, operation)
     return operation
   }

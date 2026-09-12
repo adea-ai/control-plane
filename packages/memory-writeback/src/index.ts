@@ -117,11 +117,21 @@ export class MemoryWriteError extends Error {
   }
 }
 
+/**
+ * Observability port for approval decisions. Implementations must supply bounded
+ * label cardinality and isolate exporter failures; the service additionally
+ * isolates every hook call so a throwing metrics sink can never change a decision.
+ */
+export interface MemoryWriteDecisionMetrics {
+  recordApprovalDecision(decision: 'approved' | 'denied' | 'expired'): void
+}
+
 export interface MemoryWriteServiceOptions {
   repository: MemoryWriteProposalRepository
   provider?: MemoryProviderWriter
   interactionRepository: InteractionRepository
   now?: () => string
+  metrics?: MemoryWriteDecisionMetrics
 }
 
 export class MemoryWriteService {
@@ -130,6 +140,7 @@ export class MemoryWriteService {
   readonly #interactions: InteractionService
   readonly #interactionRepository: InteractionRepository
   readonly #now: () => string
+  readonly #metrics: MemoryWriteDecisionMetrics | undefined
 
   constructor(options: MemoryWriteServiceOptions) {
     this.#repository = options.repository
@@ -137,6 +148,17 @@ export class MemoryWriteService {
     this.#interactions = new InteractionService(options.interactionRepository)
     this.#interactionRepository = options.interactionRepository
     this.#now = options.now ?? (() => new Date().toISOString())
+    this.#metrics = options.metrics
+  }
+
+  /** Emission is isolated per decision and can never change an approval outcome. */
+  #emitApprovalDecision(decision: 'approved' | 'denied' | 'expired'): void {
+    if (this.#metrics === undefined) return
+    try {
+      this.#metrics.recordApprovalDecision(decision)
+    } catch {
+      // Observability is deliberately non-authoritative and fail-open.
+    }
   }
 
   async propose(
@@ -197,12 +219,17 @@ export class MemoryWriteService {
     if (
       interaction.state === 'expired' ||
       Date.parse(observedAt) >= Date.parse(interaction.expiresAt)
-    )
+    ) {
+      this.#emitApprovalDecision('expired')
       return this.#transition(proposal, 'expired', observedAt, 'expired')
+    }
     if (interaction.state !== 'responded' || !interaction.response) fail('MEMORY_APPROVAL_STALE')
-    if (interaction.response.action === 'deny')
+    if (interaction.response.action === 'deny') {
+      this.#emitApprovalDecision('denied')
       return this.#transition(proposal, 'denied', observedAt, 'denied')
+    }
     if (interaction.response.action !== 'approve') fail('MEMORY_APPROVAL_STALE')
+    this.#emitApprovalDecision('approved')
     return this.#transition(proposal, 'approved', observedAt, 'approved')
   }
 

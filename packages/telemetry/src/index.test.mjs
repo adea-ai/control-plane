@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  consistencyMetricNames,
+  createConsistencyMetricEmitter,
   createStructuredLogger,
   createDeterministicSamplingPolicy,
   createLangSmithTraceAdapter,
@@ -7,6 +9,7 @@ import {
   extractTraceContext,
   injectTraceContext,
   redactTelemetryValue,
+  sanitizeAttributes,
   semanticAttributes,
 } from './index.ts'
 import { createSentryErrorTracker } from './sentry.ts'
@@ -447,5 +450,177 @@ describe('telemetry safety and correlation', () => {
     })
     expect(initializationAttempts).toBe(1)
     expect(() => unavailable.captureException(new Error('domain'))).not.toThrow()
+  })
+
+  test('redacts loopback endpoints from telemetry values and attributes', () => {
+    const canary = 'loopback-canary-9f4a'
+    const redacted = redactTelemetryValue({
+      admin: `http://127.0.0.1:9070/v1/${canary}`,
+      ingress: `http://localhost:8080/${canary}`,
+      ipv6: `ws://[::1]:8080/${canary}`,
+      bare: `route 127.127.1.2 keeps ${canary}`,
+      unbracketed: `connect ::1 for ${canary}`,
+      external: `https://control-plane.example.com/${canary}`,
+    })
+
+    const serialized = JSON.stringify(redacted)
+    expect(serialized).not.toContain('127.0.0.1')
+    expect(serialized).not.toContain('localhost')
+    expect(serialized).not.toContain('::1')
+    expect(serialized).toContain('control-plane.example.com')
+    expect(redacted.admin).toBe(`http://[REDACTED_LOOPBACK]/v1/${canary}`)
+    expect(redacted.ingress).toBe(`http://[REDACTED_LOOPBACK]/${canary}`)
+    expect(redacted.ipv6).toBe(`ws://[REDACTED_LOOPBACK]/${canary}`)
+    expect(redacted.bare).toBe(`route [REDACTED_LOOPBACK] keeps ${canary}`)
+    expect(redacted.unbracketed).toBe(`connect [REDACTED_LOOPBACK] for ${canary}`)
+    expect(sanitizeAttributes({ endpoint: `postgresql://localhost:5432/${canary}` })).toEqual({
+      endpoint: `postgresql://[REDACTED_LOOPBACK]/${canary}`,
+    })
+  })
+
+  test('redacts private filesystem paths from telemetry values', () => {
+    const canary = 'path-canary-9f4a'
+    const redacted = redactTelemetryValue({
+      home: `/Users/dev/${canary}/control-plane.sqlite`,
+      tmp: `stored at /tmp/${canary}-dir/file for later`,
+      system: `/etc/control-plane/${canary}.conf and /var/log/${canary}.log`,
+      windows: `mounted C:\\Users\\dev\\${canary}`,
+      relative: `see docs/${canary}/readme`,
+      url: `https://control-plane.example.com/docs/${canary}`,
+    })
+
+    const serialized = JSON.stringify(redacted)
+    expect(serialized).not.toContain('/Users/dev')
+    expect(serialized).not.toContain(`/tmp/${canary}`)
+    expect(serialized).not.toContain('/etc/control-plane')
+    expect(serialized).not.toContain('/var/log')
+    expect(serialized).not.toContain('C:\\\\Users\\\\dev')
+    expect(redacted.relative).toBe(`see docs/${canary}/readme`)
+    expect(redacted.url).toBe(`https://control-plane.example.com/docs/${canary}`)
+    expect(redacted.home).toBe('[REDACTED_PATH]')
+    expect(redacted.tmp).toBe(`stored at [REDACTED_PATH] for later`)
+  })
+
+  test('emits consistency metrics exclusively under cataloged names with bounded labels', () => {
+    const added = []
+    const emitter = createConsistencyMetricEmitter(
+      {
+        add: (name, value, attributes) => added.push({ name, value, attributes }),
+        record: () => undefined,
+      },
+      'local-control-plane'
+    )
+
+    emitter.recordAcceptanceOutcome('duplicate')
+    emitter.recordAcceptanceOutcome('conflict')
+    emitter.recordAcceptanceOutcome('accepted')
+    emitter.recordResolution('included', 'PROVIDER_SELECTED')
+    emitter.recordResolution('omitted', 'PROVIDER_REVOKED')
+    emitter.recordResolution('degraded', 'objective text and scope digests must collapse')
+    emitter.recordResolution('bogus-outcome', 'PROVIDER_UNAVAILABLE')
+    emitter.recordApprovalDecision('approved')
+    emitter.recordApprovalDecision('denied')
+    emitter.recordApprovalDecision('expired')
+    emitter.recordApprovalDecision('why did this happen')
+    emitter.recordQuarantine({ reason: 'TRANSPORT_ERROR', attempted: true })
+    emitter.recordQuarantine({ reason: 'HTTP_503', attempted: true })
+    emitter.recordQuarantine({ reason: 'HTTP_429', attempted: true })
+    emitter.recordQuarantine({ reason: 'SCHEMA_MISMATCH', attempted: false })
+    emitter.recordQuarantine({ reason: 'HTTP_999', attempted: true })
+    emitter.recordCheckpoint({
+      reason: 'runtime_disconnected',
+      state: 'manual_intervention',
+      created: true,
+    })
+    emitter.recordCheckpoint({ reason: 'healthy', state: 'resolved', created: false })
+
+    expect(added.map(({ name }) => name)).toEqual([
+      'control.command_inbox.duplicate.count',
+      'control.command_inbox.conflict.count',
+      'context.provider_resolution.count',
+      'context.provider_resolution.count',
+      'context.provider_resolution.count',
+      'context.provider_resolution.count',
+      'memory.write.decision.count',
+      'memory.write.decision.count',
+      'memory.write.decision.count',
+      'memory.write.decision.count',
+      'control.event.quarantine.count',
+      'control.event.quarantine.count',
+      'control.event.quarantine.count',
+      'control.event.quarantine.count',
+      'control.event.quarantine.count',
+      'execution.reconciliation.count',
+      'execution.manual_intervention.count',
+      'execution.reconciliation.count',
+    ])
+    expect(added.map(({ attributes }) => attributes)).toEqual([
+      { 'service.name': 'local-control-plane', outcome: 'duplicate' },
+      { 'service.name': 'local-control-plane', outcome: 'conflict' },
+      { 'service.name': 'local-control-plane', outcome: 'included', reason: 'PROVIDER_SELECTED' },
+      { 'service.name': 'local-control-plane', outcome: 'omitted', reason: 'PROVIDER_REVOKED' },
+      { 'service.name': 'local-control-plane', outcome: 'degraded', reason: 'other' },
+      { 'service.name': 'local-control-plane', outcome: 'other', reason: 'PROVIDER_UNAVAILABLE' },
+      { 'service.name': 'local-control-plane', decision: 'approved' },
+      { 'service.name': 'local-control-plane', decision: 'denied' },
+      { 'service.name': 'local-control-plane', decision: 'expired' },
+      { 'service.name': 'local-control-plane', decision: 'other' },
+      {
+        'service.name': 'local-control-plane',
+        reason_category: 'transport_error',
+        attempted: true,
+      },
+      { 'service.name': 'local-control-plane', reason_category: 'http_server', attempted: true },
+      { 'service.name': 'local-control-plane', reason_category: 'http_retryable', attempted: true },
+      {
+        'service.name': 'local-control-plane',
+        reason_category: 'schema_mismatch',
+        attempted: false,
+      },
+      { 'service.name': 'local-control-plane', reason_category: 'other', attempted: true },
+      {
+        'service.name': 'local-control-plane',
+        reason: 'runtime_disconnected',
+        outcome: 'created',
+      },
+      { 'service.name': 'local-control-plane', reason: 'runtime_disconnected' },
+      { 'service.name': 'local-control-plane', reason: 'healthy', outcome: 'observed' },
+    ])
+    for (const { name } of added) expect(operationalMetrics).toContain(name)
+  })
+
+  test('isolates consistency exporter failures per emission', () => {
+    const attempts = []
+    const emitter = createConsistencyMetricEmitter(
+      {
+        add(name) {
+          attempts.push(name)
+          throw new Error('EXPORTER_DOWN')
+        },
+        record: () => undefined,
+      },
+      'local-control-plane'
+    )
+
+    expect(() => emitter.recordAcceptanceOutcome('duplicate')).not.toThrow()
+    expect(() =>
+      emitter.recordCheckpoint({
+        reason: 'terminal_undelivered',
+        state: 'remediated',
+        created: true,
+      })
+    ).not.toThrow()
+    expect(() => emitter.recordResolution('omitted', 'PROVIDER_REVOKED')).not.toThrow()
+    expect(attempts).toEqual([
+      'control.command_inbox.duplicate.count',
+      'execution.reconciliation.count',
+      'context.provider_resolution.count',
+    ])
+  })
+
+  test('exposes every consistency metric name in the catalog', () => {
+    for (const name of Object.values(consistencyMetricNames)) {
+      expect(operationalMetrics).toContain(name)
+    }
   })
 })

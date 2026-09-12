@@ -1,4 +1,6 @@
 export { createConsoleTraceAdapter } from './console.js'
+export { consistencyMetricNames, createConsistencyMetricEmitter } from './consistency.js'
+export type { CommandInboxAcceptanceOutcome, ConsistencyMetricEmitter } from './consistency.js'
 export {
   extractTraceContext,
   injectTraceContext,

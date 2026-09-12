@@ -172,11 +172,21 @@ export interface ExecutionPlanAcceptanceValidator {
   }): Promise<boolean>
 }
 
+/**
+ * Observability port for inbox acceptance outcomes. Implementations must isolate
+ * exporter failures; the service additionally isolates every hook call so a
+ * throwing metrics sink can never change an acceptance result.
+ */
+export interface CommandInboxMetrics {
+  recordAcceptanceOutcome(outcome: CommandAcceptanceResult['outcome']): void
+}
+
 export interface CommandInboxServiceOptions {
   readonly repository: CommandAcceptanceRepository
   readonly executionIdFactory: () => string
   readonly executionPlanValidator: ExecutionPlanAcceptanceValidator
   readonly now?: () => string
+  readonly metrics?: CommandInboxMetrics
   readonly failureInjector?: {
     checkpoint(scenario: 'control_api.after_accept' | 'control_api.before_accept'): void
   }
@@ -278,10 +288,11 @@ export class CommandInboxError extends Error {
 }
 
 export class CommandInboxService {
-  readonly repository: CommandAcceptanceRepository
+  repository: CommandAcceptanceRepository
   readonly #executionIdFactory: () => string
   readonly #executionPlanValidator: ExecutionPlanAcceptanceValidator
   readonly #now: () => string
+  readonly #metrics: CommandInboxMetrics | undefined
   readonly #failureInjector: CommandInboxServiceOptions['failureInjector']
 
   constructor(options: CommandInboxServiceOptions) {
@@ -289,7 +300,18 @@ export class CommandInboxService {
     this.#executionIdFactory = options.executionIdFactory
     this.#executionPlanValidator = options.executionPlanValidator
     this.#now = options.now ?? (() => new Date().toISOString())
+    this.#metrics = options.metrics
     this.#failureInjector = options.failureInjector
+  }
+
+  /** Emission is isolated per outcome and can never change an acceptance result. */
+  #emitAcceptanceOutcome(outcome: CommandAcceptanceResult['outcome']): void {
+    if (this.#metrics === undefined) return
+    try {
+      this.#metrics.recordAcceptanceOutcome(outcome)
+    } catch {
+      // Observability is deliberately non-authoritative and fail-open.
+    }
   }
 
   async acceptExecution(input: unknown): Promise<{
@@ -354,6 +376,7 @@ export class CommandInboxService {
     })
     this.#failureInjector?.checkpoint('control_api.before_accept')
     const result = await this.repository.accept(command, execution)
+    this.#emitAcceptanceOutcome(result.outcome)
     this.#failureInjector?.checkpoint('control_api.after_accept')
     this.#assertRetained(result.command)
     if (result.outcome === 'conflict') fail('IDEMPOTENCY_PAYLOAD_CONFLICT')
@@ -458,9 +481,11 @@ export class CommandInboxService {
         payloadHash,
         lastSeenAt: this.#now(),
       })
-      await this.repository.accept(conflict, execution)
+      const accepted = await this.repository.accept(conflict, execution)
+      this.#emitAcceptanceOutcome(accepted.outcome)
       fail('IDEMPOTENCY_PAYLOAD_CONFLICT')
     }
+    this.#emitAcceptanceOutcome('duplicate')
     return {
       replayed: true,
       command: existing,

@@ -42,14 +42,22 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
-import { ExecutionLifecycleService } from '@control-plane/domain'
+import { ExecutionLifecycleService, ExecutionReconciliationService } from '@control-plane/domain'
+import type {
+  ReconciliationEffects,
+  ReconciliationRateLimit,
+  ReconciliationSource,
+} from '@control-plane/domain'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
 } from '@control-plane/workflow-worker'
+import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
+import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import { ReconciliationScheduler } from './reconciliation-scheduler.js'
 import {
   GrantsBackedContextAuthoringAuthority,
   type ContextAuthoringCompositionOptions,
@@ -111,6 +119,23 @@ export interface LocalRuntimeTransport extends RuntimeAdapterWithTransport {
   close?(): Promise<void>
 }
 
+/**
+ * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
+ * composition: absent configuration enables nothing, and invalid bounds fail
+ * closed at composition construction. The observation source and remediation
+ * effects must be supplied by the composition caller.
+ */
+export interface LocalReconciliationConfiguration {
+  readonly source: ReconciliationSource
+  readonly effects: ReconciliationEffects
+  /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
+  readonly intervalMs: number
+  /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
+  readonly batchLimit: number
+  readonly staleAfterMs?: number
+  readonly rateLimit?: ReconciliationRateLimit
+}
+
 export interface LocalControlPlaneCompositionOptions {
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
@@ -140,6 +165,8 @@ export interface LocalControlPlaneCompositionOptions {
   ) => RemoteControlHostAdapter<unknown>
   readonly environmentSecretReferences?: Readonly<Record<string, string>>
   readonly environment?: Readonly<Record<string, string | undefined>>
+  readonly metricAdapter?: MetricAdapter
+  readonly reconciliation?: LocalReconciliationConfiguration
 }
 
 export class LocalControlPlaneComposition {
@@ -173,10 +200,12 @@ export class LocalControlPlaneComposition {
   readonly commands: LocalControlApiComposition['commands']
   readonly commandRepository: LocalControlApiComposition['commandRepository']
   readonly executionLifecycleActivities: ExecutionLifecycleActivities
+  readonly reconciliationService: ExecutionReconciliationService | undefined
   readonly coordination = new LocalCoordinationProvider()
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
   readonly #endpointFactory: RestateEndpointFactory
+  readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -233,10 +262,17 @@ export class LocalControlPlaneComposition {
           policy: LOCAL_CONTEXT_AUTHORING_POLICY,
         }),
       } satisfies ContextAuthoringCompositionOptions)
+    // Consistency metrics flow through the telemetry redaction pipeline with bounded
+    // label cardinality; without an injected metric adapter every hook is a no-op.
+    const consistencyMetrics =
+      options.metricAdapter === undefined
+        ? undefined
+        : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,
-      contextAuthoring
+      contextAuthoring,
+      consistencyMetrics
     )
     const runtimeTransport =
       options.runtimeTransport ??
@@ -298,6 +334,26 @@ export class LocalControlPlaneComposition {
             commands: this.commands,
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()
+    // Reconciliation scheduling is explicit composition configuration: absent
+    // configuration enables nothing, and invalid bounds fail closed above.
+    if (options.reconciliation !== undefined) {
+      const reconciliation = options.reconciliation
+      this.reconciliationService = new ExecutionReconciliationService({
+        repository: controlApi.reconciliationCheckpoints,
+        source: reconciliation.source,
+        effects: reconciliation.effects,
+        ...(reconciliation.staleAfterMs === undefined
+          ? {}
+          : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
+        ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
+        ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+      })
+      this.#reconciliationScheduler = new ReconciliationScheduler({
+        service: this.reconciliationService,
+        intervalMs: reconciliation.intervalMs,
+        batchLimit: reconciliation.batchLimit,
+      })
+    }
     this.#endpointFactory =
       options.endpointFactory ??
       createRestateEndpointFactory({
@@ -343,7 +399,9 @@ export class LocalControlPlaneComposition {
       await this.#endpoint.run()
       await this.workflow.start()
       await this.remoteControl?.start()
+      this.#reconciliationScheduler?.start()
     } catch (error) {
+      await this.#reconciliationScheduler?.close().catch(() => undefined)
       await Promise.resolve()
         .then(() => this.remoteControl?.stop())
         .catch(() => undefined)
@@ -389,6 +447,8 @@ export class LocalControlPlaneComposition {
   async close(): Promise<void> {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
+    // Drain the scheduler first: a clean close never abandons an in-flight pass.
+    await this.#reconciliationScheduler?.close()
     try {
       await this.remoteControl?.stop()
     } finally {

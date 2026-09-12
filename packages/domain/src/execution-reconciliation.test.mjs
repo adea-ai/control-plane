@@ -274,3 +274,128 @@ describe('execution reconciliation', () => {
     )
   })
 })
+
+describe('reconciliation rate limits and metric hooks', () => {
+  const batchIds = [
+    'exe_01ARZ3NDEKTSV4RRFFQ69G5FAA',
+    'exe_01ARZ3NDEKTSV4RRFFQ69G5FAB',
+    'exe_01ARZ3NDEKTSV4RRFFQ69G5FAC',
+  ]
+  const emptyResult = {
+    examined: 0,
+    reconciled: 0,
+    remediated: 0,
+    manualIntervention: 0,
+    waiting: 0,
+  }
+
+  function options(overrides = {}) {
+    return {
+      repository: new InMemoryReconciliationCheckpointRepository(),
+      source: {
+        load: async (id) => observation({ executionId: id }),
+        listCandidates: async ({ limit }) => batchIds.slice(0, limit),
+      },
+      effects: {
+        markReconciliationRequired: async () => undefined,
+        resumeWorkflow: async () => undefined,
+        applyRuntimeTerminal: async () => undefined,
+        replayEvents: async () => undefined,
+      },
+      ...overrides,
+    }
+  }
+
+  test('rejects invalid rate limit bounds before any reconciliation runs', () => {
+    for (const rateLimit of [
+      { windowMs: 0, maximumPerWindow: 10 },
+      { windowMs: 1.5, maximumPerWindow: 10 },
+      { windowMs: 3_600_001, maximumPerWindow: 10 },
+      { windowMs: 1_000, maximumPerWindow: 0 },
+      { windowMs: 1_000, maximumPerWindow: 10_001 },
+      { windowMs: 1_000, maximumPerWindow: 2.5 },
+    ]) {
+      expect(() => new ExecutionReconciliationService({ ...options(), rateLimit })).toThrow(
+        'INVALID_RECONCILIATION_RATE_LIMIT'
+      )
+    }
+  })
+
+  test('bounds each scheduled batch to the remaining sliding-window budget', async () => {
+    let clock = 0
+    const service = new ExecutionReconciliationService({
+      ...options(),
+      rateLimit: { windowMs: 60_000, maximumPerWindow: 2 },
+      clock: () => clock,
+    })
+
+    expect(await service.runBatch({ limit: 1_000 })).toMatchObject({ examined: 2 })
+    expect(await service.runBatch({ limit: 1_000 })).toEqual(emptyResult)
+    clock = 59_999
+    expect(await service.runBatch({ limit: 1_000 })).toEqual(emptyResult)
+    clock = 60_000
+    expect(await service.runBatch({ limit: 1_000 })).toMatchObject({ examined: 2 })
+  })
+
+  test('keeps an unlimited budget when no rate limit is configured', async () => {
+    const service = new ExecutionReconciliationService(options())
+    expect(await service.runBatch({ limit: 3 })).toMatchObject({ examined: 3 })
+  })
+
+  test('emits one checkpoint metric per reconciliation outcome', async () => {
+    const emissions = []
+    const service = new ExecutionReconciliationService({
+      ...options(),
+      metrics: { recordCheckpoint: (input) => emissions.push(input) },
+    })
+
+    await service.runBatch({ limit: 10 })
+
+    expect(emissions).toEqual([
+      { reason: 'stale_heartbeat', state: 'waiting', created: true },
+      { reason: 'stale_heartbeat', state: 'waiting', created: true },
+      { reason: 'stale_heartbeat', state: 'waiting', created: true },
+    ])
+    emissions.length = 0
+    await service.runBatch({ limit: 10 })
+    expect(emissions).toEqual([
+      { reason: 'stale_heartbeat', state: 'waiting', created: false },
+      { reason: 'stale_heartbeat', state: 'waiting', created: false },
+      { reason: 'stale_heartbeat', state: 'waiting', created: false },
+    ])
+  })
+
+  test('emits manual intervention counts and isolates metrics exporter failures', async () => {
+    const emissions = []
+    let failures = 0
+    const service = new ExecutionReconciliationService({
+      ...options({
+        source: {
+          load: async (id) =>
+            observation({
+              executionId: id,
+              runtime: { status: 'disconnected', observedAt: checkedAt },
+            }),
+          listCandidates: async () => batchIds.slice(0, 1),
+        },
+      }),
+      metrics: {
+        recordCheckpoint: (input) => {
+          emissions.push(input)
+          failures += 1
+          throw new Error('EXPORTER_DOWN')
+        },
+      },
+    })
+
+    await expect(service.reconcile(batchIds[0])).resolves.toMatchObject({
+      reason: 'runtime_disconnected',
+      state: 'manual_intervention',
+    })
+
+    expect(emissions).toEqual([
+      { reason: 'runtime_disconnected', state: 'manual_intervention', created: true },
+    ])
+    expect(failures).toBe(1)
+  })
+})
