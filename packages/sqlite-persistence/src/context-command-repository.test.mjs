@@ -5,8 +5,75 @@ import { expect, test } from 'bun:test'
 import { createQueuedContextCommandRecord, contextCommandSemanticHash } from '@control-plane/domain'
 import { SqlitePersistenceProvider } from './index.ts'
 import { SqliteContextCommandRepository } from './context-command-repository.ts'
+import { SqliteContextNodeInboxRepository } from './context-node-inbox-repository.ts'
+import { createContextNodeInboxRecord } from '@control-plane/domain'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('SQLite node inbox atomically deduplicates and preserves uncertain calls after restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-node-inbox-'))
+  const path = join(directory, 'inbox.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    let repository = new SqliteContextNodeInboxRepository(provider)
+    const record = createContextNodeInboxRecord(queued().commandEnvelope, now)
+    let writes = 0
+    const failing = new SqliteContextNodeInboxRepository({
+      transaction: (operation) =>
+        provider.transaction((transaction) =>
+          operation({
+            get: transaction.get.bind(transaction),
+            put: async (input) => {
+              if (++writes === 2) throw new Error('INDEX_WRITE_FAILED')
+              return transaction.put(input)
+            },
+          })
+        ),
+    })
+    await expect(failing.accept(record)).rejects.toThrow('INDEX_WRITE_FAILED')
+    const { workspaceId } = record.command.scope
+    const { nodeId, commandId } = record.command
+    expect(await repository.get(workspaceId, nodeId, commandId)).toBeUndefined()
+    const race = createContextNodeInboxRecord(
+      queued('cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW').commandEnvelope,
+      now
+    )
+    expect(
+      (await Promise.all([repository.accept(record), repository.accept(race)])).map(
+        (entry) => entry.outcome
+      )
+    ).toEqual(['created', 'duplicate'])
+    const executing = { ...record, version: 2, status: 'executing', startedAt: now }
+    expect(await repository.compareAndSet(1, executing)).toBe(true)
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteContextNodeInboxRepository(provider)
+    expect(await repository.get(workspaceId, nodeId, commandId)).toEqual(executing)
+    expect(
+      await repository.get('wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW', nodeId, commandId)
+    ).toBeUndefined()
+    expect((await repository.accept(record)).record.status).toBe('executing')
+    const uncertain = { ...executing, version: 3, status: 'reconciliation_required' }
+    expect(await repository.compareAndSet(2, uncertain)).toBe(true)
+    expect(await repository.compareAndSet(3, { ...executing, version: 4 })).toBe(false)
+    const completed = {
+      ...uncertain,
+      version: 4,
+      status: 'succeeded',
+      terminalAt: now,
+      result: { evidence: 'reconciled' },
+    }
+    expect(await repository.compareAndSet(3, completed)).toBe(true)
+    expect((await repository.accept(record)).record).toEqual(completed)
+    expect(await repository.compareAndSet(4, { ...completed, version: 5 })).toBe(false)
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 function queued(commandId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV', objective = 'Read evidence') {
   const command = {
     type: 'command',

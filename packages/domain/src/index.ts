@@ -13,6 +13,7 @@ export * from './execution-cancellation-command.js'
 export * from './project-state.js'
 export * from './runtime-command.js'
 export * from './context-command.js'
+export * from './context-node-inbox.js'
 export * from './versioned-catalog.js'
 
 export const packageName = 'domain'

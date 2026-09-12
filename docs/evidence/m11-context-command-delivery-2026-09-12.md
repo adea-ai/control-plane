@@ -46,6 +46,17 @@ digests from terminal records.
 
 ## Remaining acceptance
 
+The separate node-local inbox now has a domain contract and transactional SQLite
+repository. It keeps original command identity separate from gateway delivery
+state, enforces at least 30 days of retention, reserves scoped operations atomically,
+and uses versioned transitions. Executing calls can become reconciliation-required;
+they cannot return to execution after recovery. Terminal results cannot reopen.
+Accepted work may expire without starting a provider. SQLite close/reopen,
+concurrent admission, cross-workspace reads, index-write rollback and terminal
+replay are covered. This is persistence evidence only: no provider execution handler
+or production transport consumes the inbox yet, and no automatic reconciliation
+algorithm or remote-profile acceptance is claimed.
+
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
 Artifact ID. Readback is mandatory; uploaded references are resolved only through
