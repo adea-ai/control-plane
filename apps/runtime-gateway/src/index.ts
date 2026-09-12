@@ -1,6 +1,13 @@
+import process from 'node:process'
 import { bootstrapService, type ServiceStartOptions } from '@control-plane/bootstrap'
 import type { RuntimeGatewayWebSocketServer } from './websocket-server.js'
 import type { RuntimeHealthDeliveryWorker } from './runtime-health-delivery-worker.js'
+import {
+  composeRuntimeGateway,
+  runtimeGatewayStoreConfigFromEnvironment,
+  type RuntimeGatewayComposition,
+  type RuntimeGatewayCompositionOptions,
+} from './composition.js'
 
 export * from './authentication.js'
 export * from './runtime-command-delivery.js'
@@ -9,6 +16,7 @@ export * from './context-command-recovery.js'
 export * from './context-read-client.js'
 export * from './context-read-binding.js'
 export * from './context-provider-composition.js'
+export * from './composition.js'
 export * from './context-result-store.js'
 export * from './context-result-integrity.js'
 export * from './reconnect-reconciliation.js'
@@ -23,30 +31,53 @@ export const serviceName = 'runtime-gateway'
 export interface RuntimeGatewayStartOptions extends ServiceStartOptions {
   readonly webSocketServer?: RuntimeGatewayWebSocketServer
   readonly healthDeliveryWorker?: RuntimeHealthDeliveryWorker
+  /** Explicit store authority; when absent it is parsed from the environment, failing closed. */
+  readonly store?: RuntimeGatewayCompositionOptions['store']
+  readonly objectStore?: RuntimeGatewayCompositionOptions['objectStore']
+  readonly authenticateUpgrade?: RuntimeGatewayCompositionOptions['authenticateUpgrade']
+  readonly metrics?: RuntimeGatewayCompositionOptions['metrics']
+  readonly reachability?: RuntimeGatewayCompositionOptions['reachability']
+  readonly traceId?: RuntimeGatewayCompositionOptions['traceId']
+  readonly instanceId?: RuntimeGatewayCompositionOptions['instanceId']
+  readonly hostname?: RuntimeGatewayCompositionOptions['hostname']
 }
 
 export const start = ({
   webSocketServer,
   healthDeliveryWorker,
+  store,
   ...options
 }: RuntimeGatewayStartOptions = {}) =>
   bootstrapService({
     ...options,
     serviceName,
-    start: ({ markReady, metadata, registerResource }) => {
-      if (
-        webSocketServer === undefined &&
-        (metadata.environment === 'staging' || metadata.environment === 'production')
-      ) {
-        throw new Error('Runtime Gateway WebSocket server is required outside local environments')
+    start: async ({ markReady, config, registerResource }) => {
+      let composed: RuntimeGatewayComposition | undefined
+      let server = webSocketServer
+      if (server === undefined) {
+        const environment = options.environment ?? process.env
+        composed = await composeRuntimeGateway({
+          store: store ?? runtimeGatewayStoreConfigFromEnvironment(environment),
+          port: config.values.port,
+          // Blank env values stay fail-closed: the composition rejects them.
+          instanceId: options.instanceId ?? environment['RUNTIME_GATEWAY_INSTANCE_ID'] ?? '',
+          hostname: options.hostname ?? environment['RUNTIME_GATEWAY_HOST'] ?? '',
+          objectStore: options.objectStore,
+          authenticateUpgrade: options.authenticateUpgrade,
+          metrics: options.metrics,
+          reachability: options.reachability,
+          traceId: options.traceId,
+        })
+        server = composed.webSocketServer
       }
       // Reverse-order cleanup drains channels before waiting on event delivery.
       if (healthDeliveryWorker !== undefined)
         registerResource('runtime-health-delivery', () => healthDeliveryWorker.close())
-      if (webSocketServer !== undefined) {
-        webSocketServer.start()
-        registerResource('runtime-gateway-websocket', () => webSocketServer.close())
-      }
+      if (composed !== undefined)
+        registerResource('runtime-gateway-composition', () => composed.close())
+      else if (server !== undefined)
+        registerResource('runtime-gateway-websocket', () => server.close())
+      server.start()
       healthDeliveryWorker?.start()
       markReady()
     },

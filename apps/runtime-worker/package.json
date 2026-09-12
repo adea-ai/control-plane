@@ -13,16 +13,16 @@
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
+    "@control-plane/config": "workspace:*",
     "@control-plane/cortana-context-adapter": "workspace:*",
+    "@control-plane/database": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/managed-pi-adapter": "workspace:*",
     "@control-plane/object-store": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
+    "@control-plane/sqlite-persistence": "workspace:*",
     "zod": "4.5.4"
-  },
-  "devDependencies": {
-    "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {
     "node": ">=24 <25"
