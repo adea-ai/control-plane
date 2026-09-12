@@ -373,3 +373,23 @@ Both signed transport E2Es pass. Full validation passes 1,358 tests (1,147 unit,
 86.96% lines / 84.45% functions. No production service was activated. Trusted
 administration, cross-host revocation, health publication and deployment acceptance
 remain required.
+
+## Operator administration boundary
+
+The operator-only `bun run context:admin` path provisions grants and provider
+registry snapshots through the existing SQLite/PostgreSQL repositories. It accepts
+only a bounded JSON document from an absolute regular file opened with no-follow
+semantics, validates an explicit backend target, and emits generic diagnostics
+without request contents or database URLs. PostgreSQL requires an explicit expected
+host and database name matching `DATABASE_URL`; SQLite rejects relative and symlink
+database targets. Grant replay is exact and idempotent, registration is expected-
+version CAS and requires a matching current grant, and retirement is fail-closed:
+revoke the grant first, then publish a revoked registration. The command is an
+OS/database administration boundary, not a public API authorization shortcut.
+
+Focused subprocess validation passes six tests / 147 assertions, including grant
+and registration provisioning, exact replay/conflict handling, wrong-target rejection,
+permanent revocation, restart lookup, malformed/oversized input, symlink input and
+generic error output. The CLI does not synthesize health, replicate grants between
+stores, or activate a production composition root. PostgreSQL CLI execution against
+a live branch and production operator credential review remain external gates.

@@ -1,4 +1,6 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
@@ -14,6 +16,135 @@ import { SqliteContextProviderRegistrationRepository } from './context-provider-
 import { createFakeContextProvider } from '@control-plane/context'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('operator CLI provisions scoped grants and registrations and preserves revocation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-admin-'))
+  const path = join(directory, 'admin.sqlite')
+  const input = join(directory, 'input.json')
+  const provider = new SqlitePersistenceProvider({ path })
+  await provider.migrate()
+  provider.close()
+  const script = fileURLToPath(
+    new URL('../../../scripts/context-provider-admin.mjs', import.meta.url)
+  )
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [script, '--backend', 'sqlite', '--database', path, '--input', input],
+      { encoding: 'utf8', timeout: 15000 }
+    )
+  const apply = async (request, expected = 0) => {
+    await writeFile(input, JSON.stringify(request), { mode: 0o600 })
+    const result = run()
+    expect(result.status).toBe(expected)
+    if (expected === 0)
+      expect(JSON.parse(result.stdout)).toEqual({ status: 'applied', operation: request.operation })
+    else {
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe('CONTEXT_PROVIDER_ADMIN_FAILED\n')
+    }
+  }
+  try {
+    const readModel = createFakeContextProvider({
+      suffix: 'A',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      health: 'healthy',
+      state: 'active',
+      capabilities: { evidenceSearch: true },
+      kind: 'evidence',
+      tokenCount: 1,
+    }).readModel
+    const registration = {
+      version: 1,
+      readModel,
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      mappedProjectRef: 'project-1',
+      authorizationRef: 'authz:admin-test',
+    }
+    const grant = {
+      authorizationRef: registration.authorizationRef,
+      workspaceId: readModel.connection.workspaceId,
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      providerRef: registration.providerRef,
+      principalRef: readModel.connection.principalRef,
+      mappedProjectRef: registration.mappedProjectRef,
+      scopeDigest: readModel.connection.scopeDigest,
+      capabilities: ['evidenceSearch'],
+      maximumTokens: 100,
+      includeEvidence: true,
+      includeMemory: false,
+      issuedAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      status: 'active',
+    }
+    const register = { operation: 'register', expectedVersion: 0, registration }
+    await apply(register, 1)
+    await writeFile(input, JSON.stringify(register), { mode: 0o600 })
+    const wrongTarget = spawnSync(
+      process.execPath,
+      [script, '--backend', 'sqlite', '--database', path, '--host', 'unexpected', '--input', input],
+      { encoding: 'utf8', timeout: 15000 }
+    )
+    expect(wrongTarget.status).toBe(1)
+    expect(wrongTarget.stdout).toBe('')
+    expect(wrongTarget.stderr).toBe('CONTEXT_PROVIDER_ADMIN_FAILED\n')
+    await apply({ operation: 'grant', grant })
+    await apply({ operation: 'grant', grant })
+    await apply({ operation: 'grant', grant: { ...grant, maximumTokens: 200 } }, 1)
+    await apply(
+      { ...register, registration: { ...registration, mappedProjectRef: 'other-project' } },
+      1
+    )
+    await apply(register)
+    await apply(register, 1)
+    const revoke = {
+      operation: 'revoke',
+      workspaceId: grant.workspaceId,
+      authorizationRef: grant.authorizationRef,
+    }
+    await apply(revoke)
+    await apply(revoke)
+    await apply({ operation: 'grant', grant }, 1)
+    await apply(
+      { operation: 'register', expectedVersion: 1, registration: { ...registration, version: 2 } },
+      1
+    )
+    const retired = structuredClone(registration)
+    retired.version = 2
+    retired.readModel.connection.state = 'revoked'
+    await apply({ operation: 'register', expectedVersion: 1, registration: retired })
+    const reopened = new SqlitePersistenceProvider({ path })
+    try {
+      await reopened.migrate()
+      expect(
+        (
+          await new SqliteContextCommandGrantRepository(reopened).get(
+            grant.workspaceId,
+            grant.authorizationRef
+          )
+        ).status
+      ).toBe('revoked')
+      expect(
+        await new SqliteContextProviderRegistrationRepository(reopened).list({
+          workspaceId: grant.workspaceId,
+          principalRef: grant.principalRef,
+        })
+      ).toEqual([])
+    } finally {
+      reopened.close()
+    }
+    await writeFile(input, 'secret-canary-not-json')
+    expect(run().stderr).toBe('CONTEXT_PROVIDER_ADMIN_FAILED\n')
+    await writeFile(input, 'x'.repeat(262145))
+    expect(run().status).toBe(1)
+    await rm(input)
+    await symlink(path, input)
+    expect(run().status).toBe(1)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
 
 test('SQLite provider registry atomically indexes scoped snapshots and retains irreversible revocation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-provider-registry-'))
