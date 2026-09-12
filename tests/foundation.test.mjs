@@ -60,6 +60,17 @@ test('boots every service through shared configuration and graceful shutdown', a
             },
           }
         : {}),
+      ...(serviceName === 'runtime-gateway'
+        ? {
+            // The gateway fails closed without injected components or explicit
+            // store composition config, so the shared-configuration smoke boot
+            // injects the minimal channel server instead of bare configuration.
+            webSocketServer: {
+              start: () => undefined,
+              close: async () => undefined,
+            },
+          }
+        : {}),
     }
     const runtime = await start(options)
 
