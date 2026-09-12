@@ -6,9 +6,60 @@ import { createQueuedContextCommandRecord, contextCommandSemanticHash } from '@c
 import { SqlitePersistenceProvider } from './index.ts'
 import { SqliteContextCommandRepository } from './context-command-repository.ts'
 import { SqliteContextNodeInboxRepository } from './context-node-inbox-repository.ts'
+import { SqliteRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
 import { createContextNodeInboxRecord } from '@control-plane/domain'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('SQLite channel sequence reservations survive concurrency, ambiguous acknowledgement and reopen', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-channel-sequence-'))
+  const path = join(directory, 'sequences.sqlite')
+  let provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const channel = {
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      gatewayInstanceId: 'gateway-test',
+      connectionId: 'connection-test',
+      channelGeneration: 1,
+      protocolVersion: { major: 1, minor: 5 },
+      connectedAt: now,
+      lastHeartbeatAt: now,
+    }
+    const request = { channel, count: 1, minimum: 1 }
+    let repository = new SqliteRuntimeChannelSequenceRepository(provider)
+    expect(
+      await Promise.all([
+        repository.reserve({ ...request, count: 2 }),
+        repository.reserve({ ...request, count: 3 }),
+        repository.reserve(request),
+      ])
+    ).toEqual([1, 3, 6])
+    const ambiguous = new SqliteRuntimeChannelSequenceRepository({
+      transaction: async (operation) => {
+        await provider.transaction(operation)
+        throw new Error('ACK_LOST_AFTER_COMMIT')
+      },
+    })
+    await expect(ambiguous.reserve(request)).rejects.toThrow('ACK_LOST_AFTER_COMMIT')
+    provider.close()
+    provider = new SqlitePersistenceProvider({ path })
+    await provider.migrate()
+    repository = new SqliteRuntimeChannelSequenceRepository(provider)
+    expect(await repository.reserve(request)).toBe(8)
+    expect(await repository.reserve({ ...request, minimum: 100 })).toBe(100)
+    expect(await repository.reserve({ ...request, minimum: 2147483647 })).toBe(2147483647)
+    await expect(repository.reserve(request)).rejects.toThrow('SEQUENCE_EXHAUSTED')
+    expect(
+      await repository.reserve({ ...request, channel: { ...channel, channelGeneration: 2 } })
+    ).toBe(1)
+    await expect(repository.reserve({ ...request, count: 1001 })).rejects.toThrow()
+  } finally {
+    provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('SQLite node inbox atomically deduplicates and preserves uncertain calls after restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'm11-node-inbox-'))

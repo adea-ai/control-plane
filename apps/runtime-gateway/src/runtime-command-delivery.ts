@@ -371,7 +371,11 @@ export class RuntimePendingCommandDispatcher {
     }
   }
 
-  async dispatch(source: ActiveRuntimeNodeChannelRecord, firstSequence: number): Promise<number> {
+  async dispatch(
+    source: ActiveRuntimeNodeChannelRecord,
+    firstSequence: number,
+    nextSequence?: () => Promise<number>
+  ): Promise<number> {
     if (!Number.isSafeInteger(firstSequence) || firstSequence < 1) {
       throw new Error('RUNTIME_PENDING_COMMAND_SEQUENCE_INVALID')
     }
@@ -385,7 +389,7 @@ export class RuntimePendingCommandDispatcher {
       if (command.status !== 'queued' || command.workspaceId !== source.workspaceId) continue
       const outcome = await this.#delivery.deliver(command.commandId, {
         channelGeneration: source.channelGeneration,
-        sequence: firstSequence + delivered,
+        sequence: nextSequence ? await nextSequence() : firstSequence + delivered,
       })
       if (outcome.sent) delivered += 1
     }

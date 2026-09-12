@@ -8,6 +8,7 @@ import {
   SqlitePersistenceProvider,
   SqliteContextCommandRepository,
   SqliteContextNodeInboxRepository,
+  SqliteRuntimeChannelSequenceRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   CortanaContextProviderAdapter,
@@ -132,6 +133,7 @@ for (const loseFirstResult of [false, true]) {
         events: { ingestProgress: unexpected, ingestResult: unexpected, ingestError: unexpected },
       })
       lifecycle = new RuntimeGatewayWebSocketLifecycle({
+        sequences: new SqliteRuntimeChannelSequenceRepository(gatewayDb),
         instanceId: 'context-test-gateway',
         coordination,
         metrics: new RecordingGatewayMetrics(),
@@ -236,7 +238,8 @@ for (const loseFirstResult of [false, true]) {
             if (dropped && !redelivered) {
               redelivered = true
               await deadline(acknowledged.promise)
-              await delivery.deliver(await coordination.lookup(nodeId), commandId, 2)
+              const source = await coordination.lookup(nodeId)
+              await delivery.deliver(source, commandId, await lifecycle.nextSequence(source))
             }
           })
           .catch((error) => completed.reject(error))
@@ -298,7 +301,7 @@ for (const loseFirstResult of [false, true]) {
           delivery,
           artifacts,
           coordination,
-          nextSequence: async () => 1,
+          nextSequence: (source) => lifecycle.nextSequence(source),
           authorize: async (record) => {
             captured = record.commandEnvelope
             await guard(record.commandEnvelope)

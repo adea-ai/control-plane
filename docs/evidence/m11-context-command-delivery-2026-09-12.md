@@ -156,3 +156,17 @@ Revocation during an Artifact read prevents disclosure without erasing terminal
 history. Focused tests and composed E2E pass 19 tests/108 assertions, including an
 uncooperative authority and cancellation before/after send. Production policy and
 durable sequence allocation remain required composition ports.
+
+## Durable channel sequences
+
+The lifecycle now exposes an ownership-fenced sequence allocator backed by a
+transactional SQLite repository. Reconnect, pending runtime dispatch and direct
+context reads share reservations when configured. Reservations commit before
+send; failed sends and lost commit acknowledgements burn numbers rather than
+reuse them. Tests cover concurrent reservations, database reopen, channel-generation
+isolation and exhaustion, plus the composed signed WebSocket path. Legacy runtime
+composition without this port remains supported but is not durable-sequence evidence.
+PostgreSQL allocation and production configuration remain required; no deployed
+composition is activated. Full suite: 1,346 passing tests (1,136 unit, 130 E2E,
+80 smoke), with build, type-check, lint/boundaries and formatting passing.
+Coverage is 87.26% lines and 84.75% functions against unchanged 80% thresholds.

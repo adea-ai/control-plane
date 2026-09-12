@@ -11,6 +11,7 @@ import {
   type GatewayProtocolVersion,
 } from '@control-plane/runtime-gateway-protocol'
 import type { RuntimeNodeChannel } from './authentication.js'
+import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
 import {
   type ActiveRuntimeNodeChannelRecord,
   type GatewayMetrics,
@@ -49,15 +50,21 @@ export interface RuntimeGatewayMessageHandler {
 export interface RuntimeGatewayReconnectHandler {
   reconcile(
     hello: GatewayHelloEnvelope,
-    record: ActiveRuntimeNodeChannelRecord
+    record: ActiveRuntimeNodeChannelRecord,
+    nextSequence?: () => Promise<number>
   ): Promise<{ readonly redelivered?: number; readonly expired?: number } | undefined>
 }
 
 export interface RuntimeGatewayPendingCommandHandler {
-  dispatch(record: ActiveRuntimeNodeChannelRecord, sequence: number): Promise<number>
+  dispatch(
+    record: ActiveRuntimeNodeChannelRecord,
+    sequence: number,
+    nextSequence?: () => Promise<number>
+  ): Promise<number>
 }
 
 export interface RuntimeGatewayWebSocketLifecycleOptions {
+  readonly sequences?: RuntimeChannelSequenceRepository
   readonly instanceId: string
   readonly coordination: RuntimeNodeCoordinationPort
   readonly reachability: RuntimeNodeReachabilityPublisher
@@ -93,6 +100,7 @@ interface LocalConnection {
 }
 
 export class RuntimeGatewayWebSocketLifecycle {
+  readonly #sequences: RuntimeChannelSequenceRepository | undefined
   readonly #connections = new Map<string, LocalConnection>()
   readonly #coordination: RuntimeNodeCoordinationPort
   readonly #instanceId: string
@@ -107,6 +115,7 @@ export class RuntimeGatewayWebSocketLifecycle {
   #draining = false
 
   constructor(options: RuntimeGatewayWebSocketLifecycleOptions) {
+    this.#sequences = options.sequences
     this.#instanceId = options.instanceId
     this.#coordination = options.coordination
     this.#reachability = options.reachability
@@ -215,6 +224,33 @@ export class RuntimeGatewayWebSocketLifecycle {
     connection.socket.send(serialized)
   }
 
+  async nextSequence(source: ActiveRuntimeNodeChannelRecord): Promise<number> {
+    const owner = await this.#coordination.lookup(source.nodeId)
+    const connection =
+      owner?.gatewayInstanceId === this.#instanceId
+        ? this.#connections.get(owner.connectionId)
+        : undefined
+    if (
+      !owner ||
+      !sameChannel(owner, source) ||
+      connection?.state !== 'active' ||
+      !connection.authenticatedChannel.active
+    )
+      throw new Error('RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE')
+    return this.#reserveSequences(connection, 1)
+  }
+
+  async #reserveSequences(connection: LocalConnection, count: number): Promise<number> {
+    if (!this.#sequences || !connection.record)
+      throw new Error('RUNTIME_GATEWAY_DURABLE_SEQUENCE_REQUIRED')
+    const minimum = connection.nextOutboundSequence
+    const first = await this.#sequences.reserve({ channel: connection.record, count, minimum })
+    if (!Number.isSafeInteger(first) || first < minimum || first + count > 2147483648)
+      throw new Error('RUNTIME_GATEWAY_SEQUENCE_RESERVATION_INVALID')
+    connection.nextOutboundSequence = Math.max(connection.nextOutboundSequence, first + count)
+    return first
+  }
+
   async closed(connectionId: string, reason = 'peer_disconnected'): Promise<void> {
     const connection = this.#connections.get(connectionId)
     if (connection !== undefined) await this.#disconnect(connection, 1000, reason, true, false)
@@ -308,8 +344,13 @@ export class RuntimeGatewayWebSocketLifecycle {
     await this.#publishReachability(record, 'online', 'channel_established', this.#now())
     connection.socket.send(JSON.stringify(serverHello(record, hello.lastAcknowledgedSequence)))
     try {
-      const recovery = await this.#reconnect?.reconcile(hello, record)
-      connection.nextOutboundSequence += (recovery?.redelivered ?? 0) + (recovery?.expired ?? 0)
+      const recovery = await this.#reconnect?.reconcile(
+        hello,
+        record,
+        this.#sequences ? () => this.nextSequence(record) : undefined
+      )
+      if (!this.#sequences)
+        connection.nextOutboundSequence += (recovery?.redelivered ?? 0) + (recovery?.expired ?? 0)
     } catch {
       await this.#disconnect(connection, 1011, 'reconnect_reconciliation_failed')
     }
@@ -371,14 +412,16 @@ export class RuntimeGatewayWebSocketLifecycle {
     }
     connection.pendingDispatch = true
     try {
+      const record = connection.record
       const delivered = await this.#pending.dispatch(
-        connection.record,
-        connection.nextOutboundSequence
+        record,
+        connection.nextOutboundSequence,
+        this.#sequences ? () => this.nextSequence(record) : undefined
       )
       if (!Number.isSafeInteger(delivered) || delivered < 0 || delivered > 1_000) {
         throw new Error('RUNTIME_GATEWAY_PENDING_DISPATCH_INVALID')
       }
-      connection.nextOutboundSequence += delivered
+      if (!this.#sequences) connection.nextOutboundSequence += delivered
     } finally {
       connection.pendingDispatch = false
     }

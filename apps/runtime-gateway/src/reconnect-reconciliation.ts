@@ -91,7 +91,8 @@ export class RuntimeReconnectReconciliationService {
 
   async reconcile(
     helloValue: unknown,
-    source: ActiveRuntimeNodeChannelRecord
+    source: ActiveRuntimeNodeChannelRecord,
+    nextSequence?: () => Promise<number>
   ): Promise<RuntimeReconnectReconciliationResult> {
     const started = this.#now().getTime()
     const hello = GatewayHelloEnvelopeSchema.parse(helloValue)
@@ -158,7 +159,7 @@ export class RuntimeReconnectReconciliationService {
       if (Date.parse(command.expiresAt) <= this.#now().getTime()) {
         await this.#delivery.deliver(command.commandId, {
           channelGeneration: source.channelGeneration,
-          sequence: sequence++,
+          sequence: nextSequence ? await nextSequence() : sequence++,
         })
         result.expired++
         continue
@@ -179,7 +180,7 @@ export class RuntimeReconnectReconciliationService {
       }
       await this.#delivery.deliver(command.commandId, {
         channelGeneration: source.channelGeneration,
-        sequence: sequence++,
+        sequence: nextSequence ? await nextSequence() : sequence++,
       })
       result.redelivered++
       this.#metrics.increment('runtime_gateway.recovery_redeliveries')

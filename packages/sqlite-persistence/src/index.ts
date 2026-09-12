@@ -34,6 +34,7 @@ export * from './execution-cancellation-repository.js'
 export * from './durability-repositories.js'
 export * from './context-command-repository.js'
 export * from './context-node-inbox-repository.js'
+export * from './runtime-channel-sequence-repository.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 

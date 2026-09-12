@@ -15,6 +15,58 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test('shares durable sequence reservations across reconnect, direct reads and pending runtime dispatch', async () => {
+    let next = 100
+    const reserved = []
+    const sequences = {
+      reserve: async ({ minimum, count }) => {
+        const first = Math.max(next, minimum)
+        next = first + count
+        reserved.push(first)
+        return first
+      },
+    }
+    const pending = {
+      dispatch: async (_, first, allocate) => {
+        expect(first).toBe(102)
+        expect(await allocate()).toBe(102)
+        return 1
+      },
+    }
+    const reconnect = {
+      reconcile: async (_, __, allocate) => {
+        expect(await allocate()).toBe(100)
+        return { redelivered: 1 }
+      },
+    }
+    const fixture = setup(
+      'sequence-gateway',
+      undefined,
+      undefined,
+      {},
+      undefined,
+      pending,
+      sequences,
+      reconnect
+    )
+    try {
+      fixture.gateway.open(connection('sequence-channel', channel(1), new FakeSocket()))
+      await fixture.gateway.receive('sequence-channel', JSON.stringify(golden.hello))
+      const source = await fixture.coordination.lookup(nodeId)
+      expect(await fixture.gateway.nextSequence(source)).toBe(101)
+      await fixture.gateway.receive(
+        'sequence-channel',
+        JSON.stringify({ ...golden.heartbeat, sentAt: '2026-08-25T12:00:02.000Z' })
+      )
+      expect(await fixture.gateway.nextSequence(source)).toBe(103)
+      await expect(
+        fixture.gateway.nextSequence({ ...source, connectionId: 'stale-channel' })
+      ).rejects.toThrow('CHANNEL_UNAVAILABLE')
+      expect(reserved).toEqual([100, 101, 102, 103])
+    } finally {
+      await fixture.gateway.close()
+    }
+  })
   test.each(['frame', 'sweep', 'send', 'awaiting-hello'])(
     'stops expired credential authority through %s',
     async (trigger) => {
@@ -355,7 +407,9 @@ function setup(
   now,
   limits = {},
   messages,
-  pending
+  pending,
+  sequences,
+  reconnect
 ) {
   const reachability = new RecordingRuntimeNodeReachabilityPublisher()
   const metrics = new RecordingGatewayMetrics()
@@ -367,6 +421,8 @@ function setup(
     now: now ?? (() => new Date('2026-08-25T12:00:01.000Z')),
     messages,
     pending,
+    sequences,
+    reconnect,
     limits: {
       maxConnections: 8,
       maxConnectionsPerWorkspace: 8,
