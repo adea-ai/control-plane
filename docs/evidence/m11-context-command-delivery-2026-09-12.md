@@ -38,6 +38,12 @@ passing. SQLite is an explicit test-only dependency of the gateway package; Bun'
 lockfile refresh also updates existing workspace version metadata, without adding
 external packages. Post-rebase validation is recorded separately in the PR.
 
+No SQL migration is needed for the optional completion digest in the stored JSON.
+Older strict record readers cannot read that new field: deploy compatible readers
+before enabling this delivery writer. No deployed composition uses this writer yet.
+Rollback should stop its activation and preserve command history, not remove replay
+digests from terminal records.
+
 ## Remaining acceptance
 
 The result-store port still needs its production implementation, including Artifact

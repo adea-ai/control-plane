@@ -531,7 +531,7 @@
         "@control-plane/runtime-sdk"
       ],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
