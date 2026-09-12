@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { URL } from 'node:url'
-import { ContextProviderResolver, runContextProviderConformance } from '@control-plane/context'
+import {
+  ContextProviderResolver,
+  InMemoryContextContributionCache,
+  runContextProviderConformance,
+} from '@control-plane/context'
 import {
   CortanaContextProviderAdapter,
   CortanaContextBundleSchema,
@@ -158,6 +162,57 @@ describe('Cortana-compatible context adapter', () => {
       decisionReasons: ['POLICY_DISABLED'],
     })
   })
+
+  test('does not reuse cached evidence across pinned corpus revisions', async () => {
+    const cache = new InMemoryContextContributionCache()
+    const first = createAdapter(new FakeCortanaCompatibleServer(bundle()))
+    await new ContextProviderResolver([first], { cache }).resolve(request())
+    const changedServer = new FakeCortanaCompatibleServer(bundle({ corpusRevision: 'corpus-43' }))
+    const changed = createAdapter(changedServer, { expectedCorpusRevision: 'corpus-43' })
+    const result = await new ContextProviderResolver([changed], { cache }).resolve(request())
+    expect(changedServer.requests).toHaveLength(1)
+    expect(result.contributions[0].providerMetadata.corpusRevision).toBe('corpus-43')
+    await new ContextProviderResolver([changed], { cache }).resolve(request())
+    expect(changedServer.requests).toHaveLength(1)
+  })
+
+  test('separates cached data by adapter project, transport, client identity, and output bound', async () => {
+    for (const overrides of [
+      { mappedProjectRef: 'different-project' },
+      { transport: 'mcp' },
+      { clientIdentity: 'different-endpoint-policy' },
+      { maximumOutputBytes: 4096 },
+    ]) {
+      const cache = new InMemoryContextContributionCache()
+      await new ContextProviderResolver(
+        [createAdapter(new FakeCortanaCompatibleServer(bundle()))],
+        { cache }
+      ).resolve(request())
+      const server = new FakeCortanaCompatibleServer(bundle())
+      await new ContextProviderResolver([createAdapter(server, overrides)], { cache }).resolve(
+        request()
+      )
+      expect(server.requests).toHaveLength(1)
+    }
+  })
+
+  test('retrieves fresh data if client identity or any required revision pin is unavailable', async () => {
+    for (const key of [
+      'clientIdentity',
+      'expectedCorpusRevision',
+      'expectedMemoryRevision',
+      'expectedEmbeddingVersion',
+      'expectedRetrievalVersion',
+    ]) {
+      const server = new FakeCortanaCompatibleServer(bundle())
+      const selected = new ContextProviderResolver([createAdapter(server, { [key]: undefined })], {
+        cache: new InMemoryContextContributionCache(),
+      })
+      await selected.resolve(request())
+      await selected.resolve(request())
+      expect(server.requests).toHaveLength(2)
+    }
+  })
 })
 
 function createAdapter(server, overrides = {}) {
@@ -167,6 +222,7 @@ function createAdapter(server, overrides = {}) {
     mappedProjectRef: 'provider-project-fixture',
     transport: 'http',
     client: server,
+    clientIdentity: 'fixture-client-v1',
     expectedCorpusRevision: 'corpus-42',
     expectedMemoryRevision: 'memory-9',
     expectedEmbeddingVersion: 'embed-3',

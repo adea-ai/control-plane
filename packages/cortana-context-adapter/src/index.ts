@@ -62,6 +62,8 @@ export interface CortanaAdapterOptions {
   mappedProjectRef: string
   transport: CortanaTransport
   client: CortanaClientPort
+  /** Non-secret identity of the configured endpoint and credential-policy binding. */
+  clientIdentity?: string
   maximumOutputBytes?: number
   maximumRetries?: number
   circuitFailureThreshold?: number
@@ -122,6 +124,35 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
     }
     this.#consecutiveFailures += 1
     throw normalizeAdapterError(lastError)
+  }
+
+  cacheIdentity(request: ContextProviderRequest): string | undefined {
+    const options = this.#options
+    if (
+      !options.clientIdentity ||
+      !options.expectedCorpusRevision ||
+      !options.expectedEmbeddingVersion ||
+      !options.expectedRetrievalVersion ||
+      this.#consecutiveFailures >= options.circuitFailureThreshold ||
+      (request.policy.includeMemory && !options.expectedMemoryRevision)
+    )
+      return undefined
+    return digest(
+      JSON.stringify({
+        adapterVersion: 'cortana-context-adapter/1',
+        clientIdentity: options.clientIdentity,
+        providerRef: options.providerRef,
+        mappedProjectRef: options.mappedProjectRef,
+        transport: options.transport,
+        maximumOutputBytes: options.maximumOutputBytes,
+        maximumRetries: options.maximumRetries,
+        circuitFailureThreshold: options.circuitFailureThreshold,
+        expectedCorpusRevision: options.expectedCorpusRevision,
+        expectedMemoryRevision: options.expectedMemoryRevision,
+        expectedEmbeddingVersion: options.expectedEmbeddingVersion,
+        expectedRetrievalVersion: options.expectedRetrievalVersion,
+      })
+    )
   }
 
   #request(request: ContextProviderRequest): CortanaClientRequest {

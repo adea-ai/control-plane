@@ -27,6 +27,13 @@ export type ContextProviderRequest = z.output<typeof RequestSchema>
 
 export interface ContextProviderDriver {
   readonly readModel: ContextProviderReadModel
+  /**
+   * SHA-256 digest identifying the pinned data revisions and adapter configuration
+   * validated by retrieve. Change it whenever either changes. Return undefined
+   * when that identity cannot be established; such reads are never cached.
+   * Do not include credentials or source content in the identity.
+   */
+  cacheIdentity?(request: ContextProviderRequest): string | undefined
   retrieve(request: ContextProviderRequest): Promise<ContextContribution[]>
 }
 
@@ -105,9 +112,18 @@ export class ContextProviderResolver {
           throw new ContextProviderResolutionError('PROVIDER_REVOKED')
         if (provider.readModel.health.status === 'unavailable')
           throw new ContextProviderResolutionError('PROVIDER_UNAVAILABLE')
-        const cacheKey = this.#cacheKey(provider, request)
-        const cached = await this.#cache?.get(cacheKey)
-        if (cached) {
+        const identity = this.#cache ? provider.cacheIdentity?.(request) : undefined
+        const cacheKey =
+          identity === undefined
+            ? undefined
+            : this.#cacheKey(provider, request, DigestSchema.parse(identity))
+        const cached = cacheKey === undefined ? undefined : await this.#cache?.get(cacheKey)
+        if (
+          cached &&
+          identity !== undefined &&
+          provider.cacheIdentity?.(request) === identity &&
+          this.#cacheKey(provider, request, identity) === cacheKey
+        ) {
           const normalizedCached = this.#validate(provider, request, cached)
           return this.#included(provider, normalizedCached, [
             'CACHE_HIT',
@@ -119,7 +135,13 @@ export class ContextProviderResolver {
           request.policy.maximumLatencyMs
         )
         const normalized = this.#validate(provider, request, contributions)
-        await this.#cache?.set(cacheKey, normalized)
+        if (
+          cacheKey !== undefined &&
+          identity !== undefined &&
+          provider.cacheIdentity?.(request) === identity &&
+          this.#cacheKey(provider, request, identity) === cacheKey
+        )
+          await this.#cache?.set(cacheKey, normalized)
         return this.#included(provider, normalized, [
           'PROVIDER_SELECTED',
           ...this.#selectionReasons(provider, request),
@@ -166,15 +188,20 @@ export class ContextProviderResolver {
     }
   }
 
-  #cacheKey(provider: ContextProviderDriver, request: ContextProviderRequest): string {
+  #cacheKey(
+    provider: ContextProviderDriver,
+    request: ContextProviderRequest,
+    providerIdentity: string
+  ): string {
     const { now, ...requestIdentity } = request
     return digest(
       JSON.stringify({
         provider: provider.readModel.definition,
         connection: provider.readModel.connection,
+        providerIdentity,
         request: requestIdentity,
         nowBucket: Math.floor(Date.parse(now) / (request.policy.maximumAgeSeconds * 1_000 || 1)),
-        adapterVersion: 'context-provider-resolver/3',
+        adapterVersion: 'context-provider-resolver/4',
       })
     )
   }
@@ -365,6 +392,7 @@ export function createFakeContextProvider(
   })
   return {
     readModel,
+    cacheIdentity: () => digest(JSON.stringify({ adapterVersion: 'fake-provider/1', options })),
     async retrieve() {
       if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
       if (options.health === 'unavailable')

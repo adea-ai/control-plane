@@ -202,6 +202,110 @@ describe('optional context provider resolution', () => {
     expect(retrievals).toBe(2)
   })
 
+  test('does not cache drivers without an authoritative cache identity', async () => {
+    const provider = fake('K')
+    let retrievals = 0
+    const selected = resolver(
+      [
+        {
+          readModel: provider.readModel,
+          async retrieve(input) {
+            retrievals += 1
+            return provider.retrieve(input)
+          },
+        },
+      ],
+      { cache: new InMemoryContextContributionCache() }
+    )
+    await selected.resolve(request())
+    await selected.resolve(request())
+    expect(retrievals).toBe(2)
+  })
+
+  test('invalidates cached data when the authoritative revision identity changes', async () => {
+    const provider = fake('K')
+    let revision = 'one'
+    let retrievals = 0
+    const selected = resolver(
+      [
+        {
+          ...provider,
+          cacheIdentity: () => contentDigest(revision),
+          async retrieve(input) {
+            retrievals += 1
+            return (await provider.retrieve(input)).map((entry) => ({ ...entry, revision }))
+          },
+        },
+      ],
+      { cache: new InMemoryContextContributionCache() }
+    )
+    await selected.resolve(request())
+    revision = 'two'
+    const result = await selected.resolve(request())
+    await selected.resolve(request())
+    expect(result.contributions[0].revision).toBe('two')
+    expect(retrievals).toBe(2)
+  })
+
+  test('does not populate cache when the revision changes during retrieval', async () => {
+    const provider = fake('K')
+    let revision = 0
+    let stores = 0
+    const selected = resolver(
+      [
+        {
+          ...provider,
+          cacheIdentity: () => contentDigest(String(revision)),
+          async retrieve(input) {
+            revision += 1
+            return provider.retrieve(input)
+          },
+        },
+      ],
+      {
+        cache: {
+          get: async () => undefined,
+          set: async () => {
+            stores += 1
+          },
+        },
+      }
+    )
+    await selected.resolve(request())
+    expect(stores).toBe(0)
+  })
+
+  test('rechecks revision identity after an asynchronous cache lookup', async () => {
+    const provider = fake('K')
+    const oldEntries = await provider.retrieve(request())
+    let revision = 'old'
+    let retrievals = 0
+    const selected = resolver(
+      [
+        {
+          ...provider,
+          cacheIdentity: () => contentDigest(revision),
+          async retrieve(input) {
+            retrievals += 1
+            return (await provider.retrieve(input)).map((entry) => ({ ...entry, revision }))
+          },
+        },
+      ],
+      {
+        cache: {
+          get: async () => {
+            revision = 'new'
+            return oldEntries
+          },
+          set: async () => undefined,
+        },
+      }
+    )
+    const result = await selected.resolve(request())
+    expect(retrievals).toBe(1)
+    expect(result.contributions[0].revision).toBe('new')
+  })
+
   test('does not reuse a contribution across execution locations', async () => {
     const provider = fake('K')
     const locations = []
