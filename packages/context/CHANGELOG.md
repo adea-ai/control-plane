@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/adea-ai/control-plane/compare/context-v1.4.1...context-v1.4.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* **context:** bind contribution cache to execution location ([#460](https://github.com/adea-ai/control-plane/issues/460)) ([5191016](https://github.com/adea-ai/control-plane/commit/51910164c8dd63761243d899042ba05fed424b7a))
+
 ## [1.4.1](https://github.com/adea-ai/control-plane/compare/context-v1.4.0...context-v1.4.1) (2026-09-10)
 
 
