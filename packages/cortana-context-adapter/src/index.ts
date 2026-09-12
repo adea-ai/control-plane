@@ -244,42 +244,65 @@ export class CortanaContextProviderAdapter implements ContextProviderDriver {
   }
 
   #validateBundle(raw: unknown, request: ContextProviderRequest): CortanaContextBundle {
-    if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > this.#options.maximumOutputBytes)
-      throw new CortanaContextAdapterError('CORTANA_OUTPUT_LIMIT')
-    const result = CortanaContextBundleSchema.safeParse(raw)
-    if (!result.success) throw new CortanaContextAdapterError('CORTANA_BUNDLE_INVALID')
-    const bundle = result.data
-    if (bundle.scopeDigest !== request.scopeDigest)
-      throw new CortanaContextAdapterError('CORTANA_SCOPE_MISMATCH')
-    const expectedPins = [
-      [this.#options.expectedCorpusRevision, bundle.corpusRevision],
-      [this.#options.expectedMemoryRevision, bundle.memoryRevision],
-      [this.#options.expectedEmbeddingVersion, bundle.embeddingVersion],
-      [this.#options.expectedRetrievalVersion, bundle.retrievalVersion],
-    ]
-    if (expectedPins.some(([expected, actual]) => expected !== undefined && expected !== actual))
-      throw new CortanaContextAdapterError('CORTANA_REVISION_MISMATCH')
-    if (bundle.bundleDigest !== bundleDigest(bundle))
-      throw new CortanaContextAdapterError('CORTANA_DIGEST_MISMATCH')
-    if (
-      [...bundle.evidence, ...bundle.memories].some(
-        (slice) => slice.contentDigest !== digest(slice.content)
-      )
-    )
-      throw new CortanaContextAdapterError('CORTANA_CONTENT_DIGEST_MISMATCH')
-    if (
-      bundle.evidence.reduce(sumTokens, 0) + bundle.memories.reduce(sumTokens, 0) !==
-      bundle.tokenCount
-    )
-      throw new CortanaContextAdapterError('CORTANA_TOKEN_MISMATCH')
-    if (bundle.tokenCount > request.policy.maximumTokens)
-      throw new CortanaContextAdapterError('CORTANA_BUDGET_EXCEEDED')
-    if (!request.policy.includeEvidence && bundle.evidence.length > 0)
-      throw new CortanaContextAdapterError('CORTANA_EVIDENCE_NOT_AUTHORIZED')
-    if (!request.policy.includeMemory && bundle.memories.length > 0)
-      throw new CortanaContextAdapterError('CORTANA_MEMORY_NOT_AUTHORIZED')
-    return bundle
+    return validateCortanaContextBundle(raw, request, this.#options)
   }
+}
+
+export type CortanaBundleValidationOptions = Pick<
+  CortanaAdapterOptions,
+  | 'maximumOutputBytes'
+  | 'expectedCorpusRevision'
+  | 'expectedMemoryRevision'
+  | 'expectedEmbeddingVersion'
+  | 'expectedRetrievalVersion'
+>
+
+export function validateCortanaContextBundle(
+  raw: unknown,
+  request: {
+    scopeDigest: string
+    policy: Pick<
+      ContextProviderRequest['policy'],
+      'maximumTokens' | 'includeEvidence' | 'includeMemory'
+    >
+  },
+  options: CortanaBundleValidationOptions = {}
+): CortanaContextBundle {
+  if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > (options.maximumOutputBytes ?? 524288))
+    throw new CortanaContextAdapterError('CORTANA_OUTPUT_LIMIT')
+  const result = CortanaContextBundleSchema.safeParse(raw)
+  if (!result.success) throw new CortanaContextAdapterError('CORTANA_BUNDLE_INVALID')
+  const bundle = result.data
+  if (bundle.scopeDigest !== request.scopeDigest)
+    throw new CortanaContextAdapterError('CORTANA_SCOPE_MISMATCH')
+  const expectedPins = [
+    [options.expectedCorpusRevision, bundle.corpusRevision],
+    [options.expectedMemoryRevision, bundle.memoryRevision],
+    [options.expectedEmbeddingVersion, bundle.embeddingVersion],
+    [options.expectedRetrievalVersion, bundle.retrievalVersion],
+  ]
+  if (expectedPins.some(([expected, actual]) => expected !== undefined && expected !== actual))
+    throw new CortanaContextAdapterError('CORTANA_REVISION_MISMATCH')
+  if (bundle.bundleDigest !== bundleDigest(bundle))
+    throw new CortanaContextAdapterError('CORTANA_DIGEST_MISMATCH')
+  if (
+    [...bundle.evidence, ...bundle.memories].some(
+      (slice) => slice.contentDigest !== digest(slice.content)
+    )
+  )
+    throw new CortanaContextAdapterError('CORTANA_CONTENT_DIGEST_MISMATCH')
+  if (
+    bundle.evidence.reduce(sumTokens, 0) + bundle.memories.reduce(sumTokens, 0) !==
+    bundle.tokenCount
+  )
+    throw new CortanaContextAdapterError('CORTANA_TOKEN_MISMATCH')
+  if (bundle.tokenCount > request.policy.maximumTokens)
+    throw new CortanaContextAdapterError('CORTANA_BUDGET_EXCEEDED')
+  if (!request.policy.includeEvidence && bundle.evidence.length > 0)
+    throw new CortanaContextAdapterError('CORTANA_EVIDENCE_NOT_AUTHORIZED')
+  if (!request.policy.includeMemory && bundle.memories.length > 0)
+    throw new CortanaContextAdapterError('CORTANA_MEMORY_NOT_AUTHORIZED')
+  return bundle
 }
 
 export function createContextBundle(

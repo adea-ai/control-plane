@@ -138,6 +138,7 @@
       "version": "1.6.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
+        "@control-plane/cortana-context-adapter": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/managed-pi-adapter": "workspace:*",
         "@control-plane/object-store": "workspace:*",

@@ -580,6 +580,7 @@
       "exports": [],
       "workspaceDependencies": [
         "@control-plane/bootstrap",
+        "@control-plane/cortana-context-adapter",
         "@control-plane/domain",
         "@control-plane/managed-pi-adapter",
         "@control-plane/object-store",

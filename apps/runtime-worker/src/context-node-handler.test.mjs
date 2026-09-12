@@ -8,8 +8,99 @@ import {
   SqliteContextNodeInboxRepository,
 } from '@control-plane/sqlite-persistence'
 import { ContextNodeHandler } from './context-node-handler.ts'
+import { ContextHttpProviderDriver } from './context-http-driver.ts'
+import { createContextBundle } from '@control-plane/cortana-context-adapter'
 
 const now = '2026-09-12T12:00:00.000Z'
+
+test('node handler uses a bound HTTP provider and replays its durable bundle after restart', () =>
+  fixture(async (options, input, reopen) => {
+    const at = new Date().toISOString()
+    input = {
+      ...input,
+      issuedAt: at,
+      sentAt: at,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      payload: {
+        version: 1,
+        parameters: {
+          ...input.payload.parameters,
+          mappedProjectRef: 'project:bound',
+          capability: 'evidenceSearch',
+          maximumTokens: 100,
+          maximumAgeSeconds: 60,
+          includeEvidence: true,
+          includeMemory: false,
+        },
+      },
+    }
+    input.payloadHash = contextCommandSemanticHash(input)
+    options.now = () => new Date()
+    options.timeoutMs = 1000
+    let calls = 0
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (incoming) => {
+        const request = await incoming.json()
+        expect(request.mappedProjectRef).toBe('project:bound')
+        expect(request.operationId).toBe(input.payload.parameters.operationId)
+        calls++
+        return Response.json(
+          createContextBundle({
+            contractVersion: '1.0.0',
+            bundleId: 'http-node-bundle',
+            scopeDigest: request.scopeDigest,
+            corpusRevision: 'corpus-1',
+            retrievalVersion: 'retrieval-1',
+            createdAt: new Date().toISOString(),
+            tokenCount: 0,
+            degraded: false,
+            omittedCount: 0,
+            evidence: [],
+            memories: [],
+          })
+        )
+      },
+    })
+    try {
+      options.driver = new ContextHttpProviderDriver({
+        workspaceId: input.workspaceId,
+        nodeId: input.nodeId,
+        providerRef: input.providerRef,
+        mappedProjectRef: 'project:bound',
+        http: { endpoint: `http://127.0.0.1:${server.port}/read`, allowLoopbackHttp: true },
+        validation: { expectedCorpusRevision: 'corpus-1' },
+      })
+      expect((await new ContextNodeHandler(options).execute(input)).result.bundleId).toBe(
+        'http-node-bundle'
+      )
+      await reopen()
+      expect((await new ContextNodeHandler(options).execute(input)).result.bundleId).toBe(
+        'http-node-bundle'
+      )
+      expect(calls).toBe(1)
+      const stored = await options.repository.get(input.workspaceId, input.nodeId, input.commandId)
+      expect(await options.driver.reconcile(stored.command, new AbortController().signal)).toEqual({
+        status: 'unknown',
+      })
+      expect(calls).toBe(1)
+      const changed = structuredClone(input)
+      changed.payload.parameters.mappedProjectRef = 'project:other'
+      changed.payloadHash = contextCommandSemanticHash(changed)
+      const wrong = {
+        ...stored.command,
+        payloadHash: changed.payloadHash,
+        commandEnvelope: changed,
+      }
+      await expect(options.driver.execute(wrong, new AbortController().signal)).rejects.toThrow(
+        'BINDING_MISMATCH'
+      )
+      expect(calls).toBe(1)
+    } finally {
+      await server.stop(true)
+    }
+  }))
 
 test('concurrent node redelivery does not execute an admitted provider twice', () =>
   fixture(async (options, input) => {

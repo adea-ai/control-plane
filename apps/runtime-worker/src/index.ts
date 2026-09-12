@@ -30,3 +30,4 @@ export const start = (options: RuntimeWorkerStartOptions = {}) => {
 
 export * from './hosted-managed-pi.js'
 export * from './context-node-handler.js'
+export * from './context-http-driver.js'

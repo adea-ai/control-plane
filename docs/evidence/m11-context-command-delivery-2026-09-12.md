@@ -80,6 +80,19 @@ streaming bounds, malformed responses and an already-aborted caller. This does
 not establish a live Cortana API contract; endpoint compatibility, node-driver
 binding, scoped credentials and production composition still require validation.
 
+ContextHttpProviderDriver now connects the node handler to that concrete client.
+Its trusted configuration binds workspace, node, provider and mapped project;
+command payloads cannot select endpoints or credentials. It uses the same extracted
+bundle validator as the adapter (scope, revision pins, digests, token accounting,
+evidence/memory authorization), additionally checking age and bounding inline
+result bytes. A real local HTTP plus SQLite test verifies one read, durable bundle
+replay after database reconstruction, and rejection of a changed project before
+network access. The HTTP contract has no operation-status endpoint: reconciliation
+explicitly returns unknown without issuing another read. No automatic recovery of
+an uncertain external HTTP operation is claimed. Full suite: 1,335 passing tests
+(1,128 unit, 127 E2E, 80 smoke); lint/boundaries and format pass. The node HTTP
+driver still requires production registry, grant-authority and socket composition.
+
 The ObjectStore-backed result implementation now verifies command-scoped metadata,
 bounded JSON bytes, checksums, and completion digests before returning a deterministic
 Artifact ID. Readback is mandatory; uploaded references are resolved only through
