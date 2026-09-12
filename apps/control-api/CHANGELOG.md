@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.6.2...control-api-v1.7.0) (2026-09-12)
+
+
+### Features
+
+* local-profile-marketplace-registry ([#448](https://github.com/adea-ai/control-plane/issues/448)) ([87bb3c1](https://github.com/adea-ai/control-plane/commit/87bb3c159626cddfeb36f0024abe64b1e1f3428f))
+
 ## [1.6.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.6.1...control-api-v1.6.2) (2026-09-10)
 
 
