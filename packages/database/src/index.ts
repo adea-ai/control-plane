@@ -27,6 +27,15 @@ export {
   PostgresStatePromotionProposalRepository,
 } from './project-state-repository.js'
 export { PostgresReconciliationCheckpointRepository } from './reconciliation-checkpoint-repository.js'
+export {
+  PostgresReconciliationEffects,
+  PostgresReconciliationSource,
+  observeRuntime,
+  type PostgresReconciliationEffectsOptions,
+  type PostgresReconciliationSourceOptions,
+  type ReconciliationOutcome,
+  type WorkflowSubmitInput,
+} from './reconciliation-projection.js'
 export { PostgresReleaseAuditRepository } from './release-audit-repository.js'
 export { PostgresRuntimeConnectionRepository } from './runtime-connection-repository.js'
 export { PostgresRuntimeHealthIngestionService } from './runtime-health-ingestion.js'

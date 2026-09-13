@@ -459,3 +459,4 @@ function digest(bytes: Uint8Array): `sha256:${string}` {
 export { sqliteSchema }
 export * from './context-command-grant-repository.js'
 export * from './context-provider-registration-repository.js'
+export * from './reconciliation-projection.js'

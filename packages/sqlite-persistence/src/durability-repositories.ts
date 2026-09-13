@@ -178,6 +178,94 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
       return archived
     })
   }
+
+  /**
+   * Bounded maintenance read for reconciliation: how many undelivered
+   * (unarchived, pending or failed) events an execution still owes, capped at
+   * `limit`. The count is a lower bound when the cap is reached.
+   */
+  summarizePendingDelivery(executionId: string, limit: number): Promise<PendingDeliverySummary> {
+    ExecutionEventSchema.shape.executionId.parse(executionId)
+    validLimit(limit)
+    return this.provider.transaction(async (transaction) => {
+      const pending = filterPendingDelivery(await listEvents(transaction), executionId)
+      if (pending.length === 0) return { pendingCount: 0 }
+      const oldest = pending[0]
+      return {
+        pendingCount: pending.slice(0, limit).length,
+        ...(oldest === undefined ? {} : { oldestPendingAt: oldest.recordedAt }),
+      }
+    })
+  }
+
+  /**
+   * Re-arms delivery for an execution's undelivered events that are not yet
+   * due, without attempting delivery itself: publication versions move
+   * forward via compare-and-set so a concurrent dispatcher never races.
+   * Returns how many events were re-armed.
+   */
+  rearmPendingDelivery(executionId: string, dueAt: string, limit: number): Promise<number> {
+    ExecutionEventSchema.shape.executionId.parse(executionId)
+    if (Number.isNaN(Date.parse(dueAt))) throw new Error('INVALID_TIMESTAMP')
+    validLimit(limit)
+    return this.provider.transaction(async (transaction) => {
+      const pending = filterPendingDelivery(await listEvents(transaction), executionId)
+        .filter(
+          (event) =>
+            event.publication.nextAttemptAt === undefined || event.publication.nextAttemptAt > dueAt
+        )
+        .slice(0, limit)
+      let rearmed = 0
+      for (const event of pending) {
+        const record = await transaction.get(namespaces.events, recordId(event.eventId))
+        if (record === undefined) continue
+        const updated = ExecutionEventSchema.parse({
+          ...event,
+          publication: {
+            ...event.publication,
+            version: event.publication.version + 1,
+            nextAttemptAt: dueAt,
+          },
+        })
+        try {
+          await transaction.put({
+            namespace: namespaces.events,
+            id: recordId(event.eventId),
+            expectedRevision: record.revision,
+            value: json(updated),
+          })
+          rearmed += 1
+        } catch (error) {
+          // A concurrent publisher won the CAS; leave its schedule untouched.
+          if (!(error instanceof Error && error.name === 'SqlitePersistenceError')) throw error
+        }
+      }
+      return rearmed
+    })
+  }
+}
+
+export interface PendingDeliverySummary {
+  /** Lower bound of undelivered events, capped at the requested scan limit. */
+  readonly pendingCount: number
+  readonly oldestPendingAt?: string
+}
+
+async function listEvents(transaction: RecordTransaction): Promise<ExecutionEvent[]> {
+  return (await transaction.list(namespaces.events)).map((record) =>
+    ExecutionEventSchema.parse(record.value)
+  )
+}
+
+function filterPendingDelivery(events: readonly ExecutionEvent[], executionId: string) {
+  return events
+    .filter(
+      (event) =>
+        event.executionId === executionId &&
+        event.archivedAt === undefined &&
+        ['pending', 'failed'].includes(event.publication.status)
+    )
+    .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
 }
 
 export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
@@ -414,6 +502,25 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
             : left.issuedAt.localeCompare(right.issuedAt)
         )
         .slice(0, limit)
+    )
+  }
+
+  /**
+   * Bounded maintenance read for reconciliation: the most recent runtime
+   * command issued for an attempt. At most one row is returned.
+   */
+  latestForAttempt(attemptId: string): Promise<RuntimeCommandRecord | undefined> {
+    RuntimeCommandRecordSchema.shape.attemptId.parse(attemptId)
+    return this.provider.transaction(
+      async (transaction) =>
+        (await transaction.list(namespaces.runtimeCommands))
+          .map((record) => RuntimeCommandRecordSchema.parse(record.value))
+          .filter((command) => command.attemptId === attemptId)
+          .toSorted((left, right) =>
+            left.issuedAt === right.issuedAt
+              ? right.commandId.localeCompare(left.commandId)
+              : right.issuedAt.localeCompare(left.issuedAt)
+          )[0]
     )
   }
 }

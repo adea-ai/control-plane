@@ -32,7 +32,10 @@ import {
   PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
   PostgresReconciliationCheckpointRepository,
+  PostgresReconciliationEffects,
+  PostgresReconciliationSource,
   PostgresRuntimeCommandRepository,
+  PostgresRuntimeConnectionRepository,
   PostgresRuntimeDiscoveryRepository,
   type PostgresConnection,
 } from '@control-plane/database'
@@ -142,12 +145,19 @@ export interface HostedServerManifest {
 /**
  * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
  * composition: absent configuration enables nothing, and invalid bounds fail
- * closed at composition construction. The observation source and remediation
- * effects must be supplied by the composition caller.
+ * closed at composition construction. Either compose the production observation
+ * projection (`projection: 'observation'`) or supply an explicit source and
+ * effects pair; the two forms are mutually exclusive.
  */
 export interface HostedReconciliationConfiguration {
-  readonly source: ReconciliationSource
-  readonly effects: ReconciliationEffects
+  /**
+   * Composes the production `PostgresReconciliationSource`/`Effects` pair from
+   * this composition's own PostgreSQL repositories: bounded stale-candidate
+   * scanning, lifecycle-respecting remediation, lost-ACK parking.
+   */
+  readonly projection?: 'observation'
+  readonly source?: ReconciliationSource
+  readonly effects?: ReconciliationEffects
   /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
   readonly intervalMs: number
   /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
@@ -204,6 +214,10 @@ export class HostedServerControlPlaneComposition {
   readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
   readonly reconciliationService: ExecutionReconciliationService | undefined
+  /** The composed observation source, exposed so the wiring is externally verifiable. */
+  readonly reconciliationSource: ReconciliationSource | undefined
+  /** The composed remediation effects, exposed so the wiring is externally verifiable. */
+  readonly reconciliationEffects: ReconciliationEffects | undefined
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
@@ -367,18 +381,56 @@ export class HostedServerControlPlaneComposition {
     this.executionLifecycleActivities = activities
     // Reconciliation scheduling is explicit composition configuration: absent
     // configuration enables nothing, and invalid bounds fail closed above.
+    // `projection: 'observation'` composes the production adapters over this
+    // composition's own PostgreSQL repositories.
     if (options.reconciliation !== undefined) {
       const reconciliation = options.reconciliation
+      if (
+        reconciliation.projection !== undefined &&
+        (reconciliation.source !== undefined || reconciliation.effects !== undefined)
+      ) {
+        throw new Error('HOSTED_RECONCILIATION_CONFIGURATION_CONFLICT')
+      }
+      if (
+        reconciliation.projection === undefined &&
+        (reconciliation.source === undefined || reconciliation.effects === undefined)
+      ) {
+        throw new Error('HOSTED_RECONCILIATION_CONFIGURATION_INVALID')
+      }
+      const commandAcceptance = new PostgresCommandAcceptanceRepository(this.connection.database)
+      const cancellations = new PostgresExecutionCancellationRepository(this.connection.database)
+      const source =
+        reconciliation.source ??
+        new PostgresReconciliationSource({
+          executions,
+          runtimeCommands,
+          runtimeConnections: new PostgresRuntimeConnectionRepository(this.connection.database),
+          commands: commandAcceptance,
+          events: executionEvents,
+        })
+      const effects =
+        reconciliation.effects ??
+        new PostgresReconciliationEffects({
+          executions,
+          commands: commandAcceptance,
+          events: executionEvents,
+          workflowSubmitter: new RestateExecutionWorkflowDispatcher({
+            ingressUrl: restateIngressUrl,
+          }),
+          cancellations,
+        })
       this.reconciliationService = new ExecutionReconciliationService({
         repository: new PostgresReconciliationCheckpointRepository(this.connection.database),
-        source: reconciliation.source,
-        effects: reconciliation.effects,
+        source,
+        effects,
         ...(reconciliation.staleAfterMs === undefined
           ? {}
           : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
         ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
         ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
       })
+      this.reconciliationSource = source
+      this.reconciliationEffects = effects
       this.#reconciliationScheduler = new ReconciliationScheduler({
         service: this.reconciliationService,
         intervalMs: reconciliation.intervalMs,
