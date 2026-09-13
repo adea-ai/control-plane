@@ -531,9 +531,9 @@ test('composed gateway and node deliver a context command end to end from admini
     // that authorized before the revoke may still deliver one frame. The node must fail
     // closed on it as a grant denial, and the received/httpReads assertions above prove
     // no execution, read, or new dispatch occurred for that frame.
-    expect(
-      channelErrors.every((error) => error instanceof ContextCommandGrantDeniedError)
-    ).toBe(true)
+    expect(channelErrors.every((error) => error instanceof ContextCommandGrantDeniedError)).toBe(
+      true
+    )
   } finally {
     for (const socket of sockets) socket.close()
     for (const gateway of gateways) await gateway.composition.close()
