@@ -3100,6 +3100,23 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       (await repository.queryAfter(executionId, 1, 10)).map(({ sequence }) => sequence)
     ).toEqual([2, 3])
 
+    // Deterministic in any environment: quarantine pre-existing pending events that
+    // do not belong to this test, so the batch delivers exactly the three own events.
+    const ownEventIds = new Set([
+      'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      'evt_01BRZ3NDEKTSV4RRFFQ69G5FAV',
+      'evt_01CRZ3NDEKTSV4RRFFQ69G5FAV',
+    ])
+    for (const stale of await repository.queryPending(1_000)) {
+      if (ownEventIds.has(stale.eventId)) continue
+      await service.quarantinePublication({
+        eventId: stale.eventId,
+        expectedPublicationVersion: stale.publication.version,
+        quarantinedAt: '2026-08-24T11:03:00.000Z',
+        errorReference: 'test://superseded-by-isolated-dispatch',
+        attempted: false,
+      })
+    }
     const delivered = []
     const dispatcher = new ExecutionEventDispatcher({
       repository,
