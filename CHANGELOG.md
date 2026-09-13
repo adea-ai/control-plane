@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.19.0...workspace-v1.20.0) (2026-09-13)
+
+
+### Features
+
+* **domain:** carry correlation on runtime command records ([#484](https://github.com/adea-ai/control-plane/issues/484)) ([03c74da](https://github.com/adea-ai/control-plane/commit/03c74dadae2dd26a3a8b030fcc5f0a1595bb7b46))
+* **object-store:** separate artifact environments by key prefix ([#483](https://github.com/adea-ai/control-plane/issues/483)) ([cff5a03](https://github.com/adea-ai/control-plane/commit/cff5a03fc6f47c1bda0381bf27e14ac6b016b1e9))
+
 ## [1.19.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.18.0...workspace-v1.19.0) (2026-09-13)
 
 

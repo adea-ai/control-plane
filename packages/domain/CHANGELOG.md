@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/domain-v1.9.0...domain-v1.10.0) (2026-09-13)
+
+
+### Features
+
+* **domain:** carry correlation on runtime command records ([#484](https://github.com/adea-ai/control-plane/issues/484)) ([03c74da](https://github.com/adea-ai/control-plane/commit/03c74dadae2dd26a3a8b030fcc5f0a1595bb7b46))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/domain-v1.8.0...domain-v1.9.0) (2026-09-13)
 
 
