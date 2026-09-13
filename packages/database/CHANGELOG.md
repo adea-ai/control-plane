@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/adea-ai/control-plane/compare/database-v1.15.0...database-v1.15.1) (2026-09-13)
+
+
+### Tests
+
+* **database:** scope dispatcher cleanup to foreign pending events ([#494](https://github.com/adea-ai/control-plane/issues/494)) ([b7518af](https://github.com/adea-ai/control-plane/commit/b7518aff3c190fd88427d6cda596d9452cd158d7))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/database-v1.14.0...database-v1.15.0) (2026-09-13)
 
 

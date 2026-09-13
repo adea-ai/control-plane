@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.1...workspace-v1.22.2) (2026-09-13)
+
+
+### Tests
+
+* **database:** scope dispatcher cleanup to foreign pending events ([#494](https://github.com/adea-ai/control-plane/issues/494)) ([b7518af](https://github.com/adea-ai/control-plane/commit/b7518aff3c190fd88427d6cda596d9452cd158d7))
+
 ## [1.22.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.0...workspace-v1.22.1) (2026-09-13)
 
 
