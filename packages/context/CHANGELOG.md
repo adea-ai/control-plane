@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/context-v1.5.1...context-v1.6.0) (2026-09-13)
+
+
+### Features
+
+* **context:** deliver and reconcile authenticated gateway commands ([#476](https://github.com/adea-ai/control-plane/issues/476)) ([d8d8074](https://github.com/adea-ai/control-plane/commit/d8d8074d1d05aa0523e206e5ffed18fe3452de95))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/context-v1.5.0...context-v1.5.1) (2026-09-12)
 
 
