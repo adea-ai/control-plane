@@ -24,6 +24,53 @@ const queued = {
   updatedAt: '2026-08-25T12:00:00.000Z',
 }
 
+describe('runtime command correlation', () => {
+  const envelope = (extra) => ({
+    type: 'command',
+    commandId: queued.commandId,
+    executionId: queued.executionId,
+    attemptId: queued.attemptId,
+    nodeId: queued.nodeId,
+    runtimeConnectionId: queued.runtimeConnectionId,
+    workspaceId: queued.workspaceId,
+    idempotencyKey: queued.idempotencyKey,
+    payloadHash: queued.payloadHash,
+    issuedAt: queued.issuedAt,
+    expiresAt: queued.expiresAt,
+    payload: { version: 1, parameters: {} },
+    ...extra,
+  })
+
+  test('carries envelope-provided correlation and never invents missing members', () => {
+    const withTrace = createQueuedRuntimeCommandRecord(
+      envelope({ traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
+      queued.createdAt
+    )
+    expect(withTrace.correlation).toEqual({ traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV' })
+
+    const full = createQueuedRuntimeCommandRecord(
+      envelope({
+        traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      }),
+      queued.createdAt
+    )
+    expect(full.correlation).toEqual({
+      traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    })
+
+    const bare = createQueuedRuntimeCommandRecord(envelope({}), queued.createdAt)
+    expect(bare.correlation).toBeUndefined()
+  })
+})
+
 describe('runtime command ledger', () => {
   test('constructs the canonical queued record from a validated transport envelope', () => {
     expect(

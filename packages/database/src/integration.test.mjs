@@ -1527,6 +1527,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       idempotencyKey: 'runtime-command:integration:1',
       payloadHash: `sha256:${'6'.repeat(64)}`,
       commandEnvelope: { type: 'command', payload: { operation: 'runtime.execute' } },
+      correlation: {
+        traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAM',
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAM',
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAM',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAM',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAM',
+      },
       issuedAt: '2026-08-24T23:00:01.000Z',
       expiresAt: '2026-08-24T23:05:01.000Z',
       status: 'queued',
@@ -1543,6 +1550,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await restarted.listDispatchable(nodeId, '2026-08-24T23:00:02.000Z', 10)).toEqual([
       record,
     ])
+    // Continuity: the durable runtime command carries the accepted execution's
+    // correlation identity, so dispatch traces link back to the original request.
+    const durableCommand = await restarted.get(record.commandId)
+    expect(durableCommand?.correlation).toEqual({
+      traceId: record.correlation.traceId,
+      requestId: execution.correlation.requestId,
+      projectId: execution.correlation.projectId,
+      taskId: execution.correlation.taskId,
+      agentId: execution.correlation.agentId,
+    })
     expect(await restarted.compareAndSet(1, { ...record, version: 2 })).toBe(true)
     expect(await restarted.compareAndSet(1, { ...record, version: 3 })).toBe(false)
     expect(await isolated.application.select().from(runtimeCommands)).toHaveLength(1)

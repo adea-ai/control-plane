@@ -32,6 +32,8 @@ export const runtimeCommands = pgTable(
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
     payloadHash: varchar('payload_hash', { length: 71 }).notNull(),
     commandEnvelope: jsonb('command_envelope').notNull(),
+    /** Optional dispatch correlation (trace/request/project/task/agent). */
+    correlation: jsonb('correlation'),
     issuedAt: timestamp('issued_at', { mode: 'date', withTimezone: true }).notNull(),
     expiresAt: timestamp('expires_at', { mode: 'date', withTimezone: true }).notNull(),
     status: runtimeCommandStatus('status').notNull(),

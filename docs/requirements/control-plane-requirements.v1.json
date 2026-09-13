@@ -1536,7 +1536,7 @@
       "heading": "Execution trace continuity (section 17)",
       "requirement": "Preserve request correlation through Control Plane inbox, provider selection/read/validation/contribution, ContextPackage/ExecutionPlan, Execution/Attempt, Restate, optional graph, direct or remote runtime commands and normalized events; correlate provider write/reconciliation separately and expose references for external consumer continuation.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "observability",
       "lane": "recovery/chaos",
       "issueRefs": [186, 188, 194, 195],
@@ -1544,13 +1544,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "packages/domain/src/runtime-command.ts"
+        },
+        {
+          "kind": "document",
+          "path": "packages/database/src/integration.test.mjs"
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "observability",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+        "disposition": "Runtime command records now carry first-class optional correlation (trace/request/project/task/agent) extracted from the dispatch envelope, persisted through a PostgreSQL JSONB column (migration 0046) and SQLite JSON records, with integration continuity assertions tying the durable command to the accepted execution correlation. Provider reads always carry operation identity and deadlines (landed in #481). Remaining: thread the original accepted request identity (requestId and request trace) into the runtime dispatch envelope, which currently derives trc(executionId)."
       }
     },
     {
