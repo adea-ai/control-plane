@@ -69,10 +69,71 @@ export type ContextProviderErrorCode =
   | 'PROVIDER_OUTPUT_STALE'
   | 'PROVIDER_BUDGET_EXCEEDED'
 
+/** Additive failure metadata for CP-CONS-028: bounded, never containing payload content. */
+export interface ContextProviderFailureMetadata {
+  /** Whether retrying the same read could plausibly succeed. */
+  readonly retryable: boolean
+  /** Where the failure originated. */
+  readonly source: 'contract' | 'driver' | 'delivery'
+  /** Bounded operator guidance for the failure class. */
+  readonly remediation: string
+  /** For OUTPUT_INVALID: distinguishes malformed payloads from contract mismatches. */
+  readonly invalidity?: 'malformed' | 'contract_mismatch'
+}
+
+const failureMetadata: Record<
+  ContextProviderErrorCode,
+  Omit<ContextProviderFailureMetadata, 'invalidity'>
+> = {
+  PROVIDER_UNAVAILABLE: {
+    retryable: true,
+    source: 'driver',
+    remediation: 'retry later or select another eligible provider connection',
+  },
+  PROVIDER_REVOKED: {
+    retryable: false,
+    source: 'contract',
+    remediation: 'reprovision or restore the provider connection before further reads',
+  },
+  PROVIDER_SCOPE_MISMATCH: {
+    retryable: false,
+    source: 'contract',
+    remediation: 'align the request scope with the connection scope',
+  },
+  PROVIDER_OUTPUT_INVALID: {
+    retryable: false,
+    source: 'driver',
+    remediation: 'the provider output violates the read contract; correct the provider response',
+  },
+  PROVIDER_OUTPUT_STALE: {
+    retryable: true,
+    source: 'driver',
+    remediation: 'refresh provider data and re-read within the freshness window',
+  },
+  PROVIDER_BUDGET_EXCEEDED: {
+    retryable: false,
+    source: 'contract',
+    remediation: 'raise the policy budget or reduce the objective size',
+  },
+}
+
 export class ContextProviderResolutionError extends Error {
-  constructor(readonly code: ContextProviderErrorCode) {
+  readonly retryable: boolean
+  readonly source: ContextProviderFailureMetadata['source']
+  readonly remediation: string
+  readonly invalidity: ContextProviderFailureMetadata['invalidity']
+
+  constructor(
+    readonly code: ContextProviderErrorCode,
+    metadata?: Partial<ContextProviderFailureMetadata>
+  ) {
     super(code)
     this.name = 'ContextProviderResolutionError'
+    const defaults = failureMetadata[code]
+    this.retryable = metadata?.retryable ?? defaults.retryable
+    this.source = metadata?.source ?? defaults.source
+    this.remediation = metadata?.remediation ?? defaults.remediation
+    this.invalidity = metadata?.invalidity
   }
 }
 
@@ -341,7 +402,10 @@ export class ContextProviderResolver {
     input: unknown
   ): ContextContribution[] {
     const parsed = z.array(ContextContributionSchema).max(128).safeParse(input)
-    if (!parsed.success) throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID')
+    if (!parsed.success)
+      throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID', {
+        invalidity: 'malformed',
+      })
     const normalized: ContextContribution[] = []
     let tokens = 0
     for (const entry of parsed.data) {
@@ -351,7 +415,9 @@ export class ContextProviderResolver {
         entry.connectionId !== provider.readModel.connection.connectionId ||
         entry.contractVersion !== provider.readModel.definition.contractVersion
       )
-        throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID')
+        throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID', {
+          invalidity: 'contract_mismatch',
+        })
       if (entry.scopeDigest !== request.scopeDigest)
         throw new ContextProviderResolutionError('PROVIDER_SCOPE_MISMATCH')
       const observedAge = Date.parse(request.now) - Date.parse(entry.observedAt)
@@ -365,7 +431,9 @@ export class ContextProviderResolver {
         (entry.kind === 'evidence' && !request.policy.includeEvidence) ||
         (entry.kind === 'memory' && !request.policy.includeMemory)
       )
-        throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID')
+        throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID', {
+          invalidity: 'contract_mismatch',
+        })
       normalized.push(normalizedEntry)
       tokens += normalizedEntry.tokenCount
     }
@@ -520,7 +588,9 @@ function normalizeConformanceOutput(
 function normalizeContributionIntegrity(entry: ContextContribution): ContextContribution {
   const contentBytes = Buffer.byteLength(entry.content, 'utf8')
   if (contentBytes > MAX_CONTRIBUTION_BYTES || entry.contentDigest !== digest(entry.content))
-    throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID')
+    throw new ContextProviderResolutionError('PROVIDER_OUTPUT_INVALID', {
+      invalidity: 'malformed',
+    })
   return {
     ...entry,
     tokenCount: Math.max(entry.tokenCount, Math.ceil(contentBytes / 4)),

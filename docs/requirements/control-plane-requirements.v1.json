@@ -1498,7 +1498,7 @@
       "heading": "Provider error taxonomy (section 16)",
       "requirement": "Provider errors distinguish unavailable, unauthorized, incompatible contract, revoked mapping, stale contribution, degraded response, malformed response, over-budget response, required-provider failure and provider-write reconciliation, with source layer, category, retryability, safe message, remediation and correlation identifiers.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1506,13 +1506,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs"
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+        "disposition": "Provider resolution failures now carry bounded failure metadata: retryability, source layer (contract/driver/delivery), bounded remediation guidance, and a malformed-vs-contract-mismatch distinction on OUTPUT_INVALID — additive and tested. Remaining: provider-write reconciliation code paths (the write surface is M12 with the provider-write feature) and exercising the metadata end-to-end through the gateway result path."
       }
     },
     {
