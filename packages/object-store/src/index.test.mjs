@@ -126,6 +126,65 @@ describe('R2ObjectStore', () => {
     })
   })
 
+  test('applies the environment prefix to every provider address while exposing visible keys', async () => {
+    const calls = []
+    const store = new R2ObjectStore({
+      bucket: configuration.bucket,
+      prefix: 'staging/',
+      client: {
+        put: undefined,
+        send: async (command) => {
+          calls.push(command)
+          return {
+            ETag: 'etag-value',
+            ContentLength: 5,
+            Metadata: { 'control-plane-sha256': 'a'.repeat(64) },
+          }
+        },
+      },
+      maxObjectBytes: 1024,
+    })
+    const put = await store.put({ key: 'm9/object.json', body: new Uint8Array([1, 2, 3, 4, 5]) })
+    expect(put.key).toBe('m9/object.json')
+    await store.head('m9/object.json')
+    expect(calls.map((command) => command.input.Key)).toEqual([
+      'staging/m9/object.json',
+      'staging/m9/object.json',
+    ])
+
+    const withoutPrefix = []
+    const plain = new R2ObjectStore({
+      bucket: configuration.bucket,
+      client: {
+        send: async (command) => {
+          withoutPrefix.push(command)
+          return {
+            ETag: 'e',
+            ContentLength: 5,
+            Metadata: { 'control-plane-sha256': 'a'.repeat(64) },
+          }
+        },
+      },
+      maxObjectBytes: 1024,
+    })
+    await plain.put({ key: 'm9/object.json', body: new Uint8Array([1, 2, 3, 4, 5]) })
+    expect(withoutPrefix[0].input.Key).toBe('m9/object.json')
+  })
+
+  test('rejects unsafe environment prefixes at construction', () => {
+    for (const prefix of ['/absolute/', '../escape/', 'a//b', './x/', 'bad prefix/']) {
+      expect(
+        () =>
+          new R2ObjectStore({
+            bucket: configuration.bucket,
+            prefix,
+            client: { send: async () => ({}) },
+            maxObjectBytes: 1024,
+          })
+      ).toThrow()
+    }
+  })
+
   test('fails closed when provider content does not match the stored checksum', async () => {
     const body = new TextEncoder().encode('tampered')
     const store = new R2ObjectStore({
