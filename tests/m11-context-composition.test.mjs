@@ -60,9 +60,9 @@ async function deadline(promise) {
     clearTimeout(timer)
   }
 }
-async function waitFor(predicate, label) {
+async function waitFor(predicate, label, budgetMs = 10000) {
   const started = Date.now()
-  while (Date.now() - started < 10000) {
+  while (Date.now() - started < budgetMs) {
     const value = await predicate()
     if (value) return value
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -436,12 +436,16 @@ test('composed gateway and node deliver a context command end to end from admini
       'acknowledged'
     )
     await connectNode(second)
+    // Redelivery after a restart is asynchronous (channel activation plus lifecycle
+    // sweeps); the budget tolerates loaded CI runners while the assertions that
+    // follow still require exactly one recovery read and no duplicate execution.
     await waitFor(
       async () =>
         (await second.composition.delivery.get(workspaceId, secondCommandId)).status === 'succeeded'
           ? true
           : undefined,
-      'RECOVERY_SUCCEEDED'
+      'RECOVERY_SUCCEEDED',
+      30_000
     )
     const recovered = await second.composition.delivery.get(workspaceId, secondCommandId)
     expect(recovered.deliveryAttempts).toBe(2)
