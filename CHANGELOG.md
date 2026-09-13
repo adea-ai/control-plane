@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.0...workspace-v1.22.1) (2026-09-13)
+
+
+### Maintenance
+
+* **requirements:** record CP-RNODE-025 spawn policy implementation ([#492](https://github.com/adea-ai/control-plane/issues/492)) ([99fa460](https://github.com/adea-ai/control-plane/commit/99fa4602bcc4efdef1c171c0d1875ebc97b97cd5))
+
 ## [1.22.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.21.0...workspace-v1.22.0) (2026-09-13)
 
 
