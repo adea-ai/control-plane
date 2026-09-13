@@ -14,7 +14,7 @@ The candidate metadata and independent review below describe the recorded audit 
 
 ## Summary
 
-- 141 atomic normative requirements: 1 not_implemented, 15 partially_verified, 6 planned, 5 superseded, 79 tbd, 35 verified.
+- 141 atomic normative requirements: 1 not_implemented, 16 partially_verified, 6 planned, 5 superseded, 78 tbd, 35 verified.
 - 103 M1–M10 issue audits: 13 partially_verified, 5 superseded, 85 verified.
 - 5 explicit contradictions or supersessions.
 
