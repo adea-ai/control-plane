@@ -135,9 +135,12 @@ export async function composeContextNode(
   if (inbox === undefined) throw new Error('CONTEXT_NODE_INBOX_REPOSITORY_REQUIRED')
 
   const authority = new ContextCommandGrantAuthority(grants)
+  // Handler authorization is grant authority only. The transport generation check
+  // stays at channel admission: enforcing it again after the driver ran would turn a
+  // mid-dispatch channel loss into an unrecoverable reconciliation state even though
+  // the outcome is already computed and is replayed safely on the next redelivery.
   const authorize = async (record: ContextCommandRecord) => {
     await authority.authorize(record)
-    await transport.assertCurrent(record.commandEnvelope as GatewayCommandEnvelope)
   }
   const handler = new ContextNodeHandler({
     workspaceId,

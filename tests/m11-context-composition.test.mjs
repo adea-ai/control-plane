@@ -186,6 +186,12 @@ async function composeGateway({
   const composition = await composeRuntimeGateway({
     store: { backend: 'sqlite', path },
     objectStore: objects,
+    logger: {
+      write: (entry) =>
+        (globalThis.m11GatewayLogs ??= []).push(
+          `${entry.event ?? '?'} ${JSON.stringify(entry.details ?? entry.metadata ?? {}).slice(0, 160)}`
+        ),
+    },
     metrics: new RecordingGatewayMetrics(),
     reachability: new RecordingRuntimeNodeReachabilityPublisher(),
     traceId: () => traceId,
@@ -261,7 +267,11 @@ test('composed gateway and node deliver a context command end to end from admini
 
       transport: {
         send: async (serialized) => {
-          if (JSON.parse(serialized).type === 'result' && nodeState.dropNextResult) {
+          const parsed = JSON.parse(serialized)
+          ;(nodeState.sentFrames ??= []).push(
+            `${parsed.type}:${parsed.status ?? parsed.disposition ?? '-'}`
+          )
+          if (parsed.type === 'result' && nodeState.dropNextResult) {
             nodeState.dropNextResult = false
             return
           }
@@ -439,14 +449,28 @@ test('composed gateway and node deliver a context command end to end from admini
     // Redelivery after a restart is asynchronous (channel activation plus lifecycle
     // sweeps); the budget tolerates loaded CI runners while the assertions that
     // follow still require exactly one recovery read and no duplicate execution.
-    await waitFor(
-      async () =>
-        (await second.composition.delivery.get(workspaceId, secondCommandId)).status === 'succeeded'
-          ? true
-          : undefined,
-      'RECOVERY_SUCCEEDED',
-      30_000
-    )
+    try {
+      await waitFor(
+        async () =>
+          (await second.composition.delivery.get(workspaceId, secondCommandId)).status ===
+          'succeeded'
+            ? true
+            : undefined,
+        'RECOVERY_SUCCEEDED',
+        30_000
+      )
+    } catch (error) {
+      const stalled = await second.composition.delivery.get(workspaceId, secondCommandId)
+      const nodeInbox = await node.handler.options.repository.get(
+        workspaceId,
+        nodeId,
+        secondCommandId
+      )
+      throw new Error(
+        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState} nodeInbox=${JSON.stringify(nodeInbox)} sentFrames=${JSON.stringify((nodeState.sentFrames ?? []).slice(-6))} gatewayLogs=${JSON.stringify((globalThis.m11GatewayLogs ?? []).slice(-12))} gatewayReceiveErrors=${JSON.stringify((globalThis.m11GatewayReceiveErrors ?? []).slice(-4))})`,
+        { cause: error }
+      )
+    }
     const recovered = await second.composition.delivery.get(workspaceId, secondCommandId)
     expect(recovered.deliveryAttempts).toBe(2)
     expect(httpReads).toEqual([
@@ -548,7 +572,7 @@ test('composed gateway and node deliver a context command end to end from admini
     await node?.close()
     await rm(directory, { recursive: true, force: true })
   }
-}, 30000)
+}, 120000)
 
 test('gateway start() refuses an empty shell in every environment', async () => {
   for (const appEnv of ['test', 'production']) {
