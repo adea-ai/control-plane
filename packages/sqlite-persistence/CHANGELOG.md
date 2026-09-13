@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.6.0...sqlite-persistence-v1.7.0) (2026-09-13)
+
+
+### Features
+
+* **events:** classify events and record provider read identity ([#481](https://github.com/adea-ai/control-plane/issues/481)) ([224da04](https://github.com/adea-ai/control-plane/commit/224da048e0b2bd6523abaa508a2862a417b32223))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.5.0...sqlite-persistence-v1.6.0) (2026-09-13)
 
 

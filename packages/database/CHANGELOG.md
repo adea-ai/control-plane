@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/database-v1.13.0...database-v1.14.0) (2026-09-13)
+
+
+### Features
+
+* **events:** classify events and record provider read identity ([#481](https://github.com/adea-ai/control-plane/issues/481)) ([224da04](https://github.com/adea-ai/control-plane/commit/224da048e0b2bd6523abaa508a2862a417b32223))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/database-v1.12.0...database-v1.13.0) (2026-09-13)
 
 
