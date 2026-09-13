@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.17.0...workspace-v1.18.0) (2026-09-13)
+
+
+### Features
+
+* **domain:** compose the reconciliation observation projection ([#478](https://github.com/adea-ai/control-plane/issues/478)) ([8365442](https://github.com/adea-ai/control-plane/commit/83654422e64f98c25224570f871d8aa33983ca18))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.16.0...workspace-v1.17.0) (2026-09-13)
 
 
