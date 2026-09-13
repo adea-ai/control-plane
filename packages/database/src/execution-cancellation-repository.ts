@@ -6,7 +6,7 @@ import {
   type ExecutionCancellationRepository,
   type ExecutionCancellationScope,
 } from '@control-plane/domain'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
 
@@ -61,7 +61,41 @@ export class PostgresExecutionCancellationRepository implements ExecutionCancell
       return receipt
     })
   }
+
+  /**
+   * Bounded maintenance read for reconciliation: cancellation receipts recorded
+   * against an execution, capped at `limit`. Lets remediation effects respect a
+   * recorded operator cancel intent without scanning unbounded history.
+   */
+  async listByExecution(input: {
+    readonly executionId: string
+    readonly workspaceId: string
+    readonly projectId: string
+    readonly limit: number
+  }): Promise<readonly ExecutionCancellationReceipt[]> {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > CANCELLATION_SCAN_LIMIT
+    ) {
+      throw new Error('INVALID_LIMIT')
+    }
+    const rows = await this.database
+      .select()
+      .from(executionCancellations)
+      .where(
+        and(
+          eq(executionCancellations.workspaceId, input.workspaceId),
+          eq(executionCancellations.projectId, input.projectId),
+          sql`${executionCancellations.receipt} -> 'request' -> 'payload' ->> 'executionId' = ${input.executionId}`
+        )
+      )
+      .limit(input.limit)
+    return rows.map(({ receipt }) => ExecutionCancellationReceiptSchema.parse(receipt))
+  }
 }
+
+const CANCELLATION_SCAN_LIMIT = 100
 
 async function read(
   database: Pick<ControlPlaneDatabase, 'select'>,

@@ -320,7 +320,7 @@
       "heading": "Explicit promotion (section 2)",
       "requirement": "Moving Local, Self-hosted or external bytes into cloud storage requires explicit promotion/upload authorization and provenance/policy checks; remote control alone does not authorize upload.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "planned",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -334,7 +334,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -650,7 +650,7 @@
       "heading": "Failed promotion locality (section 11)",
       "requirement": "Failed or cancelled cloud promotion leaves the Local or Self-hosted Artifact reference authoritative and does not imply that bytes moved successfully.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "planned",
       "owner": "artifact-integration",
       "lane": "recovery/chaos",
       "issueRefs": [188, 190, 194, 195],
@@ -664,7 +664,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -673,7 +673,7 @@
       "heading": "Scoped transfer capabilities (sections 5, 7.2 and 8)",
       "requirement": "Runtime cloud promotion uses a capability scoped to one Artifact/object key and operation with a 15-minute upload expiry, not reusable storage credentials; product download capabilities are read-only, audience-scoped and expire after 5 minutes.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "planned",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -687,7 +687,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -696,7 +696,7 @@
       "heading": "Capability secrecy (sections 8 and 14)",
       "requirement": "Signed Artifact URLs are bearer capabilities and are not persisted in messages, ProjectState, logs or durable API responses; reusable storage credentials and encryption keys never enter model context.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "planned",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -710,7 +710,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -733,7 +733,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: bounded M11 implementation — per-environment artifact store/prefix separation and cross-environment read-denial verification against the repository-owned Railway configuration. Owner artifact-integration."
       }
     },
     {
@@ -788,7 +788,7 @@
       "heading": "Provider migration (section 17)",
       "requirement": "Artifact provider migration verifies copied digest and size, preserves Artifact IDs and references, and retains one authoritative provider location per version even during temporary dual-read or dual-write migration.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "planned",
       "owner": "artifact-integration",
       "lane": "recovery/chaos",
       "issueRefs": [188, 190, 194, 195],
@@ -802,7 +802,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: no multi-provider artifact store exists in the candidate; provider migration with digest/size verification is planned with the M12 artifact store evolution. Owner artifact-integration."
       }
     },
     {
@@ -848,7 +848,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-12: Agent HQ promotion lanes are M12 surface. The M11 standalone obligation is the consumer-boundary fixture class: unavailable/quarantined/expired content never becomes an available Artifact (covered through the artifact-state consumption path). Owner artifact-integration."
       }
     },
     {
@@ -2154,7 +2154,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "Adjudicated 2026-09-12: requires the M12 Agent HQ desktop/RuntimeNode surface (native host, E2E key material, LocalContextRequest). M12-gated with owner runtime-contracts; not implementable standalone in M11."
       }
     },
     {
@@ -2177,7 +2177,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "Adjudicated 2026-09-12: M11 scope is the Control-Plane-owned spawn path (constrain managed runtime process launches: executable identity, argument/working-directory constraints). The RuntimeNode user-facing process-operation policy arrives with the M12 desktop host. Owner runtime-contracts."
       }
     },
     {
@@ -2227,7 +2227,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "Adjudicated 2026-09-12: requires the M12 Agent HQ desktop/RuntimeNode surface (native host, E2E key material, LocalContextRequest). M12-gated with owner runtime-contracts; not implementable standalone in M11."
       }
     },
     {
@@ -2250,7 +2250,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "Adjudicated 2026-09-12: requires the M12 Agent HQ desktop/RuntimeNode surface (native host, E2E key material, LocalContextRequest). M12-gated with owner runtime-contracts; not implementable standalone in M11."
       }
     },
     {

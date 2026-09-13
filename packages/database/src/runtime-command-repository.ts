@@ -5,12 +5,28 @@ import {
   type RuntimeCommandRecord,
   type RuntimeCommandRepository,
 } from '@control-plane/domain'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 
 export class PostgresRuntimeCommandRepository implements RuntimeCommandRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Bounded maintenance read for reconciliation: the most recent runtime
+   * command issued for an attempt. At most one row is returned, so repeated
+   * reconciliation passes stay bounded regardless of command history.
+   */
+  async latestForAttempt(attemptId: string): Promise<RuntimeCommandRecord | undefined> {
+    RuntimeCommandRecordSchema.shape.attemptId.parse(attemptId)
+    const [row] = await this.database
+      .select()
+      .from(runtimeCommands)
+      .where(eq(runtimeCommands.attemptId, attemptId))
+      .orderBy(desc(runtimeCommands.issuedAt), desc(runtimeCommands.commandId))
+      .limit(1)
+    return row === undefined ? undefined : fromRuntimeCommandRow(row)
+  }
 
   async create(recordValue: RuntimeCommandRecord): Promise<RuntimeCommandCreateResult> {
     const record = RuntimeCommandRecordSchema.parse(recordValue)

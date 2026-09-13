@@ -482,3 +482,29 @@ application-role connection. No connection strings, passwords or branch names be
 the disposable branch were recorded; staging and production branches were untouched.
 Live PostgreSQL CLI evidence now exists; the separate external gates — deployed-profile
 acceptance and independent review — remain open.
+
+## Managed-cloud staging certification from the merged candidate
+
+Candidate `05ea20d` (main; contains the merged PR #476 squash `d8d8074` plus the
+1.17.0 release chore). The staging Railway environment was activated through the
+repository-owned IaC (`railway config plan`/`apply`): application sources reconnected
+to GitHub `main`, one-replica topology, Restate always-on. The staging Neon branch
+schema was brought current with migrations 0042 through 0044, applied through a
+session-scoped `SET ROLE control_plane_migrator` switch (no role credentials mutated),
+with explicit grants of the new tables to the staging application role. A fresh
+Ed25519 service-certification keypair was generated for the run; its public half
+replaced the staging trust set entry and its private half was destroyed after the run.
+
+`certify-m9-cloud.mjs` passed against the activated staging stack: authenticated
+execution acceptance through the public control API, Restate-driven execution reaching
+`completed` terminal state in Neon staging with one attempt, an integrity-matched
+Artifact retained in the product R2 bucket, and idempotent replay returning the
+original execution and artifact (`status: passed`, `attemptCount: 1`, `replayed: true`,
+execution `exe_0ZR2WCX8A9X3JN4M346NA6HYNM`). The staging environment was then stood
+back down through the guarded standby transition with zero running replicas, the
+staging application-role password was rotated (Railway variables updated, new
+credential verified), and the workspace cost soft/hard limits ($5/$10) were configured
+per the operations documentation. One transient staging failure occurred when the
+trusted-keys variable was first set as a JSON object rather than the required array;
+the corrected value deployed successfully. Production remains on its prior deployment;
+production activation is a separate release operation.

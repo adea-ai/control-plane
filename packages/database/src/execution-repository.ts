@@ -5,12 +5,70 @@ import {
   type ExecutionAttempt,
   type ExecutionRepository,
 } from '@control-plane/domain'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { executionEvents } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
+
+const MAXIMUM_SCAN_LIMIT = 1_000
+
+export interface ReconciliationCandidateScan {
+  /** ISO timestamp; executions updated before it are stale enough to reconcile. */
+  readonly staleBefore: string
+  readonly limit: number
+  /** Keyset cursor from the previous page; keeps repeated scans bounded. */
+  readonly afterExecutionId?: string
+}
 
 export class PostgresExecutionRepository implements ExecutionRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Bounded maintenance scan for reconciliation candidates: non-terminal
+   * executions that went stale, plus terminal executions that still hold
+   * undelivered (unarchived, pending or failed) events. Keyset-ordered by
+   * execution id so repeated pages never revisit rows.
+   */
+  async listReconciliationCandidates(
+    input: ReconciliationCandidateScan
+  ): Promise<readonly string[]> {
+    if (Number.isNaN(Date.parse(input.staleBefore))) throw new Error('INVALID_STALE_BEFORE')
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAXIMUM_SCAN_LIMIT) {
+      throw new Error('INVALID_LIMIT')
+    }
+    const staleBefore = new Date(input.staleBefore)
+    const rows = await this.database
+      .select({ executionId: executions.executionId })
+      .from(executions)
+      .where(
+        and(
+          input.afterExecutionId === undefined
+            ? undefined
+            : gt(executions.executionId, input.afterExecutionId),
+          or(
+            and(
+              inArray(executions.state, [
+                'accepted',
+                'queued',
+                'starting',
+                'running',
+                'awaiting_input',
+                'cancelling',
+                'reconciliation_required',
+              ]),
+              lt(executions.updatedAt, staleBefore)
+            ),
+            and(
+              inArray(executions.state, ['completed', 'failed', 'cancelled', 'timed_out']),
+              sql`exists (select 1 from ${executionEvents} where ${executionEvents.executionId} = ${executions.executionId} and ${executionEvents.publicationStatus} in ('pending', 'failed') and ${executionEvents.archivedAt} is null)`
+            )
+          )
+        )
+      )
+      .orderBy(asc(executions.executionId))
+      .limit(input.limit)
+    return rows.map(({ executionId }) => executionId)
+  }
 
   async insertExecution(execution: Execution): Promise<boolean> {
     const inserted = await this.database

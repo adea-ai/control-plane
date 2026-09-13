@@ -151,6 +151,92 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       .returning()
     return row ? fromExecutionEventRow(row) : undefined
   }
+
+  /**
+   * Bounded maintenance read for reconciliation: how many undelivered
+   * (unarchived, pending or failed) events an execution still owes, capped at
+   * `limit`. The count is a lower bound when the cap is reached, which is
+   * enough for reconciliation: any positive count means delivery is owed.
+   */
+  async summarizePendingDelivery(
+    executionId: string,
+    limit: number
+  ): Promise<PendingDeliverySummary> {
+    ExecutionEventSchema.shape.executionId.parse(executionId)
+    validScanLimit(limit)
+    const rows = await this.database
+      .select({ recordedAt: executionEvents.recordedAt })
+      .from(executionEvents)
+      .where(pendingDeliveryCondition(executionId))
+      .orderBy(asc(executionEvents.recordedAt))
+      .limit(limit)
+    if (rows.length === 0) return { pendingCount: 0 }
+    const oldest = rows[0]
+    return {
+      pendingCount: rows.length,
+      ...(oldest === undefined ? {} : { oldestPendingAt: oldest.recordedAt.toISOString() }),
+    }
+  }
+
+  /**
+   * Re-arms delivery for an execution's undelivered events that are not yet
+   * due, without attempting delivery itself: publication versions move
+   * forward via compare-and-set so a concurrent dispatcher never races.
+   * Returns how many events were re-armed.
+   */
+  async rearmPendingDelivery(executionId: string, dueAt: string, limit: number): Promise<number> {
+    ExecutionEventSchema.shape.executionId.parse(executionId)
+    if (Number.isNaN(Date.parse(dueAt))) throw new Error('INVALID_TIMESTAMP')
+    validScanLimit(limit)
+    const rows = await this.database
+      .select()
+      .from(executionEvents)
+      .where(
+        and(
+          pendingDeliveryCondition(executionId),
+          or(
+            isNull(executionEvents.nextAttemptAt),
+            gt(executionEvents.nextAttemptAt, new Date(dueAt))
+          )
+        )
+      )
+      .orderBy(asc(executionEvents.recordedAt))
+      .limit(limit)
+    let rearmed = 0
+    for (const row of rows) {
+      const event = fromExecutionEventRow(row)
+      const nextAttemptAt = ExecutionEventSchema.parse({
+        ...event,
+        publication: {
+          ...event.publication,
+          version: event.publication.version + 1,
+          nextAttemptAt: dueAt,
+        },
+      })
+      if (await this.compareAndSetPublication(event.publication.version, nextAttemptAt)) {
+        rearmed += 1
+      }
+    }
+    return rearmed
+  }
+}
+
+export interface PendingDeliverySummary {
+  /** Lower bound of undelivered events, capped at the requested scan limit. */
+  readonly pendingCount: number
+  readonly oldestPendingAt?: string
+}
+
+function pendingDeliveryCondition(executionId: string) {
+  return and(
+    eq(executionEvents.executionId, executionId),
+    inArray(executionEvents.publicationStatus, ['pending', 'failed']),
+    isNull(executionEvents.archivedAt)
+  )
+}
+
+function validScanLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new Error('INVALID_LIMIT')
 }
 
 class EventInsertConflict extends Error {}

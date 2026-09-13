@@ -62,4 +62,31 @@ export class SqliteExecutionCancellationRepository implements ExecutionCancellat
       return accepted
     })
   }
+
+  /**
+   * Bounded maintenance read for reconciliation: cancellation receipts recorded
+   * against an execution, capped at `limit`. Lets remediation effects respect a
+   * recorded operator cancel intent without scanning unbounded history.
+   */
+  listByExecution(input: {
+    readonly executionId: string
+    readonly workspaceId: string
+    readonly projectId: string
+    readonly limit: number
+  }): Promise<readonly ExecutionCancellationReceipt[]> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new Error('INVALID_LIMIT')
+    }
+    return this.provider.transaction(async (transaction) =>
+      (await transaction.list(namespace))
+        .map((record) => ExecutionCancellationReceiptSchema.parse(record.value))
+        .filter(
+          (receipt) =>
+            receipt.request.workspaceId === input.workspaceId &&
+            receipt.request.projectId === input.projectId &&
+            receipt.request.payload.executionId === input.executionId
+        )
+        .slice(0, input.limit)
+    )
+  }
 }

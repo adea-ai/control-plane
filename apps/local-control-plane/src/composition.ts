@@ -21,6 +21,7 @@ import type {
   RemoteControlHostAdapter,
 } from '@control-plane/remote-control-relay'
 import {
+  RestateExecutionWorkflowDispatcher,
   UnavailableExecutionAcceptanceService,
   type ExecutionAcceptanceService,
 } from '@control-plane/control-api'
@@ -33,7 +34,10 @@ import {
 import {
   SqliteContextCommandGrantRepository,
   SqliteContextProviderRegistrationRepository,
+  SqliteExecutionCancellationRepository,
   SqlitePersistenceProvider,
+  SqliteReconciliationEffects,
+  SqliteReconciliationSource,
 } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
@@ -122,12 +126,19 @@ export interface LocalRuntimeTransport extends RuntimeAdapterWithTransport {
 /**
  * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
  * composition: absent configuration enables nothing, and invalid bounds fail
- * closed at composition construction. The observation source and remediation
- * effects must be supplied by the composition caller.
+ * closed at composition construction. Either compose the production observation
+ * projection (`projection: 'observation'`) or supply an explicit source and
+ * effects pair; the two forms are mutually exclusive.
  */
 export interface LocalReconciliationConfiguration {
-  readonly source: ReconciliationSource
-  readonly effects: ReconciliationEffects
+  /**
+   * Composes the production `SqliteReconciliationSource`/`Effects` pair from
+   * this composition's own SQLite stores: bounded stale-candidate scanning,
+   * lifecycle-respecting remediation, lost-ACK parking.
+   */
+  readonly projection?: 'observation'
+  readonly source?: ReconciliationSource
+  readonly effects?: ReconciliationEffects
   /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
   readonly intervalMs: number
   /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
@@ -201,6 +212,10 @@ export class LocalControlPlaneComposition {
   readonly commandRepository: LocalControlApiComposition['commandRepository']
   readonly executionLifecycleActivities: ExecutionLifecycleActivities
   readonly reconciliationService: ExecutionReconciliationService | undefined
+  /** The composed observation source, exposed so the wiring is externally verifiable. */
+  readonly reconciliationSource: ReconciliationSource | undefined
+  /** The composed remediation effects, exposed so the wiring is externally verifiable. */
+  readonly reconciliationEffects: ReconciliationEffects | undefined
   readonly coordination = new LocalCoordinationProvider()
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
@@ -336,18 +351,54 @@ export class LocalControlPlaneComposition {
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()
     // Reconciliation scheduling is explicit composition configuration: absent
     // configuration enables nothing, and invalid bounds fail closed above.
+    // `projection: 'observation'` composes the production adapters over this
+    // composition's own SQLite stores.
     if (options.reconciliation !== undefined) {
       const reconciliation = options.reconciliation
+      if (
+        reconciliation.projection !== undefined &&
+        (reconciliation.source !== undefined || reconciliation.effects !== undefined)
+      ) {
+        throw new Error('LOCAL_RECONCILIATION_CONFIGURATION_CONFLICT')
+      }
+      if (
+        reconciliation.projection === undefined &&
+        (reconciliation.source === undefined || reconciliation.effects === undefined)
+      ) {
+        throw new Error('LOCAL_RECONCILIATION_CONFIGURATION_INVALID')
+      }
+      const source =
+        reconciliation.source ??
+        new SqliteReconciliationSource({
+          executions: controlApi.executions,
+          commands: controlApi.commandRepository,
+          runtimeCommands: controlApi.runtimeCommands,
+          runtimeConnections: controlApi.runtimeDiscoveryRepository,
+          events: controlApi.executionEvents,
+        })
+      const effects =
+        reconciliation.effects ??
+        new SqliteReconciliationEffects({
+          executions: controlApi.executions,
+          commands: controlApi.commandRepository,
+          events: controlApi.executionEvents,
+          workflowSubmitter: new RestateExecutionWorkflowDispatcher({
+            ingressUrl: restateIngressUrl,
+          }),
+          cancellations: new SqliteExecutionCancellationRepository(this.persistence),
+        })
       this.reconciliationService = new ExecutionReconciliationService({
         repository: controlApi.reconciliationCheckpoints,
-        source: reconciliation.source,
-        effects: reconciliation.effects,
+        source,
+        effects,
         ...(reconciliation.staleAfterMs === undefined
           ? {}
           : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
         ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
         ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
       })
+      this.reconciliationSource = source
+      this.reconciliationEffects = effects
       this.#reconciliationScheduler = new ReconciliationScheduler({
         service: this.reconciliationService,
         intervalMs: reconciliation.intervalMs,

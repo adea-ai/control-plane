@@ -33,6 +33,7 @@ import {
   type ExecutionPlanReference,
   type ExecutionPlanRepository,
 } from '@control-plane/execution-plan'
+import { ExecutionEventSchema } from '@control-plane/events'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -41,7 +42,27 @@ const namespaces = {
   executions: 'executions',
   attempts: 'execution-attempts',
   plans: 'execution-plans',
+  events: 'execution-events',
 } as const
+
+const executionStates = new Set<string>([
+  'accepted',
+  'queued',
+  'starting',
+  'running',
+  'awaiting_input',
+  'cancelling',
+  'reconciliation_required',
+])
+const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
+
+export interface SqliteReconciliationCandidateScan {
+  /** ISO timestamp; executions updated before it are stale enough to reconcile. */
+  readonly staleBefore: string
+  readonly limit: number
+  /** Keyset cursor from the previous page; keeps repeated scans bounded. */
+  readonly afterExecutionId?: string
+}
 
 export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepository {
   constructor(readonly provider: PersistenceProvider) {}
@@ -306,6 +327,52 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       return true
     })
   }
+
+  /**
+   * Bounded maintenance scan for reconciliation candidates: non-terminal
+   * executions that went stale, plus terminal executions that still hold
+   * undelivered (unarchived, pending or failed) events. Keyset-ordered by
+   * execution id so repeated pages never revisit rows.
+   */
+  listReconciliationCandidates(
+    input: SqliteReconciliationCandidateScan
+  ): Promise<readonly string[]> {
+    if (Number.isNaN(Date.parse(input.staleBefore))) throw new Error('INVALID_STALE_BEFORE')
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+      throw new Error('INVALID_LIMIT')
+    }
+    return this.provider.transaction(async (transaction) => {
+      const undelivered = new Set(
+        (await transaction.list(namespaces.events))
+          .map((record) => ExecutionEventSchema.parse(record.value))
+          .filter(
+            (event) =>
+              event.archivedAt === undefined &&
+              ['pending', 'failed'].includes(event.publication.status)
+          )
+          .map((event) => event.executionId)
+      )
+      return (await transaction.list(namespaces.executions))
+        .map((record) => ExecutionSchema.parse(record.value))
+        .filter((execution) => isReconciliationCandidate(execution, input, undelivered))
+        .map((execution) => execution.executionId)
+        .toSorted((left, right) => left.localeCompare(right))
+        .slice(0, input.limit)
+    })
+  }
+}
+
+function isReconciliationCandidate(
+  execution: Execution,
+  input: SqliteReconciliationCandidateScan,
+  undelivered: ReadonlySet<string>
+): boolean {
+  if (input.afterExecutionId !== undefined && execution.executionId <= input.afterExecutionId) {
+    return false
+  }
+  if (Date.parse(execution.updatedAt) >= Date.parse(input.staleBefore)) return false
+  if (executionStates.has(execution.state)) return true
+  return terminalExecutionStates.has(execution.state) && undelivered.has(execution.executionId)
 }
 
 export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
