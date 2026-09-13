@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.20.0...workspace-v1.21.0) (2026-09-13)
+
+
+### Features
+
+* **context:** add bounded failure metadata to provider errors ([#489](https://github.com/adea-ai/control-plane/issues/489)) ([264aac6](https://github.com/adea-ai/control-plane/commit/264aac617dd35acbd19f8307596c9e1bd306b1d0))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.19.0...workspace-v1.20.0) (2026-09-13)
 
 

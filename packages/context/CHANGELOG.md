@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/context-v1.7.0...context-v1.8.0) (2026-09-13)
+
+
+### Features
+
+* **context:** add bounded failure metadata to provider errors ([#489](https://github.com/adea-ai/control-plane/issues/489)) ([264aac6](https://github.com/adea-ai/control-plane/commit/264aac617dd35acbd19f8307596c9e1bd306b1d0))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/context-v1.6.0...context-v1.7.0) (2026-09-13)
 
 
