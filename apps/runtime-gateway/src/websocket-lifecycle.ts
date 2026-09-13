@@ -208,6 +208,11 @@ export class RuntimeGatewayWebSocketLifecycle {
     await this.#handleActiveFrame(connection, value)
   }
 
+  /** Fixed-diagnostic counter for inbound frames whose processing failed. */
+  recordInboundFailure(): void {
+    this.#metrics.increment('runtime_gateway.inbound_failures')
+  }
+
   async disconnect(connectionId: string, reason = 'peer_disconnected'): Promise<void> {
     const connection = this.#connections.get(connectionId)
     if (connection !== undefined) await this.#disconnect(connection, 1000, reason)
