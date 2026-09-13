@@ -42,6 +42,7 @@ const namespaces = {
   runtimeCommands: 'runtime-commands',
   runtimeInventory: 'runtime-inventory-checkpoints',
   runtimeEventReceipts: 'runtime-event-receipts',
+  terminalDisagreements: 'execution-terminal-disagreements',
 } as const
 
 type RecordTransaction = Parameters<Parameters<PersistenceProvider['transaction']>[0]>[0]
@@ -340,6 +341,24 @@ export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
           outcome: duplicate ? 'applied' : 'terminal_conflict',
           ...(event === undefined ? {} : { eventId: event.eventId }),
         })
+        if (!duplicate) {
+          // Same durable incident record the PostgreSQL outbox receives: a terminal
+          // disagreement is inspectable evidence, and the authoritative Control Plane
+          // result stands.
+          await transaction.put({
+            namespace: namespaces.terminalDisagreements,
+            id: recordId(`${effect.execution.executionId}\u001f${effect.commandId}`),
+            value: json({
+              executionId: effect.execution.executionId,
+              attemptId: effect.attempt.attemptId,
+              commandId: effect.commandId,
+              authoritativeState: { execution: execution.state, attempt: attempt.state },
+              reportedState: effect.state,
+              frameHash: effect.frameHash,
+              recordedAt: effect.draft.recordedAt,
+            }),
+          })
+        }
         return duplicate ? { outcome: 'duplicate', event } : { outcome: 'terminal_conflict' }
       }
       const nextAttempt = ExecutionAttemptSchema.parse({

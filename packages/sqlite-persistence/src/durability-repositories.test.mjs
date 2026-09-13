@@ -349,6 +349,33 @@ describe('SQLite standalone durability repositories', () => {
         state: 'completed',
         terminalResultRef: terminal.resultReference,
       })
+
+      // A disagreeing terminal frame is recorded as a durable incident without
+      // disturbing the authoritative result.
+      const disagreement = {
+        ...terminal,
+        state: 'failed',
+        messageSequence: 4,
+        frameHash: 'e'.repeat(64),
+        draft: {
+          ...terminal.draft,
+          eventId: 'evt_01ERZ3NDEKTSV4RRFFQ69G5FAV',
+          type: 'execution.failed',
+          recordedAt: '2026-08-30T12:00:03.000Z',
+        },
+      }
+      expect(await durableEffects.applyTerminal(disagreement)).toMatchObject({
+        outcome: 'terminal_conflict',
+      })
+      const disagreements = await current().transaction((transaction) =>
+        transaction.list('execution-terminal-disagreements')
+      )
+      expect(disagreements).toHaveLength(1)
+      expect(disagreements[0].value).toMatchObject({
+        executionId: execution.executionId,
+        reportedState: 'failed',
+        authoritativeState: { execution: 'completed' },
+      })
     })
   })
 })

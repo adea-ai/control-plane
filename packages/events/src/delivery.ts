@@ -109,7 +109,12 @@ export interface ExecutionEventDispatcherOptions {
   readonly publicationService: EventPublicationService
   readonly transport: AgentHqEventTransport
   readonly now?: () => string
-  readonly retry?: { readonly baseDelayMs: number; readonly maximumAttempts: number }
+  readonly retry?: {
+    readonly baseDelayMs: number
+    readonly maximumAttempts: number
+    /** Continuously failing deliveries escalate past this age, measured from recording. */
+    readonly escalationAfterMs?: number
+  }
   readonly observer?: EventDeliveryObserver
   readonly metrics?: EventDeliveryMetrics
 }
@@ -121,6 +126,7 @@ export class ExecutionEventDispatcher {
   readonly #now: () => string
   readonly #baseDelayMs: number
   readonly #maximumAttempts: number
+  readonly #escalationAfterMs: number
   readonly #observer: EventDeliveryObserver | undefined
   readonly #metrics: EventDeliveryMetrics | undefined
 
@@ -131,9 +137,15 @@ export class ExecutionEventDispatcher {
     this.#now = options.now ?? (() => new Date().toISOString())
     this.#baseDelayMs = options.retry?.baseDelayMs ?? 1_000
     this.#maximumAttempts = options.retry?.maximumAttempts ?? 5
+    this.#escalationAfterMs = options.retry?.escalationAfterMs ?? 86_400_000
     this.#observer = options.observer
     this.#metrics = options.metrics
-    if (this.#baseDelayMs < 1 || this.#maximumAttempts < 1) {
+    if (
+      this.#baseDelayMs < 1 ||
+      this.#maximumAttempts < 1 ||
+      !Number.isSafeInteger(this.#escalationAfterMs) ||
+      this.#escalationAfterMs < 1
+    ) {
       throw new Error('INVALID_EVENT_DELIVERY_RETRY_POLICY')
     }
   }
@@ -200,6 +212,14 @@ export class ExecutionEventDispatcher {
       return 'quarantined'
     }
 
+    // Continuously retrying deliveries escalate to manual remediation (quarantine,
+    // which retains evidence and stops automatic retry) after the configured window,
+    // regardless of the attempt budget.
+    const retryAgeMs = Date.parse(attemptedAt) - Date.parse(event.recordedAt)
+    if (Number.isFinite(retryAgeMs) && retryAgeMs >= this.#escalationAfterMs) {
+      await this.#quarantine(event, attemptedAt, delivery.code, true)
+      return 'quarantined'
+    }
     const nextAttemptAt = new Date(
       Date.parse(attemptedAt) + this.#baseDelayMs * 2 ** event.publication.attempts
     ).toISOString()
