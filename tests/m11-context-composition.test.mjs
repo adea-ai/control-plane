@@ -439,14 +439,22 @@ test('composed gateway and node deliver a context command end to end from admini
     // Redelivery after a restart is asynchronous (channel activation plus lifecycle
     // sweeps); the budget tolerates loaded CI runners while the assertions that
     // follow still require exactly one recovery read and no duplicate execution.
-    await waitFor(
-      async () =>
-        (await second.composition.delivery.get(workspaceId, secondCommandId)).status === 'succeeded'
-          ? true
-          : undefined,
-      'RECOVERY_SUCCEEDED',
-      30_000
-    )
+    try {
+      await waitFor(
+        async () =>
+          (await second.composition.delivery.get(workspaceId, secondCommandId)).status ===
+          'succeeded'
+            ? true
+            : undefined,
+        'RECOVERY_SUCCEEDED',
+        30_000
+      )
+    } catch (error) {
+      const stalled = await second.composition.delivery.get(workspaceId, secondCommandId)
+      throw new Error(
+        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState})`
+      )
+    }
     const recovered = await second.composition.delivery.get(workspaceId, secondCommandId)
     expect(recovered.deliveryAttempts).toBe(2)
     expect(httpReads).toEqual([
@@ -548,7 +556,7 @@ test('composed gateway and node deliver a context command end to end from admini
     await node?.close()
     await rm(directory, { recursive: true, force: true })
   }
-}, 30000)
+}, 120000)
 
 test('gateway start() refuses an empty shell in every environment', async () => {
   for (const appEnv of ['test', 'production']) {
