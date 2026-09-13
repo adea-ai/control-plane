@@ -198,6 +198,30 @@ describe('SQLite standalone durability repositories', () => {
     })
   })
 
+  test('round-trips event sensitivity metadata and keeps legacy events valid', async () => {
+    await withReopen(async ({ current, reopened }) => {
+      const repository = new SqliteExecutionEventRepository(current())
+      const legacy = await repository.append(eventDraft())
+      expect(legacy.sensitivity).toBeUndefined()
+      expect(legacy.redaction).toBeUndefined()
+
+      const classified = await repository.append({
+        ...eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FAW'),
+        sensitivity: 'confidential',
+        redaction: 'redacted',
+      })
+      expect(classified).toMatchObject({ sensitivity: 'confidential', redaction: 'redacted' })
+
+      await reopened()
+      const durable = new SqliteExecutionEventRepository(current())
+      expect(await durable.get(classified.eventId)).toMatchObject({
+        sensitivity: 'confidential',
+        redaction: 'redacted',
+      })
+      expect((await durable.get(legacy.eventId)).sensitivity).toBeUndefined()
+    })
+  })
+
   test('persists reconciliation decisions with observation-hash CAS across reopen', async () => {
     await withReopen(async ({ current, reopened }) => {
       const checkpoint = reconciliationCheckpoint()

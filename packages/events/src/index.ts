@@ -22,6 +22,9 @@ const PublicationSchema = z.object({
   errorReference: ErrorReferenceSchema.optional(),
 })
 
+/** Classification vocabulary shared with memory-writeback and context authoring contracts. */
+export const EventSensitivitySchema = z.enum(['public', 'internal', 'confidential', 'restricted'])
+
 export const ExecutionEventSchema = z.object({
   eventId: IdentifierSchemas.eventId,
   executionId: IdentifierSchemas.executionId,
@@ -39,6 +42,13 @@ export const ExecutionEventSchema = z.object({
     commandId: IdentifierSchemas.commandId.optional(),
     traceId: IdentifierSchemas.traceId,
   }),
+  /**
+   * Classification metadata only — describes the payload's sensitivity and whether
+   * redaction was applied before persistence. It never carries payload content and is
+   * optional so events recorded before this field remain valid.
+   */
+  sensitivity: EventSensitivitySchema.optional(),
+  redaction: z.enum(['none', 'redacted']).optional(),
   payload: z.record(z.string(), z.json()),
   payloadBytes: z.number().int().nonnegative().max(16_384),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
