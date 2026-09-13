@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.21.0...workspace-v1.22.0) (2026-09-13)
+
+
+### Features
+
+* **events:** escalate stuck deliveries and record terminal disagreements ([#488](https://github.com/adea-ai/control-plane/issues/488)) ([2661fbd](https://github.com/adea-ai/control-plane/commit/2661fbd3a31565218809a12ff9dc4b9e3dfb4437))
+
 ## [1.21.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.20.0...workspace-v1.21.0) (2026-09-13)
 
 
