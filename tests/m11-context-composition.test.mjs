@@ -261,7 +261,11 @@ test('composed gateway and node deliver a context command end to end from admini
 
       transport: {
         send: async (serialized) => {
-          if (JSON.parse(serialized).type === 'result' && nodeState.dropNextResult) {
+          const parsed = JSON.parse(serialized)
+          ;(nodeState.sentFrames ??= []).push(
+            `${parsed.type}:${parsed.status ?? parsed.disposition ?? '-'}`
+          )
+          if (parsed.type === 'result' && nodeState.dropNextResult) {
             nodeState.dropNextResult = false
             return
           }
@@ -451,8 +455,13 @@ test('composed gateway and node deliver a context command end to end from admini
       )
     } catch (error) {
       const stalled = await second.composition.delivery.get(workspaceId, secondCommandId)
+      const nodeInbox = await node.handler.options.repository.get(
+        workspaceId,
+        nodeId,
+        secondCommandId
+      )
       throw new Error(
-        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState})`
+        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState} nodeInbox=${JSON.stringify(nodeInbox)} sentFrames=${JSON.stringify((nodeState.sentFrames ?? []).slice(-6))})`
       )
     }
     const recovered = await second.composition.delivery.get(workspaceId, secondCommandId)

@@ -116,7 +116,28 @@ export class ContextNodeHandler {
     authorizationCommand: ContextCommandRecord
   ) {
     try {
-      await this.#authorize(authorizationCommand, action)
+      // This authorization runs before the provider call: a failure here proves the
+      // provider was never invoked — for example a gateway reconnect closing the
+      // channel mid-dispatch. Return an executing command to re-executable state
+      // (CAS-guarded) instead of parking manual reconciliation that no driver
+      // reconcile pass can resolve; the next redelivery drives it to a terminal
+      // outcome. A concurrent driver owner keeps its state and stays authoritative.
+      try {
+        await this.#authorize(authorizationCommand, action)
+      } catch (authorizeError) {
+        if (current.status === 'executing' && action === 'execute') {
+          const reexecutable = ContextNodeInboxRecordSchema.parse({
+            ...current,
+            status: 'accepted',
+            startedAt: undefined,
+            version: current.version + 1,
+            updatedAt: this.#now(),
+          })
+          if (await this.options.repository.compareAndSet(current.version, reexecutable))
+            return reexecutable
+        }
+        throw authorizeError
+      }
       if (action === 'execute' && Date.parse(this.#now()) >= Date.parse(current.command.expiresAt))
         fail('GRANT_EXPIRED')
       const outcome = Outcome.parse(
