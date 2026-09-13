@@ -90,7 +90,7 @@
     "@control-plane/workflow-runtime": "workspace:*",
     "@langchain/langgraph": "1.4.14",
     "@types/node": "26.4.1",
-    "oxfmt": "^0.66.0",
+    "oxfmt": "^0.67.0",
     "oxlint": "^1.81.0",
     "railway": "3.11.0",
     "turbo": "2.10.12",

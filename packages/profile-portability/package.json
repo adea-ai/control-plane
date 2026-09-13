@@ -33,7 +33,7 @@
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "zod": "4.5.4"
+    "zod": "4.6.1"
   },
   "engines": {
     "node": ">=24 <25"

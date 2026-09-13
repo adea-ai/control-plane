@@ -24,7 +24,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
-    "zod": "4.5.4"
+    "zod": "4.6.1"
   },
   "devDependencies": {
     "@control-plane/execution-plan": "workspace:*"
