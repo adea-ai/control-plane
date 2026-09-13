@@ -21,7 +21,6 @@ import {
 import { executionEvents } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
-import { outboxEvents } from './schema/messaging.js'
 
 export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
   constructor(readonly database: ControlPlaneDatabase) {}
@@ -117,24 +116,6 @@ export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
           ...(event ? { eventId: event.eventId } : {}),
           recordedAt: effect.draft.recordedAt,
         })
-        if (!duplicate) {
-          // A terminal-state disagreement is an incident: it is recorded durably in
-          // the same transaction as the authoritative state and published for
-          // operator inspection. The authoritative Control Plane result stands.
-          await transaction.insert(outboxEvents).values({
-            aggregateType: 'execution',
-            aggregateId: effect.execution.executionId,
-            eventType: 'execution.terminal_disagreement',
-            payload: {
-              executionId: effect.execution.executionId,
-              attemptId: effect.attempt.attemptId,
-              commandId: effect.commandId,
-              authoritativeState: { execution: execution.state, attempt: attempt.state },
-              reportedState: effect.state,
-              frameHash: effect.frameHash,
-            },
-          })
-        }
         return duplicate ? { outcome: 'duplicate', event } : { outcome: 'terminal_conflict' }
       }
 

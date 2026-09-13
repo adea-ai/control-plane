@@ -1712,24 +1712,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(runtimeCommands)).toHaveLength(2)
     expect(await isolated.application.select().from(runtimeEventReceipts)).toHaveLength(5)
     expect(await isolated.application.select().from(executionEvents)).toHaveLength(3)
-    const disagreements = await isolated.application
-      .select()
-      .from(outboxEvents)
-      .where(
-        and(
-          eq(outboxEvents.aggregateId, terminal.execution.executionId),
-          eq(outboxEvents.eventType, 'execution.terminal_disagreement')
-        )
-      )
-    expect(disagreements).toHaveLength(1)
-    expect(disagreements[0]).toMatchObject({
-      aggregateType: 'execution',
-      aggregateId: terminal.execution.executionId,
-    })
-    expect(disagreements[0].payload).toMatchObject({
-      reportedState: cancelledTerminal.state,
-      commandId: cancelledTerminal.commandId,
-    })
     expect(await executionService.getExecution(execution.executionId)).toMatchObject({
       state: winner.state,
       ...(winner.resultReference ? { terminalResultRef: winner.resultReference } : {}),
