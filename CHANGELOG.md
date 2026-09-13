@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.19.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.18.0...workspace-v1.19.0) (2026-09-13)
+
+
+### Features
+
+* **events:** classify events and record provider read identity ([#481](https://github.com/adea-ai/control-plane/issues/481)) ([224da04](https://github.com/adea-ai/control-plane/commit/224da048e0b2bd6523abaa508a2862a417b32223))
+
+
+### Documentation
+
+* **evidence:** Local and self-hosted scenario runs from main ([#480](https://github.com/adea-ai/control-plane/issues/480)) ([770b0ec](https://github.com/adea-ai/control-plane/commit/770b0ecdaa795e69e8ce61cceddf2a7537d1d0cb))
+
 ## [1.18.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.17.0...workspace-v1.18.0) (2026-09-13)
 
 
