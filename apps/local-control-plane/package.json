@@ -31,6 +31,7 @@
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
+    "@control-plane/telemetry": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
     "@nestjs/common": "12.0.1",

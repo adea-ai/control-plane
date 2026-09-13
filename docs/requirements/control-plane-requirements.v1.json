@@ -619,7 +619,7 @@
       "heading": "Verification-state consumption (sections 4 and 10)",
       "requirement": "Pending-verification, pending-scan, quarantined and failed product Artifacts are not delivered into model/runtime context; consumers must not equate upload finalization with ordinary availability.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -627,13 +627,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-authoring-composition.test.mjs"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "GrantsBackedContextAuthoringAuthority is implemented and wired as the default authority in Local and Hosted compositions (operator-provisioned grants only, no-provider degradation, store-read artifact states); managed-cloud composition wiring, exact-candidate cross-profile evidence and adversarial unavailable-artifact probes remain."
       }
     },
     {
@@ -2178,7 +2186,7 @@
       "heading": "Opaque credential access (section 11)",
       "requirement": "Packaged Local secret values remain in OS-secure storage; Control Plane receives opaque handles or narrow authorized-use operations, and approved driver/provider executors never return credential values in responses.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2186,13 +2194,17 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/secrets/src/index.test.mjs"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "HostSecureHandleSecretsProvider adapter, bounded zeroizing leases, health and file/env providers are implemented and unit-tested; a concrete OS-secure host resolver and supported composition wiring remain open."
       }
     },
     {
@@ -2846,7 +2858,7 @@
         }
       ],
       "gap": {
-        "issue": 187,
+        "issue": 195,
         "severity": "medium",
         "owner": "catalog",
         "disposition": "Map every textual profile field and merge mode to the current split catalog and policy schemas."
@@ -2886,7 +2898,7 @@
         }
       ],
       "gap": {
-        "issue": 187,
+        "issue": 195,
         "severity": "medium",
         "owner": "runtime-contracts",
         "disposition": "Document and verify how rich capability metadata maps across catalog, policy, and RuntimeConnection schemas."

@@ -33,6 +33,8 @@ export * from './interaction-command-repository.js'
 export * from './execution-cancellation-repository.js'
 export * from './durability-repositories.js'
 export * from './context-command-repository.js'
+export * from './context-node-inbox-repository.js'
+export * from './runtime-channel-sequence-repository.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 
@@ -455,3 +457,5 @@ function digest(bytes: Uint8Array): `sha256:${string}` {
 }
 
 export { sqliteSchema }
+export * from './context-command-grant-repository.js'
+export * from './context-provider-registration-repository.js'

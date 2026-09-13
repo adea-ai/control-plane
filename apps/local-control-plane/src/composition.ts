@@ -30,7 +30,11 @@ import {
   EnvironmentSecretsProvider,
   PrivateFileSecretsProvider,
 } from '@control-plane/secrets'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import {
+  SqliteContextCommandGrantRepository,
+  SqliteContextProviderRegistrationRepository,
+  SqlitePersistenceProvider,
+} from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
   type ExecutionLifecycleActivities,
@@ -38,19 +42,60 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
-import { ExecutionLifecycleService } from '@control-plane/domain'
+import { ExecutionLifecycleService, ExecutionReconciliationService } from '@control-plane/domain'
+import type {
+  ReconciliationEffects,
+  ReconciliationRateLimit,
+  ReconciliationSource,
+} from '@control-plane/domain'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
 } from '@control-plane/workflow-worker'
+import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
+import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
-import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
+import { ReconciliationScheduler } from './reconciliation-scheduler.js'
+import {
+  GrantsBackedContextAuthoringAuthority,
+  type ContextAuthoringCompositionOptions,
+  type ContextAuthoringPolicy,
+} from '@control-plane/context'
 
 const require = createRequire(import.meta.url)
 const COMPONENT_VERSION = '1.0.0'
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+/**
+ * Explicit authoring policy for the supported local default authority. Provider content is
+ * composed at the runtime gateway, so the control plane itself never requests provider
+ * composition (mode disabled): authoring degrades to the documented no-provider path, and
+ * only grants provisioned through the operator administration can authorize context.
+ */
+const LOCAL_CONTEXT_AUTHORING_POLICY: ContextAuthoringPolicy = {
+  allowedSensitivities: ['public', 'internal'],
+  allowedCapabilities: ['boundedRetrieval', 'evidenceSearch', 'memoryRecall'],
+  executionLocation: 'runtime_node',
+  allowedArtifactIds: [],
+  permissions: [],
+  maximumBytes: 1_048_576,
+  maximumTokens: 32_768,
+  maximumContextTtlSeconds: 3_600,
+  providerPolicy: {
+    mode: 'disabled',
+    providerIds: [],
+    connectionIds: [],
+    includeEvidence: false,
+    includeMemory: false,
+    maximumTokens: 0,
+    maximumAgeSeconds: 3_600,
+    maximumProviderHealthAgeSeconds: 60,
+    maximumLatencyMs: 10_000,
+    failureBehavior: 'continue_without',
+  },
+}
 
 export interface LocalComponentManifest {
   readonly schemaVersion: 1
@@ -72,6 +117,23 @@ export interface LocalComponentManifest {
 export interface LocalRuntimeTransport extends RuntimeAdapterWithTransport {
   open?(): Promise<void>
   close?(): Promise<void>
+}
+
+/**
+ * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
+ * composition: absent configuration enables nothing, and invalid bounds fail
+ * closed at composition construction. The observation source and remediation
+ * effects must be supplied by the composition caller.
+ */
+export interface LocalReconciliationConfiguration {
+  readonly source: ReconciliationSource
+  readonly effects: ReconciliationEffects
+  /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
+  readonly intervalMs: number
+  /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
+  readonly batchLimit: number
+  readonly staleAfterMs?: number
+  readonly rateLimit?: ReconciliationRateLimit
 }
 
 export interface LocalControlPlaneCompositionOptions {
@@ -103,6 +165,8 @@ export interface LocalControlPlaneCompositionOptions {
   ) => RemoteControlHostAdapter<unknown>
   readonly environmentSecretReferences?: Readonly<Record<string, string>>
   readonly environment?: Readonly<Record<string, string | undefined>>
+  readonly metricAdapter?: MetricAdapter
+  readonly reconciliation?: LocalReconciliationConfiguration
 }
 
 export class LocalControlPlaneComposition {
@@ -136,10 +200,12 @@ export class LocalControlPlaneComposition {
   readonly commands: LocalControlApiComposition['commands']
   readonly commandRepository: LocalControlApiComposition['commandRepository']
   readonly executionLifecycleActivities: ExecutionLifecycleActivities
+  readonly reconciliationService: ExecutionReconciliationService | undefined
   readonly coordination = new LocalCoordinationProvider()
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
   readonly #endpointFactory: RestateEndpointFactory
+  readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -184,10 +250,29 @@ export class LocalControlPlaneComposition {
     if (options.runtimeTransport !== undefined && options.runtimeFactory !== undefined) {
       throw new Error('LOCAL_RUNTIME_CONFIGURATION_CONFLICT')
     }
+    // The supported default authorizes authoring from this composition's own SQLite grant
+    // and registration stores; an explicit injection always takes precedence.
+    const contextAuthoring =
+      options.contextAuthoring ??
+      ({
+        authority: new GrantsBackedContextAuthoringAuthority({
+          grants: new SqliteContextCommandGrantRepository(this.persistence),
+          registrations: new SqliteContextProviderRegistrationRepository(this.persistence),
+          artifacts: this.objectStore,
+          policy: LOCAL_CONTEXT_AUTHORING_POLICY,
+        }),
+      } satisfies ContextAuthoringCompositionOptions)
+    // Consistency metrics flow through the telemetry redaction pipeline with bounded
+    // label cardinality; without an injected metric adapter every hook is a no-op.
+    const consistencyMetrics =
+      options.metricAdapter === undefined
+        ? undefined
+        : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,
-      options.contextAuthoring
+      contextAuthoring,
+      consistencyMetrics
     )
     const runtimeTransport =
       options.runtimeTransport ??
@@ -249,6 +334,26 @@ export class LocalControlPlaneComposition {
             commands: this.commands,
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()
+    // Reconciliation scheduling is explicit composition configuration: absent
+    // configuration enables nothing, and invalid bounds fail closed above.
+    if (options.reconciliation !== undefined) {
+      const reconciliation = options.reconciliation
+      this.reconciliationService = new ExecutionReconciliationService({
+        repository: controlApi.reconciliationCheckpoints,
+        source: reconciliation.source,
+        effects: reconciliation.effects,
+        ...(reconciliation.staleAfterMs === undefined
+          ? {}
+          : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
+        ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
+        ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+      })
+      this.#reconciliationScheduler = new ReconciliationScheduler({
+        service: this.reconciliationService,
+        intervalMs: reconciliation.intervalMs,
+        batchLimit: reconciliation.batchLimit,
+      })
+    }
     this.#endpointFactory =
       options.endpointFactory ??
       createRestateEndpointFactory({
@@ -294,7 +399,9 @@ export class LocalControlPlaneComposition {
       await this.#endpoint.run()
       await this.workflow.start()
       await this.remoteControl?.start()
+      this.#reconciliationScheduler?.start()
     } catch (error) {
+      await this.#reconciliationScheduler?.close().catch(() => undefined)
       await Promise.resolve()
         .then(() => this.remoteControl?.stop())
         .catch(() => undefined)
@@ -340,6 +447,8 @@ export class LocalControlPlaneComposition {
   async close(): Promise<void> {
     if (!this.#started && this.#endpoint === undefined) return
     this.#started = false
+    // Drain the scheduler first: a clean close never abandons an in-flight pass.
+    await this.#reconciliationScheduler?.close()
     try {
       await this.remoteControl?.stop()
     } finally {

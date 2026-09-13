@@ -9,6 +9,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
+    "context:admin": "bun scripts/context-provider-admin.mjs",
     "type-check": "turbo run build openapi:check && bun run db:check && bun run compatibility:check && bun run requirements:check && bun run architecture:check && bun run infra:typecheck",
     "compatibility:check": "bun --cwd=packages/runtime-sdk run compatibility:check",
     "architecture:check": "bun scripts/architecture-audit.mjs",

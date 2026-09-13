@@ -13,6 +13,7 @@ import {
 } from '@control-plane/database'
 import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
+import { createConsistencyMetricEmitter, type MetricAdapter } from '@control-plane/telemetry'
 import {
   DurableExecutionLifecycleActivities,
   type WorkflowRuntimeActivityPort,
@@ -30,6 +31,8 @@ export interface ManagedCloudWorkflowWorkerComposition {
   readonly activities: DurableExecutionLifecycleActivities
   readonly runtime: WorkflowRuntimeActivityPort
   readonly runtimeRouter?: RuntimeDiscoveryAttemptRouter
+  /** Command inbox over the worker's own acceptance store, with consistency metrics wired. */
+  readonly commands: CommandInboxService
 }
 
 export class WorkflowWorkerCloudCompositionError extends Error {
@@ -59,7 +62,8 @@ export function createManagedCloudWorkflowWorkerComposition(
   configuration: ManagedCloudConfiguration,
   runtime: WorkflowRuntimeActivityPort | undefined,
   graph: GraphSegmentActivityPort = new DisabledGraphSegmentActivities(),
-  connectionFactory: PostgresConnectionFactory = createPostgresConnection
+  connectionFactory: PostgresConnectionFactory = createPostgresConnection,
+  metricAdapter?: MetricAdapter
 ): ManagedCloudWorkflowWorkerComposition {
   if (
     configuration.service !== 'workflow-worker' ||
@@ -79,6 +83,18 @@ export function createManagedCloudWorkflowWorkerComposition(
       ? new RuntimeDiscoveryAttemptRouter({ discovery })
       : undefined
   const commands = new PostgresRuntimeCommandRepository(connection.database)
+  // Consistency metrics flow through the telemetry redaction pipeline with bounded
+  // label cardinality; without an injected metric adapter nothing is emitted.
+  const consistencyMetrics =
+    metricAdapter === undefined
+      ? undefined
+      : createConsistencyMetricEmitter(metricAdapter, 'workflow-worker')
+  const inbox = new CommandInboxService({
+    repository: new PostgresCommandAcceptanceRepository(connection.database),
+    executionIdFactory: unavailableExecutionIdFactory,
+    executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+    ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+  })
   const selectedRuntime =
     runtime ??
     new DurableRemoteWorkflowRuntime({
@@ -103,17 +119,14 @@ export function createManagedCloudWorkflowWorkerComposition(
     connection,
     runtime: selectedRuntime,
     ...(runtimeRouter === undefined ? {} : { runtimeRouter }),
+    commands: inbox,
     activities: new DurableExecutionLifecycleActivities({
       lifecycle: new ExecutionLifecycleService(executions),
       plans,
       runtime: selectedRuntime,
       ...(runtimeRouter === undefined ? {} : { runtimeRouter }),
       graph,
-      commands: new CommandInboxService({
-        repository: new PostgresCommandAcceptanceRepository(connection.database),
-        executionIdFactory: unavailableExecutionIdFactory,
-        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
-      }),
+      commands: inbox,
     }),
   }
 }

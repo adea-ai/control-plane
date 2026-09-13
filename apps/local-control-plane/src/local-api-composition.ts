@@ -12,6 +12,7 @@ import {
   DurableInteractionCommandService,
   DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
+  type CommandInboxMetrics,
 } from '@control-plane/domain'
 import {
   ContextPackageAuthoringService,
@@ -67,7 +68,8 @@ export class LocalControlApiComposition {
   constructor(
     persistence: SqlitePersistenceProvider,
     restateIngressUrl: string,
-    contextAuthoring?: ContextAuthoringCompositionOptions
+    contextAuthoring?: ContextAuthoringCompositionOptions,
+    inboxMetrics?: CommandInboxMetrics
   ) {
     this.commandRepository = new SqliteCommandAcceptanceRepository(persistence)
     this.executionCancellationService = new DurableExecutionCancellationService(
@@ -100,6 +102,7 @@ export class LocalControlApiComposition {
       repository: this.commandRepository,
       executionIdFactory: createExecutionId,
       executionPlanValidator: new ExecutionPlanAcceptanceValidator(this.executionPlans),
+      ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
     })
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
       commands: this.commands,

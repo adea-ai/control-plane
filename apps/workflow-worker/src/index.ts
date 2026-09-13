@@ -14,6 +14,7 @@ import {
 import {
   createConsoleTraceAdapter,
   createTelemetry,
+  type MetricAdapter,
   type TraceAdapter,
 } from '@control-plane/telemetry'
 import { createRestateEndpointFactory, type RestateEndpointFactory } from './restate-worker.js'
@@ -64,6 +65,11 @@ export interface WorkflowWorkerStartOptions {
   readonly graphActivities?: GraphSegmentActivityPort
   readonly postgresConnectionFactory?: PostgresConnectionFactory
   readonly objectStoreFactory?: typeof createR2ObjectStore
+  /**
+   * Overrides the service's default metric adapter for telemetry and consistency
+   * metrics. When absent the existing OpenTelemetry adapter of this service is used.
+   */
+  readonly metricAdapter?: MetricAdapter
 }
 
 export const start = (options: WorkflowWorkerStartOptions = {}) => {
@@ -79,11 +85,14 @@ export const start = (options: WorkflowWorkerStartOptions = {}) => {
         (metadata.environment === 'development'
           ? createConsoleTraceAdapter(logger)
           : createOpenTelemetryTraceAdapter(serviceName))
+      // One metric adapter backs both service telemetry and consistency metrics;
+      // an explicit start option overrides the service's OpenTelemetry default.
+      const metricAdapter = options.metricAdapter ?? createOpenTelemetryMetricAdapter(serviceName)
       const telemetry = createTelemetry({
         serviceName,
         logger,
         traceAdapter,
-        metricAdapter: createOpenTelemetryMetricAdapter(serviceName),
+        metricAdapter,
       })
       await telemetry.withServiceSpan(
         'worker.initialize',
@@ -103,7 +112,10 @@ export const start = (options: WorkflowWorkerStartOptions = {}) => {
                   managedCloud,
                   cloudRuntime,
                   options.graphActivities,
-                  options.postgresConnectionFactory
+                  options.postgresConnectionFactory,
+                  // The service telemetry adapter is the single sourcing point;
+                  // the composition wires it into the consistency hooks.
+                  metricAdapter
                 )
           if (cloudComposition !== undefined) {
             registerResource('workflow-worker-postgres', () => cloudComposition.connection.close())

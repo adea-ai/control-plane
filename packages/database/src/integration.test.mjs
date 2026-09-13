@@ -9,6 +9,7 @@ import { ControlApiFixtures } from '@control-plane/contracts'
 import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
+  createFakeContextProvider,
 } from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
@@ -66,6 +67,9 @@ import { PostgresRuntimeCommandRepository } from './runtime-command-repository.t
 import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.ts'
 import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
+import { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
+import { PostgresContextCommandGrantRepository } from './context-command-grant-repository.ts'
+import { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
 import {
   commandInbox,
@@ -114,6 +118,147 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated?.dispose()
   })
 
+  test('persists scoped provider registrations with concurrent capacity and permanent revocation', async () => {
+    const readModel = createFakeContextProvider({
+      suffix: 'A',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      health: 'healthy',
+      state: 'active',
+      capabilities: { evidenceSearch: true },
+      kind: 'evidence',
+      tokenCount: 1,
+    }).readModel
+    const record = {
+      version: 1,
+      readModel,
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      mappedProjectRef: 'project-1',
+      authorizationRef: 'authz:registry-test',
+      expectedCorpusRevision: 'corpus:1',
+      maximumOutputBytes: 262144,
+    }
+    const scope = {
+      workspaceId: readModel.connection.workspaceId,
+      principalRef: readModel.connection.principalRef,
+    }
+    const first = new PostgresContextProviderRegistrationRepository(isolated.application)
+    const second = new PostgresContextProviderRegistrationRepository(isolated.application)
+    expect((await Promise.all([first.save(0, record), second.save(0, record)])).toSorted()).toEqual(
+      [false, true]
+    )
+    const refreshed = { ...structuredClone(record), version: 2 }
+    refreshed.readModel.health.checkedAt = '2026-09-12T12:00:00.000Z'
+    expect(await second.save(1, refreshed)).toBe(true)
+    expect(await first.save(1, refreshed)).toBe(false)
+    const moved = { ...structuredClone(refreshed), version: 3 }
+    moved.readModel.connection.principalRef = 'principal:other'
+    expect(await first.save(2, moved)).toBe(false)
+    expect(await first.save(2, { ...record, version: 3 })).toBe(false)
+    expect(await first.list({ ...scope, principalRef: 'principal:other' })).toEqual([])
+    const restarted = new PostgresContextProviderRegistrationRepository(isolated.application)
+    expect(await restarted.list(scope)).toEqual([refreshed])
+    const revoked = { ...structuredClone(refreshed), version: 3 }
+    revoked.readModel.connection.state = 'revoked'
+    expect(await restarted.save(2, revoked)).toBe(true)
+    expect(await first.list(scope)).toEqual([])
+    expect(await first.save(3, { ...refreshed, version: 4 })).toBe(false)
+    expect(await first.save(0, record)).toBe(false)
+    const additions = await Promise.all(
+      Array.from({ length: 33 }, (_, number) => {
+        const addition = structuredClone(record)
+        addition.readModel.connection.connectionId = `ctc_${String(number + 1).padStart(26, '0')}`
+        return new PostgresContextProviderRegistrationRepository(isolated.application).save(
+          0,
+          addition
+        )
+      })
+    )
+    expect(additions.filter(Boolean)).toHaveLength(32)
+    expect(await first.list(scope)).toHaveLength(32)
+    expect(await first.list({ ...scope, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })).toEqual(
+      []
+    )
+  }, 60_000)
+
+  test('persists immutable context grants and permanent revocation across repositories', async () => {
+    const grant = {
+      authorizationRef: 'authz:postgres-context-test',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      principalRef: 'service:author',
+      mappedProjectRef: 'project-1',
+      scopeDigest: `sha256:${'a'.repeat(64)}`,
+      capabilities: ['evidenceSearch'],
+      maximumTokens: 100,
+      includeEvidence: true,
+      includeMemory: false,
+      issuedAt: '2026-09-12T12:00:00.000Z',
+      expiresAt: '2026-09-12T12:01:00.000Z',
+      status: 'active',
+    }
+    const first = new PostgresContextCommandGrantRepository(isolated.application)
+    const second = new PostgresContextCommandGrantRepository(isolated.application)
+    const results = await Promise.allSettled([first.create(grant), second.create(grant)])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(await second.get(grant.workspaceId, grant.authorizationRef)).toEqual(grant)
+    const otherWorkspace = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+    expect(await first.get(otherWorkspace, grant.authorizationRef)).toBeUndefined()
+    await expect(first.revoke(otherWorkspace, grant.authorizationRef)).rejects.toThrow('NOT_FOUND')
+    await Promise.all([
+      first.revoke(grant.workspaceId, grant.authorizationRef),
+      second.revoke(grant.workspaceId, grant.authorizationRef),
+    ])
+    const restarted = new PostgresContextCommandGrantRepository(isolated.application)
+    expect(await restarted.get(grant.workspaceId, grant.authorizationRef)).toEqual({
+      ...grant,
+      status: 'revoked',
+    })
+    await expect(restarted.create(grant)).rejects.toThrow('ALREADY_EXISTS')
+    await restarted.create({ ...grant, workspaceId: otherWorkspace })
+    expect((await restarted.get(otherWorkspace, grant.authorizationRef)).status).toBe('active')
+    expect((await restarted.get(grant.workspaceId, grant.authorizationRef)).status).toBe('revoked')
+  })
+
+  test('reserves durable channel sequences across concurrent repositories and ambiguous commits', async () => {
+    const channel = {
+      nodeId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      gatewayInstanceId: 'sequence-test',
+      connectionId: 'sequence-test',
+      channelGeneration: 1,
+      protocolVersion: { major: 1, minor: 5 },
+      connectedAt: '2026-09-12T12:00:00.000Z',
+      lastHeartbeatAt: '2026-09-12T12:00:00.000Z',
+    }
+    const request = { channel, count: 1, minimum: 1 }
+    const reservations = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new PostgresRuntimeChannelSequenceRepository(isolated.application).reserve(request)
+      )
+    )
+    expect(reservations.toSorted((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    const ambiguous = new PostgresRuntimeChannelSequenceRepository({
+      transaction: async (operation) => {
+        await isolated.application.transaction(operation)
+        throw new Error('ACK_LOST_AFTER_COMMIT')
+      },
+    })
+    await expect(ambiguous.reserve(request)).rejects.toThrow('ACK_LOST_AFTER_COMMIT')
+    const restarted = new PostgresRuntimeChannelSequenceRepository(isolated.application)
+    expect(await restarted.reserve({ ...request, count: 3 })).toBe(10)
+    expect(await restarted.reserve(request)).toBe(13)
+    expect(await restarted.reserve({ ...request, minimum: 100 })).toBe(100)
+    expect(await restarted.reserve({ ...request, minimum: 2147483647 })).toBe(2147483647)
+    await expect(restarted.reserve(request)).rejects.toThrow('SEQUENCE_EXHAUSTED')
+    expect(
+      await restarted.reserve({ ...request, channel: { ...channel, channelGeneration: 2 } })
+    ).toBe(1)
+    await expect(restarted.reserve({ ...request, count: 1001 })).rejects.toThrow()
+  })
+
   test('persists scoped context commands with racing allocation, conflict isolation and CAS', async () => {
     const now = '2026-09-12T12:00:00.000Z'
     const envelope = {
@@ -156,7 +301,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const repository = new PostgresContextCommandRepository(isolated.application)
     const candidates = [queued(), queued({ commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW' })]
     const results = await Promise.all(candidates.map((record) => repository.create(record)))
-    expect(results.map(({ outcome }) => outcome).sort()).toEqual(['created', 'duplicate'])
+    expect(results.map(({ outcome }) => outcome).toSorted()).toEqual(['created', 'duplicate'])
     const first = results.find(({ outcome }) => outcome === 'created').record
     expect(results.every(({ record }) => record.commandId === first.commandId)).toBe(true)
     const restarted = new PostgresContextCommandRepository(isolated.application)
@@ -199,7 +344,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       restarted.compareAndSet(1, dispatched),
       restarted.compareAndSet(1, dispatched),
     ])
-    expect(updates.sort()).toEqual([false, true])
+    expect(updates.toSorted()).toEqual([false, true])
     expect(await restarted.compareAndSet(2, { ...first, version: 3 })).toBe(false)
     const completed = {
       ...dispatched,

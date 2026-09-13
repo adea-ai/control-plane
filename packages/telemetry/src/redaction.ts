@@ -51,6 +51,25 @@ const secretsInText = [
       /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g,
     replacement: '[REDACTED]',
   },
+  {
+    // Loopback endpoints (127.0.0.0/8, localhost, ::1) with an optional port are private
+    // topology per the content-safe telemetry requirement and never belong in telemetry.
+    pattern: /\b(?:localhost|127(?:\.\d{1,3}){3})(?::\d{1,5})?/g,
+    replacement: '[REDACTED_LOOPBACK]',
+  },
+  { pattern: /\[::1\](?::\d{1,5})?/g, replacement: '[REDACTED_LOOPBACK]' },
+  { pattern: /(?<![\w:.-])::1(?![\w:.])/g, replacement: '[REDACTED_LOOPBACK]' },
+  {
+    // Absolute filesystem paths under user/system roots expose private topology.
+    pattern:
+      /(?<![\w./-])\/(?:Users|home|root|tmp|var|etc|opt|private|usr)(?:\/[^\s"'`;|&<>()[\]]+)*/g,
+    replacement: '[REDACTED_PATH]',
+  },
+  {
+    pattern:
+      /(?<![\w.-])[A-Za-z]:\\(?:Users|Windows|Temp|Program Files)(?:\\[^\s"'`;|&<>()[\]]+)*/g,
+    replacement: '[REDACTED_PATH]',
+  },
 ] as const
 
 function redactText(value: string): string {

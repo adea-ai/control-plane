@@ -94,6 +94,16 @@ export interface EventDeliveryObserver {
   }): void
 }
 
+/**
+ * Observability port for quarantine outcomes with bounded label cardinality:
+ * implementations map `reason` to a fixed reason-category set. The dispatcher
+ * additionally isolates every hook call so a throwing metrics sink can never
+ * change a delivery result.
+ */
+export interface EventDeliveryMetrics {
+  recordQuarantine(input: { readonly reason: string; readonly attempted: boolean }): void
+}
+
 export interface ExecutionEventDispatcherOptions {
   readonly repository: ExecutionEventRepository
   readonly publicationService: EventPublicationService
@@ -101,6 +111,7 @@ export interface ExecutionEventDispatcherOptions {
   readonly now?: () => string
   readonly retry?: { readonly baseDelayMs: number; readonly maximumAttempts: number }
   readonly observer?: EventDeliveryObserver
+  readonly metrics?: EventDeliveryMetrics
 }
 
 export class ExecutionEventDispatcher {
@@ -111,6 +122,7 @@ export class ExecutionEventDispatcher {
   readonly #baseDelayMs: number
   readonly #maximumAttempts: number
   readonly #observer: EventDeliveryObserver | undefined
+  readonly #metrics: EventDeliveryMetrics | undefined
 
   constructor(options: ExecutionEventDispatcherOptions) {
     this.#repository = options.repository
@@ -120,6 +132,7 @@ export class ExecutionEventDispatcher {
     this.#baseDelayMs = options.retry?.baseDelayMs ?? 1_000
     this.#maximumAttempts = options.retry?.maximumAttempts ?? 5
     this.#observer = options.observer
+    this.#metrics = options.metrics
     if (this.#baseDelayMs < 1 || this.#maximumAttempts < 1) {
       throw new Error('INVALID_EVENT_DELIVERY_RETRY_POLICY')
     }
@@ -214,6 +227,13 @@ export class ExecutionEventDispatcher {
       errorReference: errorReference(code),
       attempted,
     })
+    if (this.#metrics !== undefined) {
+      try {
+        this.#metrics.recordQuarantine({ reason: code, attempted })
+      } catch {
+        // Metrics export is isolated per emission and can never fail delivery.
+      }
+    }
     this.#record(quarantined, 'quarantined')
   }
 

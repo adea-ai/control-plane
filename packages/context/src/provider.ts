@@ -12,7 +12,7 @@ import { z } from 'zod'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const MAX_CONTRIBUTION_BYTES = 262_144
-const RequestSchema = z.object({
+export const ContextProviderRequestSchema = z.object({
   workspaceId: IdentifierSchemas.workspaceId,
   scopeDigest: DigestSchema,
   principalRef: z.string().min(1).max(256),
@@ -29,7 +29,7 @@ const RequestSchema = z.object({
   policy: ContextProviderPolicySchema,
 })
 
-export type ContextProviderRequest = z.output<typeof RequestSchema>
+export type ContextProviderRequest = z.output<typeof ContextProviderRequestSchema>
 
 export interface ContextProviderDriver {
   readonly readModel: ContextProviderReadModel
@@ -96,19 +96,57 @@ export interface ContextProviderResolution {
   decisionReasons: string[]
 }
 
+/**
+ * Observability port for resolution outcomes. Implementations must supply bounded
+ * label cardinality and isolate exporter failures; the resolver additionally
+ * isolates every hook call so a throwing metrics sink can never change a result.
+ */
+export interface ContextProviderResolutionMetrics {
+  recordResolution(outcome: ContextProviderResolution['status'], reasonCategory: string): void
+}
+
+const fixedDecisionReasons = new Set(['PROVIDER_SELECTED', 'CACHE_HIT', 'POLICY_DISABLED'])
+
+function resolutionReasonCategory(resolution: ContextProviderResolution): string {
+  if (resolution.status === 'disabled') return 'POLICY_DISABLED'
+  if (resolution.decisionReasons.includes('CACHE_HIT')) return 'CACHE_HIT'
+  if (resolution.decisionReasons.includes('PROVIDER_SELECTED')) return 'PROVIDER_SELECTED'
+  return (
+    resolution.decisionReasons.find((reason) => !fixedDecisionReasons.has(reason)) ??
+    'NO_ELIGIBLE_PROVIDER'
+  )
+}
+
 export class ContextProviderResolver {
   readonly #providers: ContextProviderDriver[]
   readonly #cache: ContextContributionCache | undefined
+  readonly #metrics: ContextProviderResolutionMetrics | undefined
   constructor(
     providers: ContextProviderDriver[],
-    options: { readonly cache?: ContextContributionCache } = {}
+    options: {
+      readonly cache?: ContextContributionCache
+      readonly metrics?: ContextProviderResolutionMetrics
+    } = {}
   ) {
     this.#providers = [...providers]
     this.#cache = options.cache
+    this.#metrics = options.metrics
   }
 
   async resolve(input: unknown): Promise<ContextProviderResolution> {
-    const request = RequestSchema.parse(input)
+    const resolution = await this.#resolve(input)
+    if (this.#metrics !== undefined) {
+      try {
+        this.#metrics.recordResolution(resolution.status, resolutionReasonCategory(resolution))
+      } catch {
+        // Metrics export is isolated per emission and can never fail resolution.
+      }
+    }
+    return resolution
+  }
+
+  async #resolve(input: unknown): Promise<ContextProviderResolution> {
+    const request = ContextProviderRequestSchema.parse(input)
     if (request.policy.mode === 'disabled') return empty('disabled', ['POLICY_DISABLED'])
     const providers = this.#eligible(request)
     let lastError: ContextProviderResolutionError | undefined
@@ -436,7 +474,7 @@ export async function runContextProviderConformance(
   provider: ContextProviderDriver,
   requestInput: unknown
 ): Promise<{ bounded: boolean; deterministic: boolean; scopePreserved: boolean }> {
-  const request = RequestSchema.parse(requestInput)
+  const request = ContextProviderRequestSchema.parse(requestInput)
   const first = await provider.retrieve(request)
   const second = await provider.retrieve(request)
   const normalizedFirst = normalizeConformanceOutput(first)

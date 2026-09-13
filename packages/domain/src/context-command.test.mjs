@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  createContextNodeInboxRecord,
+  ContextNodeInboxRecordSchema,
+  contextNodeInboxTransitionAllowed,
+} from './context-node-inbox.ts'
+import {
   ContextCommandRecordSchema,
   InMemoryContextCommandRepository,
   contextCommandSemanticHash,
@@ -44,6 +49,45 @@ function command(overrides = {}) {
 }
 
 describe('context command ledger', () => {
+  test('node inbox preserves uncertainty across recovery and terminal replay', () => {
+    const accepted = createContextNodeInboxRecord(command(), now)
+    const executing = { ...accepted, version: 2, status: 'executing', startedAt: now }
+    expect(contextNodeInboxTransitionAllowed(accepted, executing)).toBe(true)
+    const uncertain = { ...executing, version: 3, status: 'reconciliation_required' }
+    expect(contextNodeInboxTransitionAllowed(executing, uncertain)).toBe(true)
+    expect(contextNodeInboxTransitionAllowed(uncertain, { ...executing, version: 4 })).toBe(false)
+    const completed = {
+      ...uncertain,
+      version: 4,
+      status: 'succeeded',
+      terminalAt: now,
+      result: { evidence: 'reconciled' },
+    }
+    expect(contextNodeInboxTransitionAllowed(uncertain, completed)).toBe(true)
+    expect(contextNodeInboxTransitionAllowed(completed, { ...completed, version: 5 })).toBe(false)
+    expect(
+      ContextNodeInboxRecordSchema.safeParse({
+        ...accepted,
+        retentionExpiresAt: '2026-09-13T12:00:00.000Z',
+      }).success
+    ).toBe(false)
+    expect(() => createContextNodeInboxRecord(command(), '2026-09-12T12:01:00.000Z')).toThrow()
+    expect(
+      contextNodeInboxTransitionAllowed(accepted, {
+        ...accepted,
+        status: 'expired',
+        version: 2,
+        terminalAt: '2026-09-12T12:01:00.000Z',
+        updatedAt: '2026-09-12T12:01:00.000Z',
+      })
+    ).toBe(true)
+    expect(
+      ContextNodeInboxRecordSchema.safeParse({
+        ...completed,
+        result: { oversized: 'x'.repeat(262144) },
+      }).success
+    ).toBe(false)
+  })
   test('paginates pending work by node and workspace without skipping expired grants', async () => {
     const repository = new InMemoryContextCommandRepository()
     const first = createQueuedContextCommandRecord(command(), now)
@@ -174,6 +218,7 @@ describe('context command ledger', () => {
       { updatedAt: '2026-09-12T11:59:59.000Z' },
       { deliveryAttempts: 1 },
       { terminalAt: now },
+      { completionDigest: `sha256:${'a'.repeat(64)}` },
       { errorCode: 'UNEXPECTED_ERROR' },
       { resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
       {

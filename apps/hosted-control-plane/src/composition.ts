@@ -2,7 +2,9 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   ContextPackageAuthoringService,
+  GrantsBackedContextAuthoringAuthority,
   type ContextAuthoringCompositionOptions,
+  type ContextAuthoringPolicy,
 } from '@control-plane/context'
 import {
   DurableExecutionAcceptanceService,
@@ -19,6 +21,8 @@ import {
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
   PostgresContextAuthoringCommandRepository,
+  PostgresContextCommandGrantRepository,
+  PostgresContextProviderRegistrationRepository,
   PostgresExecutionEventRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
@@ -27,6 +31,7 @@ import {
   PostgresInteractionCommandRepository,
   PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
+  PostgresReconciliationCheckpointRepository,
   PostgresRuntimeCommandRepository,
   PostgresRuntimeDiscoveryRepository,
   type PostgresConnection,
@@ -49,7 +54,14 @@ import {
   DurableInteractionCommandService,
   DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
+  ExecutionReconciliationService,
+  type CommandInboxMetrics,
+  type ReconciliationEffects,
+  type ReconciliationRateLimit,
+  type ReconciliationSource,
 } from '@control-plane/domain'
+import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
+import type { MetricAdapter } from '@control-plane/telemetry'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { RemoteRestateRuntime, RESTATE_SERVER_VERSION } from '@control-plane/restate-runtime'
@@ -68,6 +80,7 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
+import { ReconciliationScheduler } from './reconciliation-scheduler.js'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
@@ -80,6 +93,35 @@ import {
 
 const COMPONENT_VERSION = '1.0.0'
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+/**
+ * Explicit authoring policy for the supported hosted default authority. Provider content is
+ * composed at the runtime gateway, so the control plane itself never requests provider
+ * composition (mode disabled): authoring degrades to the documented no-provider path, and
+ * only grants provisioned through the operator administration can authorize context.
+ */
+const HOSTED_CONTEXT_AUTHORING_POLICY: ContextAuthoringPolicy = {
+  allowedSensitivities: ['public', 'internal'],
+  allowedCapabilities: ['boundedRetrieval', 'evidenceSearch', 'memoryRecall'],
+  executionLocation: 'runtime_node',
+  allowedArtifactIds: [],
+  permissions: [],
+  maximumBytes: 1_048_576,
+  maximumTokens: 32_768,
+  maximumContextTtlSeconds: 3_600,
+  providerPolicy: {
+    mode: 'disabled',
+    providerIds: [],
+    connectionIds: [],
+    includeEvidence: false,
+    includeMemory: false,
+    maximumTokens: 0,
+    maximumAgeSeconds: 3_600,
+    maximumProviderHealthAgeSeconds: 60,
+    maximumLatencyMs: 10_000,
+    failureBehavior: 'continue_without',
+  },
+}
 
 export interface HostedServerManifest {
   readonly schemaVersion: 1
@@ -95,6 +137,23 @@ export interface HostedServerManifest {
     readonly objectStore: 'filesystem' | 's3-compatible'
     readonly remoteControl: 'disabled' | 'outbound'
   }
+}
+
+/**
+ * Explicit reconciliation-scheduling configuration. Scheduling is opt-in per
+ * composition: absent configuration enables nothing, and invalid bounds fail
+ * closed at composition construction. The observation source and remediation
+ * effects must be supplied by the composition caller.
+ */
+export interface HostedReconciliationConfiguration {
+  readonly source: ReconciliationSource
+  readonly effects: ReconciliationEffects
+  /** Completion-scheduled interval in milliseconds; validated by the scheduler. */
+  readonly intervalMs: number
+  /** Candidate limit per pass, 1..1_000; validated by the scheduler. */
+  readonly batchLimit: number
+  readonly staleAfterMs?: number
+  readonly rateLimit?: ReconciliationRateLimit
 }
 
 export interface HostedServerCompositionOptions {
@@ -118,6 +177,8 @@ export interface HostedServerCompositionOptions {
   ) => RemoteControlHostAdapter<unknown>
   readonly runtimeActivityPort?: WorkflowRuntimeActivityPort
   readonly graphActivities?: GraphSegmentActivityPort
+  readonly metricAdapter?: MetricAdapter
+  readonly reconciliation?: HostedReconciliationConfiguration
 }
 
 export class HostedServerControlPlaneComposition {
@@ -142,8 +203,10 @@ export class HostedServerControlPlaneComposition {
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
   readonly executionLifecycleActivities: DurableExecutionLifecycleActivities
   readonly runtimeAttemptRouter: RuntimeDiscoveryAttemptRouter
+  readonly reconciliationService: ExecutionReconciliationService | undefined
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
+  readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -180,6 +243,13 @@ export class HostedServerControlPlaneComposition {
         }),
       })
     const restateIngressUrl = options.restateIngressUrl ?? 'http://restate:8080'
+    // Consistency metrics flow through the telemetry redaction pipeline with bounded
+    // label cardinality; without an injected metric adapter every hook is a no-op.
+    const consistencyMetrics =
+      options.metricAdapter === undefined
+        ? undefined
+        : createConsistencyMetricEmitter(options.metricAdapter, 'hosted-control-plane')
+    const inboxMetrics: CommandInboxMetrics | undefined = consistencyMetrics
     const plans = new PostgresExecutionPlanRepository(this.connection.database)
     const catalog = new PostgresCatalogRepository(this.connection.database)
     const projectStates = new PostgresProjectStateRepository(this.connection.database)
@@ -189,6 +259,7 @@ export class HostedServerControlPlaneComposition {
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: createExecutionId,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
       dispatcher: new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl }),
     })
@@ -197,27 +268,37 @@ export class HostedServerControlPlaneComposition {
     }
     this.remoteControl =
       options.remoteControl ?? options.remoteControlFactory?.(this.executionAcceptanceService)
+    // The supported default authorizes authoring from this composition's own PostgreSQL
+    // grant and registration stores; an explicit injection always takes precedence.
+    const contextAuthoring =
+      options.contextAuthoring ??
+      ({
+        authority: new GrantsBackedContextAuthoringAuthority({
+          grants: new PostgresContextCommandGrantRepository(this.connection.database),
+          registrations: new PostgresContextProviderRegistrationRepository(
+            this.connection.database
+          ),
+          artifacts: this.objectStore,
+          policy: HOSTED_CONTEXT_AUTHORING_POLICY,
+        }),
+      } satisfies ContextAuthoringCompositionOptions)
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: COMPONENT_VERSION,
       contextPackages,
       commands: new PostgresExecutionValidationCommandRepository(this.connection.database),
-      ...(options.contextAuthoring === undefined
-        ? {}
-        : {
-            contextAuthoring: new ContextPackageAuthoringService({
-              compilerVersion: COMPONENT_VERSION,
-              packages: contextPackages,
-              projectStates,
-              commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
-              authority: options.contextAuthoring.authority,
-              ...(options.contextAuthoring.providerResolver === undefined
-                ? {}
-                : {
-                    providerResolver: options.contextAuthoring.providerResolver,
-                  }),
-              now: options.contextAuthoring.now ?? (() => new Date()),
+      contextAuthoring: new ContextPackageAuthoringService({
+        compilerVersion: COMPONENT_VERSION,
+        packages: contextPackages,
+        projectStates,
+        commands: new PostgresContextAuthoringCommandRepository(this.connection.database),
+        authority: contextAuthoring.authority,
+        ...(contextAuthoring.providerResolver === undefined
+          ? {}
+          : {
+              providerResolver: contextAuthoring.providerResolver,
             }),
-          }),
+        now: contextAuthoring.now ?? (() => new Date()),
+      }),
       profiles: catalog,
       projectStates,
       skills: catalog,
@@ -280,9 +361,30 @@ export class HostedServerControlPlaneComposition {
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: unavailableExecutionIdFactory,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
     })
     this.executionLifecycleActivities = activities
+    // Reconciliation scheduling is explicit composition configuration: absent
+    // configuration enables nothing, and invalid bounds fail closed above.
+    if (options.reconciliation !== undefined) {
+      const reconciliation = options.reconciliation
+      this.reconciliationService = new ExecutionReconciliationService({
+        repository: new PostgresReconciliationCheckpointRepository(this.connection.database),
+        source: reconciliation.source,
+        effects: reconciliation.effects,
+        ...(reconciliation.staleAfterMs === undefined
+          ? {}
+          : { policy: { staleAfterMs: reconciliation.staleAfterMs } }),
+        ...(reconciliation.rateLimit === undefined ? {} : { rateLimit: reconciliation.rateLimit }),
+        ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+      })
+      this.#reconciliationScheduler = new ReconciliationScheduler({
+        service: this.reconciliationService,
+        intervalMs: reconciliation.intervalMs,
+        batchLimit: reconciliation.batchLimit,
+      })
+    }
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??
@@ -325,7 +427,9 @@ export class HostedServerControlPlaneComposition {
     try {
       await this.workflow.start()
       await this.remoteControl?.start()
+      this.#reconciliationScheduler?.start()
     } catch (error) {
+      await this.#reconciliationScheduler?.close().catch(() => undefined)
       await this.remoteControl?.stop()
       await this.workflow.stop().catch(() => undefined)
       await this.#endpoint.shutdown().catch(() => undefined)
@@ -378,6 +482,8 @@ export class HostedServerControlPlaneComposition {
 
   async close(): Promise<void> {
     this.#started = false
+    // Drain the scheduler first: a clean close never abandons an in-flight pass.
+    await this.#reconciliationScheduler?.close()
     await this.remoteControl?.stop()
     await this.workflow.stop().catch(() => undefined)
     await this.#endpoint?.shutdown().catch(() => undefined)

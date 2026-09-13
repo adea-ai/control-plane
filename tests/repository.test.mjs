@@ -121,6 +121,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
   assert.deepEqual(integration, [
     'apps/control-api/src/validation-replay.integration.test.mjs',
+    'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
@@ -143,6 +144,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m9-production-hardening.test.mjs',
     'tests/m10-portability-conformance.test.mjs',
     'tests/m10-operability.test.mjs',
+    'tests/m11-consistency-metric-wiring.test.mjs',
+    'tests/m11-context-authoring-composition.test.mjs',
+    'tests/m11-context-composition.test.mjs',
+    'tests/m11-context-transport-e2e.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
   ])
   assert.deepEqual(smoke, [

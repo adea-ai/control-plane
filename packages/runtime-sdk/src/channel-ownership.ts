@@ -20,6 +20,20 @@ export const RuntimeChannelOwnershipSchema = z
 
 export type RuntimeChannelOwnership = z.output<typeof RuntimeChannelOwnershipSchema>
 
+export const RuntimeChannelSequenceRequestSchema = z
+  .object({
+    channel: RuntimeChannelOwnershipSchema,
+    count: z.number().int().min(1).max(1000),
+    minimum: z.number().int().min(1).max(2147483647),
+  })
+  .strict()
+export type RuntimeChannelSequenceRequest = z.output<typeof RuntimeChannelSequenceRequestSchema>
+
+/** Reserve before sending; ambiguous/failed sends burn their range rather than reuse it. */
+export interface RuntimeChannelSequenceRepository {
+  reserve(request: RuntimeChannelSequenceRequest): Promise<number>
+}
+
 /** Durable fencing only; replacement notification is owned by the gateway coordinator. */
 export interface RuntimeChannelOwnershipRepository {
   claim(
