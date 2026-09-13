@@ -46,6 +46,9 @@ export default defineRailway((context) => {
       R2_ENDPOINT: preserve(),
       R2_BUCKET: 'ctrl-plane',
       R2_REGION: 'auto',
+      // Staging and preview object keys live under an environment prefix so a shared
+      // bucket cannot be addressed with production keys; production stays unprefixed.
+      ...(production ? {} : { R2_PREFIX: 'staging/' }),
       R2_ACCESS_KEY_ID: preserve(),
       R2_SECRET_ACCESS_KEY: preserve(),
       RESTATE_INGRESS_URL: 'http://control-planerestate.railway.internal:8080',
@@ -81,6 +84,8 @@ export default defineRailway((context) => {
       R2_ENDPOINT: preserve(),
       R2_BUCKET: 'ctrl-plane',
       R2_REGION: 'auto',
+      // Matches the control-api separation prefix for the same environment.
+      ...(production ? {} : { R2_PREFIX: 'staging/' }),
       R2_ACCESS_KEY_ID: preserve(),
       R2_SECRET_ACCESS_KEY: preserve(),
       CONTROL_PLANE_CLOUD_RUNTIME: production ? 'disabled' : 'certification',

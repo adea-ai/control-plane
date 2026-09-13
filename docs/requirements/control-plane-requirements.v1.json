@@ -719,7 +719,7 @@
       "heading": "Environment isolation (section 14)",
       "requirement": "Preview and staging Artifact stores or prefixes and credentials remain separate from production and cannot read production Artifacts.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "infrastructure/live-provider certification",
       "issueRefs": [188, 190, 194, 195],
@@ -727,13 +727,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "packages/object-store/src/index.ts"
+        },
+        {
+          "kind": "document",
+          "path": "packages/config/src/managed-cloud.ts"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-12: bounded M11 implementation — per-environment artifact store/prefix separation and cross-environment read-denial verification against the repository-owned Railway configuration. Owner artifact-integration."
+        "disposition": "M11 implementation landed: validated per-environment R2 key prefixes (R2_PREFIX) applied to every object address while descriptors expose caller-visible keys, wired through the managed-cloud configuration and the Railway IaC (staging prefixed, production unprefixed), with environment separation documented in the infrastructure manifest. Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed pair."
       }
     },
     {

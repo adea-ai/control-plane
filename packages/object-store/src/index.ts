@@ -51,6 +51,12 @@ export interface S3CompatibleObjectStoreConfiguration {
   readonly region: string
   readonly accessKeyId: string
   readonly secretAccessKey: string
+  /**
+   * Optional environment separation prefix applied to every object key. Staging and
+   * preview environments use a distinct prefix so their objects cannot be addressed
+   * with production keys from the same bucket.
+   */
+  readonly prefix?: string
 }
 
 export interface R2ObjectStoreConfiguration extends S3CompatibleObjectStoreConfiguration {
@@ -66,6 +72,7 @@ export interface R2ObjectStoreOptions {
   readonly bucket: string
   readonly client: S3ObjectClient
   readonly maxObjectBytes: number
+  readonly prefix?: string
 }
 
 export interface CreateR2ObjectStoreOptions {
@@ -98,6 +105,7 @@ export function createS3CompatibleObjectStore(
     bucket: configuration.bucket,
     client,
     maxObjectBytes: options.maxObjectBytes,
+    ...(configuration.prefix === undefined ? {} : { prefix: configuration.prefix }),
   })
 }
 
@@ -105,17 +113,34 @@ export class R2ObjectStore implements ObjectStore {
   readonly #bucket: string
   readonly #client: S3ObjectClient
   readonly #maxObjectBytes: number
+  readonly #prefix: string
 
   constructor(options: R2ObjectStoreOptions) {
     if (!/^[A-Za-z0-9._-]{3,63}$/.test(options.bucket)) invalidInput()
     if (!Number.isSafeInteger(options.maxObjectBytes) || options.maxObjectBytes <= 0) invalidInput()
+    const prefix = options.prefix ?? ''
+    if (
+      prefix !== '' &&
+      (!/^[A-Za-z0-9._/-]{1,128}$/.test(prefix) ||
+        prefix.startsWith('/') ||
+        prefix.includes('//') ||
+        prefix.split('/').some((segment) => segment === '.' || segment === '..'))
+    )
+      invalidInput()
     this.#bucket = options.bucket
+    this.#prefix = prefix
     this.#client = options.client
     this.#maxObjectBytes = options.maxObjectBytes
   }
 
+  /** Internal bucket address for a caller-visible key; descriptors expose the visible key. */
+  #address(visibleKey: string): string {
+    return this.#prefix === '' ? visibleKey : `${this.#prefix}${visibleKey}`
+  }
+
   async put(input: PutObjectInput): Promise<StoredObjectDescriptor> {
-    const key = validKey(input.key)
+    const visibleKey = validKey(input.key)
+    const key = this.#address(visibleKey)
     if (!(input.body instanceof Uint8Array)) invalidInput()
     if (input.body.byteLength > this.#maxObjectBytes) tooLarge()
     const contentType = optionalContentType(input.contentType)
@@ -136,7 +161,7 @@ export class R2ObjectStore implements ObjectStore {
       )
       const etag = optionalString(output['ETag'])
       return descriptor({
-        key,
+        key: visibleKey,
         size: input.body.byteLength,
         ...(contentType === undefined ? {} : { contentType }),
         ...(etag === undefined ? {} : { etag }),
@@ -149,14 +174,15 @@ export class R2ObjectStore implements ObjectStore {
   }
 
   async get(keyValue: string): Promise<StoredObject> {
-    const key = validKey(keyValue)
+    const visibleKey = validKey(keyValue)
+    const key = this.#address(visibleKey)
     try {
       const output = asRecord(
         await this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key }))
       )
       const body = await readBody(output['Body'])
       if (body.byteLength > this.#maxObjectBytes) tooLarge()
-      const result = descriptorFromProvider(key, output)
+      const result = descriptorFromProvider(visibleKey, output)
       if (result.size !== body.byteLength) integrityFailure()
       if (result.sha256 !== digest(body)) integrityFailure()
       return { ...result, body }
@@ -167,12 +193,13 @@ export class R2ObjectStore implements ObjectStore {
   }
 
   async head(keyValue: string): Promise<StoredObjectDescriptor> {
-    const key = validKey(keyValue)
+    const visibleKey = validKey(keyValue)
+    const key = this.#address(visibleKey)
     try {
       const output = asRecord(
         await this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }))
       )
-      const result = descriptorFromProvider(key, output)
+      const result = descriptorFromProvider(visibleKey, output)
       if (result.size > this.#maxObjectBytes) tooLarge()
       return result
     } catch (error) {
@@ -182,7 +209,7 @@ export class R2ObjectStore implements ObjectStore {
   }
 
   async delete(keyValue: string): Promise<void> {
-    const key = validKey(keyValue)
+    const key = this.#address(validKey(keyValue))
     try {
       await this.#client.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: key }))
     } catch (error) {
