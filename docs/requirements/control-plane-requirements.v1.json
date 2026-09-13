@@ -2195,7 +2195,7 @@
       "heading": "Constrained process launch (section 11)",
       "requirement": "Process operations must enforce approved executable identities, argument and working-directory constraints, environment-variable allowlists, timeout limits and output-size limits.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2203,13 +2203,17 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "packages/deployment/src/process-runtime.ts"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Adjudicated 2026-09-12: M11 scope is the Control-Plane-owned spawn path (constrain managed runtime process launches: executable identity, argument/working-directory constraints). The RuntimeNode user-facing process-operation policy arrives with the M12 desktop host. Owner runtime-contracts."
+        "disposition": "Bounded spawn policy enforcement is implemented in the managed process runtime: executable allowlist compared by resolved real path (symlinks cannot escape denial), working-directory containment, and argument/environment bounds, validated at construction and enforced before any process starts (packages/deployment/src/process-runtime.ts). Remaining: wiring the policy into the local and hosted managed launch sites with pinned executable identities, and the RuntimeNode user-facing process-operation policy which arrives with the M12 desktop host."
       }
     },
     {
