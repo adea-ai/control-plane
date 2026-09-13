@@ -116,7 +116,16 @@ export class RuntimeGatewayWebSocketServer {
             socket: nativeSocketAdapter(socket),
           })
         },
-        message: (socket, message) => this.#lifecycle.receive(socket.data.connectionId, message),
+        message: async (socket, message) => {
+          // An inbound frame whose processing fails must never be lost silently:
+          // the failure is counted through a fixed diagnostic so operators can see
+          // the drop, and the peer's own recovery path re-requests the work.
+          try {
+            await this.#lifecycle.receive(socket.data.connectionId, message)
+          } catch {
+            this.#lifecycle.recordInboundFailure()
+          }
+        },
         close: (socket, code, reason) =>
           this.#lifecycle.closed(
             socket.data.connectionId,

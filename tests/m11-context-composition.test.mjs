@@ -186,6 +186,12 @@ async function composeGateway({
   const composition = await composeRuntimeGateway({
     store: { backend: 'sqlite', path },
     objectStore: objects,
+    logger: {
+      write: (entry) =>
+        (globalThis.__m11GatewayLogs ??= []).push(
+          `${entry.event ?? '?'} ${JSON.stringify(entry.details ?? entry.metadata ?? {}).slice(0, 160)}`
+        ),
+    },
     metrics: new RecordingGatewayMetrics(),
     reachability: new RecordingRuntimeNodeReachabilityPublisher(),
     traceId: () => traceId,
@@ -461,7 +467,7 @@ test('composed gateway and node deliver a context command end to end from admini
         secondCommandId
       )
       throw new Error(
-        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState} nodeInbox=${JSON.stringify(nodeInbox)} sentFrames=${JSON.stringify((nodeState.sentFrames ?? []).slice(-6))})`
+        `${String(error).slice(0, 120)} (status=${stalled?.status} attempts=${stalled?.deliveryAttempts} socket=${nodeState.socket?.readyState} nodeInbox=${JSON.stringify(nodeInbox)} sentFrames=${JSON.stringify((nodeState.sentFrames ?? []).slice(-6))} gatewayLogs=${JSON.stringify((globalThis.__m11GatewayLogs ?? []).slice(-12))} gatewayReceiveErrors=${JSON.stringify((globalThis.__m11GatewayReceiveErrors ?? []).slice(-4))})`
       )
     }
     const recovered = await second.composition.delivery.get(workspaceId, secondCommandId)
