@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/database-v1.11.0...database-v1.12.0) (2026-09-13)
+
+
+### Features
+
+* **context:** deliver and reconcile authenticated gateway commands ([#476](https://github.com/adea-ai/control-plane/issues/476)) ([d8d8074](https://github.com/adea-ai/control-plane/commit/d8d8074d1d05aa0523e206e5ffed18fe3452de95))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/database-v1.10.2...database-v1.11.0) (2026-09-12)
 
 
