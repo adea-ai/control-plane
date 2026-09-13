@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/events-v1.5.0...events-v1.6.0) (2026-09-13)
+
+
+### Features
+
+* **events:** escalate stuck deliveries and record terminal disagreements ([#488](https://github.com/adea-ai/control-plane/issues/488)) ([2661fbd](https://github.com/adea-ai/control-plane/commit/2661fbd3a31565218809a12ff9dc4b9e3dfb4437))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/events-v1.4.0...events-v1.5.0) (2026-09-13)
 
 
