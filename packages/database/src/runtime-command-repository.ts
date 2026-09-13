@@ -141,6 +141,7 @@ export function toRuntimeCommandRow(
     resultReference: record.resultReference ?? null,
     resultStatus: record.resultStatus ?? null,
     resultRecordedAt: optionalDate(record.resultRecordedAt),
+    correlation: record.correlation ?? null,
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
   }
@@ -157,6 +158,9 @@ export function fromRuntimeCommandRow(row: RuntimeCommandRow): RuntimeCommandRec
     idempotencyKey: row.idempotencyKey,
     payloadHash: row.payloadHash,
     commandEnvelope: row.commandEnvelope,
+    ...(row.correlation === null || row.correlation === undefined
+      ? {}
+      : { correlation: row.correlation }),
     issuedAt: row.issuedAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),
     status: row.status,

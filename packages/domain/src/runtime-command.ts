@@ -36,6 +36,20 @@ export const RuntimeCommandRecordSchema = z
     status: RuntimeCommandStatusSchema,
     version: z.number().int().positive(),
     deliveryAttempts: z.number().int().nonnegative(),
+    /**
+     * Correlation carried into runtime dispatch. Tracers and reconciliation use these
+     * to link a runtime command back to its accepted request; members are optional
+     * because producers add context as it becomes available on the dispatch path.
+     */
+    correlation: z
+      .object({
+        traceId: IdentifierSchemas.traceId.optional(),
+        requestId: IdentifierSchemas.requestId.optional(),
+        projectId: IdentifierSchemas.projectId.optional(),
+        taskId: IdentifierSchemas.taskId.optional(),
+        agentId: IdentifierSchemas.agentId.optional(),
+      })
+      .optional(),
     lastChannelGeneration: z.number().int().positive().optional(),
     lastSequence: z.number().int().nonnegative().optional(),
     firstDispatchedAt: TimestampSchema.optional(),
@@ -136,6 +150,16 @@ const RuntimeCommandEnvelopeIdentitySchema = z
   })
   .passthrough()
 
+const RuntimeCommandCorrelationSourceSchema = z
+  .object({
+    traceId: IdentifierSchemas.traceId.optional(),
+    requestId: IdentifierSchemas.requestId.optional(),
+    projectId: IdentifierSchemas.projectId.optional(),
+    taskId: IdentifierSchemas.taskId.optional(),
+    agentId: IdentifierSchemas.agentId.optional(),
+  })
+  .passthrough()
+
 export function createQueuedRuntimeCommandRecord(
   commandValue: unknown,
   createdAtValue: string
@@ -143,6 +167,18 @@ export function createQueuedRuntimeCommandRecord(
   const command = RuntimeCommandEnvelopeIdentitySchema.parse(commandValue)
   const commandEnvelope = z.record(z.string(), z.json()).parse(commandValue)
   const createdAt = TimestampSchema.parse(createdAtValue)
+  // Correlation flows from the command envelope when the producer provides it; the
+  // factory never invents identities beyond what the dispatch context carries.
+  const source = RuntimeCommandCorrelationSourceSchema.parse(commandValue)
+  const correlation = Object.fromEntries(
+    Object.entries({
+      traceId: source.traceId,
+      requestId: source.requestId,
+      projectId: source.projectId,
+      taskId: source.taskId,
+      agentId: source.agentId,
+    }).filter(([, value]) => value !== undefined)
+  )
   return RuntimeCommandRecordSchema.parse({
     commandId: command.commandId,
     executionId: command.executionId,
@@ -158,6 +194,7 @@ export function createQueuedRuntimeCommandRecord(
     status: 'queued',
     version: 1,
     deliveryAttempts: 0,
+    ...(Object.keys(correlation).length === 0 ? {} : { correlation }),
     createdAt,
     updatedAt: createdAt,
   })
