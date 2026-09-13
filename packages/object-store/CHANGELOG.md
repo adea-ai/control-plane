@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/object-store-v1.2.4...object-store-v1.3.0) (2026-09-13)
+
+
+### Features
+
+* **object-store:** separate artifact environments by key prefix ([#483](https://github.com/adea-ai/control-plane/issues/483)) ([cff5a03](https://github.com/adea-ai/control-plane/commit/cff5a03fc6f47c1bda0381bf27e14ac6b016b1e9))
+
 ## [1.2.4](https://github.com/adea-ai/control-plane/compare/object-store-v1.2.3...object-store-v1.2.4) (2026-09-10)
 
 
