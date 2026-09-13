@@ -45,6 +45,8 @@ const namespaces = {
   projectStates: 'project-states',
   projectStateHistory: 'project-state-history',
   projectStateMutations: 'project-state-mutations',
+  /** Storage-level parity with the PostgreSQL outbox; no SQLite dispatcher consumes it yet. */
+  projectStateUpdates: 'project-state-updates',
 } as const
 
 export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
@@ -413,6 +415,21 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         namespace: namespaces.projectStateMutations,
         id: mutationId,
         value: json(mutation),
+      })
+      // Same durable product record the PostgreSQL outbox receives, written inside the
+      // same transaction as the revision so it exists exactly when the CAS commits.
+      await transaction.put({
+        namespace: namespaces.projectStateUpdates,
+        id: recordId(`${state.workspaceId}\u001f${state.projectId}\u001f${state.revision}`),
+        value: json({
+          workspaceId: state.workspaceId,
+          projectId: state.projectId,
+          previousRevision: expectedRevision,
+          revision: state.revision,
+          mutationId: mutation.mutationId,
+          inputDigest: mutation.inputDigest,
+          touchedItemIds: [...mutation.touchedItemIds],
+        }),
       })
       return true
     })

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
@@ -25,6 +25,8 @@ export const ContextProviderRequestSchema = z.object({
     .max(128)
     .regex(/^[A-Za-z0-9._:-]+$/)
     .optional(),
+  /** Explicit read deadline; producers always set it and the resolver derives it when absent. */
+  deadlineAt: z.iso.datetime().optional(),
   now: z.iso.datetime(),
   policy: ContextProviderPolicySchema,
 })
@@ -146,7 +148,17 @@ export class ContextProviderResolver {
   }
 
   async #resolve(input: unknown): Promise<ContextProviderResolution> {
-    const request = ContextProviderRequestSchema.parse(input)
+    const parsed = ContextProviderRequestSchema.parse(input)
+    // Every provider read carries a stable operation identity and an explicit deadline;
+    // both are derived here — never taken from provider output — and excluded from the
+    // cache identity because they are per-read correlation, not request semantics.
+    const request: ContextProviderRequest = {
+      ...parsed,
+      operationId: parsed.operationId ?? `op:${randomUUID()}`,
+      deadlineAt:
+        parsed.deadlineAt ??
+        new Date(Date.parse(parsed.now) + parsed.policy.maximumLatencyMs).toISOString(),
+    }
     if (request.policy.mode === 'disabled') return empty('disabled', ['POLICY_DISABLED'])
     const providers = this.#eligible(request)
     let lastError: ContextProviderResolutionError | undefined
@@ -237,7 +249,9 @@ export class ContextProviderResolver {
     request: ContextProviderRequest,
     providerIdentity: string
   ): string {
-    const { now, ...requestIdentity } = request
+    // Per-read correlation (operationId, deadlineAt) is deliberately excluded from the
+    // cache identity: reuse must not depend on a single read's identity or deadline.
+    const { now, operationId: _operationId, deadlineAt: _deadlineAt, ...requestIdentity } = request
     return digest(
       JSON.stringify({
         provider: provider.readModel.definition,
@@ -245,7 +259,7 @@ export class ContextProviderResolver {
         providerIdentity,
         request: requestIdentity,
         nowBucket: Math.floor(Date.parse(now) / (request.policy.maximumAgeSeconds * 1_000 || 1)),
-        adapterVersion: 'context-provider-resolver/4',
+        adapterVersion: 'context-provider-resolver/5',
       })
     )
   }

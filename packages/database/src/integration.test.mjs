@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { rejects } from 'node:assert/strict'
@@ -501,6 +501,63 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         contentDigest: `sha256:${'f'.repeat(64)}`,
       })
     ).rejects.toThrow()
+  })
+
+  test('records project_state.updated in the outbox only when the revision CAS commits', async () => {
+    const scoped = await createIsolatedTestDatabase({
+      administration: loadDatabaseCredentials(process.env, 'administration'),
+      application: loadDatabaseCredentials(process.env, 'application'),
+      migration: loadDatabaseCredentials(process.env, 'migration'),
+    })
+    try {
+      await scoped.migrate()
+      const repository = new PostgresProjectStateRepository(scoped.application)
+      const scope = {
+        workspaceId: 'wsp_01JABCDEF0123456789ABCDEFH',
+        projectId: 'prj_01JABCDEF0123456789ABCDEFH',
+      }
+      expect(
+        await repository.create({
+          schemaVersion: 1,
+          ...scope,
+          revision: 0,
+          items: [],
+          createdAt: '2026-09-13T00:00:00.000Z',
+          updatedAt: '2026-09-13T00:00:00.000Z',
+        })
+      ).toBe(true)
+      const mutation = {
+        mutationId: 'stm_01JABCDEF0123456789ABCDEFH',
+        inputDigest: `sha256:${'e'.repeat(64)}`,
+        resultingRevision: 1,
+        touchedItemIds: [],
+      }
+      const updated = { ...(await repository.get(scope.workspaceId, scope.projectId)), revision: 1 }
+      const outboxFor = () =>
+        scoped.application
+          .select()
+          .from(outboxEvents)
+          .where(
+            and(
+              eq(outboxEvents.aggregateId, `${scope.workspaceId}:${scope.projectId}`),
+              eq(outboxEvents.eventType, 'project_state.updated')
+            )
+          )
+      expect(await repository.compareAndSet(0, updated, mutation)).toBe(true)
+      const [record] = await outboxFor()
+      expect(record).toMatchObject({ aggregateType: 'project_state', status: 'pending' })
+      expect(record.payload).toMatchObject({
+        previousRevision: 0,
+        revision: 1,
+        mutationId: mutation.mutationId,
+        inputDigest: mutation.inputDigest,
+      })
+      // A stale writer against the committed revision fails without adding another event.
+      expect(await repository.compareAndSet(0, updated, mutation)).toBe(false)
+      expect(await outboxFor()).toHaveLength(1)
+    } finally {
+      await scoped.dispose()
+    }
   })
 
   test('persists ProjectState history, mutation replay, and promotion CAS across restart', async () => {

@@ -12,6 +12,7 @@ import {
 } from '@control-plane/domain'
 import { and, asc, eq } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { outboxEvents } from './schema/messaging.js'
 import {
   projectStateMutations,
   projectStateRevisions,
@@ -120,6 +121,22 @@ export class PostgresProjectStateRepository implements ProjectStateRepository {
         workspaceId: state.workspaceId,
         projectId: state.projectId,
         ...mutation,
+      })
+      // Durable product event in the same transaction as the revision write: the event
+      // exists exactly when the new revision commits, and never for a rejected CAS.
+      await transaction.insert(outboxEvents).values({
+        aggregateType: 'project_state',
+        aggregateId: `${state.workspaceId}:${state.projectId}`,
+        eventType: 'project_state.updated',
+        payload: {
+          workspaceId: state.workspaceId,
+          projectId: state.projectId,
+          previousRevision: expected,
+          revision: state.revision,
+          mutationId: mutation.mutationId,
+          inputDigest: mutation.inputDigest,
+          touchedItemIds: [...mutation.touchedItemIds],
+        },
       })
       return true
     })
