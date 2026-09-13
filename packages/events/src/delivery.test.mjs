@@ -108,7 +108,7 @@ function setup(outcomes, now = { value: '2026-08-24T12:01:00.000Z' }) {
     publicationService: service,
     transport,
     now: () => now.value,
-    retry: { baseDelayMs: 1_000, maximumAttempts: 3 },
+    retry: { baseDelayMs: 1_000, maximumAttempts: 3, ...now.escalation },
   })
   return { deliveries, dispatcher, now, repository, service }
 }
@@ -235,5 +235,50 @@ describe('Agent HQ execution event delivery', () => {
     expect(deliveries[0].eventId).toBe(deliveries[1].eventId)
     expect(deliveries[0].payloadHash).toBe(deliveries[1].payloadHash)
     expect((await repository.get(event.eventId)).publication.status).toBe('published')
+  })
+})
+
+describe('retry escalation to manual remediation', () => {
+  test('quarantines a continuously failing delivery once it exceeds the escalation window', async () => {
+    const now = { value: '2026-08-24T12:01:00.000Z' }
+    const repository = new InMemoryExecutionEventRepository()
+    const service = new ExecutionEventService(repository)
+    const deliveries = []
+    const dispatcher = new ExecutionEventDispatcher({
+      repository,
+      publicationService: service,
+      transport: {
+        deliver: async () => {
+          deliveries.push(1)
+          return { outcome: 'retryable_failure', code: 'HTTP_503' }
+        },
+      },
+      now: () => now.value,
+      retry: { baseDelayMs: 1_000, maximumAttempts: 100, escalationAfterMs: 3_600_000 },
+    })
+    const event = await service.append(eventInput())
+
+    await dispatcher.dispatchBatch(10)
+    expect(deliveries).toHaveLength(1)
+    expect((await repository.get(event.eventId)).publication.status).toBe('failed')
+
+    now.value = '2026-08-24T13:01:00.000Z'
+    await dispatcher.dispatchBatch(10)
+    const quarantined = await repository.get(event.eventId)
+    expect(quarantined.publication.status).toBe('quarantined')
+    expect(quarantined.publication.attempts).toBe(2)
+  })
+
+  test('rejects an invalid escalation window at construction', () => {
+    const repository = new InMemoryExecutionEventRepository()
+    expect(
+      () =>
+        new ExecutionEventDispatcher({
+          repository,
+          publicationService: new ExecutionEventService(repository),
+          transport: { deliver: async () => ({ outcome: 'accepted' }) },
+          retry: { baseDelayMs: 1_000, maximumAttempts: 3, escalationAfterMs: 0 },
+        })
+    ).toThrow('INVALID_EVENT_DELIVERY_RETRY_POLICY')
   })
 })

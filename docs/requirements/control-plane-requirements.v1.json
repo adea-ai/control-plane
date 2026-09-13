@@ -1222,7 +1222,7 @@
       "heading": "Permanent rejection and dead letters (section 16)",
       "requirement": "Permanent validation, schema, scope, authorization and digest failures are rejected or quarantined immediately; continuously retryable delivery reaches manual remediation after 24 hours unless intentionally in a valid durable wait.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1230,13 +1230,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/delivery.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/delivery.test.mjs"
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Escalation landed: a retryable delivery continuously failing past the configured window (default 24h from recording) is quarantined with evidence retained, regardless of attempt budget, and the window is validated at construction. Remaining: cross-profile evidence from a frozen candidate and wiring the escalation metric into operator alerting."
       }
     },
     {
