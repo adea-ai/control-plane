@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.2...workspace-v1.22.3) (2026-09-13)
+
+
+### Documentation
+
+* **requirements:** add security trust source audit ([#496](https://github.com/adea-ai/control-plane/issues/496)) ([bfbc3a4](https://github.com/adea-ai/control-plane/commit/bfbc3a4d549b9d87aebf42334b6f631a60fc5f79))
+
 ## [1.22.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.1...workspace-v1.22.2) (2026-09-13)
 
 
