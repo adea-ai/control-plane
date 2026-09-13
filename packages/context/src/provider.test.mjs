@@ -484,3 +484,43 @@ describe('provider read identity and deadline', () => {
     expect(retrievals).toBe(1)
   })
 })
+
+describe('provider failure metadata', () => {
+  test('derives bounded failure metadata per error code', () => {
+    let captured
+    const unavailable = fake('U', { health: 'unavailable' })
+    return resolver([unavailable])
+      .resolve(request())
+      .catch((error) => {
+        captured = error
+        expect(captured.retryable).toBe(true)
+        expect(captured.source).toBe('driver')
+        expect(captured.remediation).toBe(
+          'retry later or select another eligible provider connection'
+        )
+      })
+  })
+
+  test('distinguishes malformed payloads from contract mismatches', async () => {
+    let malformed
+    let mismatch
+    const forging = contribution(fake('F'), { contentDigest: `sha256:${'0'.repeat(64)}` })
+    await resolver([forging])
+      .resolve(request({ mode: 'required', failureBehavior: 'fail' }))
+      .catch((error) => {
+        malformed = error
+      })
+    expect(malformed.code).toBe('PROVIDER_OUTPUT_INVALID')
+    expect(malformed.invalidity).toBe('malformed')
+    expect(malformed.retryable).toBe(false)
+
+    const staleIdentity = contribution(fake('I'), { contractVersion: '9.9.9' })
+    await resolver([staleIdentity])
+      .resolve(request({ mode: 'required', failureBehavior: 'fail' }))
+      .catch((error) => {
+        mismatch = error
+      })
+    expect(mismatch.code).toBe('PROVIDER_OUTPUT_INVALID')
+    expect(mismatch.invalidity).toBe('contract_mismatch')
+  })
+})
