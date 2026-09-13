@@ -12,6 +12,8 @@ export interface ManagedCloudObjectStoreConfiguration {
   readonly region: 'auto'
   readonly accessKeyId: string
   readonly secretAccessKey: string
+  /** Optional environment separation prefix for staging/preview object keys. */
+  readonly prefix?: string
 }
 
 export type ManagedCloudRestateConfiguration =
@@ -224,19 +226,41 @@ function loadObjectStoreConfiguration(
   const region = environment['R2_REGION'] as string
   const accessKeyId = environment['R2_ACCESS_KEY_ID'] as string
   const secretAccessKey = environment['R2_SECRET_ACCESS_KEY'] as string
-  if (!isHttpsUrl(endpoint) || region !== 'auto' || !/^[A-Za-z0-9._-]{3,63}$/.test(bucket)) {
+  // Optional environment separation prefix; staging/preview environments set a distinct
+  // prefix so their objects cannot be addressed with production keys in a shared bucket.
+  const prefix = environment['R2_PREFIX'] === undefined ? '' : (environment['R2_PREFIX'] as string)
+  const validPrefix =
+    prefix === '' ||
+    (/^[A-Za-z0-9._/-]{1,128}$/.test(prefix) &&
+      !prefix.startsWith('/') &&
+      !prefix.includes('//') &&
+      !prefix.split('/').some((segment) => segment === '.' || segment === '..'))
+  if (
+    !isHttpsUrl(endpoint) ||
+    region !== 'auto' ||
+    !/^[A-Za-z0-9._-]{3,63}$/.test(bucket) ||
+    !validPrefix
+  ) {
     throw new ConfigurationError({
       code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
       invalid: [
         ...(!isHttpsUrl(endpoint) ? ['R2_ENDPOINT'] : []),
         ...(region !== 'auto' ? ['R2_REGION'] : []),
         ...(!/^[A-Za-z0-9._-]{3,63}$/.test(bucket) ? ['R2_BUCKET'] : []),
+        ...(!validPrefix ? ['R2_PREFIX'] : []),
       ],
       missing: [],
       component: 'r2',
     })
   }
-  return { endpoint, bucket, region: 'auto', accessKeyId, secretAccessKey }
+  return {
+    endpoint,
+    bucket,
+    region: 'auto',
+    accessKeyId,
+    secretAccessKey,
+    ...(prefix === '' ? {} : { prefix }),
+  }
 }
 
 function loadRestateIngressConfiguration(

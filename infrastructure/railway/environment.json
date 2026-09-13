@@ -91,7 +91,11 @@
     "accessKeyVariable": "R2_ACCESS_KEY_ID",
     "secretKeyVariable": "R2_SECRET_ACCESS_KEY",
     "cors": "not configured; no browser-direct upload path is part of the M9 baseline",
-    "lifecycle": "abort incomplete multipart uploads after 7 days"
+    "lifecycle": "abort incomplete multipart uploads after 7 days",
+    "environmentSeparation": {
+      "staging": "R2_PREFIX=staging/ in the staging environment; production stays unprefixed",
+      "requirement": "Preview/staging and production credentials remain distinct operator-provisioned variables; cross-environment reads must stay denied."
+    }
   },
   "restate": {
     "contract": "restate.json",

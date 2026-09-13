@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/context-v1.6.0...context-v1.7.0) (2026-09-13)
+
+
+### Features
+
+* **events:** classify events and record provider read identity ([#481](https://github.com/adea-ai/control-plane/issues/481)) ([224da04](https://github.com/adea-ai/control-plane/commit/224da048e0b2bd6523abaa508a2862a417b32223))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/context-v1.5.1...context-v1.6.0) (2026-09-13)
 
 

@@ -25,6 +25,8 @@ const cloud = {
   R2_REGION: 'auto',
   R2_ACCESS_KEY_ID: 'access-key',
   R2_SECRET_ACCESS_KEY: 'secret-key-that-is-not-logged',
+  R2_PREFIX: 'staging/2026-09/',
+
   CONTROL_PLANE_CLOUD_RUNTIME: 'certification',
 }
 
@@ -64,7 +66,7 @@ describe('managed cloud configuration', () => {
         role: 'caller',
         ingressUrl: 'http://control-planerestate.railway.internal:8080',
       },
-      objectStore: { bucket: 'ctrl-plane', region: 'auto' },
+      objectStore: { bucket: 'ctrl-plane', region: 'auto', prefix: 'staging/2026-09/' },
       serviceAuthentication: {
         audience: 'control-plane',
         issuer: 'https://agent-hq.example',
@@ -139,5 +141,18 @@ describe('managed cloud configuration', () => {
         'workflow-worker'
       )
     ).toThrow()
+  })
+
+  test('rejects unsafe R2 environment prefixes', () => {
+    for (const prefix of ['/absolute/', '../escape/', 'a//b', 'bad prefix/']) {
+      expect(() =>
+        loadManagedCloudConfiguration({ ...cloud, R2_PREFIX: prefix }, 'control-api')
+      ).toThrow()
+    }
+    const withoutPrefix = { ...cloud }
+    delete withoutPrefix.R2_PREFIX
+    expect(
+      loadManagedCloudConfiguration(withoutPrefix, 'control-api').objectStore?.prefix
+    ).toBeUndefined()
   })
 })
