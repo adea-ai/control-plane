@@ -642,3 +642,58 @@ function externalSessionDiscoveryModel() {
     limitations: [],
   }
 }
+
+describe('project state update records', () => {
+  test('records a durable project_state.updated entry inside the successful CAS transaction', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'm11-state-updates-'))
+    const provider = new SqlitePersistenceProvider({
+      path: join(directory, 'control-plane.sqlite'),
+    })
+    try {
+      await provider.migrate()
+      const projectStates = new SqliteProjectStateRepository(provider)
+      const scope = { workspaceId: ids.workspaceId, projectId: ids.projectId }
+      expect(
+        await projectStates.create({
+          schemaVersion: 1,
+          ...scope,
+          revision: 0,
+          items: [],
+          createdAt: receivedAt,
+          updatedAt: receivedAt,
+        })
+      ).toBe(true)
+      const mutation = {
+        mutationId: 'stm_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        inputDigest: `sha256:${'d'.repeat(64)}`,
+        resultingRevision: 1,
+        touchedItemIds: [],
+      }
+      const updated = {
+        ...(await projectStates.get(scope.workspaceId, scope.projectId)),
+        revision: 1,
+      }
+      expect(await projectStates.compareAndSet(1, updated, mutation)).toBe(false)
+      expect(
+        (await provider.transaction((transaction) => transaction.list('project-state-updates')))
+          .length
+      ).toBe(0)
+      expect(await projectStates.compareAndSet(0, updated, mutation)).toBe(true)
+      const records = await provider.transaction((transaction) =>
+        transaction.list('project-state-updates')
+      )
+      expect(records).toHaveLength(1)
+      expect(records[0].value).toMatchObject({
+        workspaceId: ids.workspaceId,
+        projectId: ids.projectId,
+        previousRevision: 0,
+        revision: 1,
+        mutationId: mutation.mutationId,
+        inputDigest: mutation.inputDigest,
+      })
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})

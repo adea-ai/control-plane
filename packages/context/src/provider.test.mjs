@@ -439,3 +439,48 @@ function request(policy = {}) {
     },
   }
 }
+
+describe('provider read identity and deadline', () => {
+  test('every provider read carries an operation identity and an explicit deadline', async () => {
+    const observed = []
+    const provider = fake('P')
+    const capturing = {
+      ...provider,
+      retrieve: async (input) => {
+        observed.push(input)
+        return provider.retrieve(input)
+      },
+    }
+    await resolver([capturing]).resolve(request())
+    expect(observed).toHaveLength(1)
+    expect(observed[0].operationId).toMatch(/^op:[0-9a-f-]{36}$/)
+    expect(observed[0].deadlineAt).toBe('2026-08-25T12:00:01.000Z')
+
+    observed.length = 0
+    const explicit = request({ maximumLatencyMs: 2_500 })
+    await resolver([capturing]).resolve({
+      ...explicit,
+      operationId: 'op:explicit-correlation-id',
+      deadlineAt: '2026-08-25T12:00:05.000Z',
+    })
+    expect(observed[0].operationId).toBe('op:explicit-correlation-id')
+    expect(observed[0].deadlineAt).toBe('2026-08-25T12:00:05.000Z')
+  })
+
+  test('per-read identity and deadline stay out of the cache identity', async () => {
+    let retrievals = 0
+    const provider = fake('C')
+    const counting = {
+      ...provider,
+      cacheIdentity: () => `sha256:${'c'.repeat(64)}`,
+      retrieve: async (input) => {
+        retrievals += 1
+        return provider.retrieve(input)
+      },
+    }
+    const withCache = resolver([counting], { cache: new InMemoryContextContributionCache() })
+    await withCache.resolve(request())
+    await withCache.resolve({ ...request(), operationId: 'op:a-different-correlation' })
+    expect(retrievals).toBe(1)
+  })
+})

@@ -37,6 +37,9 @@ export const executionEvents = pgTable(
     agentId: identifier('agent_id').notNull(),
     commandId: identifier('command_id'),
     traceId: identifier('trace_id').notNull(),
+    /** Classification metadata only; never payload content. Nullable for pre-existing rows. */
+    sensitivity: varchar('sensitivity', { length: 16 }),
+    redaction: varchar('redaction', { length: 16 }),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     payloadBytes: integer('payload_bytes').notNull(),
     payloadHash: varchar('payload_hash', { length: 64 }).notNull(),
