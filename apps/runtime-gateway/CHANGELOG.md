@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.5.0...runtime-gateway-v1.5.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **runtime-worker:** recover commands whose dispatch lost its channel ([#487](https://github.com/adea-ai/control-plane/issues/487)) ([358857c](https://github.com/adea-ai/control-plane/commit/358857c793c0ef6587ae4945a41cc37aca155574))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.4.1...runtime-gateway-v1.5.0) (2026-09-13)
 
 

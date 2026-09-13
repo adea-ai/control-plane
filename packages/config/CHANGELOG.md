@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/config-v1.5.1...config-v1.6.0) (2026-09-13)
+
+
+### Features
+
+* **object-store:** separate artifact environments by key prefix ([#483](https://github.com/adea-ai/control-plane/issues/483)) ([cff5a03](https://github.com/adea-ai/control-plane/commit/cff5a03fc6f47c1bda0381bf27e14ac6b016b1e9))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/config-v1.5.0...config-v1.5.1) (2026-09-10)
 
 
