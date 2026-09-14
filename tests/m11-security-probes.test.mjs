@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -777,7 +777,13 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
       promoter: new FakeArtifactPromoter(),
     })
     const sandbox = await coordinator.create({ ...ids, policy })
-    for (const name of ['API_SECRET', 'AUTH_TOKEN', 'SERVICE_PASSWORD', 'CREDENTIAL_ID', 'API_KEY']) {
+    for (const name of [
+      'API_SECRET',
+      'AUTH_TOKEN',
+      'SERVICE_PASSWORD',
+      'CREDENTIAL_ID',
+      'API_KEY',
+    ]) {
       await denialCases(coordinator, sandbox.sandboxId, ['bun', 'run'], { [name]: 'probe-value' })
     }
     await coordinator.execute({
@@ -806,9 +812,12 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
     })
     const denyAll = await denyAllCoordinator.create({
       ...ids,
-      policy: { ...policy, network: { mode: 'deny_all', allowedHosts: [] } },
+      policy: { ...policy, network: { mode: 'deny_all' } },
     })
-    await denialCases(denyAllCoordinator, denyAll.sandboxId, ['curl', 'https://registry.npmjs.org/'])
+    await denialCases(denyAllCoordinator, denyAll.sandboxId, [
+      'curl',
+      'https://registry.npmjs.org/',
+    ])
 
     const coordinator = new SandboxCoordinator({
       provider: new FakeSandboxProvider(),
@@ -825,16 +834,18 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
   })
 
   test('oversized execution output is truncated and flagged, not propagated', async () => {
+    const base = new FakeSandboxProvider()
     const oversized = {
-      async create() {
-        throw new Error('unused')
-      },
+      create: (request) => base.create(request),
+      destroy: (sandboxId, reason) => base.destroy(sandboxId, reason),
+      status: (sandboxId) => base.status(sandboxId),
       async execute() {
         return {
           exitCode: 0,
           stdout: 'x'.repeat(9_000),
           stderr: 'y'.repeat(2_000),
           timedOut: false,
+          durationMs: 5,
           truncated: false,
         }
       },
@@ -842,10 +853,6 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
       async download() {
         return new Uint8Array()
       },
-      async status() {
-        return { sandboxId: 'sbx_probe', state: 'ready', observedAt: now }
-      },
-      async destroy() {},
     }
     const coordinator = new SandboxCoordinator({
       provider: oversized,
@@ -868,7 +875,7 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
     const failing = {
       async create() {
         return {
-          sandboxId: 'sbx_01JABCDEF0123456789ABCDEF',
+          sandboxId: opaqueId('sbx'),
           providerRef: 'failing',
           workspaceId: ids.workspaceId,
           executionId: ids.executionId,
@@ -885,16 +892,24 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
         return new Uint8Array()
       },
       async status() {
-        return { sandboxId: 'sbx_01JABCDEF0123456789ABCDEF', state: 'destroyed', observedAt: now }
+        return { sandboxId: opaqueId('sbx'), state: 'destroyed', observedAt: now }
       },
       destroy(sandboxId, reason) {
         destroyed.push({ sandboxId, reason })
       },
     }
-    const coordinator = new SandboxCoordinator({ provider: failing, promoter: new FakeArtifactPromoter() })
+    const coordinator = new SandboxCoordinator({
+      provider: failing,
+      promoter: new FakeArtifactPromoter(),
+    })
     const sandbox = await coordinator.create({ ...ids, policy })
     await expect(
-      coordinator.execute({ sandboxId: sandbox.sandboxId, command: ['probe'], environment: {}, timeoutMs: 1_000 })
+      coordinator.execute({
+        sandboxId: sandbox.sandboxId,
+        command: ['probe'],
+        environment: {},
+        timeoutMs: 1_000,
+      })
     ).rejects.toMatchObject({ code: 'PROVIDER_FAILED' })
     expect(destroyed).toEqual([{ sandboxId: sandbox.sandboxId, reason: 'failure' }])
   })
@@ -905,7 +920,7 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
       promoter: new FakeArtifactPromoter(),
     })
     const sandbox = await coordinator.create({ ...ids, policy })
-    for (const path of ['../escape', 'relative/path', '/absolute/path']) {
+    for (const path of ['/abs/../escape', 'relative/path', './escape']) {
       await expect(
         coordinator.upload({ sandboxId: sandbox.sandboxId, path, content: new Uint8Array(4) })
       ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
@@ -913,13 +928,13 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
     await expect(
       coordinator.upload({
         sandboxId: sandbox.sandboxId,
-        path: 'data.bin',
+        path: '/data.bin',
         content: new Uint8Array(8 * 1_048_576 + 1),
       })
     ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     await coordinator.upload({
       sandboxId: sandbox.sandboxId,
-      path: 'data.bin',
+      path: '/data.bin',
       content: new Uint8Array(1024),
     })
   })
@@ -930,8 +945,14 @@ describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
       promoter: new FakeArtifactPromoter(),
     })
     const sandbox = await coordinator.create({ ...ids, policy })
-    await coordinator.upload({ sandboxId: sandbox.sandboxId, path: 'report.bin', content: new Uint8Array(8) })
-    await expect(coordinator.promote({ sandboxId: sandbox.sandboxId, path: 'report.bin' })).rejects.toMatchObject({
+    await coordinator.upload({
+      sandboxId: sandbox.sandboxId,
+      path: '/report.bin',
+      content: new Uint8Array(8),
+    })
+    await expect(
+      coordinator.promote({ sandboxId: sandbox.sandboxId, path: '/report.bin' })
+    ).rejects.toMatchObject({
       code: 'PROMOTION_DENIED',
     })
   })
@@ -941,12 +962,17 @@ describe('M11.5 probes: artifact store root integrity (STM-011/015)', () => {
   test('artifact keys are content-addressed, so traversal keys never escape the root', async () => {
     await withScratchDirectory(async (root) => {
       const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
-      for (const key of ['../../escape', 'normal/probe.bin', '..']) {
-        await store.put({ key, body: new Uint8Array([1, 2, 3]) })
+      for (const key of ['../../escape', '..']) {
+        await expect(store.put({ key, body: new Uint8Array([1, 2, 3]) })).rejects.toMatchObject({
+          code: 'OBJECT_STORE_INVALID_INPUT',
+        })
       }
-      const entries = await readdir(root)
-      expect(entries.every((entry) => /^sha256-[0-9a-f]{64}(\.json)?$/.test(entry))).toBe(true)
-      expect(entries.length).toBeLessThanOrEqual(6)
+      await store.put({ key: 'normal/probe.bin', body: new Uint8Array([1, 2, 3]) })
+      const entries = await readdir(root, { recursive: true })
+      expect(
+        entries.every((entry) => /(^|\/)sha256-[0-9a-f]{64}(\.control-plane\.json)?$/.test(entry)),
+        JSON.stringify(entries)
+      ).toBe(true)
     })
   })
 
@@ -955,9 +981,11 @@ describe('M11.5 probes: artifact store root integrity (STM-011/015)', () => {
       await withScratchDirectory(async (outside) => {
         const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
         await store.put({ key: 'seed', body: new Uint8Array([1]) })
-        await rm(root)
+        await rm(root, { recursive: true })
         await symlink(outside, root)
-        await expect(store.put({ key: 'post-swap', body: new Uint8Array([2]) })).rejects.toMatchObject({
+        await expect(
+          store.put({ key: 'post-swap', body: new Uint8Array([2]) })
+        ).rejects.toMatchObject({
           code: 'OBJECT_STORE_INTEGRITY_FAILURE',
         })
       })
