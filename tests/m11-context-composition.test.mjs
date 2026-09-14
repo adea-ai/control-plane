@@ -458,6 +458,10 @@ test('composed gateway and node deliver a context command end to end from admini
     expect((await second.composition.delivery.get(workspaceId, secondCommandId)).status).toBe(
       'acknowledged'
     )
+    // Disarm the injected loss before reconnecting: the restart already lost
+    // whatever result was in flight (a send against the detached socket is a
+    // no-op here), and the recovery replay must never be dropped.
+    nodeState.dropNextResult = false
     await connectNode(second)
     // Redelivery after a restart is asynchronous (channel activation plus lifecycle
     // sweeps); the budget tolerates loaded CI runners while the assertions that
