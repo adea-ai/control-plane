@@ -30,7 +30,11 @@ import {
   SqliteRuntimeChannelSequenceRepository,
 } from '@control-plane/sqlite-persistence'
 import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
-import { createConsistencyMetricEmitter, type MetricAdapter } from '@control-plane/telemetry'
+import {
+  createConsistencyMetricEmitter,
+  type MetricAdapter,
+  type StructuredLogger,
+} from '@control-plane/telemetry'
 import type { RuntimeNodeChannel } from './authentication.js'
 import { ContextCommandDeliveryService } from './context-command-delivery.js'
 import { ContextCommandRecoveryService } from './context-command-recovery.js'
@@ -106,6 +110,11 @@ export interface RuntimeGatewayCompositionOptions {
    * consistency metrics are emitted; a no-op fallback is the only default.
    */
   readonly metricAdapter?: MetricAdapter | undefined
+  /**
+   * Host log sink for transport diagnostics (inbound drops and receive
+   * failures). When absent, those diagnostics stay metrics-only.
+   */
+  readonly logger?: StructuredLogger | undefined
   readonly instanceId: string
   readonly hostname: string
   readonly port: number
@@ -238,6 +247,15 @@ export async function composeRuntimeGateway(
     reachability,
     limits,
     messages: router,
+    // Frames dropped before authentication, parsing, or routing are otherwise
+    // invisible: the metric stays fixed-cardinality and the host log carries
+    // the connection identity for diagnosis.
+    onInboundDrop: (drop) =>
+      options.logger?.write({
+        level: 'warn',
+        event: 'inbound_frame_dropped',
+        metadata: drop,
+      }),
   })
   const webSocketServer = new RuntimeGatewayWebSocketServer({
     lifecycle,
@@ -250,6 +268,12 @@ export async function composeRuntimeGateway(
     },
     authenticateUpgrade,
     ...(options.serve ? { serve: options.serve } : {}),
+    onReceiveError: (error) =>
+      options.logger?.write({
+        level: 'warn',
+        event: 'inbound_receive_failed',
+        metadata: { message: error instanceof Error ? error.message : String(error) },
+      }),
   })
   return {
     webSocketServer,

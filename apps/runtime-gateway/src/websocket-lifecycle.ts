@@ -82,6 +82,15 @@ export interface RuntimeGatewayWebSocketLifecycleOptions {
   readonly messages?: RuntimeGatewayMessageHandler
   readonly reconnect?: RuntimeGatewayReconnectHandler
   readonly pending?: RuntimeGatewayPendingCommandHandler
+  /**
+   * Invoked when an inbound frame is discarded before authentication, parsing,
+   * or routing because its connection is unknown or already closed. Diagnostic
+   * only: the peer's own recovery path re-requests the work.
+   */
+  readonly onInboundDrop?: (drop: {
+    readonly connectionId: string
+    readonly reason: 'unknown_connection' | 'closed_connection'
+  }) => void
 }
 
 export class RuntimeGatewayOutboundError extends Error {
@@ -120,6 +129,7 @@ export class RuntimeGatewayWebSocketLifecycle {
   readonly #metrics: GatewayMetrics
   readonly #now: () => Date
   readonly #pending: RuntimeGatewayPendingCommandHandler | undefined
+  readonly #onInboundDrop: RuntimeGatewayWebSocketLifecycleOptions['onInboundDrop']
   readonly #reachability: RuntimeNodeReachabilityPublisher
   readonly #reconnect: RuntimeGatewayReconnectHandler | undefined
   readonly #unsubscribe: () => void
@@ -139,6 +149,7 @@ export class RuntimeGatewayWebSocketLifecycle {
     this.#messages = options.messages
     this.#reconnect = options.reconnect
     this.#pending = options.pending
+    this.#onInboundDrop = options.onInboundDrop
     this.#unsubscribe = this.#coordination.subscribeReplacements(
       this.#instanceId,
       async (record) => {
@@ -182,7 +193,12 @@ export class RuntimeGatewayWebSocketLifecycle {
 
   async receive(connectionId: string, frame: string | ArrayBuffer | Uint8Array): Promise<void> {
     const connection = this.#connections.get(connectionId)
-    if (connection === undefined || connection.state === 'closed') return
+    if (connection === undefined || connection.state === 'closed') {
+      const reason = connection === undefined ? 'unknown_connection' : 'closed_connection'
+      this.#metrics.increment('runtime_gateway.inbound_drops', { reason })
+      this.#onInboundDrop?.({ connectionId, reason })
+      return
+    }
     if (!connection.authenticatedChannel.active) {
       await this.#disconnect(connection, 1008, 'authentication_invalidated')
       return

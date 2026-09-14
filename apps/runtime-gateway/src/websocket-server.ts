@@ -59,6 +59,12 @@ export interface RuntimeGatewayWebSocketServerOptions {
   readonly serve?: RuntimeGatewayNativeServe
   readonly sweepIntervalMs?: number
   readonly onSweepError?: () => void
+  /**
+   * Invoked with the error when an inbound frame's processing throws. The
+   * counter stays fixed-cardinality; this hook carries the failure detail to
+   * the host's log pipeline for diagnosis.
+   */
+  readonly onReceiveError?: (error: unknown) => void
   readonly inventoryMaintenance?: Pick<RuntimeInventoryMaintenance, 'runPage'>
 }
 
@@ -74,6 +80,7 @@ export class RuntimeGatewayWebSocketServer {
   #server: NativeGatewayServer | undefined
   readonly #sweepIntervalMs: number
   readonly #onSweepError: () => void
+  readonly #onReceiveError: ((error: unknown) => void) | undefined
   readonly #inventoryMaintenance: Pick<RuntimeInventoryMaintenance, 'runPage'> | undefined
   #sweepTimer: ReturnType<typeof setTimeout> | undefined
   #sweepTask: Promise<void> | undefined
@@ -95,6 +102,7 @@ export class RuntimeGatewayWebSocketServer {
     if (this.#sweepIntervalMs > 60_000) throw new Error('Invalid sweepIntervalMs')
     this.#onSweepError =
       options.onSweepError ?? (() => console.error('RUNTIME_GATEWAY_SWEEP_FAILED'))
+    this.#onReceiveError = options.onReceiveError
     this.#inventoryMaintenance = options.inventoryMaintenance
   }
 
@@ -122,8 +130,9 @@ export class RuntimeGatewayWebSocketServer {
           // the drop, and the peer's own recovery path re-requests the work.
           try {
             await this.#lifecycle.receive(socket.data.connectionId, message)
-          } catch {
+          } catch (error) {
             this.#lifecycle.recordInboundFailure()
+            this.#onReceiveError?.(error)
           }
         },
         close: (socket, code, reason) =>
