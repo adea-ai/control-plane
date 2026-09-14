@@ -187,10 +187,13 @@ async function composeGateway({
     store: { backend: 'sqlite', path },
     objectStore: objects,
     logger: {
-      write: (entry) =>
-        (globalThis.m11GatewayLogs ??= []).push(
-          `${entry.event ?? '?'} ${JSON.stringify(entry.details ?? entry.metadata ?? {}).slice(0, 160)}`
-        ),
+      write: (entry) => {
+        const line = `${entry.event ?? '?'} ${JSON.stringify(entry.metadata ?? entry.details ?? {}).slice(0, 160)}`
+        ;(globalThis.m11GatewayLogs ??= []).push(line)
+        if (entry.event === 'inbound_receive_failed') {
+          ;(globalThis.m11GatewayReceiveErrors ??= []).push(line)
+        }
+      },
     },
     metrics: new RecordingGatewayMetrics(),
     reachability: new RecordingRuntimeNodeReachabilityPublisher(),
