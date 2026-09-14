@@ -454,3 +454,40 @@ async function processAdapterFixture(mode) {
     cleanup: () => rm(directory, { recursive: true, force: true }),
   }
 }
+
+describe('ManagedPiProcessClient spawn policy (CP-RNODE-025)', () => {
+  test('a policy-pinned executable rejects symlinked escapes before any spawn', async () => {
+    const { mkdtemp, symlink, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const directory = await mkdtemp(join(tmpdir(), 'managed-pi-policy-'))
+    try {
+      await symlink('/bin/ls', join(directory, 'evil-pi'))
+      const client = new ManagedPiProcessClient({
+        executablePath: join(directory, 'evil-pi'),
+        dataDirectory: join(directory, 'data'),
+        inputResolver: { resolve: async () => undefined },
+        spawnPolicy: { allowedExecutables: ['/bin/echo'] },
+      })
+      await expect(client.inspect()).rejects.toMatchObject({
+        code: 'PROCESS_LAUNCH_POLICY_VIOLATION',
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('a pinned but non-pi executable passes the guard and reports unavailable cleanly', async () => {
+    const client = new ManagedPiProcessClient({
+      executablePath: '/bin/echo',
+      dataDirectory: '/tmp/control-plane-missing-pi-policy',
+      inputResolver: { resolve: async () => undefined },
+      spawnPolicy: { allowedExecutables: ['/bin/echo'] },
+    })
+    expect(await client.inspect()).toMatchObject({
+      health: 'unavailable',
+      runtimeVersion: '0.0.0',
+    })
+    const inspection = await client.inspect()
+    expect(inspection.limitations?.[0]).toStartWith('PI_RUNTIME_UNAVAILABLE:')
+  })
+})

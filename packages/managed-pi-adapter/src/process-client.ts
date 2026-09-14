@@ -9,6 +9,10 @@ import {
   type RuntimeExecutionHandle,
 } from '@control-plane/runtime-sdk'
 import {
+  enforceNodeProcessSpawnPolicy,
+  type NodeProcessSpawnPolicy,
+} from '@control-plane/deployment'
+import {
   ManagedPiConfigurationSchema,
   ManagedPiInspectionSchema,
   type ManagedPiClient,
@@ -45,6 +49,11 @@ export interface ManagedPiProcessClientOptions {
   readonly dataDirectory: string
   readonly inputResolver: ManagedPiProcessInputResolver
   readonly environment?: Readonly<Record<string, string>>
+  /**
+   * Bounded spawn policy (CP-RNODE-025): when set, process launches that
+   * violate it are rejected before any process starts.
+   */
+  readonly spawnPolicy?: NodeProcessSpawnPolicy
   readonly now?: () => Date
   readonly rpcTimeoutMs?: number
 }
@@ -77,6 +86,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   readonly #inputResolver: ManagedPiProcessInputResolver
   readonly #now: () => Date
   readonly #rpcTimeoutMs: number
+  readonly #spawnPolicy: NodeProcessSpawnPolicy | undefined
 
   constructor(options: ManagedPiProcessClientOptions) {
     this.#executablePath = options.executablePath
@@ -85,9 +95,17 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     this.#environment = options.environment ?? {}
     this.#now = options.now ?? (() => new Date())
     this.#rpcTimeoutMs = options.rpcTimeoutMs ?? 15_000
+    this.#spawnPolicy = options.spawnPolicy
   }
 
   async inspect() {
+    if (this.#spawnPolicy !== undefined) {
+      await enforceNodeProcessSpawnPolicy(this.#spawnPolicy, {
+        executable: this.#executablePath,
+        args: ['--version'],
+        environment: this.#environment,
+      })
+    }
     try {
       const runtimeVersion = await inspectVersion(
         this.#executablePath,
@@ -199,6 +217,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       executablePath: this.#executablePath,
       cwd: directory,
       environment: this.#environment,
+      ...(this.#spawnPolicy === undefined ? {} : { spawnPolicy: this.#spawnPolicy }),
       args: [
         '--mode',
         'rpc',
@@ -521,6 +540,7 @@ class PiRpcProcess {
   readonly #cwd: string
   readonly #environment: Readonly<Record<string, string>>
   readonly #executablePath: string
+  readonly #spawnPolicy: NodeProcessSpawnPolicy | undefined
   readonly #listeners = new Set<(event: Record<string, unknown>) => void>()
   readonly #exitListeners = new Set<(error: Error) => void>()
   readonly #pending = new Map<
@@ -536,11 +556,13 @@ class PiRpcProcess {
     args: readonly string[]
     cwd: string
     environment: Readonly<Record<string, string>>
+    spawnPolicy?: NodeProcessSpawnPolicy
   }) {
     this.#executablePath = options.executablePath
     this.#args = options.args
     this.#cwd = options.cwd
     this.#environment = options.environment
+    this.#spawnPolicy = options.spawnPolicy
   }
 
   onEvent(listener: (event: Record<string, unknown>) => void): void {
@@ -553,6 +575,14 @@ class PiRpcProcess {
 
   async start(): Promise<void> {
     if (this.#child !== undefined) throw new Error('PI_RPC_ALREADY_STARTED')
+    if (this.#spawnPolicy !== undefined) {
+      await enforceNodeProcessSpawnPolicy(this.#spawnPolicy, {
+        executable: this.#executablePath,
+        args: this.#args,
+        environment: this.#environment,
+        cwd: this.#cwd,
+      })
+    }
     const child = spawn(this.#executablePath, [...this.#args], {
       cwd: this.#cwd,
       env: { ...this.#environment },

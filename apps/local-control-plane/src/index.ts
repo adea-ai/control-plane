@@ -190,6 +190,9 @@ export function resolveLocalRuntimeOptions(
           .map((capability) => capability.trim())
           .filter((capability) => capability.length > 0),
         environment: childEnvironment,
+        // CP-RNODE-025: the managed Pi executable is pinned to the configured
+        // binary; launches of anything else are rejected before spawn.
+        spawnPolicy: { allowedExecutables: [executablePath] },
       }),
   }
 }
