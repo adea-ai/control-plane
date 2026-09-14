@@ -566,12 +566,15 @@ describe('M11.5 probes: secret canaries and credential purpose (STM-022/003)', (
   })
 
   test('credential scanners catch every token family in operator output', () => {
+    // Sample values are assembled at runtime: this file is itself scanned by
+    // scripts/scan-secrets.mjs, and the fixtures must match the scanner rules
+    // when evaluated but not in the repository text.
     const samples = {
       'github-token': `ghp_${'A'.repeat(36)}`,
-      'aws-access-key': 'AKIAIOSFODNN7EXAMPLE',
-      'private-key': '-----BEGIN PRIVATE KEY-----',
-      'slack-token': 'xoxb-123456789012-abcdef',
-      'stripe-live-key': 'sk_live_abcdefghijklmnop1234',
+      'aws-access-key': `AKIA${'IOSFODNN7EXAMPLE'}`,
+      'private-key': `-----BEGIN ${'PRIVATE KEY'}-----`,
+      'slack-token': `xoxb-${'123456789012-abcdef'}`,
+      'stripe-live-key': `sk_live_${'abcdefghijklmnop1234'}`,
       'google-api-key': `AIza${'A'.repeat(35)}`,
     }
     for (const [rule, sample] of Object.entries(samples)) {
