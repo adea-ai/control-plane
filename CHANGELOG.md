@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.3...workspace-v1.22.4) (2026-09-14)
+
+
+### Bug Fixes
+
+* **runtime-gateway:** surface inbound frame drops and receive failures ([#499](https://github.com/adea-ai/control-plane/issues/499)) ([798bcb7](https://github.com/adea-ai/control-plane/commit/798bcb7e3bd0e29642cf08840ff869dc29502a4d))
+
 ## [1.22.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.2...workspace-v1.22.3) (2026-09-13)
 
 

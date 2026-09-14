@@ -1,9 +1,9 @@
 {
-  ".": "1.22.3",
+  ".": "1.22.4",
   "apps/control-api": "1.8.0",
   "apps/hosted-control-plane": "1.6.0",
   "apps/local-control-plane": "1.9.0",
-  "apps/runtime-gateway": "1.5.1",
+  "apps/runtime-gateway": "1.5.2",
   "apps/runtime-worker": "1.7.1",
   "apps/tool-gateway": "1.2.4",
   "apps/workflow-worker": "1.7.0",
