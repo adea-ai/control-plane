@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.4...workspace-v1.22.5) (2026-09-14)
+
+
+### Tests
+
+* **security:** add M11.5 adversarial trust-boundary probes ([#498](https://github.com/adea-ai/control-plane/issues/498)) ([307694e](https://github.com/adea-ai/control-plane/commit/307694e5d8ec49965e3b55fc180ed6d940585dca))
+
 ## [1.22.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.3...workspace-v1.22.4) (2026-09-14)
 
 
