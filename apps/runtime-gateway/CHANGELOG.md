@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.5.1...runtime-gateway-v1.5.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **runtime-gateway:** surface inbound frame drops and receive failures ([#499](https://github.com/adea-ai/control-plane/issues/499)) ([798bcb7](https://github.com/adea-ai/control-plane/commit/798bcb7e3bd0e29642cf08840ff869dc29502a4d))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.5.0...runtime-gateway-v1.5.1) (2026-09-13)
 
 
