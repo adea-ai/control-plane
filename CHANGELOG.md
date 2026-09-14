@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.5...workspace-v1.22.6) (2026-09-14)
+
+
+### Tests
+
+* **gateway:** stop the injected result drop from leaking across restart ([#503](https://github.com/adea-ai/control-plane/issues/503)) ([4ba514e](https://github.com/adea-ai/control-plane/commit/4ba514e1e4ccf34c4d66f4f73f6560918ae8adbb))
+
 ## [1.22.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.4...workspace-v1.22.5) (2026-09-14)
 
 
