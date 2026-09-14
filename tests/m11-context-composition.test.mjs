@@ -274,8 +274,18 @@ test('composed gateway and node deliver a context command end to end from admini
           ;(nodeState.sentFrames ??= []).push(
             `${parsed.type}:${parsed.status ?? parsed.disposition ?? '-'}`
           )
-          if (parsed.type === 'result' && nodeState.dropNextResult) {
+          // Drop ONE result, identified by command id. The fault models losing
+          // a command's first result; a replay of an already-dropped result
+          // (recovery redelivery) must always go through. A boolean flag alone
+          // could survive a restart and consume the replay instead.
+          nodeState.droppedResults ??= new Set()
+          if (
+            parsed.type === 'result' &&
+            nodeState.dropNextResult &&
+            !nodeState.droppedResults.has(parsed.commandId)
+          ) {
             nodeState.dropNextResult = false
+            nodeState.droppedResults.add(parsed.commandId)
             return
           }
           nodeState.socket?.send(serialized)
@@ -433,11 +443,6 @@ test('composed gateway and node deliver a context command end to end from admini
     }, 'SECOND_ACKNOWLEDGED')
     await first.composition.close()
     nodeState.socket = undefined
-    // The fault models losing the original in-flight result before the restart.
-    // If the node was still executing when the gateway closed, the original
-    // result was never sent and the flag must not consume the replayed result
-    // that the recovery path depends on (this was the intermittent stall).
-    nodeState.dropNextResult = false
     expect(await secondOutcome).toBeInstanceOf(Error)
 
     // Recomposing from the same store must keep the pending command recoverable.
