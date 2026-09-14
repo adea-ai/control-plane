@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
 import { NodeProcessRuntimeProvider } from '@control-plane/deployment'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
+import { FilesystemObjectStore } from '@control-plane/object-store'
 import { RemoteRuntimeGatewayTransport } from '@control-plane/runtime-sdk'
+import {
+  FakeArtifactPromoter,
+  FakeSandboxProvider,
+  SandboxCoordinator,
+} from '@control-plane/sandbox'
 import { PrivateFileSecretsProvider, SecretsProviderError } from '@control-plane/secrets'
 import {
   MAX_RELAY_CIPHERTEXT_BYTES,
@@ -745,3 +751,234 @@ async function withScratchDirectory(run) {
     await rm(root, { recursive: true, force: true })
   }
 }
+
+describe('M11.5 probes: sandbox isolation and SSRF denial (STM-017)', () => {
+  const policy = {
+    template: 'probe-template',
+    timeoutMs: 10_000,
+    limits: { cpuCount: 2, memoryMb: 1024, storageMb: 8, outputBytes: 4096 },
+    network: { mode: 'allowlist', allowedHosts: ['registry.npmjs.org'] },
+  }
+  const ids = {
+    workspaceId: opaqueId('wsp'),
+    executionId: opaqueId('exe'),
+    attemptId: opaqueId('att'),
+  }
+
+  async function denialCases(coordinator, sandboxId, command, environment = {}) {
+    await expect(
+      coordinator.execute({ sandboxId, command, environment, timeoutMs: 1_000 })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' })
+  }
+
+  test('credential-shaped environment names are denied before execution', async () => {
+    const coordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    for (const name of ['API_SECRET', 'AUTH_TOKEN', 'SERVICE_PASSWORD', 'CREDENTIAL_ID', 'API_KEY']) {
+      await denialCases(coordinator, sandbox.sandboxId, ['bun', 'run'], { [name]: 'probe-value' })
+    }
+    await coordinator.execute({
+      sandboxId: sandbox.sandboxId,
+      command: ['bun', '--version'],
+      environment: { HOME: '/tmp', LANG: 'C' },
+      timeoutMs: 1_000,
+    })
+  })
+
+  test('cloud metadata endpoints are denied regardless of the host allowlist', async () => {
+    const coordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    for (const host of ['169.254.169.254', 'metadata.google.internal', 'metadata.azure.internal']) {
+      await denialCases(coordinator, sandbox.sandboxId, [`https://${host}/latest/meta-data/`])
+    }
+  })
+
+  test('deny-all network policy denies every host and unlisted hosts deny under allowlist', async () => {
+    const denyAllCoordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const denyAll = await denyAllCoordinator.create({
+      ...ids,
+      policy: { ...policy, network: { mode: 'deny_all', allowedHosts: [] } },
+    })
+    await denialCases(denyAllCoordinator, denyAll.sandboxId, ['curl', 'https://registry.npmjs.org/'])
+
+    const coordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    await denialCases(coordinator, sandbox.sandboxId, ['curl', 'https://evil.example.com/'])
+    await coordinator.execute({
+      sandboxId: sandbox.sandboxId,
+      command: ['curl', 'https://registry.npmjs.org/probe'],
+      environment: {},
+      timeoutMs: 1_000,
+    })
+  })
+
+  test('oversized execution output is truncated and flagged, not propagated', async () => {
+    const oversized = {
+      async create() {
+        throw new Error('unused')
+      },
+      async execute() {
+        return {
+          exitCode: 0,
+          stdout: 'x'.repeat(9_000),
+          stderr: 'y'.repeat(2_000),
+          timedOut: false,
+          truncated: false,
+        }
+      },
+      async upload() {},
+      async download() {
+        return new Uint8Array()
+      },
+      async status() {
+        return { sandboxId: 'sbx_probe', state: 'ready', observedAt: now }
+      },
+      async destroy() {},
+    }
+    const coordinator = new SandboxCoordinator({
+      provider: oversized,
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    const result = await coordinator.execute({
+      sandboxId: sandbox.sandboxId,
+      command: ['echo', 'probe'],
+      environment: {},
+      timeoutMs: 1_000,
+    })
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(4096)
+    expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(4096)
+    expect(result.truncated).toBe(true)
+  })
+
+  test('provider failure destroys the sandbox instead of leaking a live instance', async () => {
+    const destroyed = []
+    const failing = {
+      async create() {
+        return {
+          sandboxId: 'sbx_01JABCDEF0123456789ABCDEF',
+          providerRef: 'failing',
+          workspaceId: ids.workspaceId,
+          executionId: ids.executionId,
+          attemptId: ids.attemptId,
+          createdAt: now,
+          expiresAt: later(10_000),
+        }
+      },
+      async execute() {
+        throw new Error('provider exploded')
+      },
+      async upload() {},
+      async download() {
+        return new Uint8Array()
+      },
+      async status() {
+        return { sandboxId: 'sbx_01JABCDEF0123456789ABCDEF', state: 'destroyed', observedAt: now }
+      },
+      destroy(sandboxId, reason) {
+        destroyed.push({ sandboxId, reason })
+      },
+    }
+    const coordinator = new SandboxCoordinator({ provider: failing, promoter: new FakeArtifactPromoter() })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    await expect(
+      coordinator.execute({ sandboxId: sandbox.sandboxId, command: ['probe'], environment: {}, timeoutMs: 1_000 })
+    ).rejects.toMatchObject({ code: 'PROVIDER_FAILED' })
+    expect(destroyed).toEqual([{ sandboxId: sandbox.sandboxId, reason: 'failure' }])
+  })
+
+  test('sandbox uploads are path-bounded and storage-capped', async () => {
+    const coordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    for (const path of ['../escape', 'relative/path', '/absolute/path']) {
+      await expect(
+        coordinator.upload({ sandboxId: sandbox.sandboxId, path, content: new Uint8Array(4) })
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    }
+    await expect(
+      coordinator.upload({
+        sandboxId: sandbox.sandboxId,
+        path: 'data.bin',
+        content: new Uint8Array(8 * 1_048_576 + 1),
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await coordinator.upload({
+      sandboxId: sandbox.sandboxId,
+      path: 'data.bin',
+      content: new Uint8Array(1024),
+    })
+  })
+
+  test('artifact promotion without an authorized promotion gate is denied', async () => {
+    const coordinator = new SandboxCoordinator({
+      provider: new FakeSandboxProvider(),
+      promoter: new FakeArtifactPromoter(),
+    })
+    const sandbox = await coordinator.create({ ...ids, policy })
+    await coordinator.upload({ sandboxId: sandbox.sandboxId, path: 'report.bin', content: new Uint8Array(8) })
+    await expect(coordinator.promote({ sandboxId: sandbox.sandboxId, path: 'report.bin' })).rejects.toMatchObject({
+      code: 'PROMOTION_DENIED',
+    })
+  })
+})
+
+describe('M11.5 probes: artifact store root integrity (STM-011/015)', () => {
+  test('artifact keys are content-addressed, so traversal keys never escape the root', async () => {
+    await withScratchDirectory(async (root) => {
+      const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
+      for (const key of ['../../escape', 'normal/probe.bin', '..']) {
+        await store.put({ key, body: new Uint8Array([1, 2, 3]) })
+      }
+      const entries = await readdir(root)
+      expect(entries.every((entry) => /^sha256-[0-9a-f]{64}(\.json)?$/.test(entry))).toBe(true)
+      expect(entries.length).toBeLessThanOrEqual(6)
+    })
+  })
+
+  test('a symlinked or permission-loosened root fails integrity on the next write', async () => {
+    await withScratchDirectory(async (root) => {
+      await withScratchDirectory(async (outside) => {
+        const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
+        await store.put({ key: 'seed', body: new Uint8Array([1]) })
+        await rm(root)
+        await symlink(outside, root)
+        await expect(store.put({ key: 'post-swap', body: new Uint8Array([2]) })).rejects.toMatchObject({
+          code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+        })
+      })
+    })
+    await withScratchDirectory(async (root) => {
+      const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
+      await store.put({ key: 'seed', body: new Uint8Array([1]) })
+      await chmod(root, 0o755)
+      await expect(store.put({ key: 'loose', body: new Uint8Array([2]) })).rejects.toMatchObject({
+        code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+      })
+    })
+  })
+
+  test('bodies above the configured cap are rejected before touching the store', async () => {
+    await withScratchDirectory(async (root) => {
+      const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 8 })
+      await expect(store.put({ key: 'big', body: new Uint8Array(9) })).rejects.toMatchObject({
+        code: 'OBJECT_STORE_TOO_LARGE',
+      })
+      expect(await readdir(root)).toEqual([])
+    })
+  })
+})
