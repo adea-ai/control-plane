@@ -274,8 +274,18 @@ test('composed gateway and node deliver a context command end to end from admini
           ;(nodeState.sentFrames ??= []).push(
             `${parsed.type}:${parsed.status ?? parsed.disposition ?? '-'}`
           )
-          if (parsed.type === 'result' && nodeState.dropNextResult) {
+          // Drop ONE result, identified by command id. The fault models losing
+          // a command's first result; a replay of an already-dropped result
+          // (recovery redelivery) must always go through. A boolean flag alone
+          // could survive a restart and consume the replay instead.
+          nodeState.droppedResults ??= new Set()
+          if (
+            parsed.type === 'result' &&
+            nodeState.dropNextResult &&
+            !nodeState.droppedResults.has(parsed.commandId)
+          ) {
             nodeState.dropNextResult = false
+            nodeState.droppedResults.add(parsed.commandId)
             return
           }
           nodeState.socket?.send(serialized)
@@ -448,6 +458,10 @@ test('composed gateway and node deliver a context command end to end from admini
     expect((await second.composition.delivery.get(workspaceId, secondCommandId)).status).toBe(
       'acknowledged'
     )
+    // Disarm the injected loss before reconnecting: the restart already lost
+    // whatever result was in flight (a send against the detached socket is a
+    // no-op here), and the recovery replay must never be dropped.
+    nodeState.dropNextResult = false
     await connectNode(second)
     // Redelivery after a restart is asynchronous (channel activation plus lifecycle
     // sweeps); the budget tolerates loaded CI runners while the assertions that
@@ -562,9 +576,17 @@ test('composed gateway and node deliver a context command end to end from admini
     // that authorized before the revoke may still deliver one frame. The node must fail
     // closed on it as a grant denial, and the received/httpReads assertions above prove
     // no execution, read, or new dispatch occurred for that frame.
-    expect(channelErrors.every((error) => error instanceof ContextCommandGrantDeniedError)).toBe(
-      true
-    )
+    // A closing gateway's last sweep tick may deliver a frame through the node's
+    // already-superseded channel; the node rejects it closed. Only channel errors
+    // that are neither grant denials nor closed-channel rejections are failures.
+    const nonGrantDenials = channelErrors
+      .filter(
+        (error) =>
+          !(error instanceof ContextCommandGrantDeniedError) &&
+          error.message !== 'CONTEXT_COMPOSITION_CHANNEL_CLOSED'
+      )
+      .map((error) => `${error.name}: ${error.message}`)
+    expect(nonGrantDenials).toEqual([])
   } finally {
     for (const socket of sockets) socket.close()
     for (const gateway of gateways) await gateway.composition.close()
