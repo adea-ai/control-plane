@@ -433,6 +433,11 @@ test('composed gateway and node deliver a context command end to end from admini
     }, 'SECOND_ACKNOWLEDGED')
     await first.composition.close()
     nodeState.socket = undefined
+    // The fault models losing the original in-flight result before the restart.
+    // If the node was still executing when the gateway closed, the original
+    // result was never sent and the flag must not consume the replayed result
+    // that the recovery path depends on (this was the intermittent stall).
+    nodeState.dropNextResult = false
     expect(await secondOutcome).toBeInstanceOf(Error)
 
     // Recomposing from the same store must keep the pending command recoverable.
