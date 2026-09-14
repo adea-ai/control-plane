@@ -141,6 +141,7 @@ export class NodeProcessRuntimeProvider implements ProcessRuntimeProvider {
     await enforceNodeProcessSpawnPolicy(this.#spawnPolicy, {
       executable: request.executable,
       args: request.args,
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
       ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
     })
   }
@@ -160,6 +161,7 @@ export class NodeProcessRuntimeProvider implements ProcessRuntimeProvider {
     }
     Object.assign(environment, request.environment)
     const child = spawn(request.executable, request.args, {
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
       ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
       env: environment,
       shell: false,
