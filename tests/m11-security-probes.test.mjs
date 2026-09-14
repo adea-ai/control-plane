@@ -20,7 +20,7 @@ import {
   CedarPolicyDecisionPoint,
   FakeCedarEvaluator,
   InMemoryPolicyStore,
-} from '@control-plane/policy'
+} from '../packages/policy/src/index.ts'
 import {
   SecretCanaryGuard,
   assertCredentialPurpose,
