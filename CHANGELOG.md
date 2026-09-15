@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.6...workspace-v1.23.7) (2026-09-15)
+
+
+### Maintenance
+
+* reconciliation-observe-domain ([#522](https://github.com/adea-ai/control-plane/issues/522)) ([3b837a2](https://github.com/adea-ai/control-plane/commit/3b837a2dad8f95fa1abd38cf9ce1cad30f652b08))
+* **reconciliation:** extract observeRuntime into the domain module ([3b837a2](https://github.com/adea-ai/control-plane/commit/3b837a2dad8f95fa1abd38cf9ce1cad30f652b08))
+
 ## [1.23.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.5...workspace-v1.23.6) (2026-09-15)
 
 
