@@ -697,3 +697,54 @@ describe('project state update records', () => {
     }
   })
 })
+
+describe('SQLite retention sweep', () => {
+  test('deleteExpiredInbox removes only past-retention commands and their index', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const repository = new SqliteCommandAcceptanceRepository(provider)
+      const makeService = (executionId) =>
+        new CommandInboxService({
+          repository,
+          executionIdFactory: () => executionId,
+          executionPlanValidator: { validate: async () => true },
+          now: () => receivedAt,
+        })
+
+      const expired = commandInput({
+        commandId: ids.commandId,
+        requestId: ids.requestId,
+        idempotencyKey: 'retention-sweep-0001',
+        retentionExpiresAt: '2026-09-23T10:01:00.000Z',
+      })
+      const liveCommandId = ids.commandId.slice(0, -1) + 'W'
+      const liveExecutionId = ids.executionId.slice(0, -1) + 'W'
+      const live = commandInput({
+        commandId: liveCommandId,
+        requestId: ids.requestId.slice(0, -1) + 'W',
+        idempotencyKey: 'retention-sweep-0002',
+        executionPlan: {
+          executionPlanId: ids.executionPlanId.slice(0, -1) + 'W',
+          contentDigest: `sha256:${'c'.repeat(64)}`,
+          schemaVersion: 1,
+        },
+        retentionExpiresAt: '2027-09-23T10:01:00.000Z',
+      })
+      await makeService(ids.executionId).acceptExecution(expired)
+      await makeService(liveExecutionId).acceptExecution(live)
+
+      // Sweep clock sits after the expired retention cutoff, before the live one.
+      const deleted = await repository.deleteExpiredInbox(new Date('2026-09-23T11:00:00.000Z'))
+      expect(deleted).toBe(1)
+
+      expect(await repository.getByExecutionId(ids.executionId)).toBeUndefined()
+      const surviving = await repository.getByExecutionId(liveExecutionId)
+      expect(surviving?.commandId).toBe(liveCommandId)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
