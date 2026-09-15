@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.8.0...control-api-v1.8.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* marketplace-artifact-cap ([#507](https://github.com/adea-ai/control-plane/issues/507)) ([788a54a](https://github.com/adea-ai/control-plane/commit/788a54af5f4c892a8e8719c1f8358d946f70a89c))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.7.0...control-api-v1.8.0) (2026-09-12)
 
 
