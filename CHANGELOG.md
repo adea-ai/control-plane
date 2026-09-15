@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.5...workspace-v1.23.6) (2026-09-15)
+
+
+### Tests
+
+* **reconciliation:** characterize the disconnected-connection branch ([#520](https://github.com/adea-ai/control-plane/issues/520)) ([dd260a6](https://github.com/adea-ai/control-plane/commit/dd260a6775f1947eac1f5a923a7728d93e62d737))
+
 ## [1.23.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.4...workspace-v1.23.5) (2026-09-15)
 
 
