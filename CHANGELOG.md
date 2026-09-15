@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.2...workspace-v1.23.3) (2026-09-15)
+
+
+### CI
+
+* **security:** scan service images and emit SBOMs in foundation gates ([#511](https://github.com/adea-ai/control-plane/issues/511)) ([6748cd6](https://github.com/adea-ai/control-plane/commit/6748cd68bd671fbca70fd1f9ea705cb85ed70bdd))
+
 ## [1.23.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.1...workspace-v1.23.2) (2026-09-15)
 
 
