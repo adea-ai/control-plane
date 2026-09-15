@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.6.0...hosted-control-plane-v1.7.0) (2026-09-15)
+
+
+### Features
+
+* cprnode025-launch-wiring ([#504](https://github.com/adea-ai/control-plane/issues/504)) ([1c9bab2](https://github.com/adea-ai/control-plane/commit/1c9bab2858e6aa7ee06435edec353d1d7699dce6))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.5.0...hosted-control-plane-v1.6.0) (2026-09-13)
 
 
