@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.1...workspace-v1.23.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **ops:** size the control-api container for marketplace refreshes ([#513](https://github.com/adea-ai/control-plane/issues/513)) ([8e00972](https://github.com/adea-ai/control-plane/commit/8e00972ca843eea3a0b755059e81ff28e7599756))
+
 ## [1.23.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.0...workspace-v1.23.1) (2026-09-15)
 
 
