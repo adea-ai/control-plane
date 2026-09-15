@@ -32,9 +32,11 @@ import {
   PrivateFileSecretsProvider,
 } from '@control-plane/secrets'
 import {
+  SqliteCommandAcceptanceRepository,
   SqliteContextCommandGrantRepository,
   SqliteContextProviderRegistrationRepository,
   SqliteExecutionCancellationRepository,
+  SqliteExecutionEventRepository,
   SqlitePersistenceProvider,
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
@@ -62,6 +64,7 @@ import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
 import { ReconciliationScheduler } from './reconciliation-scheduler.js'
+import { RetentionSweep } from './retention-sweep.js'
 import {
   GrantsBackedContextAuthoringAuthority,
   type ContextAuthoringCompositionOptions,
@@ -156,6 +159,15 @@ export interface LocalControlPlaneCompositionOptions {
   readonly restateIngressPort?: number
   readonly restateNodePort?: number
   readonly processProvider?: ProcessRuntimeProvider
+  /**
+   * M11.9 retention policy for the local profile. When set, a slow fixed-cadence
+   * sweep physically deletes durable records past their retention deadline.
+   */
+  readonly retention?: {
+    readonly commandInboxMs: number
+    readonly executionEventsMs: number
+    readonly sweepIntervalMs: number
+  }
   readonly workflowRuntime?: WorkflowRuntime
   readonly endpointFactory?: RestateEndpointFactory
   readonly activities?: ExecutionLifecycleActivities
@@ -221,6 +233,7 @@ export class LocalControlPlaneComposition {
   readonly discovery: StaticServiceDiscovery
   readonly #endpointFactory: RestateEndpointFactory
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
+  readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -420,6 +433,15 @@ export class LocalControlPlaneComposition {
         batchLimit: reconciliation.batchLimit,
       })
     }
+    // M11.9 retention worker: physical deletion of records past their
+    // retention deadline, scheduled at a slow fixed cadence.
+    if (options.retention !== undefined) {
+      this.#retentionSweep = new RetentionSweep({
+        commandInbox: new SqliteCommandAcceptanceRepository(this.persistence),
+        executionEvents: new SqliteExecutionEventRepository(this.persistence),
+        intervalMs: options.retention.sweepIntervalMs,
+      })
+    }
     this.#endpointFactory =
       options.endpointFactory ??
       createRestateEndpointFactory({
@@ -462,6 +484,7 @@ export class LocalControlPlaneComposition {
       await this.workflow.start()
       await this.remoteControl?.start()
       this.#reconciliationScheduler?.start()
+      this.#retentionSweep?.start()
     } catch (error) {
       await this.#reconciliationScheduler?.close().catch(() => undefined)
       await Promise.resolve()
@@ -511,6 +534,7 @@ export class LocalControlPlaneComposition {
     this.#started = false
     // Drain the scheduler first: a clean close never abandons an in-flight pass.
     await this.#reconciliationScheduler?.close()
+    this.#retentionSweep?.close()
     try {
       await this.remoteControl?.stop()
     } finally {
