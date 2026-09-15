@@ -2697,6 +2697,47 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
   })
 
+  test('deleteExpiredInbox removes only past-retention commands idempotently', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FCX'
+    // receivedAt must sit >=30 days before the retention cutoff (the service
+    // enforces the STM-033 inbox minimum).
+    const now = '2026-07-31T11:00:00.000Z'
+    const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+    const service = new CommandInboxService({
+      repository,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    })
+    await service.acceptExecution({
+      callerPrincipalId: 'svc_retention-test',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-retention-sweep-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    })
+
+    // Before the cutoff the sweep is a no-op; after it, exactly one row goes,
+    // and repeated sweeps are idempotent.
+    expect(await repository.deleteExpiredInbox(new Date('2026-08-24T11:00:00.000Z'))).toBe(0)
+    expect(await repository.deleteExpiredInbox(new Date('2026-09-01T11:00:00.000Z'))).toBe(1)
+    expect(await repository.deleteExpiredInbox(new Date('2026-09-01T11:00:00.000Z'))).toBe(0)
+  })
+
   test('recovers a committed command after the accepting process exits before replying', async () => {
     const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
     const input = {
