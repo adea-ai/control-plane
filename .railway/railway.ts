@@ -31,8 +31,12 @@ export default defineRailway((context) => {
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 5,
+      // The marketplace registry refresh downloads and verifies every immutable
+      // catalog artifact (~50-128 MB transient per refresh, every 60s) and the
+      // live Agent HQ poller keeps GC pressure continuous; 1 GiB at 0.25 CPU
+      // OOM-killed the container in ~8-minute cycles.
       limitOverride: {
-        containers: { cpu: 0.25, memoryBytes: 1_073_741_824 },
+        containers: { cpu: 0.5, memoryBytes: 2_147_483_648 },
       },
     },
     networking: { privateNetworkEndpoint: 'control-planecontrol-api' },
