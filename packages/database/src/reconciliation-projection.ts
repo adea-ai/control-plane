@@ -7,17 +7,20 @@ import {
   type CommandAcceptanceRepository,
   type CommandInboxRecord,
   type Execution,
-  type ExecutionAttempt,
   type ExecutionAttemptState,
   type ExecutionRepository,
   type ExecutionState,
   type ReconciliationEffects,
   type ReconciliationObservation,
   type ReconciliationSource,
-  type RuntimeCommandRecord,
+  observeRuntime,
+  isTerminalExecutionState as isTerminal,
+  type ReconciliationOutcome,
 } from '@control-plane/domain'
+
+export { observeRuntime }
+export type { ReconciliationOutcome }
 import type { ExecutionCancellationReceipt } from '@control-plane/domain'
-import type { RuntimeConnection } from '@control-plane/runtime-sdk'
 import type { ExecutionWorkflowInput } from '@control-plane/orchestration'
 import type {
   PostgresExecutionEventRepository,
@@ -56,8 +59,6 @@ type ReconciliationReason = ReturnType<typeof ReconciliationReasonSchema.parse>
  * - `replay_events` only re-arms already-recorded outbound events, it never
  *   re-issues runtime work.
  */
-
-export type ReconciliationOutcome = 'completed' | 'failed' | 'cancelled'
 
 export interface PostgresReconciliationSourceOptions {
   readonly executions: Pick<
@@ -155,7 +156,16 @@ export class PostgresReconciliationSource implements ReconciliationSource {
             },
           }),
       workflow: { status: 'missing' },
-      runtime: observeRuntime(runtimeCommand, attempt, execution, connection),
+      runtime: observeRuntime(
+        runtimeCommand,
+        attempt,
+        execution,
+        // The domain rule is structural: the connection's own observation time
+        // feeds the observation, and the lifecycle timestamp backs it up.
+        connection === undefined
+          ? undefined
+          : { status: connection.status, observedAt: connection.updatedAt }
+      ),
       delivery: {
         pendingCount: delivery.pendingCount,
         ...(delivery.oldestPendingAt === undefined
@@ -429,95 +439,6 @@ export class PostgresReconciliationEffects implements ReconciliationEffects {
     }
     throw new Error('RECONCILIATION_ATTEMPT_STALE')
   }
-}
-
-const terminalStates = new Set<ExecutionState>(['completed', 'failed', 'cancelled', 'timed_out'])
-
-/** States from which the lifecycle accepts a `completed` outcome. */
-const completableStates = new Set<ExecutionState>([
-  'starting',
-  'running',
-  'awaiting_input',
-  'cancelling',
-  'reconciliation_required',
-])
-
-const disconnectedConnectionStates = new Set<RuntimeConnection['status']>([
-  'disconnected',
-  'unavailable',
-  'expired',
-  'revoked',
-])
-
-/**
- * Maps durable runtime facts onto the observation's runtime status. Terminal
- * results are only surfaced when the recorded lifecycle states can legally
- * accept the outcome; anything ambiguous (no recorded result, lost ACK,
- * expired command, illegal rewrite) parks as `unknown` or `not_found`.
- */
-export function observeRuntime(
-  record: RuntimeCommandRecord | undefined,
-  attempt: Pick<ExecutionAttempt, 'state' | 'updatedAt'> | undefined,
-  execution: Pick<Execution, 'state' | 'updatedAt'>,
-  connection: Pick<RuntimeConnection, 'status' | 'updatedAt'> | undefined
-): ReconciliationObservation['runtime'] {
-  if (record !== undefined) {
-    if (record.resultStatus !== undefined) {
-      const outcome = record.resultStatus === 'succeeded' ? 'completed' : record.resultStatus
-      if (outcome === 'completed' && record.resultReference === undefined) {
-        return unknownRuntime(record)
-      }
-      if (
-        !isTerminal(execution.state) &&
-        !outcomeIsLegal(outcome, execution.state, attempt?.state)
-      ) {
-        return unknownRuntime(record)
-      }
-      return {
-        status: outcome,
-        observedAt: record.resultRecordedAt ?? record.updatedAt,
-        ...(record.resultReference === undefined
-          ? {}
-          : { resultReference: record.resultReference }),
-      }
-    }
-    if (connection !== undefined && disconnectedConnectionStates.has(connection.status)) {
-      return { status: 'disconnected', observedAt: connection.updatedAt }
-    }
-    if (record.status === 'dispatched' || record.status === 'acknowledged') {
-      return {
-        status: 'running',
-        observedAt: record.acknowledgedAt ?? record.lastDispatchedAt ?? record.updatedAt,
-      }
-    }
-    // queued or expired: whether the runtime started the work is unknowable
-    // from durable facts, so the checkpoint parks instead of retrying.
-    return unknownRuntime(record)
-  }
-  if (attempt !== undefined) return { status: 'not_found', observedAt: attempt.updatedAt }
-  return { status: 'unknown', observedAt: execution.updatedAt }
-}
-
-function unknownRuntime(record: RuntimeCommandRecord): ReconciliationObservation['runtime'] {
-  return { status: 'unknown', observedAt: record.updatedAt }
-}
-
-function outcomeIsLegal(
-  outcome: ReconciliationOutcome,
-  executionState: ExecutionState,
-  attemptState: ExecutionAttemptState | undefined
-): boolean {
-  if (outcome === 'completed') {
-    return (
-      completableStates.has(executionState) &&
-      (attemptState === undefined || completableStates.has(attemptState))
-    )
-  }
-  return !isTerminal(executionState) && (attemptState === undefined || !isTerminal(attemptState))
-}
-
-function isTerminal(state: ExecutionState): boolean {
-  return terminalStates.has(state)
 }
 
 function throwMissingResultReference(): string {
