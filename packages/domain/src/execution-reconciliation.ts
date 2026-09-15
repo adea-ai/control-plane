@@ -1,6 +1,13 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import type {
+  Execution,
+  ExecutionAttempt,
+  ExecutionAttemptState,
+  ExecutionState,
+} from './execution-lifecycle.js'
+import type { RuntimeCommandRecord } from './runtime-command.js'
 
 const TimestampSchema = z.iso.datetime()
 
@@ -610,4 +617,112 @@ function clone<Value>(value: Value): Value {
 
 function cloneOptional<Value>(value: Value | undefined): Value | undefined {
   return value === undefined ? undefined : clone(value)
+}
+
+export type ReconciliationOutcome = 'completed' | 'failed' | 'cancelled'
+
+/**
+ * Storage-neutral view of a runtime connection's freshness, accepted instead
+ * of a concrete connection record so both persistence adapters (and any
+ * future backend) share one reconciliation observation rule.
+ */
+export interface ReconciliationConnectionView {
+  readonly status: string
+  readonly observedAt?: string | undefined
+}
+
+const terminalStates = new Set<ExecutionState>(['completed', 'failed', 'cancelled', 'timed_out'])
+
+/** States from which the lifecycle accepts a `completed` outcome. */
+const completableStates = new Set<ExecutionState>([
+  'starting',
+  'running',
+  'awaiting_input',
+  'cancelling',
+  'reconciliation_required',
+])
+
+/** Discovery connection statuses that mean the runtime cannot be reached. */
+const disconnectedConnectionStates = new Set<string>([
+  'disconnected',
+  'unavailable',
+  'expired',
+  'revoked',
+])
+
+export function isTerminalExecutionState(state: ExecutionState): boolean {
+  return terminalStates.has(state)
+}
+
+function unknownRuntime(record: RuntimeCommandRecord): ReconciliationObservation['runtime'] {
+  return { status: 'unknown', observedAt: record.updatedAt }
+}
+
+function outcomeIsLegal(
+  outcome: ReconciliationOutcome,
+  executionState: ExecutionState,
+  attemptState: ExecutionAttemptState | undefined
+): boolean {
+  if (outcome === 'completed') {
+    return (
+      completableStates.has(executionState) &&
+      (attemptState === undefined || completableStates.has(attemptState))
+    )
+  }
+  return (
+    !isTerminalExecutionState(executionState) &&
+    (attemptState === undefined || !isTerminalExecutionState(attemptState))
+  )
+}
+
+/**
+ * Maps durable runtime facts onto the observation's runtime status. Terminal
+ * results are only surfaced when the recorded lifecycle states can legally
+ * accept the outcome; anything ambiguous (no recorded result, lost ACK,
+ * expired command, illegal rewrite) parks as `unknown` or `not_found`.
+ */
+export function observeRuntime(
+  record: RuntimeCommandRecord | undefined,
+  attempt: Pick<ExecutionAttempt, 'state' | 'updatedAt'> | undefined,
+  execution: Pick<Execution, 'state' | 'updatedAt'>,
+  connection: ReconciliationConnectionView | undefined
+): ReconciliationObservation['runtime'] {
+  if (record !== undefined) {
+    if (record.resultStatus !== undefined) {
+      const outcome = record.resultStatus === 'succeeded' ? 'completed' : record.resultStatus
+      if (outcome === 'completed' && record.resultReference === undefined) {
+        return unknownRuntime(record)
+      }
+      if (
+        !isTerminalExecutionState(execution.state) &&
+        !outcomeIsLegal(outcome, execution.state, attempt?.state)
+      ) {
+        return unknownRuntime(record)
+      }
+      return {
+        status: outcome,
+        observedAt: record.resultRecordedAt ?? record.updatedAt,
+        ...(record.resultReference === undefined
+          ? {}
+          : { resultReference: record.resultReference }),
+      }
+    }
+    if (connection !== undefined && disconnectedConnectionStates.has(connection.status)) {
+      return {
+        status: 'disconnected',
+        observedAt: connection.observedAt ?? execution.updatedAt,
+      }
+    }
+    if (record.status === 'dispatched' || record.status === 'acknowledged') {
+      return {
+        status: 'running',
+        observedAt: record.acknowledgedAt ?? record.lastDispatchedAt ?? record.updatedAt,
+      }
+    }
+    // queued or expired: whether the runtime started the work is unknowable
+    // from durable facts, so the checkpoint parks instead of retrying.
+    return unknownRuntime(record)
+  }
+  if (attempt !== undefined) return { status: 'not_found', observedAt: attempt.updatedAt }
+  return { status: 'unknown', observedAt: execution.updatedAt }
 }

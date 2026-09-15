@@ -30,10 +30,8 @@ export { PostgresReconciliationCheckpointRepository } from './reconciliation-che
 export {
   PostgresReconciliationEffects,
   PostgresReconciliationSource,
-  observeRuntime,
   type PostgresReconciliationEffectsOptions,
   type PostgresReconciliationSourceOptions,
-  type ReconciliationOutcome,
   type WorkflowSubmitInput,
 } from './reconciliation-projection.js'
 export { PostgresReleaseAuditRepository } from './release-audit-repository.js'
