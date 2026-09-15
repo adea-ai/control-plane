@@ -388,3 +388,16 @@ describe('Control Plane marketplace contract', () => {
     ).resolves.toMatchObject({ state: 'rejected-by-policy' })
   })
 })
+
+test('aborts artifact downloads that exceed the size cap mid-stream', async () => {
+  const registry = new MarketplaceRegistryService({
+    fetchImpl: async () => new globalThis.Response('x'.repeat(64), { status: 200 }),
+    latestUrl: 'https://registry.example/releases/latest/download/catalog-latest.v1.json',
+    immutableReleaseBaseUrl: 'https://registry.example/releases/{catalogId}',
+    refreshIntervalMs: 0,
+    maxArtifactBytes: 16,
+  })
+  // Cold start with an over-cap artifact: the download aborts in flight and
+  // the registry reports unavailable instead of buffering the full payload.
+  await expect(registry.getCatalog()).rejects.toThrow(/marketplace registry is unavailable/)
+})

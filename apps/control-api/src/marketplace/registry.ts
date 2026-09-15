@@ -291,9 +291,24 @@ export class MarketplaceRegistryService {
         signal: AbortSignal.timeout(this.#requestTimeoutMs),
       })
       if (!response.ok) throw new Error('artifact request failed')
-      const body = await response.text()
-      if (new TextEncoder().encode(body).byteLength > this.#maxArtifactBytes)
-        throw new Error('artifact response exceeds size limit')
+      // Stream with an in-flight byte cap: buffering the whole body before
+      // measuring let an oversized artifact allocate the full payload (up to
+      // the cap) per fetch and OOM the container under continuous polling.
+      if (!response.body) throw new Error('artifact response has no body')
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let received = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (received > this.#maxArtifactBytes) {
+          await reader.cancel().catch(() => undefined)
+          throw new Error('artifact response exceeds size limit')
+        }
+        chunks.push(value)
+      }
+      const body = Buffer.concat(chunks).toString('utf8')
       return body
     } catch {
       throw new MarketplaceRegistryError(
