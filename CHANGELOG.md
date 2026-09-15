@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.3...workspace-v1.23.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **control-api:** cap marketplace artifact downloads in flight ([#515](https://github.com/adea-ai/control-plane/issues/515)) ([b36ed4c](https://github.com/adea-ai/control-plane/commit/b36ed4c2febe680bd2327ae793a0f80d399d6203))
+
 ## [1.23.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.2...workspace-v1.23.3) (2026-09-15)
 
 
