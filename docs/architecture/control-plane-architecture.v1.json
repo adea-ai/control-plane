@@ -43,7 +43,7 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.5.1",
+      "version": "1.6.0",
       "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
@@ -58,7 +58,7 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.5.1",
+      "version": "1.8.0",
       "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
@@ -126,7 +126,7 @@
     {
       "name": "@control-plane/cortana-context-adapter",
       "path": "packages/cortana-context-adapter",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "lockVersion": "1.2.1",
       "kind": "package",
       "private": true,
@@ -160,7 +160,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.11.0",
+      "version": "1.15.1",
       "lockVersion": "1.11.0",
       "kind": "package",
       "private": true,
@@ -188,7 +188,7 @@
     {
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
-      "version": "1.3.1",
+      "version": "1.4.0",
       "lockVersion": "1.3.1",
       "kind": "package",
       "private": true,
@@ -203,7 +203,7 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.8.0",
+      "version": "1.10.0",
       "lockVersion": "1.8.0",
       "kind": "package",
       "private": true,
@@ -218,7 +218,7 @@
     {
       "name": "@control-plane/events",
       "path": "packages/events",
-      "version": "1.3.3",
+      "version": "1.6.0",
       "lockVersion": "1.3.3",
       "kind": "package",
       "private": true,
@@ -257,7 +257,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.4.0",
+      "version": "1.6.0",
       "lockVersion": "1.4.0",
       "kind": "application",
       "private": true,
@@ -312,7 +312,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.7.0",
+      "version": "1.9.0",
       "lockVersion": "1.7.0",
       "kind": "application",
       "private": true,
@@ -366,7 +366,7 @@
     {
       "name": "@control-plane/memory-writeback",
       "path": "packages/memory-writeback",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "lockVersion": "1.1.2",
       "kind": "package",
       "private": true,
@@ -400,7 +400,7 @@
     {
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
-      "version": "1.2.4",
+      "version": "1.3.0",
       "lockVersion": "1.2.4",
       "kind": "package",
       "private": true,
@@ -518,7 +518,7 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.4.1",
+      "version": "1.5.2",
       "lockVersion": "1.4.1",
       "kind": "application",
       "private": true,
@@ -561,7 +561,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "lockVersion": "1.8.1",
       "kind": "package",
       "private": false,
@@ -576,7 +576,7 @@
     {
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
-      "version": "1.6.1",
+      "version": "1.7.1",
       "lockVersion": "1.6.1",
       "kind": "application",
       "private": true,
@@ -647,7 +647,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.4.0",
+      "version": "1.7.0",
       "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
@@ -671,7 +671,7 @@
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "lockVersion": "1.3.0",
       "kind": "package",
       "private": false,
@@ -768,7 +768,7 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.6.1",
+      "version": "1.7.0",
       "lockVersion": "1.6.1",
       "kind": "application",
       "private": true,
@@ -1413,7 +1413,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:17f88032f82572259301160c4ffd5c8aefdbf0d521a2cfecb882eb0616d438fb"
+      "sourceDigest": "sha256:48ed92e38a6ae3cd8e67c3af41aacb216136804370297cc795cf951eed821d66"
     },
     {
       "id": "hosted-server",

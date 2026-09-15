@@ -108,6 +108,8 @@ export function createManagedCloudControlApiComposition(
   const contextPackages = new PostgresContextPackageRepository(connection.database)
   const registryToken = process.env['MARKETPLACE_REGISTRY_TOKEN']
   const marketplaceRegistryService = new MarketplaceRegistryService({
+    // Full plugin catalogs exceed the registry's default 12 MiB artifact cap.
+    maxArtifactBytes: 64 * 1024 * 1024,
     ...(process.env['MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL'] === undefined
       ? {}
       : { immutableReleaseBaseUrl: process.env['MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL'] }),
