@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/deployment-v1.4.0...deployment-v1.5.0) (2026-09-15)
+
+
+### Features
+
+* cprnode025-launch-wiring ([#504](https://github.com/adea-ai/control-plane/issues/504)) ([1c9bab2](https://github.com/adea-ai/control-plane/commit/1c9bab2858e6aa7ee06435edec353d1d7699dce6))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/deployment-v1.3.1...deployment-v1.4.0) (2026-09-13)
 
 

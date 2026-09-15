@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.3.2...managed-pi-adapter-v1.4.0) (2026-09-15)
+
+
+### Features
+
+* cprnode025-launch-wiring ([#504](https://github.com/adea-ai/control-plane/issues/504)) ([1c9bab2](https://github.com/adea-ai/control-plane/commit/1c9bab2858e6aa7ee06435edec353d1d7699dce6))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.3.1...managed-pi-adapter-v1.3.2) (2026-09-10)
 
 
