@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.9.0...local-control-plane-v1.10.0) (2026-09-15)
+
+
+### Features
+
+* cprnode025-launch-wiring ([#504](https://github.com/adea-ai/control-plane/issues/504)) ([1c9bab2](https://github.com/adea-ai/control-plane/commit/1c9bab2858e6aa7ee06435edec353d1d7699dce6))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.8.0...local-control-plane-v1.9.0) (2026-09-13)
 
 
