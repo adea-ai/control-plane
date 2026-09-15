@@ -16,6 +16,8 @@ import {
   observeRuntime,
   isTerminalExecutionState as isTerminal,
   type ReconciliationOutcome,
+  transitionAttemptWithRetry,
+  transitionExecutionWithRetry,
 } from '@control-plane/domain'
 
 export { observeRuntime }
@@ -389,50 +391,28 @@ export class SqliteReconciliationEffects implements ReconciliationEffects {
     observedAt: string,
     metadata: { readonly failure?: Execution['failure']; readonly terminalResultRef?: string } = {}
   ): Promise<void> {
-    for (let pass = 0; pass < RETRY_LIMIT; pass += 1) {
-      const current = await this.#executions.getExecution(executionId)
-      if (!current) throw new Error('RECONCILIATION_EXECUTION_MISSING')
-      if (current.state === to || isTerminal(current.state)) return
-      try {
-        await this.#lifecycle.transitionExecution({
-          executionId: current.executionId,
-          expectedVersion: current.version,
-          to,
-          transitionedAt: maxTimestamp(observedAt, current.updatedAt),
-          ...metadata,
-        })
-        return
-      } catch (error) {
-        if (!isStaleLifecycleError(error)) throw error
-      }
-    }
-    throw new Error('RECONCILIATION_EXECUTION_STALE')
+    await transitionExecutionWithRetry(
+      {
+        getExecution: (id) => this.#executions.getExecution(id),
+        transitionExecution: (input) => this.#lifecycle.transitionExecution(input),
+      },
+      { executionId, to, observedAt, metadata }
+    )
   }
 
   async #transitionAttempt(
     attemptId: string,
     to: ExecutionAttemptState,
     observedAt: string,
-    metadata: { readonly failure?: Execution['failure']; readonly terminalResultRef?: string }
+    metadata: { readonly failure?: Execution['failure']; readonly terminalResultRef?: string } = {}
   ): Promise<void> {
-    for (let pass = 0; pass < RETRY_LIMIT; pass += 1) {
-      const current = await this.#executions.getAttempt(attemptId)
-      if (!current) throw new Error('RECONCILIATION_ATTEMPT_MISSING')
-      if (current.state === to || isTerminal(current.state)) return
-      try {
-        await this.#lifecycle.transitionAttempt({
-          attemptId: current.attemptId,
-          expectedVersion: current.version,
-          to,
-          transitionedAt: maxTimestamp(observedAt, current.updatedAt),
-          ...metadata,
-        })
-        return
-      } catch (error) {
-        if (!isStaleLifecycleError(error)) throw error
-      }
-    }
-    throw new Error('RECONCILIATION_ATTEMPT_STALE')
+    await transitionAttemptWithRetry(
+      {
+        getAttempt: (id) => this.#executions.getAttempt(id),
+        transitionAttempt: (input) => this.#lifecycle.transitionAttempt(input),
+      },
+      { attemptId, to, observedAt, metadata }
+    )
   }
 }
 
@@ -448,11 +428,4 @@ function workflowIdFromExecutionId(
 
 function maxTimestamp(left: string, right: string): string {
   return new Date(Math.max(Date.parse(left), Date.parse(right))).toISOString()
-}
-
-function isStaleLifecycleError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    ['STALE_EXECUTION_VERSION', 'STALE_ATTEMPT_VERSION'].includes(error.message)
-  )
 }
