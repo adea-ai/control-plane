@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.8...workspace-v1.24.0) (2026-09-15)
+
+
+### Features
+
+* **persistence:** add retention sweep primitives for the command inbox ([#526](https://github.com/adea-ai/control-plane/issues/526)) ([03d2491](https://github.com/adea-ai/control-plane/commit/03d24910ef3b0f0bd201029171d6fd4df2c58956))
+
 ## [1.23.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.7...workspace-v1.23.8) (2026-09-15)
 
 
