@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.24.0...workspace-v1.25.0) (2026-09-15)
+
+
+### Features
+
+* **local:** wire the retention sweep into the local composition ([#528](https://github.com/adea-ai/control-plane/issues/528)) ([ef69e2e](https://github.com/adea-ai/control-plane/commit/ef69e2e795527a311ba20dcd5fd2450706bdf284))
+
 ## [1.24.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.8...workspace-v1.24.0) (2026-09-15)
 
 
