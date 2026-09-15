@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.8.0...sqlite-persistence-v1.9.0) (2026-09-15)
+
+
+### Features
+
+* **local:** wire the retention sweep into the local composition ([#528](https://github.com/adea-ai/control-plane/issues/528)) ([ef69e2e](https://github.com/adea-ai/control-plane/commit/ef69e2e795527a311ba20dcd5fd2450706bdf284))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.7.2...sqlite-persistence-v1.8.0) (2026-09-15)
 
 
