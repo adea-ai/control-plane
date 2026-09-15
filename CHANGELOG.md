@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.4...workspace-v1.23.5) (2026-09-15)
+
+
+### Tests
+
+* **reconciliation:** characterize parity across storage backends ([#518](https://github.com/adea-ai/control-plane/issues/518)) ([1e2e64c](https://github.com/adea-ai/control-plane/commit/1e2e64cd2a01514fda7aa1c3ea00f312dc044fdf))
+
 ## [1.23.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.3...workspace-v1.23.4) (2026-09-15)
 
 
