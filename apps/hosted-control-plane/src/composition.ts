@@ -48,7 +48,6 @@ import type {
 import {
   BufferedObservabilityProvider,
   LocalCoordinationProvider,
-  NodeProcessRuntimeProvider,
   StaticServiceDiscovery,
 } from '@control-plane/deployment'
 import {
@@ -199,7 +198,6 @@ export class HostedServerControlPlaneComposition {
   readonly workflow: WorkflowRuntime
   readonly remoteControl: RemoteControlHostAdapter<unknown> | undefined
   readonly coordination = new LocalCoordinationProvider()
-  readonly processes = new NodeProcessRuntimeProvider()
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
   readonly executionAcceptanceService: DurableExecutionAcceptanceService

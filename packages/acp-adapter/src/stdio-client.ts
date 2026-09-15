@@ -1,5 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { isAbsolute } from 'node:path'
+import {
+  enforceNodeProcessSpawnPolicy,
+  type NodeProcessSpawnPolicy,
+} from '@control-plane/deployment'
 import { z } from 'zod'
 
 type Json = z.util.JSONType
@@ -28,6 +32,11 @@ export interface AcpStdioClientOptions {
   readonly cwd: string
   /** Explicit environment only: the parent environment is never inherited. */
   readonly environment: Readonly<Record<string, string>>
+  /**
+   * Bounded spawn policy (CP-RNODE-025): when set, process launches that
+   * violate it are rejected before any process starts.
+   */
+  readonly spawnPolicy?: NodeProcessSpawnPolicy
   readonly onNotification: (method: string, params: Json) => void
   readonly onRequest: (id: RpcId, method: string, params: Json) => void
 }
@@ -66,6 +75,14 @@ export class AcpStdioClient {
     if (this.#started) throw new Error('ACP_PROCESS_ALREADY_STARTED')
     if (this.#failure) throw this.#failure
     this.#started = true
+    if (this.#options.spawnPolicy !== undefined) {
+      await enforceNodeProcessSpawnPolicy(this.#options.spawnPolicy, {
+        executable: this.#options.executablePath,
+        args: this.#options.args ?? [],
+        environment: this.#options.environment,
+        cwd: this.#options.cwd,
+      })
+    }
     const child = spawn(this.#options.executablePath, [...(this.#options.args ?? [])], {
       cwd: this.#options.cwd,
       env: { ...this.#options.environment },

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
+import { delimiter, isAbsolute, join } from 'node:path'
+import process from 'node:process'
 import type { ProcessHandle, ProcessLaunchRequest, ProcessRuntimeProvider } from './index.js'
 
 /**
@@ -16,6 +17,92 @@ export interface NodeProcessSpawnPolicy {
   readonly maximumArguments?: number
   readonly maximumArgumentLength?: number
   readonly maximumEnvironmentVariables?: number
+}
+
+/** Launch request shape accepted by the shared spawn-policy guard. */
+export interface SpawnPolicyCheckRequest {
+  readonly executable: string
+  readonly args: readonly string[]
+  readonly environment?: Readonly<Record<string, string>>
+  readonly cwd?: string
+}
+
+/**
+ * Rejects launches that violate the policy before any process starts (CP-RNODE-025).
+ * Executables and working directories are compared by resolved real path, so
+ * symlinks cannot escape the allowlist. Bare executable names resolve against
+ * the child environment's PATH (falling back to the parent process PATH) the
+ * same way spawn would, so the guard and the spawn can never disagree.
+ */
+export async function enforceNodeProcessSpawnPolicy(
+  policy: NodeProcessSpawnPolicy,
+  request: SpawnPolicyCheckRequest
+): Promise<void> {
+  const maximumArguments = policy.maximumArguments
+  if (maximumArguments !== undefined && request.args.length > maximumArguments) {
+    throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+  }
+  const maximumArgumentLength = policy.maximumArgumentLength
+  if (
+    maximumArgumentLength !== undefined &&
+    request.args.some((argument) => argument.length > maximumArgumentLength)
+  ) {
+    throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+  }
+  if (
+    policy.maximumEnvironmentVariables !== undefined &&
+    Object.keys(request.environment ?? {}).length > policy.maximumEnvironmentVariables
+  ) {
+    throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+  }
+  if (policy.allowedExecutables !== undefined) {
+    const executableReal = await resolveExecutableReal(request).catch(() => undefined)
+    const allowed = await Promise.all(
+      policy.allowedExecutables.map((candidate) => realpath(candidate).catch(() => undefined))
+    )
+    if (executableReal === undefined || !allowed.includes(executableReal)) {
+      throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+    }
+  }
+  if (
+    policy.allowedWorkingDirectories !== undefined &&
+    (request.cwd === undefined || !isAbsolute(request.cwd))
+  ) {
+    throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+  }
+  if (request.cwd !== undefined && policy.allowedWorkingDirectories !== undefined) {
+    const cwdReal = await realpath(request.cwd).catch(() => undefined)
+    const contained = await Promise.all(
+      policy.allowedWorkingDirectories.map(async (directory) => {
+        const directoryReal = await realpath(directory).catch(() => undefined)
+        return (
+          cwdReal !== undefined &&
+          directoryReal !== undefined &&
+          (cwdReal === directoryReal || cwdReal.startsWith(`${directoryReal}/`))
+        )
+      })
+    )
+    if (!contained.some(Boolean)) throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
+  }
+}
+
+async function resolveExecutableReal(request: SpawnPolicyCheckRequest): Promise<string> {
+  if (isAbsolute(request.executable)) return realpath(request.executable)
+  const searchPath =
+    request.environment?.['PATH'] ?? process.env['PATH'] ?? process.env['Path'] ?? undefined
+  if (searchPath === undefined) throw new Error('PROCESS_EXECUTABLE_UNRESOLVABLE')
+  for (const directory of searchPath.split(delimiter)) {
+    if (directory.length === 0) continue
+    const candidate = join(directory, request.executable)
+    if (
+      await realpath(candidate)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      return realpath(candidate)
+    }
+  }
+  throw new Error('PROCESS_EXECUTABLE_UNRESOLVABLE')
 }
 
 export interface NodeProcessRuntimeProviderOptions {
@@ -50,54 +137,13 @@ export class NodeProcessRuntimeProvider implements ProcessRuntimeProvider {
   }
 
   async #enforceSpawnPolicy(request: ProcessLaunchRequest): Promise<void> {
-    const policy = this.#spawnPolicy
-    if (policy === undefined) return
-    const maximumArguments = policy.maximumArguments
-    if (maximumArguments !== undefined && request.args.length > maximumArguments) {
-      throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-    }
-    const maximumArgumentLength = policy.maximumArgumentLength
-    if (
-      maximumArgumentLength !== undefined &&
-      request.args.some((argument) => argument.length > maximumArgumentLength)
-    ) {
-      throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-    }
-    if (
-      policy.maximumEnvironmentVariables !== undefined &&
-      Object.keys(request.environment ?? {}).length > policy.maximumEnvironmentVariables
-    ) {
-      throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-    }
-    if (policy.allowedExecutables !== undefined) {
-      const executableReal = await realpath(request.executable).catch(() => undefined)
-      const allowed = await Promise.all(
-        policy.allowedExecutables.map((candidate) => realpath(candidate).catch(() => undefined))
-      )
-      if (executableReal === undefined || !allowed.includes(executableReal)) {
-        throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-      }
-    }
-    if (
-      policy.allowedWorkingDirectories !== undefined &&
-      (request.cwd === undefined || !isAbsolute(request.cwd))
-    ) {
-      throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-    }
-    if (request.cwd !== undefined && policy.allowedWorkingDirectories !== undefined) {
-      const cwdReal = await realpath(request.cwd).catch(() => undefined)
-      const contained = await Promise.all(
-        policy.allowedWorkingDirectories.map(async (directory) => {
-          const directoryReal = await realpath(directory).catch(() => undefined)
-          return (
-            cwdReal !== undefined &&
-            directoryReal !== undefined &&
-            (cwdReal === directoryReal || cwdReal.startsWith(`${directoryReal}/`))
-          )
-        })
-      )
-      if (!contained.some(Boolean)) throw new ProcessRuntimeError('PROCESS_LAUNCH_POLICY_VIOLATION')
-    }
+    if (this.#spawnPolicy === undefined) return
+    await enforceNodeProcessSpawnPolicy(this.#spawnPolicy, {
+      executable: request.executable,
+      args: request.args,
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
+      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+    })
   }
 
   async launch(request: ProcessLaunchRequest): Promise<ProcessHandle> {
@@ -115,6 +161,7 @@ export class NodeProcessRuntimeProvider implements ProcessRuntimeProvider {
     }
     Object.assign(environment, request.environment)
     const child = spawn(request.executable, request.args, {
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
       ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
       env: environment,
       shell: false,

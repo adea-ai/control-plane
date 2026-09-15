@@ -239,7 +239,22 @@ export class LocalControlPlaneComposition {
       throw new Error('LOCAL_GRAPH_RUNTIME_REQUIRED')
     this.dataDirectory = resolve(options.dataDirectory)
     this.profile = options.profile ?? 'local'
-    const processProvider = options.processProvider ?? new NodeProcessRuntimeProvider()
+    const restateExecutablePath = join(
+      resolve(require.resolve('@restatedev/restate-server/package.json'), '..'),
+      'lib',
+      'index.js'
+    )
+    // CP-RNODE-025: the default process provider pins the managed Restate
+    // server to its package-resolved binary and the local data directory;
+    // injected providers remain authoritative when supplied.
+    const processProvider =
+      options.processProvider ??
+      new NodeProcessRuntimeProvider({
+        spawnPolicy: {
+          allowedExecutables: [restateExecutablePath],
+          allowedWorkingDirectories: [this.dataDirectory],
+        },
+      })
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     const restateAdminUrl = `http://127.0.0.1:${options.restateAdminPort ?? 9070}`
     const restateIngressUrl = `http://127.0.0.1:${options.restateIngressPort ?? 8080}`
@@ -417,11 +432,7 @@ export class LocalControlPlaneComposition {
     this.workflow =
       options.workflowRuntime ??
       new LocalRestateRuntime({
-        executablePath: join(
-          resolve(require.resolve('@restatedev/restate-server/package.json'), '..'),
-          'lib',
-          'index.js'
-        ),
+        executablePath: restateExecutablePath,
         dataDirectory: join(this.dataDirectory, 'restate'),
         profile: this.profile,
         processProvider,
