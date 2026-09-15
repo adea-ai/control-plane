@@ -84,20 +84,19 @@ jobs:
         run: >-
           docker buildx bake -f infrastructure/containers/docker-bake.hcl
           ${{ matrix.target }} --set '*.platform=linux/amd64'
+      # Run Trivy through its own container: no host installer to break, and the
+      # docker socket lets it see the locally built image.
       - name: Scan for critical and high vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: control-plane/${{ matrix.target }}:local
-          format: table
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.65.0 image --exit-code 1 --ignore-unfixed
+          --severity CRITICAL,HIGH control-plane/${{ matrix.target }}:local
       - name: Generate CycloneDX SBOM
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: control-plane/${{ matrix.target }}:local
-          format: cyclonedx
-          output: sbom-${{ matrix.target }}.json
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD":/output aquasec/trivy:0.65.0 image
+          --format cyclonedx --output /output/sbom-${{ matrix.target }}.json
+          control-plane/${{ matrix.target }}:local
       - name: Upload SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
