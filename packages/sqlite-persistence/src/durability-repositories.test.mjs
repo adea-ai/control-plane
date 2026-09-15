@@ -505,3 +505,29 @@ function runtimeInventoryCheckpoint() {
     revision: 1,
   }
 }
+
+describe('SQLite event retention sweep', () => {
+  test('deleteExpiredEvents removes only events past their retention deadline', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-events-retention-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const repository = new SqliteExecutionEventRepository(provider)
+      await repository.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FAV'))
+      await repository.append({
+        ...eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FBW'),
+        retentionExpiresAt: '2026-08-15T12:00:00.000Z',
+      })
+
+      const sweepNow = new Date('2026-09-15T12:00:00.000Z')
+      expect(await repository.deleteExpiredEvents(sweepNow)).toBe(1)
+      expect(await repository.deleteExpiredEvents(sweepNow)).toBe(0)
+
+      expect(await repository.get('evt_01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBeDefined()
+      expect(await repository.get('evt_01ARZ3NDEKTSV4RRFFQ69G5FBW')).toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
