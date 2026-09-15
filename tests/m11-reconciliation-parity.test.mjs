@@ -86,6 +86,29 @@ describe('M11.7 reconciliation parity (characterization)', () => {
     }
   })
 
+  test('disconnected-connection observations are recorded per backend', () => {
+    // The backends carry different connection shapes: Postgres reads
+    // connection.updatedAt, SQLite reads connection.observedAt with an
+    // execution-time fallback. Same logical input, per-backend transport.
+    const logicalConnection = { status: 'disconnected' }
+    const postgres = observeRuntimePostgres(
+      runtimeRecord({ status: 'dispatched' }),
+      attemptRunning,
+      executionRunning,
+      { ...logicalConnection, updatedAt: now }
+    )
+    const sqlite = observeRuntimeSqlite(
+      runtimeRecord({ status: 'dispatched' }),
+      attemptRunning,
+      executionRunning,
+      { ...logicalConnection, observedAt: undefined }
+    )
+    expect(postgres.status).toBe('disconnected')
+    expect(sqlite.status).toBe('disconnected')
+    expect(postgres.observedAt).toBe(now)
+    expect(sqlite.observedAt).toBe(executionRunning.updatedAt)
+  })
+
   test('the pinned semantic outcomes hold for both implementations', () => {
     for (const [, observe] of implementations) {
       const terminal = observe(
