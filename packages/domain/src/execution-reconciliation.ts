@@ -726,3 +726,112 @@ export function observeRuntime(
   if (attempt !== undefined) return { status: 'not_found', observedAt: attempt.updatedAt }
   return { status: 'unknown', observedAt: execution.updatedAt }
 }
+
+/**
+ * Minimal query/transition port the reconciliation adapters satisfy with
+ * their execution repository + lifecycle service. Keeping the retry shell
+ * here means both backends share one convergence rule set.
+ */
+export interface ReconciliationLifecycleTransitionPort {
+  getExecution(executionId: string): Promise<Execution | undefined>
+  transitionExecution(input: {
+    executionId: string
+    expectedVersion: number
+    to: ExecutionState
+    transitionedAt: string
+    failure?: Execution['failure']
+    terminalResultRef?: string
+  }): Promise<unknown>
+  getAttempt(attemptId: string): Promise<ExecutionAttempt | undefined>
+  transitionAttempt(input: {
+    attemptId: string
+    expectedVersion: number
+    to: ExecutionAttemptState
+    transitionedAt: string
+    failure?: Execution['failure']
+    terminalResultRef?: string
+  }): Promise<unknown>
+}
+
+export const RECONCILIATION_TRANSITION_RETRY_LIMIT = 3
+
+function maxTimestamp(left: string, right: string): string {
+  return new Date(Math.max(Date.parse(left), Date.parse(right))).toISOString()
+}
+
+function isStaleLifecycleError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    ['STALE_EXECUTION_VERSION', 'STALE_ATTEMPT_VERSION'].includes(error.message)
+  )
+}
+
+export async function transitionExecutionWithRetry(
+  port: Pick<ReconciliationLifecycleTransitionPort, 'getExecution' | 'transitionExecution'>,
+  input: {
+    readonly executionId: string
+    readonly to: ExecutionState
+    readonly observedAt: string
+    readonly metadata?: {
+      readonly failure?: Execution['failure']
+      readonly terminalResultRef?: string
+    }
+  }
+): Promise<void> {
+  for (let pass = 0; pass < RECONCILIATION_TRANSITION_RETRY_LIMIT; pass += 1) {
+    const current = await port.getExecution(input.executionId)
+    if (!current) throw new Error('RECONCILIATION_EXECUTION_MISSING')
+    if (current.state === input.to || isTerminalExecutionState(current.state)) return
+    try {
+      await port.transitionExecution({
+        executionId: current.executionId,
+        expectedVersion: current.version,
+        to: input.to,
+        transitionedAt: maxTimestamp(input.observedAt, current.updatedAt),
+        ...(input.metadata?.failure === undefined ? {} : { failure: input.metadata.failure }),
+        ...(input.metadata?.terminalResultRef === undefined
+          ? {}
+          : { terminalResultRef: input.metadata.terminalResultRef }),
+      })
+      return
+    } catch (error) {
+      if (!isStaleLifecycleError(error)) throw error
+    }
+  }
+  throw new Error('RECONCILIATION_EXECUTION_STALE')
+}
+
+export async function transitionAttemptWithRetry(
+  port: Pick<ReconciliationLifecycleTransitionPort, 'getAttempt' | 'transitionAttempt'>,
+  input: {
+    readonly attemptId: string
+    readonly to: ExecutionAttemptState
+    readonly observedAt: string
+    readonly metadata?: {
+      readonly failure?: Execution['failure']
+      readonly terminalResultRef?: string
+    }
+  }
+): Promise<void> {
+  for (let pass = 0; pass < RECONCILIATION_TRANSITION_RETRY_LIMIT; pass += 1) {
+    const current = await port.getAttempt(input.attemptId)
+    if (!current) throw new Error('RECONCILIATION_ATTEMPT_MISSING')
+    if (current.state === input.to || isTerminalExecutionState(current.state)) return
+    try {
+      await port.transitionAttempt({
+        attemptId: current.attemptId,
+        expectedVersion: current.version,
+        to: input.to,
+        transitionedAt: maxTimestamp(input.observedAt, current.updatedAt),
+        ...(input.metadata?.failure === undefined ? {} : { failure: input.metadata.failure }),
+        ...(input.metadata?.terminalResultRef === undefined
+          ? {}
+          : { terminalResultRef: input.metadata.terminalResultRef }),
+      })
+      return
+    } catch (error) {
+      if (!isStaleLifecycleError(error)) throw error
+    }
+  }
+  throw new Error('RECONCILIATION_ATTEMPT_STALE')
+}
