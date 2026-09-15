@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.6...workspace-v1.22.7) (2026-09-15)
+
+
+### Bug Fixes
+
+* marketplace-artifact-cap ([#507](https://github.com/adea-ai/control-plane/issues/507)) ([788a54a](https://github.com/adea-ai/control-plane/commit/788a54af5f4c892a8e8719c1f8358d946f70a89c))
+
 ## [1.22.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.5...workspace-v1.22.6) (2026-09-14)
 
 
