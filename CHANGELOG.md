@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.23.0...workspace-v1.23.1) (2026-09-15)
+
+
+### Tests
+
+* m190-probes-tranche2 ([#505](https://github.com/adea-ai/control-plane/issues/505)) ([150af41](https://github.com/adea-ai/control-plane/commit/150af4122c8502c9253e0839d1e8b1f2ba165778))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.22.7...workspace-v1.23.0) (2026-09-15)
 
 
