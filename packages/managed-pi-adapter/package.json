@@ -21,6 +21,7 @@
     "test": "bun test src"
   },
   "dependencies": {
+    "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",

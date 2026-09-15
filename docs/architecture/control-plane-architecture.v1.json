@@ -16,6 +16,7 @@
       "browser": false,
       "exports": ["."],
       "workspaceDependencies": [
+        "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
@@ -44,7 +45,7 @@
       "name": "@control-plane/config",
       "path": "packages/config",
       "version": "1.6.0",
-      "lockVersion": "1.5.1",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -59,7 +60,7 @@
       "name": "@control-plane/context",
       "path": "packages/context",
       "version": "1.8.0",
-      "lockVersion": "1.5.1",
+      "lockVersion": "1.8.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -127,7 +128,7 @@
       "name": "@control-plane/cortana-context-adapter",
       "path": "packages/cortana-context-adapter",
       "version": "1.3.0",
-      "lockVersion": "1.2.1",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -161,7 +162,7 @@
       "name": "@control-plane/database",
       "path": "packages/database",
       "version": "1.15.1",
-      "lockVersion": "1.11.0",
+      "lockVersion": "1.15.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -189,7 +190,7 @@
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
       "version": "1.4.0",
-      "lockVersion": "1.3.1",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -204,7 +205,7 @@
       "name": "@control-plane/domain",
       "path": "packages/domain",
       "version": "1.10.0",
-      "lockVersion": "1.8.0",
+      "lockVersion": "1.10.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -219,7 +220,7 @@
       "name": "@control-plane/events",
       "path": "packages/events",
       "version": "1.6.0",
-      "lockVersion": "1.3.3",
+      "lockVersion": "1.6.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -258,7 +259,7 @@
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
       "version": "1.6.0",
-      "lockVersion": "1.4.0",
+      "lockVersion": "1.6.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -313,7 +314,7 @@
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
       "version": "1.9.0",
-      "lockVersion": "1.7.0",
+      "lockVersion": "1.9.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -354,6 +355,7 @@
       "browser": false,
       "exports": ["."],
       "workspaceDependencies": [
+        "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
@@ -367,7 +369,7 @@
       "name": "@control-plane/memory-writeback",
       "path": "packages/memory-writeback",
       "version": "1.2.0",
-      "lockVersion": "1.1.2",
+      "lockVersion": "1.2.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -401,7 +403,7 @@
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
       "version": "1.3.0",
-      "lockVersion": "1.2.4",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -519,7 +521,7 @@
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
       "version": "1.5.2",
-      "lockVersion": "1.4.1",
+      "lockVersion": "1.5.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -562,7 +564,7 @@
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
       "version": "1.9.0",
-      "lockVersion": "1.8.1",
+      "lockVersion": "1.9.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -577,7 +579,7 @@
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
       "version": "1.7.1",
-      "lockVersion": "1.6.1",
+      "lockVersion": "1.7.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -648,7 +650,7 @@
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
       "version": "1.7.0",
-      "lockVersion": "1.4.0",
+      "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -672,7 +674,7 @@
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
       "version": "1.4.0",
-      "lockVersion": "1.3.0",
+      "lockVersion": "1.4.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -769,7 +771,7 @@
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
       "version": "1.7.0",
-      "lockVersion": "1.6.1",
+      "lockVersion": "1.7.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -1452,7 +1454,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:f60a7888c08c3f432df6100cab23f875a6a1e582b45dcb36030c6a486936a7b9"
+      "sourceDigest": "sha256:fc2743a927fe2f2cbbdf0eb78e18bd86d32efaee5dc36e622beb0b8c96174480"
     },
     {
       "id": "hosted-simple",
@@ -1491,7 +1493,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:4c1c955dfd81bd6bd4057db3d8bf4dea1f41742566e645a203b1052bda0e5f1f"
+      "sourceDigest": "sha256:06be7459b5caac31f05c83d14f495e792dba61d8c24851c8904fdafec229c18b"
     },
     {
       "id": "local",
@@ -1530,7 +1532,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:4c1c955dfd81bd6bd4057db3d8bf4dea1f41742566e645a203b1052bda0e5f1f"
+      "sourceDigest": "sha256:06be7459b5caac31f05c83d14f495e792dba61d8c24851c8904fdafec229c18b"
     }
   ],
   "ownership": [

@@ -84,6 +84,12 @@ export function createInstalledLocalAcpRuntime(
     args: [join(options.installationDirectory, 'source/dist/index.js')],
     cwd: options.cwd,
     environment,
+    // CP-RNODE-025: launches are pinned to the verified node runtime and the
+    // configured working directory; anything else is rejected before spawn.
+    spawnPolicy: {
+      allowedExecutables: [options.nodeExecutable],
+      allowedWorkingDirectories: [options.cwd],
+    },
     externalSessionId: () => `ses_${createExecutionId().slice(4)}`,
     interactionId: () => `int_${createExecutionId().slice(4)}`,
     resolvePrompt: createRepositoryAcpTaskPromptResolver(

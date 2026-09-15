@@ -14,6 +14,7 @@ import {
   DirectLocalRuntimeTransport,
   type RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
+import type { NodeProcessSpawnPolicy } from '@control-plane/deployment'
 import { resolvePublishedRuntimeInputs } from './published-runtime-inputs.js'
 import { LocalRuntimeModelRoute, type LocalModelRouteOptions } from './runtime-model-route.js'
 
@@ -26,6 +27,7 @@ export interface LocalManagedPiRuntimeOptions {
   readonly providerClass: string
   readonly dataResidency: string
   readonly environment?: Readonly<Record<string, string>>
+  readonly spawnPolicy?: NodeProcessSpawnPolicy
 }
 
 export interface LocalManagedPiRuntimeRepositories {
@@ -45,6 +47,7 @@ export function createLocalManagedPiRuntime(
     executablePath: options.executablePath,
     dataDirectory: `${repositories.dataDirectory}/managed-pi`,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
+    ...(options.spawnPolicy === undefined ? {} : { spawnPolicy: options.spawnPolicy }),
     inputResolver: new RepositoryManagedPiProcessInputResolver(repositories, {
       provider: options.provider,
       model: options.model,
