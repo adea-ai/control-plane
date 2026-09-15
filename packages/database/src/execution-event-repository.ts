@@ -16,6 +16,19 @@ import { executions } from './schema/executions.js'
 export class PostgresExecutionEventRepository implements ExecutionEventRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
 
+  /**
+   * Retention worker primitive (M11.9/#194): physically removes execution
+   * events whose retention deadline has passed. Returns the number deleted.
+   */
+  async deleteExpiredEvents(now: Date): Promise<number> {
+    if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
+    const deleted = await this.database
+      .delete(executionEvents)
+      .where(lte(executionEvents.retentionExpiresAt, now))
+      .returning({ eventId: executionEvents.eventId })
+    return deleted.length
+  }
+
   append(draft: ExecutionEventDraft): Promise<ExecutionEvent | undefined> {
     return this.database.transaction((transaction) =>
       appendExecutionEventInTransaction(transaction, draft)
