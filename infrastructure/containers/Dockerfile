@@ -25,6 +25,11 @@ WORKDIR /workspace
 COPY --from=build --chown=bun:bun /workspace /workspace
 COPY --chown=bun:bun infrastructure/containers/entrypoint.sh /usr/local/bin/control-plane-entrypoint
 
+# CVE-2026-14456 (OpenSSL denial of service, HIGH): the pinned base digest
+# ships libcrypto3/libssl3 3.5.7-r0; pull the fixed 3.5.8-r0 packages so the
+# digest-pinned base cannot freeze a known vulnerability into every image.
+RUN apk upgrade --no-cache openssl libcrypto3 libssl3
+
 RUN chmod 0555 /usr/local/bin/control-plane-entrypoint
 
 USER bun
