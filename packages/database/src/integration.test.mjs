@@ -2699,7 +2699,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   test('deleteExpiredInbox removes only past-retention commands idempotently', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FCX'
-    const now = '2026-08-24T11:00:00.000Z'
+    // receivedAt must sit >=30 days before the retention cutoff (the service
+    // enforces the STM-033 inbox minimum).
+    const now = '2026-07-31T11:00:00.000Z'
     const repository = new PostgresCommandAcceptanceRepository(isolated.application)
     const service = new CommandInboxService({
       repository,
