@@ -57,18 +57,68 @@ jobs:
           docker buildx bake -f infrastructure/containers/docker-bake.hcl
           default database-migrate --set '*.platform=linux/amd64'
 
+  # M11.5 supply-chain gate (#190): every built image is scanned for critical
+  # and high vulnerabilities and receives a CycloneDX SBOM. Findings fail the
+  # lane so they cannot ship unowned; scan results upload as artifacts.
+  image-security:
+    name: Container image security (${{ matrix.target }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - control-api
+          - workflow-worker
+          - runtime-worker
+          - runtime-gateway
+          - tool-gateway
+          - database-migrate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build ${{ matrix.target }} image
+        run: >-
+          docker buildx bake -f infrastructure/containers/docker-bake.hcl
+          ${{ matrix.target }} --set '*.platform=linux/amd64'
+      - name: Scan for critical and high vulnerabilities
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: control-plane/${{ matrix.target }}:local
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: control-plane/${{ matrix.target }}:local
+          format: cyclonedx
+          output: sbom-${{ matrix.target }}.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sbom-${{ matrix.target }}
+          path: sbom-${{ matrix.target }}.json
+          retention-days: 30
+
   # Stable required check: Foundation Acceptance / Gate
   gate:
     name: Foundation Acceptance / Gate
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    needs: [core, containers]
+    needs: [core, containers, image-security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       CONTAINERS_RESULT: ${{ needs.containers.result }}
       CORE_RESULT: ${{ needs.core.result }}
+      IMAGE_SECURITY_RESULT: ${{ needs.image-security.result }}
     steps:
       - name: Require every foundation lane
         run: |
           test "$CORE_RESULT" = success
           test "$CONTAINERS_RESULT" = success
+          test "$IMAGE_SECURITY_RESULT" = success
