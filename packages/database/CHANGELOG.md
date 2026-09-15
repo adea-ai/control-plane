@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/database-v1.15.3...database-v1.16.0) (2026-09-15)
+
+
+### Features
+
+* **persistence:** add retention sweep primitives for the command inbox ([#526](https://github.com/adea-ai/control-plane/issues/526)) ([03d2491](https://github.com/adea-ai/control-plane/commit/03d24910ef3b0f0bd201029171d6fd4df2c58956))
+
 ## [1.15.3](https://github.com/adea-ai/control-plane/compare/database-v1.15.2...database-v1.15.3) (2026-09-15)
 
 
