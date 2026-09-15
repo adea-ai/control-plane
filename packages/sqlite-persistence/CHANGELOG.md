@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.7.2...sqlite-persistence-v1.8.0) (2026-09-15)
+
+
+### Features
+
+* **persistence:** add retention sweep primitives for the command inbox ([#526](https://github.com/adea-ai/control-plane/issues/526)) ([03d2491](https://github.com/adea-ai/control-plane/commit/03d24910ef3b0f0bd201029171d6fd4df2c58956))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.7.1...sqlite-persistence-v1.7.2) (2026-09-15)
 
 
