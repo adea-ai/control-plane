@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.3](https://github.com/adea-ai/control-plane/compare/database-v1.15.2...database-v1.15.3) (2026-09-15)
+
+
+### Maintenance
+
+* **reconciliation:** share the lifecycle transition retry shells ([#524](https://github.com/adea-ai/control-plane/issues/524)) ([df1054f](https://github.com/adea-ai/control-plane/commit/df1054f794fe8172c728908b91c24289db678d7e))
+
 ## [1.15.2](https://github.com/adea-ai/control-plane/compare/database-v1.15.1...database-v1.15.2) (2026-09-15)
 
 
