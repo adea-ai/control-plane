@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.7.1...sqlite-persistence-v1.7.2) (2026-09-15)
+
+
+### Maintenance
+
+* **reconciliation:** share the lifecycle transition retry shells ([#524](https://github.com/adea-ai/control-plane/issues/524)) ([df1054f](https://github.com/adea-ai/control-plane/commit/df1054f794fe8172c728908b91c24289db678d7e))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.7.0...sqlite-persistence-v1.7.1) (2026-09-15)
 
 
