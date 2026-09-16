@@ -39,6 +39,32 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
       return run
     })
   }
+
+  /**
+   * Retention sweep primitive (M11.9/#194): physically removes completed
+   * evaluation runs that finished before the cutoff. Returns the number
+   * deleted. Unreadable payloads are skipped so the sweep never crashes.
+   */
+  async deleteCompletedBefore(cutoff: Date): Promise<number> {
+    if (Number.isNaN(cutoff.getTime())) throw new Error('EVALUATION_RETENTION_INVALID_CUTOFF')
+    return this.provider.transaction(async (transaction) => {
+      const records = await transaction.list('evaluation-runs')
+      let deleted = 0
+      for (const record of records) {
+        let run: EvalRun
+        try {
+          run = EvalRunSchema.parse(record.value)
+        } catch {
+          continue
+        }
+        const completed = Date.parse(run.completedAt)
+        if (!Number.isFinite(completed) || completed > cutoff.getTime()) continue
+        await transaction.delete('evaluation-runs', record.id)
+        deleted += 1
+      }
+      return deleted
+    })
+  }
 }
 
 function recordId(value: string): string {
