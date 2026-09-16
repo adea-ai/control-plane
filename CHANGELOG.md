@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.1...workspace-v1.25.2) (2026-09-16)
+
+
+### Tests
+
+* **recovery:** add measured RPO/RTO evidence for the SQLite profile ([#532](https://github.com/adea-ai/control-plane/issues/532)) ([4dd8fb4](https://github.com/adea-ai/control-plane/commit/4dd8fb45b088e7b832da5139f8d30f34d9463049))
+
 ## [1.25.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.0...workspace-v1.25.1) (2026-09-16)
 
 
