@@ -4,12 +4,26 @@ import {
   type EvalRun,
   type EvaluationRepository,
 } from '@control-plane/production-readiness'
-import { eq } from 'drizzle-orm'
+import { eq, lte } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { evaluationRuns } from './schema/evaluations.js'
 
 export class PostgresEvaluationRepository implements EvaluationRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Retention sweep primitive (M11.9/#194): physically removes completed
+   * evaluation runs that finished before the cutoff. Returns the number
+   * deleted.
+   */
+  async deleteCompletedBefore(cutoff: Date): Promise<number> {
+    if (Number.isNaN(cutoff.getTime())) throw new Error('EVALUATION_RETENTION_INVALID_CUTOFF')
+    const deleted = await this.database
+      .delete(evaluationRuns)
+      .where(lte(evaluationRuns.completedAt, cutoff))
+      .returning({ evalRunId: evaluationRuns.evalRunId })
+    return deleted.length
+  }
 
   async saveRun(value: EvalRun): Promise<void> {
     const run = EvalRunSchema.parse(value)
