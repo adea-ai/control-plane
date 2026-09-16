@@ -7,6 +7,11 @@ import type {
   ExecutionAttemptState,
   ExecutionState,
 } from './execution-lifecycle.js'
+import {
+  CommandInboxError,
+  type CommandInboxRecord,
+  type CommandInboxStatus,
+} from './command-inbox.js'
 import type { RuntimeCommandRecord } from './runtime-command.js'
 
 const TimestampSchema = z.iso.datetime()
@@ -834,4 +839,101 @@ export async function transitionAttemptWithRetry(
     }
   }
   throw new Error('RECONCILIATION_ATTEMPT_STALE')
+}
+
+/**
+ * Minimal command-inbox port the reconciliation adapters satisfy with their
+ * inbox service + acceptance repository. Keeping the stale-version retry
+ * shells here means both backends share one convergence rule set.
+ */
+export interface ReconciliationCommandPort {
+  getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined>
+  transitionCommand(input: {
+    callerPrincipalId: string
+    operation: string
+    workspaceId: string
+    projectId: string
+    idempotencyKey: string
+    expectedVersion: number
+    to: CommandInboxStatus
+    transitionedAt: string
+    errorReference?: string
+  }): Promise<unknown>
+}
+
+export const RECONCILIATION_COMMAND_RETRY_LIMIT = 3
+
+function isStaleCommandVersionError(error: unknown): boolean {
+  return error instanceof CommandInboxError && error.code === 'STALE_COMMAND_VERSION'
+}
+
+/**
+ * Parks a command inbox record in reconciliation_required. A settled inbox
+ * record (completed/failed) cannot take the state — the execution-level
+ * parking still records the required state — and stale-version conflicts are
+ * retried up to the reconciliation retry limit.
+ */
+export async function markCommandReconciliationRequiredWithRetry(
+  port: Pick<ReconciliationCommandPort, 'getByExecutionId' | 'transitionCommand'>,
+  input: {
+    readonly executionId: string
+    readonly observedAt: string
+    readonly errorReference: string
+  }
+): Promise<void> {
+  for (let pass = 0; pass < RECONCILIATION_COMMAND_RETRY_LIMIT; pass += 1) {
+    const current = await port.getByExecutionId(input.executionId)
+    if (!current) throw new Error('RECONCILIATION_COMMAND_MISSING')
+    if (current.status === 'reconciliation_required') return
+    if (current.status === 'completed' || current.status === 'failed') return
+    try {
+      await port.transitionCommand({
+        callerPrincipalId: current.callerPrincipalId,
+        operation: current.operation,
+        workspaceId: current.workspaceId,
+        projectId: current.projectId,
+        idempotencyKey: current.idempotencyKey,
+        expectedVersion: current.version,
+        to: 'reconciliation_required',
+        transitionedAt: maxTimestamp(input.observedAt, current.lastSeenAt),
+        errorReference: input.errorReference,
+      })
+      return
+    } catch (error) {
+      if (!isStaleCommandVersionError(error)) throw error
+    }
+  }
+  throw new Error('RECONCILIATION_COMMAND_STALE')
+}
+
+/**
+ * Advances a command inbox record to processing. Records already in a
+ * non-retryable state (processing/completed/failed) are left alone, and
+ * stale-version conflicts are retried up to the reconciliation retry limit.
+ */
+export async function advanceCommandToProcessingWithRetry(
+  port: Pick<ReconciliationCommandPort, 'getByExecutionId' | 'transitionCommand'>,
+  input: { readonly command: CommandInboxRecord; readonly at: string }
+): Promise<void> {
+  for (let pass = 0; pass < RECONCILIATION_COMMAND_RETRY_LIMIT; pass += 1) {
+    const current = await port.getByExecutionId(input.command.executionId)
+    if (!current) throw new Error('RECONCILIATION_COMMAND_MISSING')
+    if (['processing', 'completed', 'failed'].includes(current.status)) return
+    try {
+      await port.transitionCommand({
+        callerPrincipalId: current.callerPrincipalId,
+        operation: current.operation,
+        workspaceId: current.workspaceId,
+        projectId: current.projectId,
+        idempotencyKey: current.idempotencyKey,
+        expectedVersion: current.version,
+        to: 'processing',
+        transitionedAt: maxTimestamp(input.at, current.lastSeenAt),
+      })
+      return
+    } catch (error) {
+      if (!isStaleCommandVersionError(error)) throw error
+    }
+  }
+  throw new Error('RECONCILIATION_COMMAND_STALE')
 }
