@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/database-v1.17.1...database-v1.18.0) (2026-09-16)
+
+
+### Features
+
+* **persistence:** add retention sweep primitive for evaluation runs ([#541](https://github.com/adea-ai/control-plane/issues/541)) ([89f6237](https://github.com/adea-ai/control-plane/commit/89f6237b969e844484f02d256db866fcb35a599f))
+
 ## [1.17.1](https://github.com/adea-ai/control-plane/compare/database-v1.17.0...database-v1.17.1) (2026-09-16)
 
 
