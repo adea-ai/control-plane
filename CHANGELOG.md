@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.0...workspace-v1.25.1) (2026-09-16)
+
+
+### Tests
+
+* m196-skill-baseline ([#530](https://github.com/adea-ai/control-plane/issues/530)) ([1068e30](https://github.com/adea-ai/control-plane/commit/1068e303a30a0ce00640d291388c93b5f601575b))
+
 ## [1.25.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.24.0...workspace-v1.25.0) (2026-09-15)
 
 
