@@ -161,7 +161,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.16.0",
+      "version": "1.18.0",
       "lockVersion": "1.15.1",
       "kind": "package",
       "private": true,
@@ -204,7 +204,7 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.10.2",
+      "version": "1.10.3",
       "lockVersion": "1.10.0",
       "kind": "package",
       "private": true,
@@ -313,7 +313,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "lockVersion": "1.9.0",
       "kind": "application",
       "private": true,
@@ -649,7 +649,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.8.0",
+      "version": "1.10.0",
       "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
@@ -1454,7 +1454,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:fc2743a927fe2f2cbbdf0eb78e18bd86d32efaee5dc36e622beb0b8c96174480"
+      "sourceDigest": "sha256:6a127237b5449f617cc323ed57635e501e9f37f3fcef72f387af06f2e55afda3"
     },
     {
       "id": "hosted-simple",
@@ -1493,7 +1493,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:f6c3666813ae56760990f1483443139953c195db61c8a9c90cb311ba59dcdf89"
+      "sourceDigest": "sha256:982ee93c664f09de7244a14b5a91a25a3697facf27ea7dbd60bdf386ed581d1d"
     },
     {
       "id": "local",
@@ -1532,7 +1532,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:f6c3666813ae56760990f1483443139953c195db61c8a9c90cb311ba59dcdf89"
+      "sourceDigest": "sha256:982ee93c664f09de7244a14b5a91a25a3697facf27ea7dbd60bdf386ed581d1d"
     }
   ],
   "ownership": [
