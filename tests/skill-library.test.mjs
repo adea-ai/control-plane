@@ -17,4 +17,11 @@ describe('M11.11 skill library baseline', () => {
       expect(skill.description.length, skill.name).toBeGreaterThanOrEqual(10)
     }
   })
+
+  test('every retained skill carries a declared version', async () => {
+    const skills = await validateSkillLibrary()
+    for (const skill of skills) {
+      expect(typeof skill.version === 'string' && skill.version.length > 0, skill.name).toBe(true)
+    }
+  })
 })

@@ -69,6 +69,10 @@ export async function discoverSkillLibrary() {
       continue
     }
     const frontmatter = parseFrontmatter(skillMd)
+    const versionMatch = /^\s{2}version:\s*"(.+)"\s*$/m.exec(skillMd)
+    if (!versionMatch) {
+      errors.push({ skill: name, message: 'SKILL.md frontmatter is missing metadata.version' })
+    }
     if (!frontmatter.name)
       errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a name' })
     if (frontmatter.name !== undefined && frontmatter.name !== name) {
@@ -90,6 +94,7 @@ export async function discoverSkillLibrary() {
     skills.push({
       name,
       description: (frontmatter.description ?? '').slice(0, 400),
+      version: versionMatch ? versionMatch[1] : undefined,
       files,
       skillMdBytes: Buffer.byteLength(skillMd, 'utf8'),
     })
