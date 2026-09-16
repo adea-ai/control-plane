@@ -148,3 +148,91 @@ test('atomically retains an observed evaluation run through concurrency, rollbac
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('deleteCompletedBefore removes only evaluation runs past the retention cutoff', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sqlite-eval-retention-'))
+  const path = join(directory, 'state.sqlite')
+  const provider = new SqlitePersistenceProvider({ path })
+  try {
+    await provider.migrate()
+    const repository = new SqliteEvaluationRepository(provider)
+    const fixture = {
+      taskId: 'retention-case',
+      version: '1',
+      candidate: 'candidate',
+      prompt: 'Inspect the gate.',
+      untrustedSummary: 'Everything passed.',
+      requirements: [
+        { id: 'gate', evidence: { id: 'run', candidate: 'candidate', outcome: 'unavailable' } },
+      ],
+    }
+    const artifact = { id: 'offline-fixture', version: '1', digest: `sha256:${'1'.repeat(64)}` }
+    const runFor = async (evalRunId, clock) =>
+      await new EvaluationService({ repository, now: () => clock }).run({
+        evalRunId,
+        suite: {
+          evalSuiteId: 'offline-suite',
+          version: '1',
+          digest: artifact.digest,
+          dataset: artifact,
+          mode: 'offline',
+          cases: [
+            {
+              evalCaseId: fixture.taskId,
+              inputDigest: evidenceAuditFixtureDigest(fixture),
+              scorers: [
+                {
+                  metric: 'functional_correctness',
+                  direction: 'min',
+                  threshold: 1,
+                  required: true,
+                },
+              ],
+            },
+          ],
+        },
+        configuration: {
+          executionPlanDigest: artifact.digest,
+          profile: artifact,
+          skills: [],
+          graph: artifact,
+          runtime: artifact,
+          model: artifact,
+          tools: [],
+          policy: artifact,
+        },
+        execute: createEvidenceAuditMetricsExecutor({
+          fixtures: [fixture],
+          executorReference: 'scripted-control',
+          seed: 1104,
+          executor: async ({ tools }) => {
+            const evidence = tools.inspect('gate')
+            return {
+              status: 'partial',
+              requirements: [{ id: 'gate', evidenceId: evidence.id, state: 'unavailable' }],
+            }
+          },
+        }),
+      })
+
+    const buildSaved = async (evalRunId, clock) => {
+      const observed = await runFor(evalRunId, clock)
+      await repository.saveRun({ ...observed, completedAt: clock })
+      return evalRunId
+    }
+    // 'lost' completed before the retention cutoff; 'kept' after it.
+    await buildSaved('sqlite-retention-lost', '2026-08-01T12:00:00.000Z')
+    await buildSaved('sqlite-retention-kept', '2026-09-16T12:00:00.000Z')
+
+    const deleted = await repository.deleteCompletedBefore(new Date('2026-09-15T12:00:00.000Z'))
+    expect(deleted).toBe(1)
+    expect(await repository.getRun('sqlite-retention-lost')).toBeUndefined()
+    expect(await repository.getRun('sqlite-retention-kept')).toBeDefined()
+
+    // Idempotent: a repeated sweep deletes nothing further.
+    expect(await repository.deleteCompletedBefore(new Date('2026-09-15T12:00:00.000Z'))).toBe(0)
+  } finally {
+    await provider.close({ checkpoint: true })
+    await rm(directory, { recursive: true, force: true })
+  }
+})
