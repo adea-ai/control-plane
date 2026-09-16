@@ -1,11 +1,9 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
-  CommandInboxError,
   CommandInboxService,
   ExecutionLifecycleService,
   ReconciliationReasonSchema,
   type CommandAcceptanceRepository,
-  type CommandInboxRecord,
   type Execution,
   type ExecutionAttemptState,
   type ExecutionRepository,
@@ -13,7 +11,10 @@ import {
   type ReconciliationEffects,
   type ReconciliationObservation,
   type ReconciliationSource,
+  advanceCommandToProcessingWithRetry,
+  markCommandReconciliationRequiredWithRetry,
   observeRuntime,
+  type ReconciliationCommandPort,
   isTerminalExecutionState as isTerminal,
   type ReconciliationOutcome,
   transitionAttemptWithRetry,
@@ -198,7 +199,6 @@ export interface PostgresReconciliationEffectsOptions {
   readonly now?: () => string
 }
 
-const RETRY_LIMIT = 3
 const REPLAY_EVENT_LIMIT = 100
 
 export class PostgresReconciliationEffects implements ReconciliationEffects {
@@ -233,11 +233,11 @@ export class PostgresReconciliationEffects implements ReconciliationEffects {
     readonly observedAt: string
   }): Promise<void> {
     const errorReference = `reconciliation://checkpoint/${input.checkpointId}`
-    await this.#markCommandReconciliationRequired(
-      input.executionId,
-      input.observedAt,
-      errorReference
-    )
+    await markCommandReconciliationRequiredWithRetry(this.#commandPort(), {
+      executionId: input.executionId,
+      observedAt: input.observedAt,
+      errorReference,
+    })
     await this.#transitionExecution(input.executionId, 'reconciliation_required', input.observedAt)
     if (input.attemptId !== undefined) {
       await this.#transitionAttempt(
@@ -277,7 +277,7 @@ export class PostgresReconciliationEffects implements ReconciliationEffects {
       executionPlan: execution.executionPlan,
       deadlineAt: execution.deadlineAt ?? command.retentionExpiresAt,
     })
-    await this.#advanceCommandToProcessing(command, this.#now())
+    await advanceCommandToProcessingWithRetry(this.#commandPort(), { command, at: this.#now() })
   }
 
   async applyRuntimeTerminal(input: {
@@ -330,64 +330,11 @@ export class PostgresReconciliationEffects implements ReconciliationEffects {
     )
   }
 
-  async #markCommandReconciliationRequired(
-    executionId: string,
-    observedAt: string,
-    errorReference: string
-  ): Promise<void> {
-    for (let pass = 0; pass < RETRY_LIMIT; pass += 1) {
-      const current = await this.#commands.getByExecutionId(executionId)
-      if (!current) throw new Error('RECONCILIATION_COMMAND_MISSING')
-      if (current.status === 'reconciliation_required') return
-      // A settled inbox record cannot take reconciliation_required; the
-      // execution-level parking below still records the required state.
-      if (current.status === 'completed' || current.status === 'failed') return
-      try {
-        await this.#inbox.transitionCommand({
-          callerPrincipalId: current.callerPrincipalId,
-          operation: current.operation,
-          workspaceId: current.workspaceId,
-          projectId: current.projectId,
-          idempotencyKey: current.idempotencyKey,
-          expectedVersion: current.version,
-          to: 'reconciliation_required',
-          transitionedAt: maxTimestamp(observedAt, current.lastSeenAt),
-          errorReference,
-        })
-        return
-      } catch (error) {
-        if (!(error instanceof CommandInboxError && error.code === 'STALE_COMMAND_VERSION')) {
-          throw error
-        }
-      }
+  #commandPort(): ReconciliationCommandPort {
+    return {
+      getByExecutionId: (executionId) => this.#commands.getByExecutionId(executionId),
+      transitionCommand: (input) => this.#inbox.transitionCommand(input),
     }
-    throw new Error('RECONCILIATION_COMMAND_STALE')
-  }
-
-  async #advanceCommandToProcessing(command: CommandInboxRecord, at: string): Promise<void> {
-    for (let pass = 0; pass < RETRY_LIMIT; pass += 1) {
-      const current = await this.#commands.getByExecutionId(command.executionId)
-      if (!current) throw new Error('RECONCILIATION_COMMAND_MISSING')
-      if (['processing', 'completed', 'failed'].includes(current.status)) return
-      try {
-        await this.#inbox.transitionCommand({
-          callerPrincipalId: current.callerPrincipalId,
-          operation: current.operation,
-          workspaceId: current.workspaceId,
-          projectId: current.projectId,
-          idempotencyKey: current.idempotencyKey,
-          expectedVersion: current.version,
-          to: 'processing',
-          transitionedAt: maxTimestamp(at, current.lastSeenAt),
-        })
-        return
-      } catch (error) {
-        if (!(error instanceof CommandInboxError && error.code === 'STALE_COMMAND_VERSION')) {
-          throw error
-        }
-      }
-    }
-    throw new Error('RECONCILIATION_COMMAND_STALE')
   }
 
   async #transitionExecution(
@@ -429,8 +376,4 @@ function workflowIdFromExecutionId(
   executionId: string
 ): ReturnType<typeof IdentifierSchemas.workflowId.parse> {
   return IdentifierSchemas.workflowId.parse(`wfl_${executionId.slice(4)}`)
-}
-
-function maxTimestamp(left: string, right: string): string {
-  return new Date(Math.max(Date.parse(left), Date.parse(right))).toISOString()
 }
