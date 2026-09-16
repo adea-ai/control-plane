@@ -153,7 +153,6 @@ test('deleteCompletedBefore removes only evaluation runs past the retention cuto
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-eval-retention-'))
   const path = join(directory, 'state.sqlite')
   const provider = new SqlitePersistenceProvider({ path })
-  const now = '2026-09-07T12:00:00.000Z'
   try {
     await provider.migrate()
     const repository = new SqliteEvaluationRepository(provider)
