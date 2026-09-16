@@ -69,9 +69,13 @@ export async function discoverSkillLibrary() {
       continue
     }
     const frontmatter = parseFrontmatter(skillMd)
-    if (!frontmatter.name) errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a name' })
+    if (!frontmatter.name)
+      errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a name' })
     if (frontmatter.name !== undefined && frontmatter.name !== name) {
-      errors.push({ skill: name, message: `frontmatter name '${frontmatter.name}' does not match directory '${name}'` })
+      errors.push({
+        skill: name,
+        message: `frontmatter name '${frontmatter.name}' does not match directory '${name}'`,
+      })
     }
     if (!frontmatter.description || frontmatter.description.length < 10) {
       errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a usable description' })
@@ -109,7 +113,9 @@ export async function validateSkillLibrary(options = {}) {
     throw new Error('docs/skills/skill-library.json is missing; run with --refresh to write it.')
   }
   if (JSON.stringify(stored.skills) !== JSON.stringify(skills)) {
-    throw new Error('Skill library inventory drifted from the on-disk skills; re-run with --refresh.')
+    throw new Error(
+      'Skill library inventory drifted from the on-disk skills; re-run with --refresh.'
+    )
   }
   return skills
 }

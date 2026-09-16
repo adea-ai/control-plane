@@ -7,27 +7,27 @@ smoke lane via `tests/skill-library.test.mjs`.
 
 ## Baseline measurements
 
-| Metric | Value |
-| --- | --- |
-| Skills | 9 |
-| Total SKILL.md bytes | see `skill-library.json` (`skillMdBytes` per skill) |
-| Skills with frontmatter `name` mismatch | 0 (validated) |
-| Skills with machine-specific absolute paths | 0 (validated) |
-| Skills referencing files outside their directory | 0 (validated) |
+| Metric                                           | Value                                               |
+| ------------------------------------------------ | --------------------------------------------------- |
+| Skills                                           | 9                                                   |
+| Total SKILL.md bytes                             | see `skill-library.json` (`skillMdBytes` per skill) |
+| Skills with frontmatter `name` mismatch          | 0 (validated)                                       |
+| Skills with machine-specific absolute paths      | 0 (validated)                                       |
+| Skills referencing files outside their directory | 0 (validated)                                       |
 
 ## Coverage map: skill → M11 audit lane
 
-| Skill | Primary M11 lane / purpose |
-| --- | --- |
-| `control-plane-audit` | #190/#194/#197 repository-wide acceptance and evidence reviews |
-| `code-review` | standards + spec review for every merged lane |
-| `security-and-hardening` | #190 security and hardening guidance |
-| `test-driven-development` | #192/#193 regression discipline |
-| `verification-before-completion` | #197 evidence-before-claims discipline |
-| `incremental-implementation` | bounded vertical slices (#192 consolidation) |
-| `code-simplification` | #192 stale/complexity removal |
-| `turborepo` | build/CI lane knowledge |
-| `typescript-advanced-types` | implementation reference |
+| Skill                            | Primary M11 lane / purpose                                     |
+| -------------------------------- | -------------------------------------------------------------- |
+| `control-plane-audit`            | #190/#194/#197 repository-wide acceptance and evidence reviews |
+| `code-review`                    | standards + spec review for every merged lane                  |
+| `security-and-hardening`         | #190 security and hardening guidance                           |
+| `test-driven-development`        | #192/#193 regression discipline                                |
+| `verification-before-completion` | #197 evidence-before-claims discipline                         |
+| `incremental-implementation`     | bounded vertical slices (#192 consolidation)                   |
+| `code-simplification`            | #192 stale/complexity removal                                  |
+| `turborepo`                      | build/CI lane knowledge                                        |
+| `typescript-advanced-types`      | implementation reference                                       |
 
 ## Known gaps against #196 acceptance (owned, sequenced)
 
