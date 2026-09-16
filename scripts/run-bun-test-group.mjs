@@ -40,6 +40,7 @@ const repositoryGroups = {
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
     'tests/neon-workflow.test.mjs',
+    'tests/skill-library.test.mjs',
     'tests/repository.test.mjs',
     'tests/restate-identity.test.mjs',
   ],
