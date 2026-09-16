@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.2...workspace-v1.26.0) (2026-09-16)
+
+
+### Features
+
+* **skills:** require and record per-skill versions ([#534](https://github.com/adea-ai/control-plane/issues/534)) ([a48c5c7](https://github.com/adea-ai/control-plane/commit/a48c5c7ef2d9549c448d0d799f82513f33f814a2))
+
 ## [1.25.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.1...workspace-v1.25.2) (2026-09-16)
 
 
