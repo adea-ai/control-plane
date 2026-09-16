@@ -19,11 +19,11 @@ procedures are documented."
 
 ## Review cadence
 
-| Trigger | Review scope |
-| --- | --- |
-| Any merged change to `.agents/skills/**` | validate + inventory refresh in the PR itself |
-| Each M-milestone closeout | full inventory re-baseline (purpose, triggers, overlaps, gaps) |
-| Ad hoc: a skill's guidance contradicts repo reality | immediate fix or deprecation, per the update process |
+| Trigger                                             | Review scope                                                   |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| Any merged change to `.agents/skills/**`            | validate + inventory refresh in the PR itself                  |
+| Each M-milestone closeout                           | full inventory re-baseline (purpose, triggers, overlaps, gaps) |
+| Ad hoc: a skill's guidance contradicts repo reality | immediate fix or deprecation, per the update process           |
 
 ## Versioning and deprecation
 
