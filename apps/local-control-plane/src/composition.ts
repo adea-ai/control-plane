@@ -13,6 +13,7 @@ import {
   LocalCoordinationProvider,
   NodeProcessRuntimeProvider,
   StaticServiceDiscovery,
+  RetentionSweep,
 } from '@control-plane/deployment'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { LocalRestateRuntime, RESTATE_SERVER_VERSION } from '@control-plane/restate-runtime'
@@ -64,7 +65,7 @@ import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
 import { ReconciliationScheduler } from './reconciliation-scheduler.js'
-import { RetentionSweep } from './retention-sweep.js'
+
 import {
   GrantsBackedContextAuthoringAuthority,
   type ContextAuthoringCompositionOptions,

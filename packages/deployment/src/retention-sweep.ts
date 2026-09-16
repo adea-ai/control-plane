@@ -1,9 +1,8 @@
-import type { SqliteCommandAcceptanceRepository } from '@control-plane/sqlite-persistence'
-import type { SqliteExecutionEventRepository } from '@control-plane/sqlite-persistence'
-
 export interface RetentionSweepOptions {
-  readonly commandInbox: Pick<SqliteCommandAcceptanceRepository, 'deleteExpiredInbox'>
-  readonly executionEvents: Pick<SqliteExecutionEventRepository, 'deleteExpiredEvents'>
+  readonly commandInbox: { readonly deleteExpiredInbox: (now: Date) => Promise<number> }
+  readonly executionEvents: {
+    readonly deleteExpiredEvents: (now: Date) => Promise<number>
+  }
   /** Non-overlapping sweep cadence; a slow pass never overlaps the next one. */
   readonly intervalMs: number
   readonly onError?: (error: unknown) => void
@@ -15,7 +14,9 @@ const MAXIMUM_INTERVAL_MS = 3_600_000 * 24
  * M11.9 retention worker (#194): completion-scheduled, non-overlapping sweeps
  * that physically delete durable records past their retention deadline.
  * Explicit composition configuration only — constructing the sweep without
- * starting it enables nothing.
+ * starting it enables nothing. Storage-neutral: the command-inbox and
+ * execution-events deletions are supplied as callables, so both the SQLite
+ * and PostgreSQL repositories satisfy the ports.
  */
 export class RetentionSweep {
   readonly #commandInbox: RetentionSweepOptions['commandInbox']
