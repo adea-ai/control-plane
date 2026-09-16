@@ -332,3 +332,11 @@ After completing a simplification pass:
 - [ ] No error handling was removed or weakened
 - [ ] No dead code was left behind (unused imports, unreachable branches)
 - [ ] A teammate or review agent would approve the change as a net improvement
+
+## Evidence contract
+
+- **Inputs:** a code region (file or diff) to simplify.
+- **Allowed mutations:** behavior-preserving refactors only — renaming, extraction, deduplication, deletion of dead code.
+- **Outputs:** the refactored code plus a note per change describing what was simplified.
+- **Verification:** the existing test suite passes unchanged before and after; no public API surface changes.
+- **Completion guard:** the skill must not claim simplification succeeded if any test, type check, or lint run fails; report the failure instead.

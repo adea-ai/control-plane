@@ -109,3 +109,11 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
+
+## Evidence contract
+
+- **Inputs:** a base ref (commit, branch, or tag); the working tree or PR diff to review.
+- **Allowed mutations:** none — this skill is read-only over the code under review.
+- **Outputs:** two side-by-side findings lists (standards conformance, spec conformance), each citing file:line.
+- **Verification:** every standards finding cites a documented repo rule; every spec finding cites an issue requirement.
+- **Completion guard:** reviews are advisory — the skill never claims the reviewed work is correct or complete, and never approves a PR.

@@ -250,3 +250,11 @@ After completing all increments for a task:
 ## See Also
 
 Per-increment verification is the local check. Before declaring a task done, apply the project-wide Definition of Done as the final gate, the standing bar every increment clears regardless of the task. See `../../references/definition-of-done.md`.
+
+## Evidence contract
+
+- **Inputs:** a multi-file implementation task, broken into ordered increments.
+- **Allowed mutations:** source files, tests, and configs within the task scope; one increment at a time.
+- **Outputs:** a series of compiling, tested increments, each independently verifiable.
+- **Verification:** each increment ends with the relevant tests passing before the next begins.
+- **Completion guard:** the skill must not declare the task done while any increment is unstarted, failing, or skipped without a documented reason.

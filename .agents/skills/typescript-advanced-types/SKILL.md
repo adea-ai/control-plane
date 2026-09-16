@@ -319,3 +319,11 @@ type ShouldError = ExpectError<AssertEqual<string, number>>;
 - Cache complex type computations
 - Limit recursion depth in recursive types
 - Use build tools to skip type checking in production
+
+## Evidence contract
+
+- **Inputs:** a TypeScript typing problem (generics, conditional types, mapped types, template literals, utilities).
+- **Allowed mutations:** type definitions and type-level tests within the task scope.
+- **Outputs:** type definitions that compile under strict mode with type-level tests demonstrating behavior.
+- **Verification:** the compiler accepts the types under strict settings and the type-level tests pass.
+- **Completion guard:** the skill must not claim typing success while `tsc` reports errors under strict mode or any `any` escape was introduced to force compilation.

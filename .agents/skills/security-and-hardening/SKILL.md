@@ -500,3 +500,11 @@ After implementing security-relevant code:
 - [ ] LLM/model output validated and encoded before use (if AI features present)
 - [ ] Personal data is classified, minimized to a stated purpose, and has a retention limit
 - [ ] Deletion and export requests work end-to-end (including backups, caches, and analytics copies)
+
+## Evidence contract
+
+- **Inputs:** code handling untrusted input, auth, storage, external integrations, or personal data.
+- **Allowed mutations:** hardening changes within the reviewed scope; no weakening of existing checks.
+- **Outputs:** hardened code plus findings classified with severity and remediation.
+- **Verification:** every finding cites the attack surface and the applied mitigation; regression tests cover each fix.
+- **Completion guard:** the skill must not mark hardening complete while any finding is unmitigated and unowned — report residual risk explicitly.

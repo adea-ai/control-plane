@@ -121,3 +121,11 @@ Skip any step = lying, not verifying
 - Paraphrases and synonyms
 - Implications of success
 - ANY communication suggesting completion/correctness
+
+## Evidence contract
+
+- **Inputs:** a completion claim (about any work) that must be verified before it is made.
+- **Allowed mutations:** none — this skill is read-only over the claimed state.
+- **Outputs:** a verdict backed by command output: each claim mapped to a passing verification command, or marked unverified.
+- **Verification:** every claim is checked against real evidence — running commands, reading results, not trusting prior assertions.
+- **Completion guard:** the skill must not allow a completion claim without command evidence; anything unverified is reported as unverified, never assumed.
