@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.26.0...workspace-v1.26.1) (2026-09-16)
+
+
+### Maintenance
+
+* reconciliation-command-shells ([#537](https://github.com/adea-ai/control-plane/issues/537)) ([90e25b6](https://github.com/adea-ai/control-plane/commit/90e25b6921d56fd2b23f240ffad828376a5da3cb))
+
 ## [1.26.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.2...workspace-v1.26.0) (2026-09-16)
 
 
