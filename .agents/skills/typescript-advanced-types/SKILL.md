@@ -1,5 +1,8 @@
 ---
 name: typescript-advanced-types
+metadata:
+  version: "1.0.0"
+  owner: "Control Plane maintainers"
 description: Master TypeScript's advanced type system including generics, conditional types, mapped types, template literals, and utility types for building type-safe applications. Use when implementing complex type logic, creating reusable type utilities, or ensuring compile-time type safety in TypeScript projects.
 ---
 
