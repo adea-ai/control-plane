@@ -949,3 +949,11 @@ This skill is based on the official Turborepo documentation at:
 
 - Source: `apps/docs/content/docs/` in the Turborepo repository
 - Live: https://turborepo.dev/docs
+
+## Evidence contract
+
+- **Inputs:** a monorepo build/task/pipeline question or change.
+- **Allowed mutations:** turbo.json, package scripts, and task configuration within the workspace.
+- **Outputs:** corrected task configuration with the dependency graph left intact.
+- **Verification:** the affected tasks run successfully through the turbo pipeline.
+- **Completion guard:** the skill must not claim configuration success if any affected task fails or the dependency graph changes task semantics silently.
