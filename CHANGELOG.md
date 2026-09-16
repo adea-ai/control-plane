@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.27.0...workspace-v1.28.0) (2026-09-16)
+
+
+### Features
+
+* **skills:** require structured evidence contracts in every skill ([#546](https://github.com/adea-ai/control-plane/issues/546)) ([26d75ba](https://github.com/adea-ai/control-plane/commit/26d75ba09f6f90b2977e82b554448d5f512b2b62))
+
+
+### Documentation
+
+* **skills:** document the skill library maintenance cadence ([#543](https://github.com/adea-ai/control-plane/issues/543)) ([b9c3ae2](https://github.com/adea-ai/control-plane/commit/b9c3ae28f4a6a2de093d4fd32f692ad4c48f4dc4))
+
 ## [1.27.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.26.1...workspace-v1.27.0) (2026-09-16)
 
 
