@@ -98,7 +98,8 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
         serviceAuthenticator: authentication.authenticator,
         componentManifest: () => composition.manifest(),
         dependencyReadiness: async () =>
-          (await composition.manifest()).components.every((component) => component.ready),
+          (await composition.manifest()).components.every((component) => component.ready) &&
+          (await composition.persistence.health()).ready,
         health,
         logger: options.logger ?? jsonLogger,
         metadata: config.metadata,
