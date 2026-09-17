@@ -15,7 +15,9 @@ import {
   executionConstraintFixtures,
 } from '@control-plane/domain'
 import { withTestApplication } from '@control-plane/testing'
+import { RetentionSweep } from '@control-plane/deployment'
 import { createControlApiApplication, createOpenApiDocument } from './application.ts'
+import { ControlApiCloudCompositionError } from './cloud-composition.ts'
 import {
   ConfiguredCredentialRevocationChecker,
   Ed25519ServiceCredentialVerifier,
@@ -1379,6 +1381,36 @@ describe('Control API', () => {
     expect(JSON.stringify(logs)).not.toContain('must-not-leak')
   })
 
+  test('reports managed Cloud /ready not ready once the database probe fails', async () => {
+    const processAdapter = new FakeProcessAdapter()
+    let databaseDown = false
+    const started = await start({
+      environment: managedCloudEnvironment(),
+      listen: false,
+      logger: { write: () => undefined },
+      processAdapter,
+      postgresConnectionFactory: () => ({
+        database: {},
+        check: async () => {
+          if (databaseDown) throw new Error('connection terminated unexpectedly')
+        },
+        close: async () => undefined,
+      }),
+    })
+
+    try {
+      const healthy = await started.application.inject({ method: 'GET', url: '/ready' })
+      expect(healthy.statusCode).toBe(200)
+
+      databaseDown = true
+      const degraded = await started.application.inject({ method: 'GET', url: '/ready' })
+      expect(degraded.statusCode).toBe(503)
+      expect(degraded.json().status).toBe('not_ready')
+    } finally {
+      await processAdapter.emit('SIGTERM')
+    }
+  })
+
   test('constructs the durable validator and signed authenticator from one Cloud composition', () => {
     const authority = { authorize: async () => undefined, resolveArtifact: async () => undefined }
     const providerResolver = {
@@ -1404,6 +1436,24 @@ describe('Control API', () => {
       DurableExecutionCancellationService
     )
     expect(composition.serviceAuthenticator).toBeInstanceOf(PolicyServiceAuthenticator)
+    expect(composition.retentionSweep).toBeInstanceOf(RetentionSweep)
+  })
+
+  test('fails the Cloud composition closed on an invalid retention sweep interval', () => {
+    const previous = process.env['RETENTION_SWEEP_INTERVAL_MS']
+    process.env['RETENTION_SWEEP_INTERVAL_MS'] = 'not-a-number'
+    try {
+      expect(() =>
+        createManagedCloudControlApiComposition(
+          loadManagedCloudConfiguration(managedCloudEnvironment(), 'control-api'),
+          { write: () => undefined },
+          () => ({ database: {}, check: async () => undefined, close: async () => undefined })
+        )
+      ).toThrow(ControlApiCloudCompositionError)
+    } finally {
+      if (previous === undefined) delete process.env['RETENTION_SWEEP_INTERVAL_MS']
+      else process.env['RETENTION_SWEEP_INTERVAL_MS'] = previous
+    }
   })
 })
 

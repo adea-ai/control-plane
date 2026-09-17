@@ -4,6 +4,7 @@ import {
   commandInbox,
   createPostgresConnection,
   DatabaseConnectionError,
+  databaseReadinessProbe,
   executionAttempts,
   executionEvents,
   executions,
@@ -361,6 +362,35 @@ describe('createPostgresConnection', () => {
         url: 'postgresql://migrator:secret@database/control_plane',
       })
     ).toThrow(DatabaseConnectionError)
+  })
+})
+
+describe('databaseReadinessProbe', () => {
+  const fakeConnection = (check) => ({ check, close: async () => undefined })
+
+  test('resolves true when the database check settles', async () => {
+    expect(await databaseReadinessProbe(fakeConnection(async () => undefined))).toBe(true)
+  })
+
+  test('resolves false when the database check rejects', async () => {
+    expect(
+      await databaseReadinessProbe(
+        fakeConnection(async () => {
+          throw new Error('connection refused')
+        })
+      )
+    ).toBe(false)
+  })
+
+  test('resolves false when the database check exceeds the probe budget', async () => {
+    const startedAt = Date.now()
+    expect(
+      await databaseReadinessProbe(
+        fakeConnection(() => new Promise(() => {})),
+        25
+      )
+    ).toBe(false)
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(20)
   })
 })
 

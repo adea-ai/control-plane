@@ -51,6 +51,36 @@ export function createPostgresConnection(
   }
 }
 
+const DEFAULT_READINESS_PROBE_TIMEOUT_MS = 3000
+
+/**
+ * Bounded database probe for /ready-style dependency checks: resolves false
+ * when check() rejects or does not settle within the timeout budget, so an
+ * unreachable database can neither hang the readiness endpoint nor silently
+ * pass it. A losing probe attempt is left to the pool's own connect timeout.
+ */
+export async function databaseReadinessProbe(
+  connection: PostgresConnection,
+  timeoutMs = DEFAULT_READINESS_PROBE_TIMEOUT_MS
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      connection.check().then(
+        () => true,
+        () => false
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs)
+      }),
+    ])
+  } catch {
+    return false
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 export function assertPostgresUrl(value: string): void {
   let url: URL
   try {
