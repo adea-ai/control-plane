@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.29.0...workspace-v1.29.1) (2026-09-17)
+
+
+### Documentation
+
+* **evals:** add the blinded human calibration kit for the adversarial corpus ([#551](https://github.com/adea-ai/control-plane/issues/551)) ([fb7657f](https://github.com/adea-ai/control-plane/commit/fb7657fed08348abd8bbd571becafd759b42251e))
+
 ## [1.29.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.28.0...workspace-v1.29.0) (2026-09-16)
 
 
