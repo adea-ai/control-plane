@@ -1,5 +1,5 @@
 import type { StructuredLogger } from '@control-plane/bootstrap'
-import type { ManagedCloudConfiguration } from '@control-plane/config'
+import type { ManagedCloudConfiguration, RawEnvironment } from '@control-plane/config'
 import {
   ContextPackageAuthoringService,
   type ContextAuthoringCompositionOptions,
@@ -8,6 +8,7 @@ import {
   createPostgresConnection,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
+  PostgresExecutionEventRepository,
   PostgresInteractionRepository,
   PostgresInteractionCommandRepository,
   PostgresExecutionCancellationRepository,
@@ -25,6 +26,7 @@ import {
   DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
 } from '@control-plane/domain'
+import { RetentionSweep } from '@control-plane/deployment'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import {
   ConfiguredCredentialRevocationChecker,
@@ -51,6 +53,19 @@ import { MarketplaceRegistryService } from './marketplace/registry.js'
 
 const executionPlanCompilerVersion = '1.0.0'
 
+const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 3_600_000
+
+/** Sweep cadence override; invalid values fail closed before any resource is created. */
+function resolveRetentionSweepIntervalMs(environment: RawEnvironment): number {
+  const raw = environment['RETENTION_SWEEP_INTERVAL_MS']
+  if (raw === undefined || raw === '') return DEFAULT_RETENTION_SWEEP_INTERVAL_MS
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new ControlApiCloudCompositionError()
+  }
+  return value
+}
+
 export type PostgresConnectionFactory = typeof createPostgresConnection
 
 export interface ManagedCloudControlApiComposition {
@@ -66,6 +81,7 @@ export interface ManagedCloudControlApiComposition {
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly marketplaceRegistryService: MarketplaceRegistryService
   readonly marketplaceInstallationService: MarketplaceInstallationAuthority
+  readonly retentionSweep: RetentionSweep
 }
 
 export class ControlApiCloudCompositionError extends Error {
@@ -101,11 +117,18 @@ export function createManagedCloudControlApiComposition(
     ),
     verifier: new Ed25519ServiceCredentialVerifier(authentication.trustedKeys),
   })
+  const retentionIntervalMs = resolveRetentionSweepIntervalMs(process.env)
   const connection = connectionFactory(configuration.database)
   const catalog = new PostgresCatalogRepository(connection.database)
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const projectStates = new PostgresProjectStateRepository(connection.database)
   const contextPackages = new PostgresContextPackageRepository(connection.database)
+  const retentionSweep = new RetentionSweep({
+    commandInbox: new PostgresCommandAcceptanceRepository(connection.database),
+    executionEvents: new PostgresExecutionEventRepository(connection.database),
+    intervalMs: retentionIntervalMs,
+    onError: () => logger.write({ level: 'error', event: 'retention.sweep_failed' }),
+  })
   const registryToken = process.env['MARKETPLACE_REGISTRY_TOKEN']
   const marketplaceRegistryService = new MarketplaceRegistryService({
     // Full plugin catalogs exceed the registry's default 12 MiB artifact cap.
@@ -124,6 +147,7 @@ export function createManagedCloudControlApiComposition(
 
   return {
     connection,
+    retentionSweep,
     executionCancellationService: new DurableExecutionCancellationService(
       new PostgresExecutionCancellationRepository(connection.database),
       new PostgresCommandAcceptanceRepository(connection.database),

@@ -1,4 +1,4 @@
-import type { PostgresConnection } from '@control-plane/database'
+import { databaseReadinessProbe, type PostgresConnection } from '@control-plane/database'
 
 export interface DependencyReadinessOptions {
   /** Upper bound for the database probe so /ready answers within health-check budgets. */
@@ -22,27 +22,8 @@ export async function hostedDependencyReadiness(
 ): Promise<boolean> {
   const manifest = await composition.manifest()
   if (!manifest.components.every((component) => component.ready)) return false
-  return databaseReady(
+  return databaseReadinessProbe(
     composition.connection,
     options.databaseTimeoutMs ?? DEFAULT_DATABASE_TIMEOUT_MS
   )
-}
-
-async function databaseReady(connection: PostgresConnection, timeoutMs: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      connection.check().then(
-        () => true,
-        () => false
-      ),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs)
-      }),
-    ])
-  } catch {
-    return false
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
 }

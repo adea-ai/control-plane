@@ -8,6 +8,7 @@ import {
 import type { RawEnvironment } from '@control-plane/config'
 import type { ContextAuthoringCompositionOptions } from '@control-plane/context'
 import type { NestFastifyApplication } from '@nestjs/platform-fastify'
+import { databaseReadinessProbe } from '@control-plane/database'
 import { createControlApiApplication } from './application.js'
 import type { ServiceAuthenticator } from './auth/service-authentication.js'
 import {
@@ -85,7 +86,11 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
             )
       if (cloudComposition !== undefined) {
         registerResource('control-api-postgres', () => cloudComposition.connection.close())
+        registerResource('control-api-retention-sweep', () =>
+          cloudComposition.retentionSweep.close()
+        )
         await cloudComposition.connection.check()
+        cloudComposition.retentionSweep.start()
       }
       const executionValidationService =
         options.executionValidationService ?? cloudComposition?.executionValidationService
@@ -118,6 +123,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         logger,
         metadata,
         readiness,
+        ...(cloudComposition === undefined
+          ? {}
+          : { dependencyReadiness: () => databaseReadinessProbe(cloudComposition.connection) }),
         ...(profileResolutionService === undefined ? {} : { profileResolutionService }),
         ...(projectStateResolutionService === undefined ? {} : { projectStateResolutionService }),
         ...(contextPackageResolutionService === undefined

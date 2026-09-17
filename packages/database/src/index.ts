@@ -2,6 +2,7 @@ export {
   assertPostgresUrl,
   createPostgresConnection,
   DatabaseConnectionError,
+  databaseReadinessProbe,
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
 export { PostgresContextPackageRepository } from './context-package-repository.js'

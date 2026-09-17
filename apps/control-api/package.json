@@ -19,6 +19,7 @@
     "@control-plane/context": "workspace:*",
     "@control-plane/contracts": "workspace:*",
     "@control-plane/database": "workspace:*",
+    "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
