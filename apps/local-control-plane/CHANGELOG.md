@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.11.0...local-control-plane-v1.12.0) (2026-09-16)
+
+
+### Features
+
+* **hosted:** wire the retention sweep into the hosted composition ([#547](https://github.com/adea-ai/control-plane/issues/547)) ([e0bba6f](https://github.com/adea-ai/control-plane/commit/e0bba6f4232625ecd85fe3e5629e4e99bafa101e))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.10.0...local-control-plane-v1.11.0) (2026-09-15)
 
 
