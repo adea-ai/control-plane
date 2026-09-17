@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -457,8 +457,6 @@ async function processAdapterFixture(mode) {
 
 describe('ManagedPiProcessClient spawn policy (CP-RNODE-025)', () => {
   test('a policy-pinned executable rejects symlinked escapes before any spawn', async () => {
-    const { mkdtemp, symlink, rm } = await import('node:fs/promises')
-    const { tmpdir } = await import('node:os')
     const directory = await mkdtemp(join(tmpdir(), 'managed-pi-policy-'))
     try {
       await symlink('/bin/ls', join(directory, 'evil-pi'))

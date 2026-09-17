@@ -1023,3 +1023,42 @@ test('SQLite reconnect dispatch and terminal result replay survive database reco
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('deleteStoredResult removes the stored artifact only past the retention cutoff', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-context-retention-'))
+  const objects = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 262144 })
+  try {
+    const store = new ContextCommandArtifactStore(objects)
+    const f = fixture()
+    f.options.results = store
+    await f.service.enqueue(f.command)
+    await f.service.deliver(f.source, f.command.commandId, 1)
+    await f.service.recordResult(f.source, f.result)
+    const terminal = await f.repository.get(f.source.workspaceId, f.command.commandId)
+    const cutoffBefore = new Date(Date.parse(terminal.terminalAt) - 1000)
+    const cutoffAfter = new Date(Date.parse(terminal.terminalAt) + 1000)
+
+    // Before the cutoff: the artifact is retained and remains readable.
+    expect(await store.deleteStoredResult(terminal, cutoffBefore)).toBe(false)
+    expect(await store.read(terminal)).toEqual({ evidence: 'bounded' })
+
+    // After the cutoff: the stored artifact is physically deleted.
+    expect(await store.deleteStoredResult(terminal, cutoffAfter)).toBe(true)
+    // The underlying object store reports the missing key through its own
+    // error surface; the invariant is that the read no longer succeeds.
+    await expect(store.read(terminal)).rejects.toThrow()
+
+    // Deleting a command that was never succeeded is a no-op.
+    const neverSucceeded = {
+      ...terminal,
+      status: 'dispatched',
+      terminalAt: undefined,
+      resultReference: undefined,
+      completionDigest: undefined,
+    }
+    expect(await store.deleteStoredResult(neverSucceeded, cutoffAfter)).toBe(false)
+  } finally {
+    objects.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

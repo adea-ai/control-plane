@@ -22,6 +22,7 @@ const OperationalPolicySchema = z
       terminalCommandLedgerMs: z.number().int().positive(),
       executionEventsMs: z.number().int().positive(),
       maximumCommandLifetimeMs: z.number().int().positive(),
+      artifactsMs: z.number().int().positive(),
     }),
     payload: z.object({
       remoteMetadataBytes: z.number().int().positive(),
@@ -74,6 +75,7 @@ export const managedCloudOperationalPolicy: OperationalPolicyConfig = Operationa
       terminalCommandLedgerMs: 7 * 24 * 60 * 60 * 1_000,
       executionEventsMs: 30 * 24 * 60 * 60 * 1_000,
       maximumCommandLifetimeMs: 24 * 60 * 60 * 1_000,
+      artifactsMs: 90 * 24 * 60 * 60 * 1_000,
     },
     payload: {
       remoteMetadataBytes: 256 * 1024,
