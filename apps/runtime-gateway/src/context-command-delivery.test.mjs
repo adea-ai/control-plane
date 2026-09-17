@@ -1033,7 +1033,7 @@ test('deleteStoredResult removes the stored artifact only past the retention cut
     f.options.results = store
     await f.service.enqueue(f.command)
     await f.service.deliver(f.source, f.command.commandId, 1)
-    const completed = await f.service.recordResult(f.source, f.result)
+    await f.service.recordResult(f.source, f.result)
     const terminal = await f.repository.get(f.source.workspaceId, f.command.commandId)
     const cutoffBefore = new Date(Date.parse(terminal.terminalAt) - 1000)
     const cutoffAfter = new Date(Date.parse(terminal.terminalAt) + 1000)
