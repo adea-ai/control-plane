@@ -45,11 +45,11 @@ test('pins the required Node and Bun toolchain', async () => {
   const testTsconfig = await readJson('tsconfig.json')
 
   assert.equal(manifest.packageManager, 'bun@1.4.0')
-  assert.equal(manifest.engines.node, '>=24 <25')
+  assert.equal(manifest.engines.node, '24.18.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
-  assert.equal(
-    (await readFile(new URL('../.node-version', import.meta.url), 'utf8')).trim(),
-    '24.18.0'
+  assert.match(
+    await readFile(new URL('../.mise.toml', import.meta.url), 'utf8'),
+    /node = "24\.18\.0"/
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
@@ -65,6 +65,7 @@ test('defines root quality and build commands', async () => {
 
   for (const script of [
     'build',
+    'dev',
     'type-check',
     'lint',
     'test',
@@ -411,8 +412,10 @@ test('scaffolds every application with an executable placeholder target', async 
     assert.equal(manifest.name, `@control-plane/${app}`)
     assert.equal(manifest.private, true)
     assert.equal(manifest.browser, false)
-    assert.equal(manifest.engines.node, '>=24 <25')
+    assert.equal(manifest.engines.node, '24.18.0')
     assert.equal(typeof manifest.scripts.build, 'string')
+    assert.equal(typeof manifest.scripts.dev, 'string')
+    assert.equal(manifest.scripts.dev, 'bun --watch src/start.ts')
     assert.equal(typeof manifest.scripts.start, 'string')
     assert.equal(typeof manifest.scripts.lint, 'string')
     assert.equal(typeof manifest.scripts.test, 'string')

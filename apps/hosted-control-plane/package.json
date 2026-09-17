@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "bun src/start.ts",
+    "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
   },
@@ -32,6 +33,6 @@
     "@control-plane/workflow-worker": "workspace:*"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": "24.18.0"
   }
 }

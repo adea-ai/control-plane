@@ -9,6 +9,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
+    "dev": "turbo run dev",
     "context:admin": "bun scripts/context-provider-admin.mjs",
     "type-check": "turbo run build openapi:check && bun run db:check && bun run compatibility:check && bun run requirements:check && bun run architecture:check && bun run infra:typecheck",
     "compatibility:check": "bun --cwd=packages/runtime-sdk run compatibility:check",
@@ -89,12 +90,12 @@
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@langchain/langgraph": "1.4.14",
-    "@types/node": "26.4.1",
+    "@types/node": "^26.5.1",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "railway": "3.11.0",
-    "turbo": "2.10.12",
-    "typescript": "6.0.3"
+    "turbo": "^2.10.12",
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "esbuild": "0.28.2",
@@ -102,7 +103,7 @@
   },
   "engines": {
     "bun": ">=1.4.0 <2",
-    "node": ">=24 <25"
+    "node": "24.18.0"
   },
   "packageManager": "bun@1.4.0",
   "patchedDependencies": {
