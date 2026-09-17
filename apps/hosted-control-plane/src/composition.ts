@@ -189,6 +189,8 @@ export interface HostedServerCompositionOptions {
   readonly graphActivities?: GraphSegmentActivityPort
   readonly metricAdapter?: MetricAdapter
   readonly reconciliation?: HostedReconciliationConfiguration
+  /** Retention sweep cadence override; defaults to one hour. */
+  readonly retentionSweepIntervalMs?: number
 }
 
 export class HostedServerControlPlaneComposition {
@@ -434,7 +436,7 @@ export class HostedServerControlPlaneComposition {
       this.#retentionSweep = new RetentionSweep({
         commandInbox: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionEvents: new PostgresExecutionEventRepository(this.connection.database),
-        intervalMs: 3_600_000,
+        intervalMs: options.retentionSweepIntervalMs ?? 3_600_000,
       })
       this.#reconciliationScheduler = new ReconciliationScheduler({
         service: this.reconciliationService,
