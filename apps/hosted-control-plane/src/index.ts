@@ -16,6 +16,7 @@ import {
   HostedServerControlPlaneComposition,
   type HostedServerCompositionOptions,
 } from './composition.js'
+import { hostedDependencyReadiness } from './dependency-readiness.js'
 
 export const serviceName = 'hosted-control-plane'
 
@@ -55,8 +56,7 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
         runtimeDiscoveryRepository: composition.runtimeDiscoveryRepository,
         serviceAuthenticator: authentication.authenticator,
         componentManifest: () => composition.manifest(),
-        dependencyReadiness: async () =>
-          (await composition.manifest()).components.every((component) => component.ready),
+        dependencyReadiness: () => hostedDependencyReadiness(composition),
         health,
         logger: options.logger ?? jsonLogger,
         metadata: config.metadata,
