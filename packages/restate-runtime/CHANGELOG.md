@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.6](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.5...restate-runtime-v1.1.6) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
 ## [1.1.5](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.4...restate-runtime-v1.1.5) (2026-09-12)
 
 
