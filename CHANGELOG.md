@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.28.0...workspace-v1.29.0) (2026-09-16)
+
+
+### Features
+
+* **hosted:** wire the retention sweep into the hosted composition ([#547](https://github.com/adea-ai/control-plane/issues/547)) ([e0bba6f](https://github.com/adea-ai/control-plane/commit/e0bba6f4232625ecd85fe3e5629e4e99bafa101e))
+
+
+### Tests
+
+* **recovery:** assert events follow executions across restore ([#550](https://github.com/adea-ai/control-plane/issues/550)) ([064d4da](https://github.com/adea-ai/control-plane/commit/064d4dafb9fdc307d76d90eee5d5502b4d72119c))
+
 ## [1.28.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.27.0...workspace-v1.28.0) (2026-09-16)
 
 
