@@ -99,6 +99,29 @@ export class ContextCommandArtifactStore {
     return artifactId
   }
 
+  /**
+   * Retention sweep primitive (M11.9/#194): physically deletes the stored
+   * result artifact of a succeeded command whose terminal time predates the
+   * cutoff. Returns false when the command is not a succeeded command with a
+   * stored reference, or is not yet past the cutoff — those are left for a
+   * later sweep.
+   */
+  async deleteStoredResult(commandInput: ContextCommandRecord, cutoff: Date): Promise<boolean> {
+    const command = ContextCommandRecordSchema.parse(commandInput)
+    if (
+      command.status !== 'succeeded' ||
+      !command.resultReference ||
+      !command.completionDigest ||
+      command.terminalAt === undefined ||
+      Date.parse(command.terminalAt) >= cutoff.getTime()
+    )
+      return false
+    await this.objectStore.delete(
+      storedKey(command, allocatedArtifactId(command, command.completionDigest))
+    )
+    return true
+  }
+
   async read(commandInput: ContextCommandRecord): Promise<Record<string, unknown>> {
     const command = ContextCommandRecordSchema.parse(commandInput)
     if (command.status !== 'succeeded' || !command.resultReference || !command.completionDigest)
