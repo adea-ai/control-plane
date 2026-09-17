@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { RetentionSweep } from './retention-sweep.ts'
+import { RetentionSweep } from './retention-sweep.js'
 
 describe('retention sweep', () => {
   test('runs non-overlapping passes and stops cleanly', async () => {

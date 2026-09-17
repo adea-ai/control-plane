@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.4](https://github.com/adea-ai/control-plane/compare/domain-v1.10.3...domain-v1.10.4) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
+## [1.10.3](https://github.com/adea-ai/control-plane/compare/domain-v1.10.2...domain-v1.10.3) (2026-09-16)
+
+
+### Maintenance
+
+* reconciliation-command-shells ([#537](https://github.com/adea-ai/control-plane/issues/537)) ([90e25b6](https://github.com/adea-ai/control-plane/commit/90e25b6921d56fd2b23f240ffad828376a5da3cb))
+
 ## [1.10.2](https://github.com/adea-ai/control-plane/compare/domain-v1.10.1...domain-v1.10.2) (2026-09-15)
 
 

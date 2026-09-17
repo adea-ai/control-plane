@@ -83,6 +83,7 @@ import {
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
 import { ReconciliationScheduler } from './reconciliation-scheduler.js'
+import { RetentionSweep } from '@control-plane/deployment'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
@@ -219,6 +220,7 @@ export class HostedServerControlPlaneComposition {
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
+  readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -429,6 +431,11 @@ export class HostedServerControlPlaneComposition {
       })
       this.reconciliationSource = source
       this.reconciliationEffects = effects
+      this.#retentionSweep = new RetentionSweep({
+        commandInbox: new PostgresCommandAcceptanceRepository(this.connection.database),
+        executionEvents: new PostgresExecutionEventRepository(this.connection.database),
+        intervalMs: 3_600_000,
+      })
       this.#reconciliationScheduler = new ReconciliationScheduler({
         service: this.reconciliationService,
         intervalMs: reconciliation.intervalMs,
@@ -477,8 +484,10 @@ export class HostedServerControlPlaneComposition {
     try {
       await this.workflow.start()
       await this.remoteControl?.start()
+      this.#retentionSweep?.start()
       this.#reconciliationScheduler?.start()
     } catch (error) {
+      this.#retentionSweep?.close()
       await this.#reconciliationScheduler?.close().catch(() => undefined)
       await this.remoteControl?.stop()
       await this.workflow.stop().catch(() => undefined)

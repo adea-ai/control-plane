@@ -41,3 +41,9 @@ smoke lane via `tests/skill-library.test.mjs`.
 4. **Maintenance cadence** (review interval, deprecation process) is not yet written down.
 
 These gaps are tracked on #196; none of them weaken repository safety rules.
+
+## Maintenance cadence
+
+The ownership, review cadence, versioning/deprecation, provenance/security,
+and update process for this library are documented in
+[`maintenance-cadence.md`](./maintenance-cadence.md).

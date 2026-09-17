@@ -399,3 +399,11 @@ After completing any implementation:
 - [ ] Coverage hasn't decreased (if tracked)
 
 **Note:** Run each test command after a change that could affect the result. After a clean run, don't repeat the same command unless the code has changed since — re-running on unchanged code adds no confidence.
+
+## Evidence contract
+
+- **Inputs:** a behavior change, bug fix, or new logic to implement.
+- **Allowed mutations:** source code, tests, and test fixtures within the task scope.
+- **Outputs:** a failing test written first, the minimal implementation that passes it, and a green suite.
+- **Verification:** the new test fails before the fix and passes after; the full suite stays green.
+- **Completion guard:** the skill must not claim completion if any test is skipped, stubbed, or deleted to force a pass — report what blocks the green run.

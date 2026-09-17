@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/adea-ai/control-plane/compare/secrets-v1.1.1...secrets-v1.1.2) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
 ## [1.1.1](https://github.com/adea-ai/control-plane/compare/secrets-v1.1.0...secrets-v1.1.1) (2026-09-07)
 
 

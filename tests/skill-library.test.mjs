@@ -18,6 +18,16 @@ describe('M11.11 skill library baseline', () => {
     }
   })
 
+  test('every retained skill documents an evidence contract', async () => {
+    const skills = await validateSkillLibrary()
+    for (const skill of skills) {
+      const body = await (
+        await import('node:fs/promises')
+      ).readFile(`.agents/skills/${skill.name}/SKILL.md`, 'utf8')
+      expect(/^## Evidence contract$/m.test(body), skill.name).toBe(true)
+    }
+  })
+
   test('every retained skill carries a declared version', async () => {
     const skills = await validateSkillLibrary()
     for (const skill of skills) {

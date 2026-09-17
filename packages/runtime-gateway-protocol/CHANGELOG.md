@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.4.1...runtime-gateway-protocol-v1.4.2) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
 ## [1.4.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.4.0...runtime-gateway-protocol-v1.4.1) (2026-09-10)
 
 

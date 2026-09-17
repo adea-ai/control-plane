@@ -73,6 +73,9 @@ export async function discoverSkillLibrary() {
     if (!versionMatch) {
       errors.push({ skill: name, message: 'SKILL.md frontmatter is missing metadata.version' })
     }
+    if (!/^## Evidence contract$/m.test(skillMd)) {
+      errors.push({ skill: name, message: 'SKILL.md is missing an Evidence contract section' })
+    }
     if (!frontmatter.name)
       errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a name' })
     if (frontmatter.name !== undefined && frontmatter.name !== name) {

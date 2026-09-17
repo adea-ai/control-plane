@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.10.0...sqlite-persistence-v1.10.1) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.9.1...sqlite-persistence-v1.10.0) (2026-09-16)
+
+
+### Features
+
+* **persistence:** add retention sweep primitive for evaluation runs ([#541](https://github.com/adea-ai/control-plane/issues/541)) ([89f6237](https://github.com/adea-ai/control-plane/commit/89f6237b969e844484f02d256db866fcb35a599f))
+
+## [1.9.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.9.0...sqlite-persistence-v1.9.1) (2026-09-16)
+
+
+### Maintenance
+
+* reconciliation-command-shells ([#537](https://github.com/adea-ai/control-plane/issues/537)) ([90e25b6](https://github.com/adea-ai/control-plane/commit/90e25b6921d56fd2b23f240ffad828376a5da3cb))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.8.0...sqlite-persistence-v1.9.0) (2026-09-15)
 
 

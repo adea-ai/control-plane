@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.8.0...hosted-control-plane-v1.8.1) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.7.0...hosted-control-plane-v1.8.0) (2026-09-16)
+
+
+### Features
+
+* **hosted:** wire the retention sweep into the hosted composition ([#547](https://github.com/adea-ai/control-plane/issues/547)) ([e0bba6f](https://github.com/adea-ai/control-plane/commit/e0bba6f4232625ecd85fe3e5629e4e99bafa101e))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.6.0...hosted-control-plane-v1.7.0) (2026-09-15)
 
 

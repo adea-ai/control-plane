@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.29.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.29.0...workspace-v1.29.1) (2026-09-17)
+
+
+### Documentation
+
+* **evals:** add the blinded human calibration kit for the adversarial corpus ([#551](https://github.com/adea-ai/control-plane/issues/551)) ([fb7657f](https://github.com/adea-ai/control-plane/commit/fb7657fed08348abd8bbd571becafd759b42251e))
+
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.28.0...workspace-v1.29.0) (2026-09-16)
+
+
+### Features
+
+* **hosted:** wire the retention sweep into the hosted composition ([#547](https://github.com/adea-ai/control-plane/issues/547)) ([e0bba6f](https://github.com/adea-ai/control-plane/commit/e0bba6f4232625ecd85fe3e5629e4e99bafa101e))
+
+
+### Tests
+
+* **recovery:** assert events follow executions across restore ([#550](https://github.com/adea-ai/control-plane/issues/550)) ([064d4da](https://github.com/adea-ai/control-plane/commit/064d4dafb9fdc307d76d90eee5d5502b4d72119c))
+
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.27.0...workspace-v1.28.0) (2026-09-16)
+
+
+### Features
+
+* **skills:** require structured evidence contracts in every skill ([#546](https://github.com/adea-ai/control-plane/issues/546)) ([26d75ba](https://github.com/adea-ai/control-plane/commit/26d75ba09f6f90b2977e82b554448d5f512b2b62))
+
+
+### Documentation
+
+* **skills:** document the skill library maintenance cadence ([#543](https://github.com/adea-ai/control-plane/issues/543)) ([b9c3ae2](https://github.com/adea-ai/control-plane/commit/b9c3ae28f4a6a2de093d4fd32f692ad4c48f4dc4))
+
+## [1.27.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.26.1...workspace-v1.27.0) (2026-09-16)
+
+
+### Features
+
+* **persistence:** add retention sweep primitive for evaluation runs ([#541](https://github.com/adea-ai/control-plane/issues/541)) ([89f6237](https://github.com/adea-ai/control-plane/commit/89f6237b969e844484f02d256db866fcb35a599f))
+
+## [1.26.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.26.0...workspace-v1.26.1) (2026-09-16)
+
+
+### Maintenance
+
+* reconciliation-command-shells ([#537](https://github.com/adea-ai/control-plane/issues/537)) ([90e25b6](https://github.com/adea-ai/control-plane/commit/90e25b6921d56fd2b23f240ffad828376a5da3cb))
+
 ## [1.26.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.25.2...workspace-v1.26.0) (2026-09-16)
 
 
