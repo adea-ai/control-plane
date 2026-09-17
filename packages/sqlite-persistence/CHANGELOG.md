@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.10.0...sqlite-persistence-v1.10.1) (2026-09-17)
+
+
+### Documentation
+
+* skill-maintenance-cadence ([#545](https://github.com/adea-ai/control-plane/issues/545)) ([8cd335e](https://github.com/adea-ai/control-plane/commit/8cd335e23445325f9fdacf009776828a1ade2238))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.9.1...sqlite-persistence-v1.10.0) (2026-09-16)
 
 
