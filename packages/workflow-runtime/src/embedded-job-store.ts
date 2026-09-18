@@ -11,6 +11,7 @@ const namespaces = {
   jobs: 'workflow-jobs',
   interactions: 'workflow-interactions',
   cancellations: 'workflow-cancellations',
+  journal: 'workflow-journal',
 } as const
 
 export const WorkflowJobStatusSchema = z.enum([
@@ -383,6 +384,39 @@ export class WorkflowJobStore {
   }
 
   /**
+   * Persists the first result for a workflow activity effect. Replays return
+   * the recorded result so a resumed run replays persisted activities instead
+   * of re-executing them — the embedded equivalent of the Restate journal.
+   * A `null` result records an activity that returned no value.
+   */
+  async recordEffect(
+    workflowKey: string,
+    effectKey: string,
+    result: unknown
+  ): Promise<{ outcome: 'created' | 'existing'; result?: JsonValue }> {
+    const id = effectRecordId(workflowKey, effectKey)
+    const value = result === undefined ? null : json(result)
+    return this.provider.transaction(async (transaction) => {
+      const existing = await transaction.get(namespaces.journal, id)
+      if (existing !== undefined) {
+        return { outcome: 'existing' as const, result: existing.value }
+      }
+      await transaction.put({ namespace: namespaces.journal, id, value })
+      return { outcome: 'created' as const, result: value }
+    })
+  }
+
+  async getEffect(workflowKey: string, effectKey: string): Promise<JsonValue | undefined> {
+    return this.provider.transaction(async (transaction) => {
+      const record = await transaction.get(
+        namespaces.journal,
+        effectRecordId(workflowKey, effectKey)
+      )
+      return record === undefined ? undefined : record.value
+    })
+  }
+
+  /**
    * Persists the first response for an interaction; replays are duplicates so
    * redelivered signals never replace the response the workflow observes.
    */
@@ -493,6 +527,13 @@ function decodeCancellation(value: JsonValue): WorkflowCancellation {
 function interactionRecordId(workflowKey: string, interactionId: string): string {
   if (interactionId.length === 0) throw new Error('WORKFLOW_JOB_INVALID_INTERACTION')
   return recordId(`${validWorkflowKey(workflowKey)}\u001f${interactionId}`)
+}
+
+function effectRecordId(workflowKey: string, effectKey: string): string {
+  if (typeof effectKey !== 'string' || effectKey.length === 0 || effectKey.length > 512) {
+    throw new Error('WORKFLOW_JOB_INVALID_EFFECT_KEY')
+  }
+  return recordId(`${validWorkflowKey(workflowKey)}\u001f${effectKey}`)
 }
 
 function validWorkflowKey(workflowKey: string): string {

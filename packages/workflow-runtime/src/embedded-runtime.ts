@@ -192,7 +192,11 @@ export class EmbeddedWorkflowRuntime {
     try {
       const input = ExecutionWorkflowInputSchema.parse(job.input)
       const control = await this.#control(job.workflowKey, lease.token, input)
-      const result = await runExecutionLifecycle(input, this.#activities, control)
+      const result = await runExecutionLifecycle(
+        input,
+        journalActivities(this.#store, job.workflowKey, this.#activities),
+        control
+      )
       await this.#store.complete({
         workflowKey: job.workflowKey,
         owner: this.#owner,
@@ -302,6 +306,49 @@ export class EmbeddedWorkflowRuntime {
 const neverSettles = (): Promise<never> => new Promise(() => {})
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Journals every activity result by effect key before the workflow observes
+ * it. A resumed run replays persisted activities from the journal instead of
+ * re-executing them — the embedded equivalent of the Restate `ctx.run`
+ * journal. Throwing activities are not journaled: the underlying activities
+ * are idempotent, so a retried run re-executes them (at-least-once).
+ */
+function journalActivities(
+  store: WorkflowJobStore,
+  workflowKey: string,
+  activities: ExecutionLifecycleActivities
+): ExecutionLifecycleActivities {
+  const wrap = <
+    Input extends { readonly effectKey?: string; readonly idempotencyKey?: string },
+    Result,
+  >(
+    method: (input: Input) => Promise<Result>
+  ): ((input: Input) => Promise<Result>) => {
+    return async (input: Input) => {
+      const effectKey = input.effectKey ?? input.idempotencyKey
+      if (effectKey === undefined) return method(input)
+      const replayed = await store.getEffect(workflowKey, effectKey)
+      if (replayed !== undefined) {
+        return (replayed === null ? undefined : replayed) as Result
+      }
+      const result = await method(input)
+      const stored = await store.recordEffect(workflowKey, effectKey, result)
+      return (stored.result === null ? undefined : stored.result) as Result
+    }
+  }
+  return {
+    ensureAttempt: wrap(activities.ensureAttempt.bind(activities)),
+    persistStatus: wrap(activities.persistStatus.bind(activities)),
+    dispatch: wrap(activities.dispatch.bind(activities)),
+    applyInteraction: wrap(activities.applyInteraction.bind(activities)),
+    runGraphSegment: wrap(activities.runGraphSegment.bind(activities)),
+    resumeGraphSegment: wrap(activities.resumeGraphSegment.bind(activities)),
+    continueGraphSegment: wrap(activities.continueGraphSegment.bind(activities)),
+    cancelActive: wrap(activities.cancelActive.bind(activities)),
+    cleanup: wrap(activities.cleanup.bind(activities)),
+  }
+}
 
 function positiveInteger(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value <= 0)

@@ -1,28 +1,39 @@
 # Local deployment and recovery
 
-Local is the developer-MVP default. Adea Desktop owns one Control Plane process and its bundled
-Restate child process. The composition uses embedded SQLite, filesystem Artifacts, local secret
-handles, content-redacted telemetry, and a direct co-located RuntimeTransport. It does not require
-Docker, PostgreSQL, Redis/Valkey, Temporal, Railway, Neon, R2, or Runtime Gateway.
+Local is the developer-MVP default. Adea Desktop owns one Control Plane process. The composition
+uses embedded SQLite, filesystem Artifacts, local secret handles, content-redacted telemetry, and a
+direct co-located RuntimeTransport. It does not require Docker, PostgreSQL, Redis/Valkey, Temporal,
+Railway, Neon, R2, Runtime Gateway, or a Restate process: durable execution runs in-process on the
+embedded SQLite queue (`WorkflowJobStore` + `EmbeddedWorkflowRuntime`), which serves the same
+workflow contracts as the Restate path. Restate remains the durable-execution backbone for the
+hosted and user-controlled self-hosted profiles (`hosted-simple` keeps the bundled Restate child
+through this same composition with `durableExecution: 'restate'`).
 
 ## Packaging contract
 
-The desktop host supplies a private data directory and starts `@control-plane/local-control-plane`
-with loopback API and workflow ports. It must supervise the parent process, send a graceful
-termination signal before desktop exit or upgrade, and restart the whole composition after an
-unexpected Control Plane or Restate failure. A failed component makes readiness false; the desktop
-must not silently move work to Cloud. Host sleep/wake preserves the process and data directory; on
-wake the desktop rechecks `/ready` and restarts the composition if Restate did not recover.
-If the owned Restate child exits while startup is polling readiness, startup reports
-`RESTATE_PROCESS_EXITED` and cleans up through the captured process handle. A health
-response received after that child exits does not establish readiness. This is a child
-liveness check, not cryptographic authentication of a service listening on the selected port.
+The desktop host supplies a private data directory and starts `@control-plane/local-control-plane`.
+It must supervise the parent process and send a graceful termination signal before desktop exit or
+upgrade. Accepted executions are enqueued durably before the HTTP response, claims are leased with
+single-use tokens, and a restart (graceful or crashed) resumes parked or in-flight jobs
+at-least-once: workflow activities replay from the durable journal and lost dispatches reconcile
+against the runtime adapter. A failed component makes readiness false; the desktop must not
+silently move work to Cloud. Host sleep/wake preserves the process and data directory; on wake the
+desktop rechecks `/ready` and restarts the composition if it did not survive.
 
-Co-located compositions must use separate private data directories and distinct ports.
-`LocalControlPlaneComposition` accepts `restateAdminPort` (default 9070),
-`restateIngressPort` (8080), `restateNodePort` (5122), and `workflowEndpointPort` (9080).
-All four listeners remain loopback-only. Standalone E2E tests allocate their own ports so
-they do not register workflows or submit commands to an already running Local service.
+`hosted-simple` deployments select `durableExecution: 'restate'` (or
+`CONTROL_PLANE_DEPLOYMENT_PROFILE=hosted-simple`) and bundle the Restate child. In that mode the
+desktop must additionally restart the composition after an unexpected Restate failure. If the owned
+Restate child exits while startup is polling readiness, startup reports `RESTATE_PROCESS_EXITED`
+and cleans up through the captured process handle. A health response received after that child
+exits does not establish readiness. This is a child liveness check, not cryptographic
+authentication of a service listening on the selected port.
+
+Co-located compositions must use separate private data directories and distinct ports. Restate-mode
+compositions accept `restateAdminPort` (default 9070), `restateIngressPort` (8080),
+`restateNodePort` (5122), and `workflowEndpointPort` (9080); all four listeners remain
+loopback-only. The embedded local mode starts no extra listeners. Standalone E2E tests allocate
+their own ports so they do not register workflows or submit commands to an already running Local
+service.
 
 The supported runtime seams are the `runtimeTransport` and `runtimeFactory` options on
 `LocalControlPlaneComposition` (or the same fields under `start({ compositionOptions })`). The
@@ -143,7 +154,8 @@ A terminal state confirms the adapter reports no active execution; this boundary
 independently certify native process termination or resolve an unavailable adapter's state.
 
 The data directory is one recovery unit: `control-plane.sqlite` (including any SQLite sidecars),
-`restate/`, `artifacts/`, `secrets/`, and generated private API authentication state. It must remain
+`artifacts/`, `secrets/`, and generated private API authentication state. Restate-mode
+(`hosted-simple`) compositions additionally own the `restate/` subdirectory. It must remain
 owner-only. Do not back up one of those paths independently while work is admitted.
 
 ## Checkpoint and restore
@@ -155,7 +167,8 @@ checkpoint. Preserve them until settlement and recovery references are resolved;
 they are not themselves billing entries. Missing usage is unresolved, not zero.
 See the [receipt evidence and limits](evidence/m11-terminal-usage-receipts-2026-09-08.md).
 
-Stop the Local Control Plane and confirm the process plus bundled Restate child have exited. Create
+Stop the Local Control Plane and, in restate mode, confirm the process plus bundled Restate
+child have exited. Create
 and verify an integrity manifest without printing file contents:
 
 Successful Local composition shutdown requests a cold SQLite checkpoint before closing the
@@ -186,8 +199,8 @@ symlink, special file, extra file, missing file, or private-path overlap fails c
 
 ## Upgrade, rollback, and incidents
 
-Before upgrade, quiesce admission, create a checkpoint, record the current app/Restate/schema
-versions, and retain the prior signed desktop bundle. After upgrade, require readiness and a durable
+Before upgrade, quiesce admission, create a checkpoint, record the current app and schema
+versions (plus the Restate version in restate mode), and retain the prior signed desktop bundle. After upgrade, require readiness and a durable
 command replay check. Roll back the application only when its schema and Restate data format remain
 compatible. Otherwise restore the matching pre-upgrade checkpoint or apply the reviewed
 forward-repair release.
@@ -202,7 +215,7 @@ the host or backup confidentiality is uncertain.
 Minimum supported developer host allocation is 2 CPU cores, 4 GiB system RAM, and 2 GiB free disk;
 recommended is 4 cores, 8 GiB RAM, and 10 GiB free disk. The Local composition release budget is
 less than 750 MiB idle RSS, less than 5% of one core sustained at idle, at most 2 cores and 2 GiB RSS
-under the representative M10 workload, and bounded disk growth attributable to SQLite, Restate, and
-Artifacts. Local has a $0/month mandatory managed-infrastructure budget because it runs on the
+under the representative M10 workload, and bounded disk growth attributable to SQLite and Artifacts (plus Restate data in restate
+mode). Local has a $0/month mandatory managed-infrastructure budget because it runs on the
 developer's existing machine; optional backups or remote-control connectivity are user-selected
 costs. M11 must remeasure these limits on packaged macOS and desktop sleep/wake hardware.

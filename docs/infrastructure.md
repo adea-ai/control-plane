@@ -156,10 +156,14 @@ Local and Hosted profiles introduced in M10 use filesystem or user-controlled S3
 
 ## Restate
 
-Restate is the canonical durable workflow runtime across profiles.
+Restate is the canonical durable workflow runtime for the cloud and hosted profiles; the local profile runs the same workflow contracts on the embedded SQLite queue (#548).
 
 - M9.8 completed the **Railway cloud** migration from Temporal to Restate, including networking, health, persistence, restart/redeploy, observability, and in-flight execution behavior.
-- M10.1 owns packaging/porting the already accepted Restate workflow implementation to Local and Hosted profiles.
+- M10.1 packaged the accepted Restate workflow implementation for Local and Hosted profiles.
+- CP1 (#548) made the local profile Restate-free: `apps/local-control-plane` composes
+  `EmbeddedWorkflowRuntime` + `WorkflowJobStore` over SQLite (leased claims, at-least-once replay,
+  durable interaction and cancellation records), while `hosted-simple` keeps the bundled Restate
+  child.
 
 The execution lifecycle races user cancellation and the absolute execution deadline against every
 active runtime or graph activity. Terminal control dispatches an idempotent cancellation activity,

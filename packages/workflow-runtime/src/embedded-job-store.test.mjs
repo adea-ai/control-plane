@@ -461,4 +461,25 @@ describe('WorkflowJobStore', () => {
       ).toBe(false)
     })
   })
+
+  test('journals workflow activity effects first-wins per effect key', async () => {
+    await withStore(async ({ store }) => {
+      const queue = store()
+      expect(await queue.getEffect('exe_journal', 'wfl_x:queued')).toBeUndefined()
+
+      const first = await queue.recordEffect('exe_journal', 'wfl_x:queued', { attemptId: 'att_1' })
+      expect(first.outcome).toBe('created')
+      const replay = await queue.recordEffect('exe_journal', 'wfl_x:queued', { attemptId: 'att_9' })
+      expect(replay.outcome).toBe('existing')
+      expect(replay.result).toEqual({ attemptId: 'att_1' })
+
+      expect(await queue.getEffect('exe_journal', 'wfl_x:queued')).toEqual({ attemptId: 'att_1' })
+      expect(await queue.getEffect('exe_journal', 'wfl_x:starting')).toBeUndefined()
+      expect(await queue.getEffect('exe_other', 'wfl_x:queued')).toBeUndefined()
+
+      const empty = await queue.recordEffect('exe_journal', 'wfl_x:cleanup', undefined)
+      expect(empty.outcome).toBe('created')
+      expect(await queue.getEffect('exe_journal', 'wfl_x:cleanup')).toBeNull()
+    })
+  })
 })

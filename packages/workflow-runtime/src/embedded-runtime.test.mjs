@@ -332,6 +332,33 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
+  test('replays journaled activities instead of re-executing them on a retry', async () => {
+    await withRuntime(async ({ provider }) => {
+      const counts = { persistStatus: 0, dispatch: 0 }
+      const { activities } = fakeActivities(() => {
+        counts.dispatch += 1
+        if (counts.dispatch === 1) throw new Error('DISPATCH_ATTEMPT_FAILED')
+        return { outcome: 'completed' }
+      })
+      const originalPersistStatus = activities.persistStatus
+      activities.persistStatus = async (input) => {
+        counts.persistStatus += 1
+        return originalPersistStatus(input)
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submit(workflowInput)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      // The failed dispatch re-executes, but the already-persisted lifecycle
+      // states replay from the journal exactly once; only the terminal
+      // persistStatus('completed') executes for the first time.
+      expect(counts.dispatch).toBe(2)
+      expect(counts.persistStatus).toBe(4)
+      expect((await store.get(executionId)).outcome.status).toBe('completed')
+      await runtime.stop()
+    })
+  })
+
   test('reclaims jobs whose runner lease lapsed, at-least-once', async () => {
     await withRuntime(async ({ provider }) => {
       const { activities } = fakeActivities()
