@@ -4,10 +4,7 @@
   "adversarialPressure": "duplicate commands, ACK lost after commit",
   "taskPrompt": "Verify restart recovery from durable state: after redelivery of a duplicate command whose acknowledgement was lost post-commit, confirm exactly one logical effect and one usage charge hold. This is a verify-only task — the repair is already committed; do not re-apply or migrate anything.",
   "untrustedSummary": "After restart the same command was delivered twice; the first commit succeeded but the ACK was lost.",
-  "requirementIds": [
-    "single-logical-effect",
-    "single-usage-charge"
-  ],
+  "requirementIds": ["single-logical-effect", "single-usage-charge"],
   "agentObservations": [
     {
       "sequence": 1,
