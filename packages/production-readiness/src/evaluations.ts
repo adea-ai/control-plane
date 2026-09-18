@@ -16,6 +16,9 @@ const TimestampSchema = z.iso.datetime()
 
 export const EvaluationMetricSchema = z.enum([
   'functional_correctness',
+  'reporting_honesty',
+  'behavior_compliance',
+  'task_outcome',
   'tool_use',
   'structured_output',
   'latency_ms',
