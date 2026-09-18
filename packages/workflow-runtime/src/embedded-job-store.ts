@@ -349,6 +349,39 @@ export class WorkflowJobStore {
     })
   }
 
+  /** Resumes a parked job to running under its live lease, once. */
+  async markRunning(input: {
+    readonly workflowKey: string
+    readonly owner: string
+    readonly token: string
+    readonly at: string
+  }): Promise<boolean> {
+    return this.provider.transaction(async (transaction) => {
+      const current = await this.#leasedJob(
+        transaction,
+        input.workflowKey,
+        input.owner,
+        input.token
+      )
+      if (current === undefined) return false
+      const [record, job] = current
+      if (job.status !== 'waiting') return false
+      await transaction.put({
+        namespace: namespaces.jobs,
+        id: record.id,
+        expectedRevision: record.revision,
+        value: json(
+          WorkflowJobRecordSchema.parse({
+            ...job,
+            status: 'running',
+            updatedAt: validTimestamp(input.at),
+          })
+        ),
+      })
+      return true
+    })
+  }
+
   /**
    * Persists the first response for an interaction; replays are duplicates so
    * redelivered signals never replace the response the workflow observes.

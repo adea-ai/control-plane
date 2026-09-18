@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/orchestration": "workspace:*",

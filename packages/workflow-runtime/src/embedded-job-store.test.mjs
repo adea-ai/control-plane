@@ -419,4 +419,46 @@ describe('WorkflowJobStore', () => {
       ).resolves.toBeDefined()
     })
   })
+
+  test('resumes waiting jobs back to running under the live lease', async () => {
+    await withStore(async ({ store }) => {
+      const queue = store()
+      await queue.enqueue({ workflowKey: 'exe_resume', input, at: now })
+      const [claimed] = await queue.claimDue({ owner, leaseMs: 60_000, now, limit: 1 })
+      await queue.markWaiting({
+        workflowKey: 'exe_resume',
+        owner,
+        token: claimed.lease.token,
+        at: now,
+      })
+
+      expect(
+        await queue.markRunning({
+          workflowKey: 'exe_resume',
+          owner: owner2,
+          token: claimed.lease.token,
+          at: later,
+        })
+      ).toBe(false)
+      expect((await queue.get('exe_resume')).status).toBe('waiting')
+
+      expect(
+        await queue.markRunning({
+          workflowKey: 'exe_resume',
+          owner,
+          token: claimed.lease.token,
+          at: later,
+        })
+      ).toBe(true)
+      expect((await queue.get('exe_resume')).status).toBe('running')
+      expect(
+        await queue.markRunning({
+          workflowKey: 'exe_resume',
+          owner,
+          token: claimed.lease.token,
+          at: later,
+        })
+      ).toBe(false)
+    })
+  })
 })
