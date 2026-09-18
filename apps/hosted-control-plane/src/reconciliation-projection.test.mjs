@@ -5,7 +5,7 @@ import {
   PostgresReconciliationSource,
 } from '@control-plane/database'
 import { HostedServerControlPlaneComposition } from './composition.ts'
-import { ReconciliationScheduler } from './reconciliation-scheduler.ts'
+import { ReconciliationScheduler } from '@control-plane/deployment'
 
 const identityPublicKey = 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f'
 

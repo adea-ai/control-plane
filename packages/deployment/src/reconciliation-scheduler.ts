@@ -1,8 +1,11 @@
-import type { ExecutionReconciliationService } from '@control-plane/domain'
+/** Structural port: any completion-scheduled reconciliation service satisfies this. */
+export interface ReconciliationBatchPort {
+  runBatch(input: { readonly limit: number }): Promise<unknown>
+}
 
 export interface ReconciliationSchedulerOptions {
   /** The composed reconciliation service; only the scheduled batch entry point is required. */
-  readonly service: Pick<ExecutionReconciliationService, 'runBatch'>
+  readonly service: ReconciliationBatchPort
   /**
    * Completion-scheduled interval in milliseconds: no pass is scheduled until the
    * previous pass settles, so a slow pass never overlaps the next one.

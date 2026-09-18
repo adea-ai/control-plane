@@ -5,6 +5,7 @@ export * from './checkpoint.js'
 export * from './process-runtime.js'
 export * from './local-adapters.js'
 export * from './retention-sweep.js'
+export * from './reconciliation-scheduler.js'
 
 export const DeploymentProfiles = Object.freeze({
   cloud: 'cloud',
