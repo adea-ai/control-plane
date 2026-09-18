@@ -534,8 +534,14 @@
       "version": "1.3.2",
       "dependencies": {
         "@control-plane/config": "workspace:*",
+        "@control-plane/deployment": "workspace:*",
+        "@control-plane/domain": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@restatedev/restate-sdk": "1.17.0",
+        "zod": "4.5.4",
+      },
+      "devDependencies": {
+        "@control-plane/sqlite-persistence": "workspace:*",
       },
     },
   },
