@@ -82,8 +82,7 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
-import { ReconciliationScheduler } from './reconciliation-scheduler.js'
-import { RetentionSweep } from '@control-plane/deployment'
+import { ReconciliationScheduler, RetentionSweep } from '@control-plane/deployment'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,

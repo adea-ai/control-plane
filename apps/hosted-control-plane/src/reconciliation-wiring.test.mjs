@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { HostedServerControlPlaneComposition } from './composition.ts'
-import { ReconciliationScheduler } from './reconciliation-scheduler.ts'
-
-const identityPublicKey = 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f'
+import { HostedServerControlPlaneComposition } from './index.ts'
 
 function fakeConnection() {
   return {
@@ -12,98 +9,10 @@ function fakeConnection() {
   }
 }
 
-function deferred() {
-  let resolve
-  const promise = new Promise((yes) => {
-    resolve = yes
-  })
-  return { promise, resolve }
-}
-
-async function waitFor(predicate, label) {
-  const started = Date.now()
-  while (Date.now() - started < 5_000) {
-    const value = await predicate()
-    if (value) return value
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  throw new Error(`HOSTED_SCHEDULER_TEST_TIMEOUT_${label}`)
-}
-
-describe('hosted reconciliation scheduler', () => {
-  test('fails closed on invalid scheduler bounds', () => {
-    const service = { runBatch: async () => undefined }
-    for (const intervalMs of [0, -1, 1.5, Number.NaN, 3_600_001]) {
-      expect(() => new ReconciliationScheduler({ service, intervalMs, batchLimit: 10 })).toThrow(
-        'Invalid reconciliation scheduler intervalMs'
-      )
-    }
-    for (const batchLimit of [0, -1, 2.5, 1_001]) {
-      expect(() => new ReconciliationScheduler({ service, intervalMs: 1_000, batchLimit })).toThrow(
-        'Invalid reconciliation scheduler batchLimit'
-      )
-    }
-  })
-
-  test('never overlaps passes and drains the in-flight pass on close', async () => {
-    const calls = []
-    let gate
-    const service = {
-      runBatch: async (input) => {
-        calls.push(input)
-        while (gate !== undefined) await gate.promise
-        return { examined: 0, reconciled: 0, remediated: 0, manualIntervention: 0, waiting: 0 }
-      },
-    }
-    const scheduler = new ReconciliationScheduler({
-      service,
-      intervalMs: 10,
-      batchLimit: 6,
-      onBatchError: () => undefined,
-    })
-    gate = deferred()
-    scheduler.start()
-    await waitFor(() => calls.length === 1, 'FIRST_PASS')
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    expect(calls).toEqual([{ limit: 6 }])
-    const draining = scheduler.close()
-    gate.resolve()
-    gate = undefined
-    await draining
-    expect(() => scheduler.start()).toThrow('RECONCILIATION_SCHEDULER_CLOSED')
-    expect(calls).toEqual([{ limit: 6 }])
-  })
-
-  test('a failed pass reports a fixed diagnostic and later passes still run', async () => {
-    const errors = []
-    let calls = 0
-    let failing = true
-    const scheduler = new ReconciliationScheduler({
-      service: {
-        runBatch: async () => {
-          calls += 1
-          if (failing) throw new Error('raw persistence failure')
-          return { examined: 0, reconciled: 0, remediated: 0, manualIntervention: 0, waiting: 0 }
-        },
-      },
-      intervalMs: 10,
-      batchLimit: 4,
-      onBatchError: () => errors.push('RECONCILIATION_BATCH_FAILED'),
-    })
-    try {
-      scheduler.start()
-      await waitFor(() => errors.length === 1, 'FIRST_FAILURE')
-      failing = false
-      await waitFor(() => calls === 2, 'RECOVERY_PASS')
-    } finally {
-      await scheduler.close()
-    }
-  })
-})
+const identityPublicKey = 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f'
+const dataDirectory = '/unused-hosted-reconciliation-test'
 
 describe('hosted composition reconciliation wiring', () => {
-  const dataDirectory = '/unused-hosted-reconciliation-test'
-
   function reconciliationOptions() {
     return {
       source: {

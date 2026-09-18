@@ -9,7 +9,7 @@ import {
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import { CommandInboxService, ExecutionReconciliationService } from '@control-plane/domain'
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
-import { ReconciliationScheduler } from './reconciliation-scheduler.ts'
+import { ReconciliationScheduler } from '@control-plane/deployment'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const checkedAt = '2026-08-24T15:00:00.000Z'

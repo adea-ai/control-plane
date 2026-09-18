@@ -13,6 +13,7 @@ import {
   LocalCoordinationProvider,
   NodeProcessRuntimeProvider,
   StaticServiceDiscovery,
+  ReconciliationScheduler,
   RetentionSweep,
 } from '@control-plane/deployment'
 import { FilesystemObjectStore } from '@control-plane/object-store'
@@ -64,7 +65,6 @@ import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
-import { ReconciliationScheduler } from './reconciliation-scheduler.js'
 
 import {
   GrantsBackedContextAuthoringAuthority,
