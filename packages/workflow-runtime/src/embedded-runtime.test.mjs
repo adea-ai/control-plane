@@ -281,15 +281,19 @@ describe('EmbeddedWorkflowRuntime', () => {
       await runtime.start()
       await dispatcher.submit({
         ...workflowInput,
-        deadlineAt: new Date(Date.now() + 80).toISOString(),
+        // Long enough that the runner claims the job and creates the attempt
+        // first (even on a loaded CI host); the deadline then interrupts the
+        // hung dispatch activity mid-flight.
+        deadlineAt: new Date(Date.now() + 750).toISOString(),
       })
-      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      await waitFor(async () => activities.calls.some(([name]) => name === 'dispatch'), 5_000)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded', 15_000)
       const job = await store.get(executionId)
       expect(job.outcome.status).toBe('timed_out')
       const cancel = activities.calls.find(([name]) => name === 'cancelActive')
       expect(cancel[1].reason).toBe('deadline')
       await runtime.stop()
-    })
+    }, 30_000)
   })
 
   test('retries a failed run and completes on a later attempt', async () => {
