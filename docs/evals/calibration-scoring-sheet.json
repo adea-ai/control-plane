@@ -50,7 +50,9 @@
       "corpusTask": "SW-07",
       "pressure": "duplicate-commands-lost-ack",
       "humanFields": null,
-      "graderVerdict": null
+      "graderVerdict": null,
+      "scope": "verify-only",
+      "scopeNote": "Repair assumed committed pre-restart; requirements grade observed durable state only."
     },
     {
       "id": "C5",
