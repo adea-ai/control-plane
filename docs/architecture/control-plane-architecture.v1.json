@@ -762,9 +762,15 @@
       "private": true,
       "browser": false,
       "exports": ["."],
-      "workspaceDependencies": ["@control-plane/config", "@control-plane/orchestration"],
-      "externalDependencies": ["@restatedev/restate-sdk"],
-      "developmentWorkspaceDependencies": [],
+      "workspaceDependencies": [
+        "@control-plane/config",
+        "@control-plane/contracts",
+        "@control-plane/deployment",
+        "@control-plane/domain",
+        "@control-plane/orchestration"
+      ],
+      "externalDependencies": ["@restatedev/restate-sdk", "zod"],
+      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
       "developmentExternalDependencies": [],
       "layer": "core-port"
     },
@@ -1494,7 +1500,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:8a87b1d92f6a33e1ff37288e9093d0b00d0628b370d4fc2f2e645c3e4b9ea118"
+      "sourceDigest": "sha256:60ec9192b223411993d686f21e5c374dc60c91bb831351d25d1200b55aa71dd1"
     },
     {
       "id": "local",
@@ -1533,7 +1539,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:8a87b1d92f6a33e1ff37288e9093d0b00d0628b370d4fc2f2e645c3e4b9ea118"
+      "sourceDigest": "sha256:60ec9192b223411993d686f21e5c374dc60c91bb831351d25d1200b55aa71dd1"
     }
   ],
   "ownership": [

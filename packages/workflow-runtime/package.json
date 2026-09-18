@@ -23,8 +23,15 @@
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
+    "@control-plane/deployment": "workspace:*",
+    "@control-plane/domain": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
-    "@restatedev/restate-sdk": "1.17.0"
+    "@restatedev/restate-sdk": "1.17.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

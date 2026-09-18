@@ -168,6 +168,7 @@ describe('M11 standalone execution composition', () => {
         new LocalControlPlaneComposition({
           dataDirectory,
           runtimeTransport: createDirectManagedPiAdapter(),
+          durableExecution: 'restate',
           ...ports,
           graphActivitiesFactory: ({ persistence }) =>
             new OrchestrationGraphSegmentActivities(
@@ -438,6 +439,7 @@ describe('M11 standalone execution composition', () => {
       const local = new LocalControlPlaneComposition({
         dataDirectory: directory,
         runtimeTransport: createManagedPiAdapterWithClient(client),
+        durableExecution: 'restate',
         ...ports,
       })
       try {
@@ -520,6 +522,7 @@ describe('M11 standalone execution composition', () => {
     const local = new LocalControlPlaneComposition({
       dataDirectory: directory,
       runtimeTransport: createManagedPiAdapterWithClient(runtime),
+      durableExecution: 'restate',
       ...ports,
     })
     let application
@@ -658,6 +661,7 @@ describe('M11 standalone execution composition', () => {
       if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
       const local = new LocalControlPlaneComposition({
         dataDirectory: directory,
+        durableExecution: 'restate',
         runtimeFactory: (repositories) => {
           const runtime = createLocalManagedPiRuntime(repositories, {
             executablePath,

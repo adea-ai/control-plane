@@ -45,6 +45,9 @@ import {
 } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
+  EmbeddedExecutionWorkflowDispatcher,
+  EmbeddedWorkflowRuntime,
+  WorkflowJobStore,
   type ExecutionLifecycleActivities,
   type GraphSegmentActivityPort,
   type RestateEndpointFactory,
@@ -114,7 +117,8 @@ export interface LocalComponentManifest {
   readonly topology: {
     readonly externalServices: 0
     readonly runtimeTransport: 'direct-local' | 'unconfigured'
-    readonly restateVersion: string
+    readonly durableExecution: 'embedded-sqlite' | 'restate'
+    readonly restateVersion?: string
     readonly persistence: 'sqlite'
     readonly objectStore: 'filesystem'
     readonly remoteControl: 'disabled' | 'outbound'
@@ -155,6 +159,12 @@ export interface LocalControlPlaneCompositionOptions {
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
+  /**
+   * Durable-execution backing for workflow contracts. Defaults to
+   * `embedded-sqlite` for the `local` profile and `restate` for
+   * `hosted-simple`; explicit values win over the profile default.
+   */
+  readonly durableExecution?: 'embedded-sqlite' | 'restate'
   readonly workflowEndpointPort?: number
   readonly restateAdminPort?: number
   readonly restateIngressPort?: number
@@ -198,9 +208,14 @@ export class LocalControlPlaneComposition {
   readonly executionCancellationService: LocalControlApiComposition['executionCancellationService']
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
+  readonly durableExecution: 'embedded-sqlite' | 'restate'
   readonly persistence: SqlitePersistenceProvider
   readonly objectStore: ObjectStore
   readonly workflow: WorkflowRuntime
+  /** Durable queue behind the embedded workflow runtime; empty in restate mode. */
+  readonly workflowJobs: WorkflowJobStore | undefined
+  /** Queue-backed dispatcher used by acceptance, interactions, cancellations, and reconciliation. */
+  readonly workflowDispatcher: EmbeddedExecutionWorkflowDispatcher | undefined
   readonly secrets: SecretsProvider
   readonly runtimeTransport: LocalRuntimeTransport | undefined
   readonly remoteControl: RemoteControlHostAdapter<unknown> | undefined
@@ -232,7 +247,7 @@ export class LocalControlPlaneComposition {
   readonly coordination = new LocalCoordinationProvider()
   readonly observability = new BufferedObservabilityProvider()
   readonly discovery: StaticServiceDiscovery
-  readonly #endpointFactory: RestateEndpointFactory
+  readonly #endpointFactory: RestateEndpointFactory | undefined
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
@@ -253,22 +268,31 @@ export class LocalControlPlaneComposition {
       throw new Error('LOCAL_GRAPH_RUNTIME_REQUIRED')
     this.dataDirectory = resolve(options.dataDirectory)
     this.profile = options.profile ?? 'local'
-    const restateExecutablePath = join(
-      resolve(require.resolve('@restatedev/restate-server/package.json'), '..'),
-      'lib',
-      'index.js'
-    )
+    this.durableExecution =
+      options.durableExecution ?? (this.profile === 'local' ? 'embedded-sqlite' : 'restate')
+    // Restate wiring (spawn policy, ingress, endpoint) exists only in restate
+    // mode; the embedded mode runs the workflow contracts in-process on SQLite.
+    const restateExecutablePath =
+      this.durableExecution === 'restate'
+        ? join(
+            resolve(require.resolve('@restatedev/restate-server/package.json'), '..'),
+            'lib',
+            'index.js'
+          )
+        : undefined
     // CP-RNODE-025: the default process provider pins the managed Restate
     // server to its package-resolved binary and the local data directory;
     // injected providers remain authoritative when supplied.
     const processProvider =
       options.processProvider ??
-      new NodeProcessRuntimeProvider({
-        spawnPolicy: {
-          allowedExecutables: [restateExecutablePath],
-          allowedWorkingDirectories: [this.dataDirectory],
-        },
-      })
+      (restateExecutablePath === undefined
+        ? undefined
+        : new NodeProcessRuntimeProvider({
+            spawnPolicy: {
+              allowedExecutables: [restateExecutablePath],
+              allowedWorkingDirectories: [this.dataDirectory],
+            },
+          }))
     const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     const restateAdminUrl = `http://127.0.0.1:${options.restateAdminPort ?? 9070}`
     const restateIngressUrl = `http://127.0.0.1:${options.restateIngressPort ?? 8080}`
@@ -312,11 +336,20 @@ export class LocalControlPlaneComposition {
       options.metricAdapter === undefined
         ? undefined
         : createConsistencyMetricEmitter(options.metricAdapter, 'local-control-plane')
+    // The embedded mode routes acceptance, interactions, cancellations, and
+    // reconciliation remediation through one queue-backed dispatcher; restate
+    // mode keeps the ingress client as the default inside the API composition.
+    this.workflowJobs = new WorkflowJobStore(this.persistence)
+    this.workflowDispatcher =
+      this.durableExecution === 'embedded-sqlite'
+        ? new EmbeddedExecutionWorkflowDispatcher({ store: this.workflowJobs })
+        : undefined
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,
       contextAuthoring,
-      consistencyMetrics
+      consistencyMetrics,
+      this.workflowDispatcher
     )
     const runtimeTransport =
       options.runtimeTransport ??
@@ -411,9 +444,11 @@ export class LocalControlPlaneComposition {
           executions: controlApi.executions,
           commands: controlApi.commandRepository,
           events: controlApi.executionEvents,
-          workflowSubmitter: new RestateExecutionWorkflowDispatcher({
-            ingressUrl: restateIngressUrl,
-          }),
+          workflowSubmitter:
+            this.workflowDispatcher ??
+            new RestateExecutionWorkflowDispatcher({
+              ingressUrl: restateIngressUrl,
+            }),
           cancellations: new SqliteExecutionCancellationRepository(this.persistence),
         })
       this.reconciliationService = new ExecutionReconciliationService({
@@ -443,18 +478,25 @@ export class LocalControlPlaneComposition {
         intervalMs: options.retention.sweepIntervalMs,
       })
     }
+    // The Restate workflow endpoint exists only in restate mode; embedded mode
+    // drives the lifecycle in-process. An explicitly injected endpoint factory
+    // (tests, supervision harnesses) still runs in either mode.
     this.#endpointFactory =
       options.endpointFactory ??
-      createRestateEndpointFactory({
-        host: '127.0.0.1',
-        // Local Restate connects directly: allow control signals during long-running activities.
-        bidirectional: true,
-        port: workflowEndpointPort,
-        activities: this.executionLifecycleActivities,
-      })
-    this.workflow =
-      options.workflowRuntime ??
-      new LocalRestateRuntime({
+      (this.durableExecution === 'restate'
+        ? createRestateEndpointFactory({
+            host: '127.0.0.1',
+            // Local Restate connects directly: allow control signals during long-running activities.
+            bidirectional: true,
+            port: workflowEndpointPort,
+            activities: this.executionLifecycleActivities,
+          })
+        : undefined)
+    const composeRestateRuntime = (): LocalRestateRuntime => {
+      if (restateExecutablePath === undefined || processProvider === undefined) {
+        throw new Error('LOCAL_RESTATE_MODE_CONFIGURATION_MISSING')
+      }
+      return new LocalRestateRuntime({
         executablePath: restateExecutablePath,
         dataDirectory: join(this.dataDirectory, 'restate'),
         profile: this.profile,
@@ -464,14 +506,27 @@ export class LocalControlPlaneComposition {
         ...(options.restateNodePort === undefined ? {} : { nodePort: options.restateNodePort }),
         deploymentUri: `http://127.0.0.1:${workflowEndpointPort}`,
       })
-    this.discovery = new StaticServiceDiscovery([
-      { service: 'restate', url: new URL(restateIngressUrl), private: true },
-      {
-        service: 'workflow-runtime',
-        url: new URL(`http://127.0.0.1:${workflowEndpointPort}`),
-        private: true,
-      },
-    ])
+    }
+    this.workflow =
+      options.workflowRuntime ??
+      (this.durableExecution === 'embedded-sqlite'
+        ? new EmbeddedWorkflowRuntime({
+            provider: this.persistence,
+            activities: this.executionLifecycleActivities,
+            profile: this.profile,
+          })
+        : composeRestateRuntime())
+    this.discovery =
+      this.durableExecution === 'restate'
+        ? new StaticServiceDiscovery([
+            { service: 'restate', url: new URL(restateIngressUrl), private: true },
+            {
+              service: 'workflow-runtime',
+              url: new URL(`http://127.0.0.1:${workflowEndpointPort}`),
+              private: true,
+            },
+          ])
+        : new StaticServiceDiscovery([])
   }
 
   async start(): Promise<void> {
@@ -480,8 +535,10 @@ export class LocalControlPlaneComposition {
     await this.persistence.migrate()
     try {
       await this.runtimeTransport?.open?.()
-      this.#endpoint = await this.#endpointFactory.create()
-      await this.#endpoint.run()
+      if (this.#endpointFactory !== undefined) {
+        this.#endpoint = await this.#endpointFactory.create()
+        await this.#endpoint.run()
+      }
       await this.workflow.start()
       await this.remoteControl?.start()
       this.#reconciliationScheduler?.start()
@@ -522,7 +579,8 @@ export class LocalControlPlaneComposition {
       topology: {
         externalServices: 0,
         runtimeTransport: this.runtimeTransport === undefined ? 'unconfigured' : 'direct-local',
-        restateVersion: RESTATE_SERVER_VERSION,
+        durableExecution: this.durableExecution,
+        ...(this.durableExecution === 'restate' ? { restateVersion: RESTATE_SERVER_VERSION } : {}),
         persistence: 'sqlite',
         objectStore: 'filesystem',
         remoteControl: this.remoteControl === undefined ? 'disabled' : 'outbound',

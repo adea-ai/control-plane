@@ -9,9 +9,10 @@ All deployable services enter through `@control-plane/bootstrap`, which loads ty
 Deployment profile is a separate concept from application environment:
 
 - managed cloud — Railway services using Neon, R2 and Restate;
-- Local — all-in-one composition using SQLite, local Restate and direct RuntimeTransport;
-- Hosted `simple` — containerized all-in-one with SQLite;
-- Hosted `server` — PostgreSQL-backed server composition.
+- Local — all-in-one composition using SQLite, the embedded SQLite workflow queue (no Restate
+  process) and direct RuntimeTransport;
+- Hosted `simple` — containerized all-in-one with SQLite and bundled Restate;
+- Hosted `server` — PostgreSQL-backed server composition with Restate.
 
 The same public/domain behavior must not depend on an environment-specific variable name.
 
@@ -40,6 +41,9 @@ M9.7/M9.9 defined the exact variable manifest per service, validation rules, pub
 networking, `PORT` behavior, health/readiness, restart/drain behavior, and dependency ownership. The
 repository-owned manifest is `infrastructure/railway/environment.json`; M9.8 published the Restate
 contract in `infrastructure/railway/restate.json`, and M9.9 wired and verified both against Railway.
+
+These Restate variables belong to the cloud and hosted profiles (`hosted-simple` included); the
+local profile composes its queue without them and ignores them.
 
 `control-api` owns `RESTATE_INGRESS_URL` because callers invoke workflows through Restate ingress.
 The Cloud value is the private Railway HTTP endpoint on port 8080; non-private endpoints must use

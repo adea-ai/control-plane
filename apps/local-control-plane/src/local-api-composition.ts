@@ -6,6 +6,7 @@ import {
   RepositoryProfileResolutionService,
   RepositoryProjectStateResolutionService,
   RepositoryContextPackageResolutionService,
+  type ExecutionWorkflowDispatcher,
 } from '@control-plane/control-api'
 import {
   CommandInboxService,
@@ -13,6 +14,8 @@ import {
   DurableExecutionCancellationService,
   DurableInteractionDeliveryService,
   type CommandInboxMetrics,
+  type ExecutionCancellationDispatcher,
+  type InteractionSignalDispatcher,
 } from '@control-plane/domain'
 import {
   ContextPackageAuthoringService,
@@ -40,6 +43,14 @@ import {
   SqliteVersionedCatalogRepository,
   type SqlitePersistenceProvider,
 } from '@control-plane/sqlite-persistence'
+
+/**
+ * Dispatcher contract shared by the Restate ingress client and the embedded
+ * queue dispatcher; the local profile selects which one routes submissions.
+ */
+export type LocalWorkflowDispatcher = ExecutionWorkflowDispatcher &
+  InteractionSignalDispatcher &
+  ExecutionCancellationDispatcher
 
 export class LocalControlApiComposition {
   readonly executionCancellationService: DurableExecutionCancellationService
@@ -69,13 +80,17 @@ export class LocalControlApiComposition {
     persistence: SqlitePersistenceProvider,
     restateIngressUrl: string,
     contextAuthoring?: ContextAuthoringCompositionOptions,
-    inboxMetrics?: CommandInboxMetrics
+    inboxMetrics?: CommandInboxMetrics,
+    workflowDispatcher?: LocalWorkflowDispatcher
   ) {
+    const dispatcher: LocalWorkflowDispatcher =
+      workflowDispatcher ??
+      new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
     this.commandRepository = new SqliteCommandAcceptanceRepository(persistence)
     this.executionCancellationService = new DurableExecutionCancellationService(
       new SqliteExecutionCancellationRepository(persistence),
       this.commandRepository,
-      new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
+      dispatcher
     )
     this.catalog = new SqliteVersionedCatalogRepository(persistence)
     this.contextPackages = new SqliteContextPackageRepository(persistence)
@@ -84,11 +99,7 @@ export class LocalControlApiComposition {
     this.interactions = new SqliteInteractionRepository(persistence)
     this.interactionCommandService = new DurableInteractionCommandService(
       new SqliteInteractionCommandRepository(persistence),
-      new DurableInteractionDeliveryService(
-        this.interactions,
-        this.commandRepository,
-        new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
-      )
+      new DurableInteractionDeliveryService(this.interactions, this.commandRepository, dispatcher)
     )
     this.executionEvents = new SqliteExecutionEventRepository(persistence)
     this.projectStates = new SqliteProjectStateRepository(persistence)
@@ -106,7 +117,7 @@ export class LocalControlApiComposition {
     })
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
       commands: this.commands,
-      dispatcher: new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl }),
+      dispatcher,
     })
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',

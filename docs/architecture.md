@@ -43,18 +43,18 @@ This implementation order is distinct from Adea product rollout. The Control Pla
 - Railway compute/service lifecycle.
 - Separate Control Plane Neon PostgreSQL.
 - Cloudflare R2 through the S3-compatible `ObjectStore` boundary. The current Control Plane resource is bucket `ctrl-plane` with Wrangler binding `ctrl_plane`; these identifiers are deployment configuration, not domain identity.
-- Restate as the only required durable workflow runtime.
+- Restate as the canonical durable workflow runtime for cloud and hosted profiles.
 - Railway private networking for internal service calls where applicable.
 - Railway service/shared variables for bootstrap/service configuration.
 - Dynamic connector/provider credentials remain behind the credential-vault secret boundary rather than becoming per-user environment variables.
 
 Control Plane R2 storage and Adea Artifact storage are separate authorities even if they use the same Cloudflare account/provider. Each product uses separately scoped buckets/environment sets and credentials; Control Plane's `ctrl-plane` bucket is not Adea Artifact storage.
 
-### Local — M10
+### Local — M10, Restate-free since CP1 (#548)
 
 - all-in-one Control Plane composition;
 - Node 24 `node:sqlite` through Drizzle behind `PersistenceProvider`;
-- pinned single-node Restate;
+- embedded SQLite durable queue and in-process workflow runtime serving the same workflow contracts as Restate;
 - filesystem object storage;
 - direct co-located RuntimeTransport/RuntimeDriver path;
 - no Docker, PostgreSQL, Redis/Valkey, Temporal, or Runtime Gateway requirement for ordinary execution.
@@ -75,7 +75,7 @@ Control Plane R2 storage and Adea Artifact storage are separate authorities even
 | PostgreSQL        | accepted server/cloud adapter              | Neon for the M9 managed-cloud profile; recommended for Hosted `server`.                                                                               |
 | SQLite            | accepted Local/simple adapter              | Node 24 `node:sqlite` + Drizzle for M10 Local and Hosted `simple`.                                                                                    |
 | Drizzle           | accepted                                   | Persistence schema/migration layer behind deployment-specific adapters.                                                                               |
-| Restate           | accepted canonical workflow runtime        | M9.8 establishes the Railway implementation; M10.1 ports the same workflow semantics to Local/Hosted.                                                 |
+| Restate           | accepted canonical workflow runtime        | Cloud and hosted profiles; M9.8 establishes the Railway implementation. Local runs the same workflow contracts on the embedded SQLite queue (#548).   |
 | Temporal          | historical migration provenance            | Not an accepted release dependency or active runtime.                                                                                                 |
 | LangGraph         | adapter-bound                              | Optional bounded graph/multi-agent execution inside a Restate-owned durable lifecycle.                                                                |
 | Pi                | adapter-bound                              | Default managed harness behind RuntimeAdapter/RuntimeDriver contracts.                                                                                |
