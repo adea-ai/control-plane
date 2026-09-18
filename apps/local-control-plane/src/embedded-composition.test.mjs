@@ -11,7 +11,7 @@ import { LocalControlPlaneComposition } from './composition.ts'
 const restateWorkflowFake = (calls) => ({
   profile: 'hosted-simple',
   start: async () => calls.push('workflow:start'),
-  health: async () => ({ ready: true, component: 'restate', version: '1.7.9' }),
+  health: async () => ({ ready: true, component: 'restate', version: '1.7.10' }),
   stop: async () => calls.push('workflow:stop'),
 })
 
@@ -64,7 +64,7 @@ describe('Local control plane embedded durable execution', () => {
       await composition.start()
       const manifest = await composition.manifest()
       expect(manifest.topology.durableExecution).toBe('restate')
-      expect(manifest.topology.restateVersion).toBe('1.7.9')
+      expect(manifest.topology.restateVersion).toBe('1.7.10')
       expect((await composition.discovery.resolve('restate')).private).toBe(true)
       expect(calls).toEqual(['endpoint:start', 'workflow:start'])
     } finally {

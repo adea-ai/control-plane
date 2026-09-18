@@ -90,7 +90,7 @@
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
-    "@langchain/langgraph": "1.4.14",
+    "@langchain/langgraph": "1.4.15",
     "@types/node": "^26.5.1",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",

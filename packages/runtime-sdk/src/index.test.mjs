@@ -20,7 +20,7 @@ describe('runtime capability vocabulary', () => {
     const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     expect(manifest.dependencies).toEqual({
       '@control-plane/contracts': 'workspace:*',
-      zod: '4.5.4',
+      zod: '4.6.5',
     })
     expect(JSON.stringify(manifest).toLowerCase()).not.toContain('pi-sdk')
     expect(JSON.stringify(manifest).toLowerCase()).not.toContain('acp-sdk')
