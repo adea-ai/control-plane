@@ -137,6 +137,7 @@ describe('Local Control Plane composition', () => {
       contextAuthoring: { authority, providerResolver },
       workflowRuntime: workflow,
       runtimeTransport: { transportKind: 'direct-local' },
+      durableExecution: 'restate',
       endpointFactory: {
         create: async () => ({
           run: async () => calls.push('endpoint:start'),
@@ -160,6 +161,8 @@ describe('Local Control Plane composition', () => {
         topology: {
           externalServices: 0,
           runtimeTransport: 'direct-local',
+          durableExecution: 'restate',
+          restateVersion: '1.7.9',
           persistence: 'sqlite',
           objectStore: 'filesystem',
           remoteControl: 'disabled',

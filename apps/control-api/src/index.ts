@@ -155,6 +155,7 @@ export {
   UnavailableExecutionAcceptanceService,
   createExecutionId,
   type ExecutionAcceptanceService,
+  type ExecutionWorkflowDispatcher,
 } from './executions/execution-acceptance.service.js'
 export { DurableExecutionValidationService } from './executions/execution-validation.service.js'
 export {
