@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "bun src/start.ts",
+    "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
     "openapi:check": "bun src/openapi/check.ts",
     "test": "bun test src --timeout 30000",
@@ -41,6 +42,6 @@
     "@control-plane/testing": "workspace:*"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": "24.18.0"
   }
 }

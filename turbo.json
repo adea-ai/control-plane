@@ -6,6 +6,10 @@
       "outputs": ["dist/**"]
     },
     "lint": {},
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
     "openapi:check": {
       "dependsOn": ["^build"]
     },

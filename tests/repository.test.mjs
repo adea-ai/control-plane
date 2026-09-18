@@ -45,11 +45,11 @@ test('pins the required Node and Bun toolchain', async () => {
   const testTsconfig = await readJson('tsconfig.json')
 
   assert.equal(manifest.packageManager, 'bun@1.4.0')
-  assert.equal(manifest.engines.node, '>=24 <25')
+  assert.equal(manifest.engines.node, '24.18.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
-  assert.equal(
-    (await readFile(new URL('../.node-version', import.meta.url), 'utf8')).trim(),
-    '24.18.0'
+  assert.match(
+    await readFile(new URL('../.mise.toml', import.meta.url), 'utf8'),
+    /node = "24\.18\.0"/
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
@@ -65,6 +65,7 @@ test('defines root quality and build commands', async () => {
 
   for (const script of [
     'build',
+    'dev',
     'type-check',
     'lint',
     'test',
@@ -236,7 +237,7 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.match(config, /^dependency_review: auto$/m)
   assert.doesNotMatch(config, /^opencode_security:/m)
   assert.doesNotMatch(config, /^staging_validation_mode:/m)
-  assert.match(config, /^runtime_ref: v1\.28\.\d+$/m)
+  assert.match(config, /^runtime_ref: v1\.30\.0$/m)
   for (const runner of [
     'runner',
     'ci_runner',
@@ -288,7 +289,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.28\.\d+/
+    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.30\.0/
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
@@ -300,7 +301,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(validation, /synchronize/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v1\.28\.\d+/)
+  assert.match(release, /release\.yml@v1\.30\.0/)
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
@@ -411,8 +412,10 @@ test('scaffolds every application with an executable placeholder target', async 
     assert.equal(manifest.name, `@control-plane/${app}`)
     assert.equal(manifest.private, true)
     assert.equal(manifest.browser, false)
-    assert.equal(manifest.engines.node, '>=24 <25')
+    assert.equal(manifest.engines.node, '24.18.0')
     assert.equal(typeof manifest.scripts.build, 'string')
+    assert.equal(typeof manifest.scripts.dev, 'string')
+    assert.equal(manifest.scripts.dev, 'bun --watch src/start.ts')
     assert.equal(typeof manifest.scripts.start, 'string')
     assert.equal(typeof manifest.scripts.lint, 'string')
     assert.equal(typeof manifest.scripts.test, 'string')
