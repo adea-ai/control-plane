@@ -10,6 +10,7 @@ description: |
   or has apps/packages directories.
 metadata:
   version: "2.10.11-canary.4"
+  owner: "vendored — Vercel upstream (pinned)"
 ---
 
 # Turborepo Skill
@@ -952,8 +953,11 @@ This skill is based on the official Turborepo documentation at:
 
 ## Evidence contract
 
-- **Inputs:** a monorepo build/task/pipeline question or change.
-- **Allowed mutations:** turbo.json, package scripts, and task configuration within the workspace.
-- **Outputs:** corrected task configuration with the dependency graph left intact.
-- **Verification:** the affected tasks run successfully through the turbo pipeline.
-- **Completion guard:** the skill must not claim configuration success if any affected task fails or the dependency graph changes task semantics silently.
+- **Inputs:** a monorepo build/task/pipeline question or change touching turbo.json, package scripts, or task configuration.
+- **Safe assumptions:** the dependency graph (`dependsOn`, `^task`) is authoritative; `^task` ordering only works for workspace dependencies that are actually declared.
+- **Allowed mutations:** turbo.json (root and package configurations), package.json scripts, and task configuration within the workspace — never a silent change to what a task produces.
+- **Outputs:** corrected task configuration with the dependency graph intact, package tasks preferred over root tasks, and `turbo run` in all checked-in scripts and CI.
+- **Verification commands:** run the affected tasks through the pipeline (`bun run build`, `bun run lint`, `bun run test`) plus the applicable batch from `.agents/validation.md`; use `turbo run <task> --dry` or `--summarize` to confirm cache-hash behavior.
+- **Failure/skip reporting:** an affected task that fails, or a cache hit that shouldn't happen, is reported with the failing task name and the config diff — never described as fixed without a passing run.
+- **Cleanup:** no root-package task logic, `&&`-chained scripts, or leftover `prebuild` shims remain; reverted experiments leave no orphan config keys.
+- **Completion-claim guard:** the skill must not claim configuration success if any affected task fails or the dependency graph changes task semantics silently.

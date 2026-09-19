@@ -253,8 +253,11 @@ Per-increment verification is the local check. Before declaring a task done, app
 
 ## Evidence contract
 
-- **Inputs:** a multi-file implementation task, broken into ordered increments.
-- **Allowed mutations:** source files, tests, and configs within the task scope; one increment at a time.
-- **Outputs:** a series of compiling, tested increments, each independently verifiable.
-- **Verification:** each increment ends with the relevant tests passing before the next begins.
-- **Completion guard:** the skill must not declare the task done while any increment is unstarted, failing, or skipped without a documented reason.
+- **Inputs:** a multi-file implementation task broken into ordered increments, with explicit in-scope and out-of-scope surfaces per increment.
+- **Safe assumptions:** the project builds and its existing tests pass before the first increment; each slice is small enough to implement, test, and commit on its own.
+- **Allowed mutations:** source files, tests, and configs within the task scope, one increment at a time; out-of-scope improvements are noted, not touched.
+- **Outputs:** a series of compiling, tested, independently revertable increments, each committed with a descriptive message.
+- **Verification commands:** after each increment run the repository's focused test/build/type/lint commands; before declaring done run the full applicable batch from `.agents/validation.md` (here: `bun run lint`, `bun run type-check`, `bun run build`, `bun run test`).
+- **Failure/skip reporting:** a failing increment stops the cycle — revert or fix before the next slice; any skipped step is reported with its reason, never silently dropped.
+- **Cleanup:** no uncommitted changes remain; feature-flag scaffolding, fixtures, and temp files from incomplete slices are removed or explicitly documented.
+- **Completion-claim guard:** the skill must not declare the task done while any increment is unstarted, failing, or skipped without a documented reason.

@@ -503,8 +503,11 @@ After implementing security-relevant code:
 
 ## Evidence contract
 
-- **Inputs:** code handling untrusted input, auth, storage, external integrations, or personal data.
-- **Allowed mutations:** hardening changes within the reviewed scope; no weakening of existing checks.
-- **Outputs:** hardened code plus findings classified with severity and remediation.
-- **Verification:** every finding cites the attack surface and the applied mitigation; regression tests cover each fix.
-- **Completion guard:** the skill must not mark hardening complete while any finding is unmitigated and unowned — report residual risk explicitly.
+- **Inputs:** code handling untrusted input, auth, storage, external integrations, or personal data, plus the feature's trust boundaries and assets.
+- **Safe assumptions:** every external input — including LLM output — is hostile; client-side validation is never a security boundary; package-manager audits find known advisories only, not novel supply-chain attacks.
+- **Allowed mutations:** hardening changes within the reviewed scope (validation, authorization, headers, rate limits, dependency updates); "Ask First" items (auth flows, new sensitive data, CORS, uploads, elevated roles) require human approval; never weaken existing checks.
+- **Outputs:** hardened code plus findings classified with severity, reachability, and remediation — or a documented deferral with a review date.
+- **Verification commands:** the native package-manager audit plus the applicable batch from `.agents/validation.md` (`bun run lint`, `bun run type-check`, `bun run build`, `bun run test`); each fix gets a regression test.
+- **Failure/skip reporting:** every finding cites its attack surface and applied mitigation; a skipped optional scan is reported as skipped, never counted as a passing security audit.
+- **Cleanup:** no secrets, PII, or test credentials left in code, fixtures, logs, or git history; a committed secret triggers rotation, not just deletion.
+- **Completion-claim guard:** the skill must not mark hardening complete while any finding is unmitigated and unowned — report residual risk explicitly.

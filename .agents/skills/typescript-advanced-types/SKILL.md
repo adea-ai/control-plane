@@ -322,8 +322,11 @@ type ShouldError = ExpectError<AssertEqual<string, number>>;
 
 ## Evidence contract
 
-- **Inputs:** a TypeScript typing problem (generics, conditional types, mapped types, template literals, utilities).
-- **Allowed mutations:** type definitions and type-level tests within the task scope.
-- **Outputs:** type definitions that compile under strict mode with type-level tests demonstrating behavior.
-- **Verification:** the compiler accepts the types under strict settings and the type-level tests pass.
-- **Completion guard:** the skill must not claim typing success while `tsc` reports errors under strict mode or any `any` escape was introduced to force compilation.
+- **Inputs:** a TypeScript typing problem (generics, conditional types, mapped types, template literals, utilities) within the task scope.
+- **Safe assumptions:** the project compiles under strict mode before the change; the worked patterns in `references/details.md` are consulted before inventing new type machinery.
+- **Allowed mutations:** type definitions and type-level tests within the task scope; no runtime behavior changes.
+- **Outputs:** type definitions that compile under strict mode, with type-level tests (e.g. `AssertEqual`) demonstrating the intended behavior.
+- **Verification commands:** strict-mode compilation via `bun run type-check`, plus the applicable batch from `.agents/validation.md` (`bun run lint`, `bun run build`, `bun run test`) when the type changes touch shipped code.
+- **Failure/skip reporting:** compiler errors under strict mode, or type tests that pass when they should fail, are reported as failures — never worked around.
+- **Cleanup:** no temporary `any`, `as unknown as`, or experimental type aliases left in the diff.
+- **Completion-claim guard:** the skill must not claim typing success while `tsc` reports errors under strict mode or any `any` escape was introduced to force compilation.

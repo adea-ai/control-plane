@@ -112,8 +112,11 @@ Reporting them separately stops one axis from masking the other.
 
 ## Evidence contract
 
-- **Inputs:** a base ref (commit, branch, or tag); the working tree or PR diff to review.
-- **Allowed mutations:** none — this skill is read-only over the code under review.
-- **Outputs:** two side-by-side findings lists (standards conformance, spec conformance), each citing file:line.
-- **Verification:** every standards finding cites a documented repo rule; every spec finding cites an issue requirement.
-- **Completion guard:** reviews are advisory — the skill never claims the reviewed work is correct or complete, and never approves a PR.
+- **Inputs:** a base ref (commit, branch, tag, or merge-base); the review surfaces to cover — committed diff, plus staged, unstaged, or untracked work when the request includes work in progress — with the resolved base/head commits and dirty state recorded.
+- **Safe assumptions:** the fixed point resolves and at least one requested surface is non-empty; documented repo standards override the smell baseline; delegation is available (if not, run both axes sequentially and disclose the lack of independent review).
+- **Allowed mutations:** none — this skill is read-only over the code, the working tree, and the issue tracker; a review request does not authorize fixes, issue edits, PR comments, or merges.
+- **Outputs:** two side-by-side findings lists under `## Standards` and `## Spec`, each citing file:line and its source (documented rule or spec line), plus a one-line per-axis summary, spec provenance, and the exact surfaces reviewed.
+- **Verification commands:** review is observational — it re-runs none of the `.agents/validation.md` batch as proof of correctness; findings cite standards files and spec text, not tool output.
+- **Failure/skip reporting:** an empty committed diff ends a committed-only review; a missing spec is reported as "no spec available" and the Spec axis is marked skipped, never passed.
+- **Cleanup:** none — the review leaves no files, comments, issues, or PR artifacts behind.
+- **Completion-claim guard:** reviews are advisory — the skill must not claim the reviewed work is correct, complete, or mergeable, and closed issues or green CI never stand in for spec compliance.
