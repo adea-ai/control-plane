@@ -50,6 +50,8 @@ This implementation order is distinct from Adea product rollout. The Control Pla
 
 Control Plane R2 storage and Adea Artifact storage are separate authorities even if they use the same Cloudflare account/provider. Each product uses separately scoped buckets/environment sets and credentials; Control Plane's `ctrl-plane` bucket is not Adea Artifact storage.
 
+**Production image build path (canonical).** The production Railway services (`control-api`, `workflow-worker`) build from the repository's digest-pinned `infrastructure/containers/Dockerfile` via `RAILWAY_DOCKERFILE_PATH`, dispatching the deployable service at runtime through `APP_NAME` and `infrastructure/containers/entrypoint.sh` (`USER bun`, Alpine base with the #511 OpenSSL upgrade). This is the same image surface the enforced image-security gate (Trivy CRITICAL/HIGH + CycloneDX SBOM) scans, so the scanned artifact and the deployed artifact cannot diverge. Railpack inference is not a supported production build path.
+
 ### Local — M10, Restate-free since CP1 (#548)
 
 - all-in-one Control Plane composition;
