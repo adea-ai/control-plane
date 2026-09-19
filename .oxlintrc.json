@@ -134,6 +134,17 @@
           }
         ]
       }
+    },
+    {
+      "files": [
+        "packages/cortana-context-adapter/src/http-client-effect.ts"
+      ],
+      "rules": {
+        "no-underscore-dangle": [
+          "error",
+          { "allow": ["_event", "_meta", "case_", "package_", "_tag"] }
+        ]
+      }
     }
   ]
 }
