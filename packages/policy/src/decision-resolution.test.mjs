@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveDecisionLayer, DecisionResolutionDeniedError } from './index.ts'
+import { resolveDecisionLayer } from './index.ts'
 
 const ids = {
   requestId: 'req_01JABCDEF0123456789ABCDEFG',
@@ -46,7 +46,16 @@ const baseRequest = () => ({
   explicitPins: {},
 })
 
-const noPins = () => ({ harness: undefined, model: undefined, skills: undefined, capabilities: undefined, runtime: undefined, sandbox: undefined, contextPackage: undefined, delegation: undefined })
+function expectDenied(code, run) {
+  try {
+    run()
+  } catch (error) {
+    expect(error?.name).toBe('DecisionResolutionDeniedError')
+    expect(error?.code).toBe(code)
+    return
+  }
+  throw new Error(`expected denial ${code} but resolution succeeded`)
+}
 
 describe('decision-layer resolution (#558)', () => {
   test('resolves all eight outputs with policy defaults and local-runtime preference', () => {
@@ -62,7 +71,10 @@ describe('decision-layer resolution (#558)', () => {
       effectiveCapabilities: ['shell.exec'],
     })
     expect(resolution.resolution.contextPackage).toEqual({ mode: 'none' })
-    expect(resolution.resolution.delegation).toEqual({ fanOut: 'none', promotion: 'review-required' })
+    expect(resolution.resolution.delegation).toEqual({
+      fanOut: 'none',
+      promotion: 'review-required',
+    })
     expect(resolution.diagnostics).toEqual([])
     expect(resolution.resolutionDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(resolution.trace.harness.source).toBe('policy-default')
@@ -83,7 +95,10 @@ describe('decision-layer resolution (#558)', () => {
     const viaProfile = resolveDecisionLayer(noPin, {})
     expect(viaProfile.trace.harness.source).toBe('profile-default')
 
-    const noProfile = { ...baseRequest(), projectDefaults: { harness: { harnessId: 'claude-code' } } }
+    const noProfile = {
+      ...baseRequest(),
+      projectDefaults: { harness: { harnessId: 'claude-code' } },
+    }
     const viaProject = resolveDecisionLayer(noProfile, {})
     expect(viaProject.trace.harness.source).toBe('project-default')
   })
@@ -94,7 +109,7 @@ describe('decision-layer resolution (#558)', () => {
         ...baseRequest(),
         explicitPins: { skills: { skillVersionIds: [ids.skillVersionId] } },
       },
-      {},
+      {}
     )
     expect(pinned.resolution.skills.skillVersionIds).toEqual([ids.skillVersionId])
     expect(pinned.trace.skills.source).toBe('explicit-pin')
@@ -102,20 +117,20 @@ describe('decision-layer resolution (#558)', () => {
   })
 
   test('runtime pin to an unavailable runtime denies UNSUPPORTED_RUNTIME_PIN', () => {
-    expect(() =>
+    expectDenied('UNSUPPORTED_RUNTIME_PIN', () =>
       resolveDecisionLayer(
         {
           ...baseRequest(),
           explicitPins: { runtime: { runtimeDefinitionId: 'rtd_01JABCDEF0123456789XYZDEFG' } },
         },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'UNSUPPORTED_RUNTIME_PIN')
+        {}
+      )
+    )
   })
 
   test('harness pin unavailable on the selected runtime denies', () => {
     // claude-code exists only on the local runtime; pin the remote runtime.
-    expect(() =>
+    expectDenied('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME', () =>
       resolveDecisionLayer(
         {
           ...baseRequest(),
@@ -124,19 +139,19 @@ describe('decision-layer resolution (#558)', () => {
             harness: { harnessId: 'claude-code' },
           },
         },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
+        {}
+      )
+    )
   })
 
   test('model pin without entitlement denies; unentitled without pin withholds', () => {
-    const unentitled = { ...baseRequest(), entitlements: { modelAccess: 'none', grantedCapabilityNames: ['shell.exec'] } }
-    expect(() =>
-      resolveDecisionLayer(
-        { ...unentitled, explicitPins: { model: { modelId: 'pi/sol-1' } } },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'MODEL_ACCESS_NOT_ENTITLED')
+    const unentitled = {
+      ...baseRequest(),
+      entitlements: { modelAccess: 'none', grantedCapabilityNames: ['shell.exec'] },
+    }
+    expectDenied('MODEL_ACCESS_NOT_ENTITLED', () =>
+      resolveDecisionLayer({ ...unentitled, explicitPins: { model: { modelId: 'pi/sol-1' } } }, {})
+    )
     const withheld = resolveDecisionLayer(unentitled, {})
     expect(withheld.resolution.model).toEqual({ withheld: 'MODEL_ACCESS_NOT_ENTITLED' })
     expect(withheld.diagnostics).toEqual(['MODEL_ACCESS_NOT_ENTITLED'])
@@ -149,41 +164,40 @@ describe('decision-layer resolution (#558)', () => {
   })
 
   test('capability pin beyond grants denies CAPABILITY_BEYOND_GRANT; grants bound the sandbox', () => {
-    expect(() =>
+    expectDenied('CAPABILITY_BEYOND_GRANT', () =>
       resolveDecisionLayer(
         { ...baseRequest(), explicitPins: { capabilities: { capabilityNames: ['net.free'] } } },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'CAPABILITY_BEYOND_GRANT')
+        {}
+      )
+    )
     // Required capability 'fs.read' is granted; the sandbox only ever sees the
     // intersection of resolved capabilities with grants — never 'net.denied'.
     const resolution = resolveDecisionLayer(
       { ...baseRequest(), requiredCapabilities: ['shell.exec', 'fs.read'] },
-      {},
+      {}
     )
     expect(resolution.resolution.capabilities.capabilityNames).toEqual(['shell.exec', 'fs.read'])
     expect(resolution.resolution.sandbox.effectiveCapabilities).toEqual(['shell.exec', 'fs.read'])
   })
 
   test('required capability beyond grants denies even without pins', () => {
-    expect(() =>
-      resolveDecisionLayer(
-        { ...baseRequest(), requiredCapabilities: ['net.free'] },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'CAPABILITY_BEYOND_GRANT')
+    expectDenied('CAPABILITY_BEYOND_GRANT', () =>
+      resolveDecisionLayer({ ...baseRequest(), requiredCapabilities: ['net.free'] }, {})
+    )
   })
 
   test('context package pin requires the id; resolutions are deterministic per input', () => {
-    expect(() =>
+    expectDenied('CONTEXT_PACKAGE_PIN_MISMATCH', () =>
       resolveDecisionLayer(
         { ...baseRequest(), explicitPins: { contextPackage: { mode: 'existing' } } },
-        {},
-      ),
-    ).toThrow((error) => error instanceof DecisionResolutionDeniedError && error.code === 'CONTEXT_PACKAGE_PIN_MISMATCH')
+        {}
+      )
+    )
     const input = {
       ...baseRequest(),
-      explicitPins: { contextPackage: { mode: 'existing', contextPackageId: 'ctx_01JABCDEF0123456789ABCDEFG' } },
+      explicitPins: {
+        contextPackage: { mode: 'existing', contextPackageId: 'ctx_01JABCDEF0123456789ABCDEFG' },
+      },
     }
     const first = resolveDecisionLayer(input, { model: { modelId: 'pi/sol-1' } })
     const second = resolveDecisionLayer(input, { model: { modelId: 'pi/sol-1' } })

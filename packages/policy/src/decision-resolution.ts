@@ -36,6 +36,15 @@ export type DecisionOutputKey = (typeof OUTPUT_KEYS)[number]
 /** Policy defaults are the last precedence layer and may pin any output. */
 export type DecisionLayerPolicyDefaults = DecisionPins
 
+type ResolutionOutputs = DecisionLayerResolution['resolution']
+type ResolutionValue<Key extends DecisionOutputKey> = ResolutionOutputs[Key]
+type PinValue<Key extends DecisionOutputKey> = NonNullable<DecisionPins[Key]>
+
+type PinSelection<Key extends DecisionOutputKey> = {
+  source: ResolutionSource
+  pin: PinValue<Key> | undefined
+}
+
 const PRECEDENCE_LAYERS: ReadonlyArray<{
   source: ResolutionSource
   pick: (request: DecisionResolutionRequest, policyDefaults: DecisionPins) => DecisionPins
@@ -55,38 +64,33 @@ export class DecisionResolutionDeniedError extends Error {
   }
 }
 
-function pickPin(
-  key: DecisionOutputKey,
+function pickPin<Key extends DecisionOutputKey>(
+  key: Key,
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
-): { source: ResolutionSource; pin: DecisionPins[DecisionOutputKey] | undefined } {
+  policyDefaults: DecisionPins
+): PinSelection<Key> {
   for (const layer of PRECEDENCE_LAYERS) {
     const pin = layer.pick(request, policyDefaults)[key]
-    if (pin !== undefined) return { source: layer.source, pin }
+    if (pin !== undefined) return { source: layer.source, pin } as PinSelection<Key>
   }
   return { source: 'policy-default', pin: undefined }
 }
 
-function requirePin<Value>(pin: NonNullable<DecisionPins[DecisionOutputKey]>): Value {
-  return pin as Value
-}
-
 function resolveRuntime(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
+  policyDefaults: DecisionPins
 ): { runtime: AvailableRuntime; source: ResolutionSource } {
   const { source, pin } = pickPin('runtime', request, policyDefaults)
   if (pin !== undefined) {
-    const pinned = requirePin<{ runtimeDefinitionId: string }>(pin)
     const match = request.availableRuntimes.find(
-      (candidate) => candidate.runtimeDefinitionId === pinned.runtimeDefinitionId,
+      (candidate) => candidate.runtimeDefinitionId === pin.runtimeDefinitionId
     )
     if (match === undefined) throw new DecisionResolutionDeniedError('UNSUPPORTED_RUNTIME_PIN')
     return { runtime: match, source }
   }
 
   const capable = request.availableRuntimes.filter((candidate) =>
-    request.requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)),
+    request.requiredCapabilities.every((capability) => candidate.capabilities.includes(capability))
   )
   const preferred =
     capable.find((candidate) => candidate.kind === 'local') ??
@@ -100,15 +104,14 @@ function resolveRuntime(
 function resolveHarness(
   request: DecisionResolutionRequest,
   policyDefaults: DecisionPins,
-  runtime: AvailableRuntime,
-): { value: { harnessId: string }; source: ResolutionSource } {
+  runtime: AvailableRuntime
+): { value: ResolutionValue<'harness'>; source: ResolutionSource } {
   const { source, pin } = pickPin('harness', request, policyDefaults)
   if (pin !== undefined) {
-    const pinned = requirePin<{ harnessId: string }>(pin)
-    if (!runtime.harnessIds.includes(pinned.harnessId)) {
+    if (!runtime.harnessIds.includes(pin.harnessId)) {
       throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
     }
-    return { value: pinned, source }
+    return { value: pin, source }
   }
   const harnessId = runtime.harnessIds[0]
   if (harnessId === undefined) {
@@ -119,9 +122,9 @@ function resolveHarness(
 
 function resolveModel(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
+  policyDefaults: DecisionPins
 ): {
-  value: { modelId: string } | { withheld: DecisionResolutionDiagnostic }
+  value: ResolutionValue<'model'>
   source: ResolutionSource
 } {
   const { source, pin } = pickPin('model', request, policyDefaults)
@@ -129,7 +132,7 @@ function resolveModel(
     if (request.entitlements.modelAccess === 'none') {
       throw new DecisionResolutionDeniedError('MODEL_ACCESS_NOT_ENTITLED')
     }
-    return { value: requirePin<{ modelId: string }>(pin), source }
+    return { value: pin, source }
   }
   // No pin at any layer: a model is only resolvable when access is entitled
   // AND the policy names a default model; otherwise it is withheld (the
@@ -144,16 +147,15 @@ function resolveModel(
 
 function resolveCapabilities(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
-): { value: { capabilityNames: string[] }; source: ResolutionSource } {
+  policyDefaults: DecisionPins
+): { value: ResolutionValue<'capabilities'>; source: ResolutionSource } {
   const granted = new Set(request.entitlements.grantedCapabilityNames)
   const { source, pin } = pickPin('capabilities', request, policyDefaults)
   if (pin !== undefined) {
-    const pinned = requirePin<{ capabilityNames: string[] }>(pin)
-    if (!pinned.capabilityNames.every((capability) => granted.has(capability))) {
+    if (!pin.capabilityNames.every((capability) => granted.has(capability))) {
       throw new DecisionResolutionDeniedError('CAPABILITY_BEYOND_GRANT')
     }
-    return { value: pinned, source }
+    return { value: pin, source }
   }
   if (!request.requiredCapabilities.every((capability) => granted.has(capability))) {
     throw new DecisionResolutionDeniedError('CAPABILITY_BEYOND_GRANT')
@@ -164,19 +166,18 @@ function resolveCapabilities(
 function resolveSandbox(
   request: DecisionResolutionRequest,
   policyDefaults: DecisionPins,
-  resolvedCapabilities: string[],
-): { value: { mode: 'none' | 'managed'; effectiveCapabilities: string[] }; source: ResolutionSource } {
+  resolvedCapabilities: string[]
+): { value: ResolutionValue<'sandbox'>; source: ResolutionSource } {
   const granted = new Set(request.entitlements.grantedCapabilityNames)
   // Sandbox selection intersects resolved capabilities with grants; it never
   // grants beyond them (adea M10 #33 boundary).
   const effective = resolvedCapabilities.filter((capability) => granted.has(capability))
   const { source, pin } = pickPin('sandbox', request, policyDefaults)
   if (pin !== undefined) {
-    const pinned = requirePin<{ mode: 'none' | 'managed'; effectiveCapabilities: string[] }>(pin)
-    if (!pinned.effectiveCapabilities.every((capability) => effective.includes(capability))) {
+    if (!pin.effectiveCapabilities.every((capability) => effective.includes(capability))) {
       throw new DecisionResolutionDeniedError('CAPABILITY_BEYOND_GRANT')
     }
-    return { value: pinned, source }
+    return { value: pin, source }
   }
   return {
     value: { mode: effective.length > 0 ? 'managed' : 'none', effectiveCapabilities: effective },
@@ -186,27 +187,20 @@ function resolveSandbox(
 
 function resolveContextPackage(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionPins,
-): {
-  value: { mode: 'none' | 'existing' | 'author'; contextPackageId?: string }
-  source: ResolutionSource
-} {
+  policyDefaults: DecisionPins
+): { value: ResolutionValue<'contextPackage'>; source: ResolutionSource } {
   const { source, pin } = pickPin('contextPackage', request, policyDefaults)
   if (pin !== undefined) {
-    const pinned = requirePin<{ mode: 'none' | 'existing' | 'author'; contextPackageId?: string }>(pin)
-    if (pinned.mode === 'existing' && pinned.contextPackageId === undefined) {
+    if (pin.mode === 'existing' && pin.contextPackageId === undefined) {
       throw new DecisionResolutionDeniedError('CONTEXT_PACKAGE_PIN_MISMATCH')
     }
-    return { value: pinned, source }
+    return { value: pin, source }
   }
   return { value: { mode: 'none' }, source: 'policy-default' }
 }
 
-function digestResolution(
-  resolution: DecisionLayerResolution['resolution'],
-  trace: DecisionLayerResolution['trace'],
-): string {
-  return `sha256:${createHash('sha256').update(JSON.stringify({ resolution, trace })).digest('hex')}`
+function jsonSafe<Value>(value: Value): Value {
+  return JSON.parse(JSON.stringify(value)) as Value
 }
 
 /**
@@ -218,7 +212,7 @@ function digestResolution(
  */
 export function resolveDecisionLayer(
   request: DecisionResolutionRequest,
-  policyDefaults: DecisionLayerPolicyDefaults,
+  policyDefaults: DecisionLayerPolicyDefaults
 ): DecisionLayerResolution {
   const parsed = DecisionResolutionRequestSchema.parse({
     ...request,
@@ -231,39 +225,40 @@ export function resolveDecisionLayer(
   const capabilities = resolveCapabilities(parsed, policyDefaults)
   const sandbox = resolveSandbox(parsed, policyDefaults, capabilities.value.capabilityNames)
   const contextPackage = resolveContextPackage(parsed, policyDefaults)
-  const delegationPin = pickPin('delegation', parsed, policyDefaults)
-  const skillsPin = pickPin('skills', parsed, policyDefaults)
+  const delegation = pickPin('delegation', parsed, policyDefaults)
+  const skills = pickPin('skills', parsed, policyDefaults)
 
-  const resolution = {
+  const resolution: ResolutionOutputs = {
     harness: harness.value,
     model: model.value,
-    skills:
-      skillsPin.pin !== undefined
-        ? requirePin<{ skillVersionIds: string[] }>(skillsPin.pin)
-        : { skillVersionIds: [] },
+    skills: skills.pin ?? { skillVersionIds: [] },
     capabilities: capabilities.value,
     runtime: runtimeSelection.runtime,
     sandbox: sandbox.value,
     contextPackage: contextPackage.value,
-    delegation:
-      delegationPin.pin !== undefined
-        ? requirePin<DecisionLayerResolution['resolution']['delegation']>(delegationPin.pin)
-        : { fanOut: 'none' as const, promotion: 'review-required' as const },
+    delegation: delegation.pin ?? {
+      fanOut: 'none',
+      promotion: 'review-required',
+    },
   }
 
-  const trace: DecisionLayerResolution['trace'] = {
-    harness: { source: harness.source, value: harness.value },
-    model: { source: model.source, value: model.value },
-    skills: { source: skillsPin.source, value: resolution.skills },
-    capabilities: { source: capabilities.source, value: capabilities.value },
-    runtime: { source: runtimeSelection.source, value: runtimeSelection.runtime },
-    sandbox: { source: sandbox.source, value: sandbox.value },
-    contextPackage: { source: contextPackage.source, value: contextPackage.value },
-    delegation: { source: delegationPin.source, value: resolution.delegation },
+  const trace = {
+    harness: { source: harness.source, value: jsonSafe(resolution.harness) },
+    model: { source: model.source, value: jsonSafe(resolution.model) },
+    skills: { source: skills.source, value: jsonSafe(resolution.skills) },
+    capabilities: { source: capabilities.source, value: jsonSafe(resolution.capabilities) },
+    runtime: { source: runtimeSelection.source, value: jsonSafe(resolution.runtime) },
+    sandbox: { source: sandbox.source, value: jsonSafe(resolution.sandbox) },
+    contextPackage: { source: contextPackage.source, value: jsonSafe(resolution.contextPackage) },
+    delegation: { source: delegation.source, value: jsonSafe(resolution.delegation) },
   }
 
   const diagnostics: DecisionResolutionDiagnostic[] = []
   if ('withheld' in resolution.model) diagnostics.push(resolution.model.withheld)
+
+  const resolutionDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify({ resolution, trace }))
+    .digest('hex')}`
 
   return DecisionLayerResolutionSchema.parse({
     schemaVersion: 1,
@@ -274,6 +269,6 @@ export function resolveDecisionLayer(
     resolution,
     trace,
     diagnostics,
-    resolutionDigest: digestResolution(resolution, trace),
+    resolutionDigest,
   })
 }

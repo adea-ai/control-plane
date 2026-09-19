@@ -91,7 +91,9 @@ export const DecisionPinsSchema = z
     capabilities: z
       .strictObject({ capabilityNames: z.array(CapabilityNameSchema).max(64) })
       .optional(),
-    runtime: z.strictObject({ runtimeDefinitionId: IdentifierSchemas.runtimeDefinitionId }).optional(),
+    runtime: z
+      .strictObject({ runtimeDefinitionId: IdentifierSchemas.runtimeDefinitionId })
+      .optional(),
     sandbox: SandboxResolutionSchema.optional(),
     contextPackage: z
       .strictObject({
