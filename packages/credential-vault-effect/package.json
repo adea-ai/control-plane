@@ -1,0 +1,34 @@
+{
+  "name": "@control-plane/credential-vault-effect",
+  "version": "0.0.0-poc",
+  "private": true,
+  "description": "M14 #407 Effect-TS proof of concept for the credential-vault lease core. Isolated PoC — not for production use.",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "browser": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "node": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint src",
+    "test": "bun test src/*.test.mjs"
+  },
+  "dependencies": {
+    "@control-plane/contracts": "workspace:*",
+    "@control-plane/credential-vault": "workspace:*",
+    "@control-plane/policy": "workspace:*",
+    "effect": "3.22.2",
+    "zod": "4.6.5"
+  },
+  "engines": {
+    "node": "24.18.0"
+  }
+}
