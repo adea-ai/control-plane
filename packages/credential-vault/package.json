@@ -23,6 +23,7 @@
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "@control-plane/policy": "workspace:*",
+    "effect": "3.22.2",
     "zod": "4.6.5"
   },
   "engines": {
