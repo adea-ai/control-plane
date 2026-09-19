@@ -163,10 +163,7 @@ test('provides one ancestry-aware local acceptance command and a parallel CI gat
   }
   assert.match(workflow, /Foundation Acceptance \/ Gate/)
   assert.match(workflow, /needs: \[core, containers, image-security\]/)
-  assert.match(
-    workflow,
-    /aquasec\/trivy:0\.65\.0@sha256:[0-9a-f]{64} image --exit-code 1/,
-  )
+  assert.match(workflow, /aquasec\/trivy:0\.65\.0@sha256:[0-9a-f]{64} image --exit-code 1/)
   assert.match(workflow, /--format cyclonedx --output \/output\/sbom-/)
   assert.match(workflow, /git fetch --no-tags origin '\+refs\/heads\/\*:refs\/remotes\/origin\/\*'/)
   assert.doesNotMatch(workflow, /Terraform|terraform/)
