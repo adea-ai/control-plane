@@ -125,7 +125,10 @@ Skip any step = lying, not verifying
 ## Evidence contract
 
 - **Inputs:** a completion claim (about any work) that must be verified before it is made.
-- **Allowed mutations:** none — this skill is read-only over the claimed state.
-- **Outputs:** a verdict backed by command output: each claim mapped to a passing verification command, or marked unverified.
-- **Verification:** every claim is checked against real evidence — running commands, reading results, not trusting prior assertions.
-- **Completion guard:** the skill must not allow a completion claim without command evidence; anything unverified is reported as unverified, never assumed.
+- **Safe assumptions:** none — prior passing runs, agent success reports, and "should work" carry zero evidential weight; only fresh command output counts.
+- **Allowed mutations:** none — this skill is read-only over the claimed state; it runs commands and reads output, it does not edit the work.
+- **Outputs:** a verdict backed by evidence — each claim mapped to a verification command and its observed output, or marked unverified.
+- **Verification commands:** the full applicable batch from `.agents/validation.md` (here: `bun run format:check`, `bun run lint`, `bun run type-check`, `bun run build`, `bun run test`) — that file is the canonical owner of what "fully verified" means in this repository.
+- **Failure/skip reporting:** every check that could not run is stated with its exact reason; a skipped check is not a passing check, and partial verification proves nothing.
+- **Cleanup:** none — verification leaves no artifacts; it records only the commands run and their results.
+- **Completion-claim guard:** any check that was not executed is unverified work; a passing claim without the full command output in evidence is forbidden.

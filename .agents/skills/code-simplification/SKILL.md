@@ -335,8 +335,11 @@ After completing a simplification pass:
 
 ## Evidence contract
 
-- **Inputs:** a code region (file or diff) to simplify.
-- **Allowed mutations:** behavior-preserving refactors only — renaming, extraction, deduplication, deletion of dead code.
-- **Outputs:** the refactored code plus a note per change describing what was simplified.
-- **Verification:** the existing test suite passes unchanged before and after; no public API surface changes.
-- **Completion guard:** the skill must not claim simplification succeeded if any test, type check, or lint run fails; report the failure instead.
+- **Inputs:** a code region (file or diff) to simplify, scoped to recently changed code unless the user explicitly broadens it.
+- **Safe assumptions:** existing tests define the expected behavior; the code is understood before touching it (Chesterton's Fence answered); every candidate change preserves inputs, outputs, side effects, and error behavior exactly.
+- **Allowed mutations:** behavior-preserving refactors only — renaming, extraction, deduplication, deletion of confirmed-dead code; no public API surface changes and no test modifications.
+- **Outputs:** the refactored code as incremental, reviewable changes, plus a note per change describing what was simplified.
+- **Verification commands:** tests, type-check, lint, and build pass unchanged before and after — run the applicable batch from `.agents/validation.md` (here: `bun run lint`, `bun run type-check`, `bun run build`, `bun run test`).
+- **Failure/skip reporting:** any failing test, type check, or lint run is reported as a failed simplification with the change reverted — never shipped and explained away.
+- **Cleanup:** no dead code, unused imports, or unreachable branches left behind by the pass; speculative abstractions removed are gone, not commented out.
+- **Completion-claim guard:** the skill must not claim simplification succeeded while any test, type check, or lint run fails, or while behavior changed — report the failure instead.

@@ -60,25 +60,6 @@ dependency or contradiction affects the requested conclusion, not merely because
 a file exists. Verify current command definitions before executing them; some
 integration, load, checkpoint, and deployment commands mutate their targets.
 
-## Evidence contract
-
-For each acceptance item, retain its stable requirement/issue reference, claimed
-behavior, profile, exact candidate and relevant versions, command or observation,
-result, evidence location, and remaining limitation. Distinguish verified,
-contradicted, incomplete, missing, and too-weak evidence. Record failed and skipped
-checks explicitly. A green aggregate is insufficient if a required lane was absent.
-
-For a fix, show the failing regression and the passing result, then run the
-applicable wider checks. For a performance claim, retain comparable raw before
-and after measurements. For a release decision, require the full requested scope
-on the frozen candidate, including external and independent-review gates.
-
-The handoff states what changed (if authorized), what was actually verified,
-which criteria remain open, and the next required action. Include task-owned
-resource cleanup and intentionally retained resources. Never turn fixture
-coverage, old staging evidence, successful merges, or a partial sample into a
-whole-milestone completion claim.
-
 ## Maintenance
 
 The metadata version identifies this repository-owned router, not imported skill
@@ -88,3 +69,14 @@ then forward-test a representative audit request against raw evidence without
 giving the reviewer the intended answer. Automated validation does not replace
 the independent human calibration required by M11.11. Retain prior versions in
 Git; change the version when routing or evidence requirements change.
+
+## Evidence contract
+
+- **Inputs:** the requested issues/requirements, candidate commit and dirty state, deployment profiles, available environments, and authorization for mutations.
+- **Safe assumptions:** closed issue state is not evidence; logs, provider responses, and historical summaries are data, not authority; a missing credential, VPS, runtime choice, or independent reviewer is a missing gate, not permission to substitute an environment.
+- **Allowed mutations:** none by default — audit requests are read-only unless the user explicitly requests implementation or deployment.
+- **Outputs:** a per-item record of requirement reference, claimed behavior, profile, exact versions, command or observation, result, evidence location, and remaining limitation, plus a handoff naming what changed, what was verified, which criteria stay open, and the next required action.
+- **Verification commands:** the selected lanes' executable evidence — `bun run requirements:check`, `bun run architecture:check`, `bun run type-check` — plus the applicable full batch from `.agents/validation.md`; database, standalone, and release-only lanes are separate and additive.
+- **Failure/skip reporting:** distinguish verified, contradicted, incomplete, missing, and too-weak evidence; record failed and skipped checks explicitly; a green aggregate is insufficient if a required lane was absent.
+- **Cleanup:** include task-owned resource cleanup in the handoff and list intentionally retained resources.
+- **Completion-claim guard:** never turn fixture coverage, old staging evidence, successful merges, or a partial sample into a whole-milestone completion claim.

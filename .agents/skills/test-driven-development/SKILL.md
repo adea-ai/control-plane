@@ -402,8 +402,11 @@ After completing any implementation:
 
 ## Evidence contract
 
-- **Inputs:** a behavior change, bug fix, or new logic to implement.
+- **Inputs:** a behavior change, bug fix, or new logic to implement, plus this repository's discovered test commands and conventions.
+- **Safe assumptions:** the suite is green before starting; RED, GREEN, and verification steps use the repository's own discovered commands, never an assumed default like `npm test`.
 - **Allowed mutations:** source code, tests, and test fixtures within the task scope.
-- **Outputs:** a failing test written first, the minimal implementation that passes it, and a green suite.
-- **Verification:** the new test fails before the fix and passes after; the full suite stays green.
-- **Completion guard:** the skill must not claim completion if any test is skipped, stubbed, or deleted to force a pass — report what blocks the green run.
+- **Outputs:** a failing test written first (RED), the minimal implementation that passes it (GREEN), a REFACTOR step with the suite still green — bug fixes include a reproduction test that failed before the fix.
+- **Verification commands:** the repository's focused-test command inside the RED→GREEN loop and its full-suite command before completion; the canonical batch lives in `.agents/validation.md` (here: `bun run lint`, `bun run type-check`, `bun run build`, `bun run test`).
+- **Failure/skip reporting:** a RED test that never failed, a suite green with skipped or disabled tests, or a flaky pass is reported as unverified; "all tests pass" is only claimed with fresh command output.
+- **Cleanup:** no skipped, stubbed, or disabled tests left behind; test state stays isolated, deterministic, and free of secrets.
+- **Completion-claim guard:** the skill must not claim completion if any test is skipped, stubbed, or deleted to force a pass — report what blocks the green run.
