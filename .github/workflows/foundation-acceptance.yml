@@ -89,12 +89,12 @@ jobs:
       - name: Scan for critical and high vulnerabilities
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
-          aquasec/trivy:0.65.0 image --exit-code 1 --ignore-unfixed
+          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436 image --exit-code 1 --ignore-unfixed
           --severity CRITICAL,HIGH control-plane/${{ matrix.target }}:local
       - name: Generate CycloneDX SBOM
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
-          -v "$PWD":/output aquasec/trivy:0.65.0 image
+          -v "$PWD":/output aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436 image
           --format cyclonedx --output /output/sbom-${{ matrix.target }}.json
           control-plane/${{ matrix.target }}:local
       - name: Upload SBOM
