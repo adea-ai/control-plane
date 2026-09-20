@@ -639,7 +639,9 @@ describe('CP1 persistence-profile conformance', () => {
       expect(result.conforms).toBe(true)
       for (const world of worlds.values()) await world.close()
     },
-    180_000
+    // Remote Postgres (Neon preview branches) adds per-database migration
+    // latency; the matrix opens three isolated worlds, so allow ten minutes.
+    600_000
   )
 
   test('case scripts stay digest-stable for the conformance ledger', () => {
