@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.0...workspace-v1.31.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **m189:** run the Postgres persistence-profile conformance matrix in CI ([#605](https://github.com/adea-ai/control-plane/issues/605)) ([f1a7f21](https://github.com/adea-ai/control-plane/commit/f1a7f219b1adff63c359de9eeed036481c02afb3))
+
 ## [1.31.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.7...workspace-v1.31.0) (2026-09-20)
 
 
