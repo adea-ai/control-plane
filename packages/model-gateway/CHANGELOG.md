@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.2.0...model-gateway-v1.2.1) (2026-09-20)
+
+
+### Maintenance
+
+* **m405:** consolidate the duplicated withTimeout race into domain ([#609](https://github.com/adea-ai/control-plane/issues/609)) ([b6af3d5](https://github.com/adea-ai/control-plane/commit/b6af3d5d60546bf094ff015560469bb987b6e5b5))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.1.4...model-gateway-v1.2.0) (2026-09-20)
 
 
