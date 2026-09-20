@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "comment": "M13 #405 regression budgets. Ceilings are reviewed ceilings, not targets — changes are a reviewable diff. Lane values are wall-clock seconds measured by scripts/run-bun-test-group.mjs on the CI runner.",
+  "lanes": {
+    "unit": { "ceilingSeconds": 300, "baselineSeconds": 256 },
+    "e2e": { "ceilingSeconds": 120, "baselineSeconds": 85 },
+    "smoke": { "ceilingSeconds": 90, "baselineSeconds": 68 }
+  },
+  "dist": {
+    "totalMbCeiling": 12,
+    "baselineMb": 9.8,
+    "comment": "Sum of packages/*/dist + apps/*/dist, checked by scripts/check-budgets.mjs dist after a full build."
+  },
+  "dependencies": {
+    "externalPackageCeiling": 285,
+    "baselineCount": 274,
+    "comment": "Unique external package@version pairs from `bun pm ls --all`; #405 counted 274 at c37de22 with 6 known duplicated-major transitive pairs."
+  },
+  "startup": {
+    "localAllInOneReadySecondsCeiling": 45,
+    "baselineSeconds": 29.1,
+    "comment": "Cold start to /ready for apps/local-control-plane on a developer host; measured by the documented probe, not wired into CI."
+  },
+  "rss": {
+    "localAllInOnePeakMbCeiling": 256,
+    "baselineMb": 176,
+    "comment": "Main-process peak RSS at idle after ready; measured by the documented probe, not wired into CI. Re-evaluate sizing whenever marketplace artifact budgets change (#194 rule)."
+  }
+}

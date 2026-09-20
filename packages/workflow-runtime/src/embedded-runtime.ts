@@ -8,7 +8,11 @@ import {
   ExecutionCancellationCommandSchema,
   type ExecutionCancellationCommand,
 } from '@control-plane/contracts'
-import { InteractionRequestSchema, type InteractionRequest } from '@control-plane/domain'
+import {
+  computeBackoffDelayMs,
+  InteractionRequestSchema,
+  type InteractionRequest,
+} from '@control-plane/domain'
 import {
   ExecutionWorkflowInputSchema,
   type ExecutionWorkflowInput,
@@ -207,7 +211,11 @@ export class EmbeddedWorkflowRuntime {
     } catch (error) {
       const interrupted = error instanceof WorkflowRunInterrupted || this.#stopping
       const retriable = job.attempt < this.#maximumAttempts
-      const backoffMs = this.#retryDelayMs * 2 ** Math.max(0, job.attempt - 1)
+      const backoffMs = computeBackoffDelayMs({
+        baseDelayMs: this.#retryDelayMs,
+        attempt: job.attempt - 1,
+        maxDelayMs: 30_000,
+      })
       await this.#store
         .fail({
           workflowKey: job.workflowKey,
@@ -217,9 +225,7 @@ export class EmbeddedWorkflowRuntime {
           ...(retriable
             ? {
                 retryAt: new Date(
-                  interrupted
-                    ? Date.parse(this.#now())
-                    : Date.parse(this.#now()) + Math.min(backoffMs, 30_000)
+                  interrupted ? Date.parse(this.#now()) : Date.parse(this.#now()) + backoffMs
                 ).toISOString(),
               }
             : {}),

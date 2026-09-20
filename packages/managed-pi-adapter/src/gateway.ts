@@ -14,6 +14,9 @@ import {
   type GatewayInventoryEnvelope,
   type GatewayProgressEnvelope,
   type GatewayResultEnvelope,
+  GrantReferenceSchema,
+  RuntimeErrorDataSchema,
+  type RuntimeErrorData,
 } from '@control-plane/runtime-gateway-protocol'
 import {
   RuntimeAdapterError,
@@ -40,30 +43,6 @@ import {
   type ManagedPiStartCommand,
   type ManagedPiStatus,
 } from './index.js'
-
-const GrantReferenceSchema = z
-  .string()
-  .min(16)
-  .max(128)
-  .regex(/^grant:[A-Za-z0-9._:-]+$/)
-const RuntimeErrorDataSchema = z
-  .object({
-    code: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
-    classification: z.enum([
-      'validation',
-      'unsupported',
-      'unavailable',
-      'conflict',
-      'timeout',
-      'cancelled',
-      'runtime',
-      'infrastructure',
-      'unknown',
-    ]),
-    message: z.string().min(1).max(4096),
-    retryable: z.boolean(),
-  })
-  .strict()
 
 export type ManagedPiGatewayConnectionState = 'online' | 'offline' | 'revoked'
 export type LocalProjectGrantState = 'granted' | 'missing' | 'revoked'
@@ -921,7 +900,7 @@ function successResult(
 function failureResult(
   command: GatewayCommandEnvelope,
   code: string,
-  classification: z.output<typeof RuntimeErrorDataSchema>['classification'],
+  classification: RuntimeErrorData['classification'],
   retryable: boolean,
   completedAt: string
 ): GatewayResultEnvelope {
@@ -945,9 +924,9 @@ function failureResult(
 
 function runtimeError(
   code: string,
-  classification: z.output<typeof RuntimeErrorDataSchema>['classification'],
+  classification: RuntimeErrorData['classification'],
   retryable: boolean
-): z.output<typeof RuntimeErrorDataSchema> {
+): RuntimeErrorData {
   return RuntimeErrorDataSchema.parse({ code, classification, message: code, retryable })
 }
 

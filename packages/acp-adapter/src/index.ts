@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { computeBackoffDelayMs } from '@control-plane/domain'
 import {
   RuntimeAdapterError,
   RuntimeAdapterInspectionSchema,
@@ -1002,10 +1003,13 @@ export class AcpDriver implements RuntimeAdapter {
 
     const schedule = (): void => {
       if (this.#observationRepairs.get(nativeSessionId) !== repair) return
-      const delayMs = Math.min(
-        30_000,
-        Math.max(20, this.#requestTimeoutMs * 2 ** Math.min(repair.attempt, 10))
-      )
+      const delayMs = computeBackoffDelayMs({
+        baseDelayMs: this.#requestTimeoutMs,
+        attempt: repair.attempt,
+        minDelayMs: 20,
+        maxDelayMs: 30_000,
+        maxExponent: 10,
+      })
       const timer = setTimeout(() => {
         void (async () => {
           if (this.#observationRepairs.get(nativeSessionId) !== repair) return

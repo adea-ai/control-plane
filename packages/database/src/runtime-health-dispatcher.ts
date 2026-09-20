@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { computeBackoffDelayMs } from '@control-plane/domain'
 import {
   RuntimeAvailabilityChangeSchema,
   type RuntimeAvailabilityChange,
@@ -126,7 +127,12 @@ export class PostgresRuntimeHealthEventDispatcher {
               ? null
               : new Date(
                   attemptedAt.getTime() +
-                    Math.min(60_000, this.#baseDelayMs * 2 ** Math.min(row.attempts, 16))
+                    computeBackoffDelayMs({
+                      baseDelayMs: this.#baseDelayMs,
+                      attempt: row.attempts,
+                      maxDelayMs: 60_000,
+                      maxExponent: 16,
+                    })
                 ),
         })
         .where(
