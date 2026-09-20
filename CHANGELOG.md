@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.7...workspace-v1.31.0) (2026-09-20)
+
+
+### Features
+
+* **m405:** executable startup and RSS budget probe ([#602](https://github.com/adea-ai/control-plane/issues/602)) ([48d611b](https://github.com/adea-ai/control-plane/commit/48d611b0d2b68539e726635344de9cf5c8b1cc0d))
+
 ## [1.30.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.6...workspace-v1.30.7) (2026-09-20)
 
 
