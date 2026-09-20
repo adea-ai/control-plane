@@ -3,7 +3,7 @@ name: Foundation Acceptance
 on:
   pull_request:
     branches: [main]
-    types: [ready_for_review]
+    types: [ready_for_review, synchronize]
   workflow_dispatch:
 
 permissions:

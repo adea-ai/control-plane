@@ -122,9 +122,14 @@ Production activation is a release operation, not a scale-only operation. Before
 the candidate commit must be merged to `main` and tagged by the release flow; production-specific secrets and service
 identity must exist; the production Neon migration must pass with migration-only authority; Restate
 must have its production volume, stable identity key, and worker registration; and R2 isolation,
-health, smoke, observability, and rollback gates must pass. Connect application sources only as an
-explicit part of that activation. On rollback, stop new admission, preserve provider state, return
-to no active application deployments, and disconnect production sources again.
+health, smoke, observability, and rollback gates must pass. The container-promotion workflow connects
+each application service only to its scan-attested public GHCR digest and verifies the Railway deployment
+record before activation evidence is accepted. GHCR creates packages as private by default: bootstrap
+`control-plane-control-api` and `control-plane-workflow-worker` with a non-deploying manual workflow
+run, then an organization package administrator must make both packages public before the first
+production promotion. The deployment job proves anonymous digest retrieval before changing Railway. On rollback, stop new admission, preserve provider
+state, return to the prior attested digest (or no active application deployments), and never request a
+fresh build from the same source as a substitute for the recorded artifact.
 
 ## Managed-cloud release and rollback
 
@@ -134,8 +139,8 @@ exercise or measured production RTO. M11 must measure or explicitly revise these
 production release candidate.
 
 1. Require M9.7–M9.13 implementation/configuration gates to be complete.
-2. Build/test/scan the complete monorepo using the repository-owned Railway/container build path.
-3. Record exact commit, service versions, Restate version, schema/contracts, and repository-owned Railway configuration.
+2. Build/test the complete monorepo, then use `.github/workflows/container-promotion.yml` to build each production image once, scan it, publish it, attest it, and deploy its immutable GHCR digest.
+3. Record exact commit, image references and digests, attestations, SBOM artifacts, service versions, Restate version, schema/contracts, and repository-owned Railway configuration.
 4. Validate required Railway variables and external dependency references without exposing secret values.
 5. Run explicit Neon migrations using separately scoped migration authority.
 6. Deploy required Railway services and the accepted Restate topology.

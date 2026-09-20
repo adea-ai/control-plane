@@ -13,6 +13,10 @@ export default defineRailway((context) => {
   // branch; see infrastructure/railway/environment.json.
   const sourceBranch = 'main'
   const desiredReplicas = 1
+  // Production image sources are release outputs, not source builds. The
+  // container-promotion workflow sets each service to its scan-attested GHCR
+  // digest; leaving source absent here prevents IaC reconciliation from
+  // replacing that immutable digest with a repository build.
   const applicationSource = production ? undefined : github(repository, { branch: sourceBranch })
   const restateData = volume('restate-data', { sizeMB: 500, region: 'ams' })
 

@@ -3,7 +3,7 @@ name: M9 Production Readiness
 on:
   pull_request:
     branches: [main]
-    types: [ready_for_review]
+    types: [ready_for_review, synchronize]
   schedule:
     - cron: '17 7 * * 3'
   workflow_dispatch:

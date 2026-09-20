@@ -166,6 +166,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   ])
   assert.deepEqual(smoke, [
     'tests/agent-skill-library.test.mjs',
+    'tests/container-promotion.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/m11-acp-installation.test.mjs',
@@ -377,6 +378,21 @@ test('emits the required gate contexts and documents the direct-workflow policy'
   assert.match(contributing, /Draft pull requests do not start validation/)
 })
 
+test('reruns every required pull-request gate after ready-PR updates', async () => {
+  const workflows = await Promise.all(
+    [
+      'foundation-acceptance.yml',
+      'm9-production-readiness.yml',
+      'm10-operability.yml',
+      'review-policy.yml',
+    ].map((name) => readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'))
+  )
+
+  for (const workflow of workflows) {
+    assert.match(workflow, /types: \[ready_for_review, synchronize\]/)
+  }
+})
+
 test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {
   const validation = await readFile(
     new URL('../.github/workflows/validation.yml', import.meta.url),
@@ -436,6 +452,62 @@ test('documents required, public-repository, and future CI gates', async () => {
   assert.match(documentation, /migration/i)
   assert.match(documentation, /E2E/i)
   assert.match(documentation, /deploy/i)
+})
+
+test('promotes scan-attested container digests to Railway production', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/container-promotion.yml', import.meta.url),
+    'utf8'
+  )
+  const promotionClient = await readFile(
+    new URL('../scripts/promote-railway-images.mjs', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(workflow, /release:\n\s+types: \[published\]/)
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /packages: write/)
+  assert.match(workflow, /attestations: write/)
+  assert.match(workflow, /id-token: write/)
+  assert.match(workflow, /control-api/)
+  assert.match(workflow, /workflow-worker/)
+  assert.match(workflow, /Scan the immutable image/)
+  assert.match(workflow, /docker push/)
+  assert.ok(
+    workflow.indexOf('Scan the immutable image') < workflow.indexOf('docker push'),
+    'the image must pass Trivy before it is published'
+  )
+  assert.match(
+    workflow,
+    /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661/
+  )
+  assert.match(workflow, /RAILWAY_PRODUCTION_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
+  assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
+  assert.match(workflow, /startsWith\(github\.event\.release\.tag_name, 'workspace-v'\)/)
+  assert.match(workflow, /test "\$PRERELEASE" = false/)
+  assert.match(workflow, /\^workspace-v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
+  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA"/)
+  assert.match(
+    workflow,
+    /RELEASE_NAME: \$\{\{ github\.event\.release\.tag_name \|\| github\.ref_name \}\}/
+  )
+  assert.match(workflow, /--arg release "\$RELEASE_NAME"/)
+  assert.match(workflow, /bun scripts\/promote-railway-images\.mjs promotion-\*\.json/)
+  assert.doesNotMatch(workflow, /packages\/container\/.*visibility=public/)
+  assert.doesNotMatch(workflow, /npm install --global @railway\/cli/)
+  assert.match(promotionClient, /Bun\.spawn\(\['docker', 'pull', reference\]/)
+  assert.match(promotionClient, /Project-Access-Token/)
+  assert.match(promotionClient, /ServiceInstanceUpdateInput/)
+  assert.match(promotionClient, /deploymentRollback/)
+  assert.match(promotionClient, /deploymentRemove/)
+  assert.match(promotionClient, /canRollback/)
+  assert.match(promotionClient, /assertMutationSucceeded/)
+  assert.match(promotionClient, /reconcilePriorState/)
+  assert.match(promotionClient, /knownDeploymentIds/)
+  assert.match(promotionClient, /stableChecks >= 3/)
+  assert.match(promotionClient, /deploymentStopped === false/)
+  assert.match(workflow, /timeout-minutes: 60/)
+  assert.match(workflow, /no-cache: true/)
 })
 
 test('retains immutable load, recovery, and container evidence artifacts', async () => {

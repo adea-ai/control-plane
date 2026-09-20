@@ -185,8 +185,8 @@ M10 adds Local and Hosted `SecretsProvider` adapters without changing secret-ref
 
 The accepted managed-cloud release flow is:
 
-1. Build/test/scan reproducible service images from the complete workspace.
-2. Validate repository-owned/reproducible Railway service configuration and exact image/application revision.
+1. Build each release image once from the complete workspace, scan that image, generate its SBOM, publish it to GHCR, and attest the resulting immutable registry digest.
+2. Configure Railway with that exact `image@sha256:…` reference and require its successful deployment record to report the same source reference and digest; a same-source rebuild is not equivalent promotion evidence.
 3. Validate required Railway variables and external dependency configuration without exposing values.
 4. Run the explicit Neon migration step with separately scoped migration authority.
 5. Deploy the required service topology and Restate runtime.
