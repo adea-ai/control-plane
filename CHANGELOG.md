@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.5...workspace-v1.30.6) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** split Railway mutation credentials ([#599](https://github.com/adea-ai/control-plane/issues/599)) ([aa15f7b](https://github.com/adea-ai/control-plane/commit/aa15f7b9700bcf37806b40fbdd1587cb3a7d7a7a))
+
 ## [1.30.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.4...workspace-v1.30.5) (2026-09-20)
 
 
