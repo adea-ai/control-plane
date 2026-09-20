@@ -33,14 +33,15 @@ jobs:
 
       - name: Require a final release from main
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PRERELEASE: ${{ github.event.release.prerelease || false }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF_TYPE" = tag
           test "$PRERELEASE" = false
           [[ "$GITHUB_REF_NAME" =~ ^workspace-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
-          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$GITHUB_DEFAULT_BRANCH"
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
 
   build-scan-publish:
     name: Promote ${{ matrix.target }}
