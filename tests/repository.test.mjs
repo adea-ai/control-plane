@@ -166,6 +166,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   ])
   assert.deepEqual(smoke, [
     'tests/agent-skill-library.test.mjs',
+    'tests/container-promotion.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/m11-acp-installation.test.mjs',
@@ -458,6 +459,10 @@ test('promotes scan-attested container digests to Railway production', async () 
     new URL('../.github/workflows/container-promotion.yml', import.meta.url),
     'utf8'
   )
+  const promotionClient = await readFile(
+    new URL('../scripts/promote-railway-images.mjs', import.meta.url),
+    'utf8'
+  )
 
   assert.match(workflow, /release:\n\s+types: \[published\]/)
   assert.match(workflow, /workflow_dispatch:/)
@@ -476,7 +481,7 @@ test('promotes scan-attested container digests to Railway production', async () 
     workflow,
     /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661/
   )
-  assert.match(workflow, /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
+  assert.match(workflow, /RAILWAY_PRODUCTION_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
   assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
   assert.match(workflow, /startsWith\(github\.event\.release\.tag_name, 'workspace-v'\)/)
   assert.match(workflow, /test "\$PRERELEASE" = false/)
@@ -487,19 +492,18 @@ test('promotes scan-attested container digests to Railway production', async () 
     /RELEASE_NAME: \$\{\{ github\.event\.release\.tag_name \|\| github\.ref_name \}\}/
   )
   assert.match(workflow, /--arg release "\$RELEASE_NAME"/)
-  assert.match(workflow, /docker pull "\$EXPECTED_IMAGE"/)
+  assert.match(workflow, /bun scripts\/promote-railway-images\.mjs promotion-\*\.json/)
   assert.doesNotMatch(workflow, /packages\/container\/.*visibility=public/)
   assert.doesNotMatch(workflow, /npm install --global @railway\/cli/)
-  assert.match(workflow, /Project-Access-Token: \$RAILWAY_TOKEN/)
-  assert.match(workflow, /ServiceInstanceUpdateInput/)
-  assert.match(workflow, /input: \{source: \{image: \$image\}\}/)
-  assert.match(workflow, /deploymentRollback/)
-  assert.match(workflow, /PRIOR_DEPLOYMENTS/)
-  assert.match(workflow, /PRIOR_SOURCES/)
-  assert.match(workflow, /Source restoration failed/)
-  assert.match(workflow, /\$IMAGE@\$DIGEST/)
-  assert.match(workflow, /DeploymentListInput/)
-  assert.match(workflow, /DEPLOYED_IMAGE.*EXPECTED_IMAGE/)
+  assert.match(promotionClient, /Bun\.spawn\(\['docker', 'pull', reference\]/)
+  assert.match(promotionClient, /Project-Access-Token/)
+  assert.match(promotionClient, /ServiceInstanceUpdateInput/)
+  assert.match(promotionClient, /deploymentRollback/)
+  assert.match(promotionClient, /deploymentRemove/)
+  assert.match(promotionClient, /canRollback/)
+  assert.match(promotionClient, /assertMutationSucceeded/)
+  assert.match(promotionClient, /waitForPriorState/)
+  assert.match(promotionClient, /deploymentStopped === false/)
 })
 
 test('retains immutable load, recovery, and container evidence artifacts', async () => {

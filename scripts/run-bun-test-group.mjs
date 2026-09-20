@@ -29,6 +29,7 @@ const repositoryGroups = {
   ],
   smoke: [
     'tests/agent-skill-library.test.mjs',
+    'tests/container-promotion.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/m11-acp-installation.test.mjs',
