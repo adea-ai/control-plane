@@ -102,6 +102,9 @@ describe('container promotion', () => {
           throw new Error('response lost after commit')
         }
       },
+      async deploySource(target) {
+        calls.push(['deploy', target])
+      },
       async rollbackDeployment(target, id) {
         calls.push(['rollback', target, id])
         rolledBack.add(target)
@@ -131,6 +134,7 @@ describe('container promotion', () => {
       ]
     )
     assert(calls.some(([operation, target]) => operation === 'update' && target === 'control-api'))
+    assert(calls.some(([operation, target]) => operation === 'deploy' && target === 'control-api'))
     assert(
       calls.some(([operation, target]) => operation === 'update' && target === 'workflow-worker')
     )
@@ -171,6 +175,9 @@ describe('container promotion', () => {
         if (target === 'workflow-worker' && source.image !== null) {
           throw new Error('second service failed')
         }
+      },
+      async deploySource(target) {
+        calls.push(['deploy', target])
       },
       async rollbackDeployment(target, id) {
         calls.push(['rollback', target, id])
