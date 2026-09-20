@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.8.1...hosted-control-plane-v1.9.0) (2026-09-20)
+
+
+### Features
+
+* artifacts-retention ([#559](https://github.com/adea-ai/control-plane/issues/559)) ([8fb56b9](https://github.com/adea-ai/control-plane/commit/8fb56b9d4aab0729bad5b1e3da3cfdbf817836b9))
+* **hosted:** make the retention sweep cadence configurable ([#562](https://github.com/adea-ai/control-plane/issues/562)) ([fae3fdc](https://github.com/adea-ai/control-plane/commit/fae3fdc081a7f77caa2bdf684691af6d5884a6e8))
+
+
+### Bug Fixes
+
+* **control-api:** wire database readiness and the retention sweep into the cloud composition ([#566](https://github.com/adea-ai/control-plane/issues/566)) ([a692613](https://github.com/adea-ai/control-plane/commit/a692613ffc5c3a45f4d24c2a23b2fdb3f46a537d))
+* **hosted:** make /ready fail closed when the database is unreachable ([#565](https://github.com/adea-ai/control-plane/issues/565)) ([1005ac0](https://github.com/adea-ai/control-plane/commit/1005ac00b5398fcd817bddf66b999ad0d8ab6e12))
+
+
+### Tests
+
+* m194-artifact-retention ([#561](https://github.com/adea-ai/control-plane/issues/561)) ([5ffc778](https://github.com/adea-ai/control-plane/commit/5ffc778642aa47733b884764ae54b2bb56a68689))
+* m194-rpo-rto ([#539](https://github.com/adea-ai/control-plane/issues/539)) ([9cf1598](https://github.com/adea-ai/control-plane/commit/9cf15982a25f8d7f95c1d99dbae1e989b637989e))
+
+
+### Maintenance
+
+* consolidate the reconciliation scheduler into packages/deployment ([#568](https://github.com/adea-ai/control-plane/issues/568)) ([5e06e27](https://github.com/adea-ai/control-plane/commit/5e06e270b796a35efc434d8d20e05a56126e6971))
+* toolchain-alignment ([#564](https://github.com/adea-ai/control-plane/issues/564)) ([d30ea64](https://github.com/adea-ai/control-plane/commit/d30ea64356f0aa49d654db0cc69d7618df3ef5f8))
+
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.8.0...hosted-control-plane-v1.8.1) (2026-09-17)
 
 
