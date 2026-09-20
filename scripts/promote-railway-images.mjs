@@ -19,8 +19,11 @@ const SOURCE_QUERY = `query($serviceId: String!, $environmentId: String!) {
     source { image repo }
   }
 }`
-const UPDATE_MUTATION = `mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
-  serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+const CONNECT_MUTATION = `mutation($id: String!, $input: ServiceConnectInput!) {
+  serviceConnect(id: $id, input: $input) { id }
+}`
+const DISCONNECT_MUTATION = `mutation($id: String!) {
+  serviceDisconnect(id: $id) { id }
 }`
 const DEPLOY_MUTATION = `mutation($serviceId: String!, $environmentId: String!) {
   serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
@@ -360,13 +363,19 @@ export function createRailwayClient({ token, fetchImpl = fetch }) {
       return data.deployments.edges.map(({ node }) => node)
     },
     async updateSource(target, source) {
-      const { serviceId, environmentId } = variablesForTarget(target)
-      const data = await request(UPDATE_MUTATION, {
-        serviceId,
-        environmentId,
-        input: { source },
-      })
-      assertMutationSucceeded(data, 'serviceInstanceUpdate')
+      const { serviceId } = variablesForTarget(target)
+      if (source.image === null && source.repo === null) {
+        const data = await request(DISCONNECT_MUTATION, { id: serviceId })
+        if (data.serviceDisconnect?.id !== serviceId) {
+          throw new Error('Railway mutation serviceDisconnect returned the wrong service')
+        }
+        return
+      }
+
+      const data = await request(CONNECT_MUTATION, { id: serviceId, input: source })
+      if (data.serviceConnect?.id !== serviceId) {
+        throw new Error('Railway mutation serviceConnect returned the wrong service')
+      }
     },
     async deploySource(target) {
       const { serviceId, environmentId } = variablesForTarget(target)
