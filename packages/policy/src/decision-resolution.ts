@@ -85,7 +85,12 @@ function resolveRuntime(
     const match = request.availableRuntimes.find(
       (candidate) => candidate.runtimeDefinitionId === pin.runtimeDefinitionId
     )
-    if (match === undefined) throw new DecisionResolutionDeniedError('UNSUPPORTED_RUNTIME_PIN')
+    if (
+      match === undefined ||
+      !request.requiredCapabilities.every((capability) => match.capabilities.includes(capability))
+    ) {
+      throw new DecisionResolutionDeniedError('UNSUPPORTED_RUNTIME_PIN')
+    }
     return { runtime: match, source }
   }
 
@@ -95,8 +100,7 @@ function resolveRuntime(
   const preferred =
     capable.find((candidate) => candidate.kind === 'local') ??
     capable.find((candidate) => candidate.kind === 'self-hosted') ??
-    capable.find((candidate) => candidate.kind === 'cloud') ??
-    request.availableRuntimes[0]
+    capable.find((candidate) => candidate.kind === 'cloud')
   if (preferred === undefined) throw new DecisionResolutionDeniedError('UNSUPPORTED_RUNTIME_PIN')
   return { runtime: preferred, source: 'policy-default' }
 }
@@ -214,15 +218,15 @@ export function resolveDecisionLayer(
   request: DecisionResolutionRequest,
   policyDefaults: DecisionLayerPolicyDefaults
 ): DecisionLayerResolution {
-  const parsed = DecisionResolutionRequestSchema.parse({
-    ...request,
-    contractVersion: DECISION_RESOLUTION_CONTRACT_VERSION,
-  })
+  const parsed = DecisionResolutionRequestSchema.parse(request)
+  if (parsed.contractVersion.major !== DECISION_RESOLUTION_CONTRACT_VERSION.major) {
+    throw new Error('UNSUPPORTED_DECISION_RESOLUTION_CONTRACT_VERSION')
+  }
 
+  const capabilities = resolveCapabilities(parsed, policyDefaults)
   const runtimeSelection = resolveRuntime(parsed, policyDefaults)
   const harness = resolveHarness(parsed, policyDefaults, runtimeSelection.runtime)
   const model = resolveModel(parsed, policyDefaults)
-  const capabilities = resolveCapabilities(parsed, policyDefaults)
   const sandbox = resolveSandbox(parsed, policyDefaults, capabilities.value.capabilityNames)
   const contextPackage = resolveContextPackage(parsed, policyDefaults)
   const delegation = pickPin('delegation', parsed, policyDefaults)

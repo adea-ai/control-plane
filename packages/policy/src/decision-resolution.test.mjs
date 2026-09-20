@@ -128,6 +128,31 @@ describe('decision-layer resolution (#558)', () => {
     )
   })
 
+  test('runtime pin missing a required capability denies UNSUPPORTED_RUNTIME_PIN', () => {
+    expectDenied('UNSUPPORTED_RUNTIME_PIN', () =>
+      resolveDecisionLayer(
+        {
+          ...baseRequest(),
+          requiredCapabilities: ['shell.exec', 'fs.read'],
+          explicitPins: { runtime: { runtimeDefinitionId: ids.runtimeRemote } },
+        },
+        {}
+      )
+    )
+  })
+
+  test('automatic runtime selection denies when no runtime supplies every required capability', () => {
+    expectDenied('UNSUPPORTED_RUNTIME_PIN', () =>
+      resolveDecisionLayer(
+        {
+          ...baseRequest(),
+          requiredCapabilities: ['shell.exec', 'fs.read', 'net.denied'],
+        },
+        {}
+      )
+    )
+  })
+
   test('harness pin unavailable on the selected runtime denies', () => {
     // claude-code exists only on the local runtime; pin the remote runtime.
     expectDenied('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME', () =>
@@ -184,6 +209,12 @@ describe('decision-layer resolution (#558)', () => {
     expectDenied('CAPABILITY_BEYOND_GRANT', () =>
       resolveDecisionLayer({ ...baseRequest(), requiredCapabilities: ['net.free'] }, {})
     )
+  })
+
+  test('rejects unsupported decision-resolution contract major versions', () => {
+    expect(() =>
+      resolveDecisionLayer({ ...baseRequest(), contractVersion: { major: 2, minor: 0 } }, {})
+    ).toThrow('UNSUPPORTED_DECISION_RESOLUTION_CONTRACT_VERSION')
   })
 
   test('context package pin requires the id; resolutions are deterministic per input', () => {
