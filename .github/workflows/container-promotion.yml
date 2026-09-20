@@ -21,6 +21,7 @@ concurrency:
 jobs:
   candidate:
     name: Validate tagged candidate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'workspace-v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -37,6 +38,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF_TYPE" = tag
           test "$PRERELEASE" = false
+          [[ "$GITHUB_REF_NAME" =~ ^workspace-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
           git merge-base --is-ancestor "$GITHUB_SHA" "origin/$GITHUB_DEFAULT_BRANCH"
 

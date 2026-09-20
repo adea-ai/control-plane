@@ -478,7 +478,9 @@ test('promotes scan-attested container digests to Railway production', async () 
   )
   assert.match(workflow, /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
   assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
+  assert.match(workflow, /startsWith\(github\.event\.release\.tag_name, 'workspace-v'\)/)
   assert.match(workflow, /test "\$PRERELEASE" = false/)
+  assert.match(workflow, /\^workspace-v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
   assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA"/)
   assert.match(
     workflow,
