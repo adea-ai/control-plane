@@ -1,4 +1,5 @@
 export * from './backoff.js'
+export * from './with-timeout.js'
 export * from './catalog-models.js'
 export * from './catalog-resolver.js'
 export * from './command-inbox.js'

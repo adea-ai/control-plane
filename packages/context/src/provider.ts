@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { withTimeout } from '@control-plane/domain'
 import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
@@ -249,7 +250,8 @@ export class ContextProviderResolver {
         }
         const contributions = await withTimeout(
           provider.retrieve(request),
-          request.policy.maximumLatencyMs
+          request.policy.maximumLatencyMs,
+          () => new ContextProviderResolutionError('PROVIDER_UNAVAILABLE')
         )
         const normalized = this.#validate(provider, request, contributions)
         if (
@@ -612,24 +614,4 @@ function empty(
 
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
-}
-
-async function withTimeout<Value>(
-  promise: Promise<Value>,
-  maximumLatencyMs: number
-): Promise<Value> {
-  let timeout: NodeJS.Timeout | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new ContextProviderResolutionError('PROVIDER_UNAVAILABLE')),
-          maximumLatencyMs
-        )
-      }),
-    ])
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
 }
