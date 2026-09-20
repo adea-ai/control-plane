@@ -196,11 +196,43 @@ describe('M11.1 requirements ledger', () => {
             state: 'OPEN',
             milestone: { title: 'M12: Cross-Product Integration & Release' },
           },
+          {
+            number: 197,
+            state: 'OPEN',
+            milestone: { title: 'M11: Feature Completion & Production Audit' },
+          },
         ],
         [192]
       )
     ).toThrow(
       'Gap issues must be open and assigned to M11: #188 (CLOSED, M11: Feature Completion & Production Audit), #194 (OPEN, M12: Cross-Product Integration & Release), #192 (CLOSED, M11: Feature Completion & Production Audit)'
+    )
+  })
+
+  test('keeps the final audit gate open while ledger gaps remain', () => {
+    const ledgerWithGap = {
+      sources: [],
+      deploymentProfiles: [],
+      requirements: [{ gap: { issue: 188 } }],
+      priorIssueInventory: [],
+      priorMilestoneAudits: [],
+    }
+
+    expect(() =>
+      refreshPriorMilestoneAudits(ledgerWithGap, [
+        {
+          number: 188,
+          state: 'OPEN',
+          milestone: { title: 'M11: Feature Completion & Production Audit' },
+        },
+        {
+          number: 197,
+          state: 'CLOSED',
+          milestone: { title: 'M11: Feature Completion & Production Audit' },
+        },
+      ])
+    ).toThrow(
+      'Gap issues must be open and assigned to M11: #197 (CLOSED, M11: Feature Completion & Production Audit)'
     )
   })
 

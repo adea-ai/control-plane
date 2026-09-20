@@ -284,6 +284,7 @@ export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues 
       .filter((issue) => issue !== undefined),
     ...additionalGapIssues,
   ]
+  if (gapIssues.length > 0) gapIssues.push(197)
   const invalidGapIssues = [...new Set(gapIssues)].flatMap((issueNumber) => {
     const issue = issueByNumber.get(issueNumber)
     if (issue?.state === 'OPEN' && (issue.milestone?.title ?? '').startsWith('M11:')) return []
