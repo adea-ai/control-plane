@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.2...workspace-v1.30.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** trigger Railway image deployments ([#591](https://github.com/adea-ai/control-plane/issues/591)) ([8e7ee64](https://github.com/adea-ai/control-plane/commit/8e7ee64ef1acd4404ae87aafc76a85b129cf1237))
+
 ## [1.30.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.1...workspace-v1.30.2) (2026-09-20)
 
 
