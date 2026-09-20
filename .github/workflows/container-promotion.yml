@@ -1,0 +1,202 @@
+name: Container Promotion
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the promoted digests to Railway production
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-promotion-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-scan-publish:
+    name: Promote ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [control-api, workflow-worker]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}
+      REF: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}:${{ github.sha }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout the release revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the release image once
+        run: >-
+          docker buildx bake -f infrastructure/containers/docker-bake.hcl
+          "$TARGET" --set "$TARGET.platform=linux/amd64"
+          --set "$TARGET.tags=$REF" --load
+
+      - name: Scan the immutable image
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH "$REF"
+
+      - name: Generate the CycloneDX SBOM
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD":/output
+          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          image --format cyclonedx --output "/output/sbom-$TARGET.json" "$REF"
+
+      - name: Publish the scanned image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUSH_OUTPUT="$(docker push "$REF")"
+          printf '%s\n' "$PUSH_OUTPUT"
+          DIGEST="$(printf '%s\n' "$PUSH_OUTPUT" | sed -n 's/^digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
+          test -n "$DIGEST"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg target "$TARGET" \
+            --arg image "$IMAGE" \
+            --arg digest "$DIGEST" \
+            --arg sourceSha "$GITHUB_SHA" \
+            --arg release "${{ github.event.release.tag_name || github.ref_name }}" \
+            '{target: $target, image: $image, digest: $digest, sourceSha: $sourceSha, release: $release}' \
+            > "promotion-$TARGET.json"
+
+      - name: Make the release image available to Railway
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh api --method PATCH
+          "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/control-plane-${TARGET}"
+          -f visibility=public
+
+      - name: Attest the published image digest
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload promotion evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: promotion-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            promotion-${{ matrix.target }}.json
+            sbom-${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy-production:
+    name: Deploy attested digests
+    if: github.event_name == 'release' || inputs.deploy
+    needs: [build-scan-publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: control-plane / production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+      RAILWAY_PROJECT_ID: 18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f
+      RAILWAY_ENVIRONMENT_ID: 52f5b0ac-2af0-4792-aa56-30d80e5db31e
+      RAILWAY_CALLER: workflow:container-promotion
+      RAILWAY_AGENT_SESSION: container-promotion-${{ github.run_id }}
+    steps:
+      - name: Download promotion evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: promotion-*-${{ github.sha }}
+          merge-multiple: true
+
+      - name: Require a tagged production candidate
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF_TYPE" = tag
+
+      - name: Install the pinned Railway CLI
+        run: |
+          npm install --global @railway/cli@5.58.0 --foreground-scripts
+          test "$(railway --version)" = 'railway 5.58.0'
+
+      - name: Deploy and verify exact image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for MANIFEST in promotion-*.json; do
+            TARGET="$(jq -r .target "$MANIFEST")"
+            IMAGE="$(jq -r .image "$MANIFEST")"
+            DIGEST="$(jq -r .digest "$MANIFEST")"
+            SOURCE_SHA="$(jq -r .sourceSha "$MANIFEST")"
+            EXPECTED_IMAGE="$IMAGE@$DIGEST"
+
+            case "$TARGET" in
+              control-api) SERVICE_ID='9167a33b-af0f-4780-8614-a5a161697c9c' ;;
+              workflow-worker) SERVICE_ID='d733ec0d-bda5-4be5-86b9-637154d282eb' ;;
+              *) echo "Unsupported production target: $TARGET" >&2; exit 1 ;;
+            esac
+
+            railway environment edit \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service-config "$SERVICE_ID" source.image "$EXPECTED_IMAGE" \
+              --message "Promote $TARGET from $SOURCE_SHA" \
+              --json
+
+            STATUS=''
+            MATCH=''
+            for _ in $(seq 1 60); do
+              DEPLOYMENTS="$(railway deployment list \
+                --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service "$SERVICE_ID" \
+                --limit 20 --json)"
+              MATCH="$(jq -c --arg expected "$EXPECTED_IMAGE" \
+                '[.[] | select(.meta.image == $expected)] | first // empty' <<<"$DEPLOYMENTS")"
+              if [[ -z "$MATCH" ]]; then
+                sleep 10
+                continue
+              fi
+
+              STATUS="$(jq -r .status <<<"$MATCH")"
+              case "$STATUS" in
+                SUCCESS) break ;;
+                FAILED|CRASHED|REMOVED|REMOVING|SKIPPED|NEEDS_APPROVAL)
+                  echo "Deployment for $TARGET stopped with $STATUS" >&2
+                  exit 1
+                  ;;
+                *) sleep 10 ;;
+              esac
+            done
+
+            test "$STATUS" = SUCCESS
+            DEPLOYED_IMAGE="$(jq -r .meta.image <<<"$MATCH")"
+            DEPLOYED_DIGEST="$(jq -r .meta.imageDigest <<<"$MATCH")"
+            test "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE"
+            test "$DEPLOYED_DIGEST" = "$DIGEST"
+          done

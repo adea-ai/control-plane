@@ -453,6 +453,37 @@ test('documents required, public-repository, and future CI gates', async () => {
   assert.match(documentation, /deploy/i)
 })
 
+test('promotes scan-attested container digests to Railway production', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/container-promotion.yml', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(workflow, /release:\n\s+types: \[published\]/)
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /packages: write/)
+  assert.match(workflow, /attestations: write/)
+  assert.match(workflow, /id-token: write/)
+  assert.match(workflow, /control-api/)
+  assert.match(workflow, /workflow-worker/)
+  assert.match(workflow, /Scan the immutable image/)
+  assert.match(workflow, /docker push/)
+  assert.ok(
+    workflow.indexOf('Scan the immutable image') < workflow.indexOf('docker push'),
+    'the image must pass Trivy before it is published'
+  )
+  assert.match(
+    workflow,
+    /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661/
+  )
+  assert.match(workflow, /RAILWAY_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
+  assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
+  assert.match(workflow, /source\.image/)
+  assert.match(workflow, /\$IMAGE@\$DIGEST/)
+  assert.match(workflow, /railway deployment list/)
+  assert.match(workflow, /DEPLOYED_IMAGE.*EXPECTED_IMAGE/)
+})
+
 test('retains immutable load, recovery, and container evidence artifacts', async () => {
   const workflow = await readFile(
     new URL('../.github/workflows/m9-production-readiness.yml', import.meta.url),
