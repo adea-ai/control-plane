@@ -513,6 +513,20 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.match(promotionClient, /deploymentStopped === false/)
   assert.match(workflow, /timeout-minutes: 60/)
   assert.match(workflow, /no-cache: true/)
+  // The promoted image bakes its source commit so /health metadata stays
+  // truthful without service-level variable pinning (#584 provenance audit).
+  assert.match(workflow, /SOURCE_SHA: \$\{\{ github\.sha \}\}/)
+  const dockerfile = await readFile(
+    new URL('../infrastructure/containers/Dockerfile', import.meta.url),
+    'utf8'
+  )
+  assert.match(dockerfile, /ARG COMMIT_SHA/)
+  assert.match(dockerfile, /COMMIT_SHA=\$\{COMMIT_SHA\}/)
+  const bake = await readFile(
+    new URL('../infrastructure/containers/docker-bake.hcl', import.meta.url),
+    'utf8'
+  )
+  assert.match(bake, /COMMIT_SHA = "\$\{SOURCE_SHA\}"/)
 })
 
 test('retains immutable load, recovery, and container evidence artifacts', async () => {
