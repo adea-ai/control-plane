@@ -590,9 +590,15 @@ describe('CP1 persistence-profile conformance', () => {
     }
   }, 60_000)
 
+  // Coverage boundary: this matrix drives the same durable-execution stores and
+  // ports the hosted compositions use, over a REAL Postgres baseline (direct
+  // ports path). The hosted HTTP/Restate ingress itself is exercised by the
+  // hosted composition suites. Skipped locally unless
+  // RUN_M10_POSTGRES_CONFORMANCE=true; the Migrate Neon Branch CI lane runs it
+  // against the ephemeral preview Postgres.
   const conformanceMatrix = postgresConfigured ? test : test.skip
   conformanceMatrix(
-    'matches the cloud Postgres baseline through the profile conformance matrix',
+    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in the Migrate Neon Branch lane)',
     async () => {
       const credentials = {
         administration: loadDatabaseCredentials(process.env, 'administration'),
