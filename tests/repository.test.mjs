@@ -377,6 +377,21 @@ test('emits the required gate contexts and documents the direct-workflow policy'
   assert.match(contributing, /Draft pull requests do not start validation/)
 })
 
+test('reruns every required pull-request gate after ready-PR updates', async () => {
+  const workflows = await Promise.all(
+    [
+      'foundation-acceptance.yml',
+      'm9-production-readiness.yml',
+      'm10-operability.yml',
+      'review-policy.yml',
+    ].map((name) => readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'))
+  )
+
+  for (const workflow of workflows) {
+    assert.match(workflow, /types: \[ready_for_review, synchronize\]/)
+  }
+})
+
 test('generates the direct-workflow Code Foundry callers with parallel validation', async () => {
   const validation = await readFile(
     new URL('../.github/workflows/validation.yml', import.meta.url),
