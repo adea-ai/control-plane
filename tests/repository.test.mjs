@@ -473,6 +473,7 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.match(workflow, /workflow-worker/)
   assert.match(workflow, /Scan the immutable image/)
   assert.match(workflow, /docker push/)
+  assert.ok(workflow.includes("sed -n 's/.*digest: \\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p'"))
   assert.ok(
     workflow.indexOf('Scan the immutable image') < workflow.indexOf('docker push'),
     'the image must pass Trivy before it is published'

@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           PUSH_OUTPUT="$(docker push "$REF")"
           printf '%s\n' "$PUSH_OUTPUT"
-          DIGEST="$(printf '%s\n' "$PUSH_OUTPUT" | sed -n 's/^digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
+          DIGEST="$(printf '%s\n' "$PUSH_OUTPUT" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
           test -n "$DIGEST"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           jq -n \
