@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.6...workspace-v1.30.7) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** bake the source commit into promoted images ([#601](https://github.com/adea-ai/control-plane/issues/601)) ([b6e7bd8](https://github.com/adea-ai/control-plane/commit/b6e7bd879a3d8157a9a97a0fa755c4e2a8d14794))
+
 ## [1.30.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.5...workspace-v1.30.6) (2026-09-20)
 
 
