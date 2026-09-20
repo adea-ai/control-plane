@@ -77,7 +77,10 @@ export type ActivityRaceResult<Value> =
 export interface WorkflowControl {
   readonly cancelled?: boolean
   readonly deadlineReached?: boolean
-  readonly waitForInteraction?: (interactionId: string) => Promise<WorkflowInteractionResponse>
+  readonly waitForInteraction?: (
+    interactionId: string,
+    signal?: AbortSignal
+  ) => Promise<WorkflowInteractionResponse>
   readonly raceActivity?: <Value>(activity: Promise<Value>) => Promise<ActivityRaceResult<Value>>
   readonly checkTerminal?: () => Promise<TerminalControl | undefined>
 }
@@ -205,7 +208,16 @@ export async function runExecutionLifecycle(
       effectKey: key(`awaiting-input:${interactionId}`),
     })
     if (!control.waitForInteraction) throw new Error('INTERACTION_WAITER_REQUIRED')
-    const raced = await raceActivity(control.waitForInteraction(interactionId), control)
+    const interactionWait = new AbortController()
+    let raced: ActivityRaceResult<WorkflowInteractionResponse>
+    try {
+      raced = await raceActivity(
+        control.waitForInteraction(interactionId, interactionWait.signal),
+        control
+      )
+    } finally {
+      interactionWait.abort()
+    }
     if (raced.type === 'terminal') {
       return finishTerminal(input, activities, raced.control, key, attemptId)
     }

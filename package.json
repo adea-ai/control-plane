@@ -16,7 +16,7 @@
     "architecture:check": "bun scripts/architecture-audit.mjs",
     "architecture:write": "bun scripts/architecture-audit.mjs --write",
     "architecture:refresh": "bun scripts/architecture-audit.mjs --refresh",
-    "requirements:check": "bun scripts/requirements-ledger.mjs",
+    "requirements:check": "bun scripts/requirements-ledger.mjs --check-issues",
     "requirements:write": "bun scripts/requirements-ledger.mjs --write",
     "requirements:refresh": "bun scripts/requirements-ledger.mjs --refresh-issues",
     "lint": "turbo run lint && oxlint --deny-warnings tests && bun run check:boundaries",

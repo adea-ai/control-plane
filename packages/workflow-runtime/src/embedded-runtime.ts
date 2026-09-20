@@ -88,7 +88,6 @@ export class EmbeddedWorkflowRuntime {
   readonly #leaseMs: number
   readonly #pollIntervalMs: number
   readonly #retryDelayMs: number
-  readonly #maximumAttempts: number
   readonly #claimLimit: number
   readonly #stopGraceMs: number
   readonly #now: () => string
@@ -108,10 +107,7 @@ export class EmbeddedWorkflowRuntime {
       options.pollIntervalMs ?? defaults.pollIntervalMs
     )
     this.#retryDelayMs = options.retryDelayMs ?? defaults.retryDelayMs
-    this.#maximumAttempts = positiveInteger(
-      'maximumAttempts',
-      options.maximumAttempts ?? defaults.maximumAttempts
-    )
+    positiveInteger('maximumAttempts', options.maximumAttempts ?? defaults.maximumAttempts)
     this.#claimLimit = positiveInteger('claimLimit', options.claimLimit ?? defaults.claimLimit)
     this.#stopGraceMs = options.stopGraceMs ?? defaults.stopGraceMs
     this.#now = options.now ?? (() => new Date().toISOString())
@@ -159,11 +155,14 @@ export class EmbeddedWorkflowRuntime {
   async #tick(): Promise<void> {
     if (!this.#running) return
     try {
+      const availableSlots = this.#claimLimit - this.#activeRuns.size
+      const now = this.#now()
+      if (availableSlots <= 0) return
       const claimed = await this.#store.claimDue({
         owner: this.#owner,
         leaseMs: this.#leaseMs,
-        now: this.#now(),
-        limit: this.#claimLimit,
+        now,
+        limit: availableSlots,
       })
       for (const job of claimed) {
         const run = this.#runJob(job).finally(() => this.#activeRuns.delete(run))
@@ -210,7 +209,7 @@ export class EmbeddedWorkflowRuntime {
       })
     } catch (error) {
       const interrupted = error instanceof WorkflowRunInterrupted || this.#stopping
-      const retriable = job.attempt < this.#maximumAttempts
+      const retriable = job.attempt < job.maximumAttempts
       const backoffMs = computeBackoffDelayMs({
         baseDelayMs: this.#retryDelayMs,
         attempt: job.attempt - 1,
@@ -245,7 +244,7 @@ export class EmbeddedWorkflowRuntime {
     const deadlineMs = Date.parse(input.deadlineAt)
     const store = this.#store
     const now = () => this.#now()
-    const poll = () => sleep(this.#pollIntervalMs)
+    const poll = (signal?: AbortSignal) => sleep(this.#pollIntervalMs, signal)
     const entryControl = (async (): Promise<
       { cancelled: true } | { deadlineReached: true } | Record<string, never>
     > => {
@@ -256,11 +255,15 @@ export class EmbeddedWorkflowRuntime {
     })()
     return {
       ...(await entryControl),
-      waitForInteraction: async (interactionId: string): Promise<WorkflowInteractionResponse> => {
+      waitForInteraction: async (
+        interactionId: string,
+        signal?: AbortSignal
+      ): Promise<WorkflowInteractionResponse> => {
         if (!(await store.markWaiting({ workflowKey, owner: this.#owner, token, at: now() }))) {
           throw new Error('WORKFLOW_CLAIM_LOST')
         }
         for (;;) {
+          if (signal?.aborted) throw new WorkflowRunInterrupted()
           const saved = await store.getInteractionResponse(workflowKey, interactionId)
           if (saved !== undefined) {
             if (!(await store.markRunning({ workflowKey, owner: this.#owner, token, at: now() }))) {
@@ -268,8 +271,8 @@ export class EmbeddedWorkflowRuntime {
             }
             return saved as WorkflowInteractionResponse
           }
-          if (this.#stopping) throw new WorkflowRunInterrupted()
-          await poll()
+          if (this.#stopping || signal?.aborted) throw new WorkflowRunInterrupted()
+          await poll(signal)
         }
       },
       raceActivity: async <Value>(activity: Promise<Value>): Promise<ActivityRaceResult<Value>> => {
@@ -311,7 +314,22 @@ export class EmbeddedWorkflowRuntime {
 
 const neverSettles = (): Promise<never> => new Promise(() => {})
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new WorkflowRunInterrupted())
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new WorkflowRunInterrupted())
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 
 /**
  * Journals every activity result by effect key before the workflow observes

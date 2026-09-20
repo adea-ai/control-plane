@@ -113,6 +113,29 @@ async function withRuntime(run) {
   }
 }
 
+function observeInteractionReads(provider, onRead) {
+  return {
+    profile: provider.profile,
+    dialect: provider.dialect,
+    migrate: provider.migrate.bind(provider),
+    health: provider.health.bind(provider),
+    close: provider.close.bind(provider),
+    transaction: (operation) =>
+      provider.transaction((transaction) =>
+        operation({
+          get: (namespace, id) => {
+            if (namespace === 'workflow-interactions') onRead()
+            return transaction.get(namespace, id)
+          },
+          put: transaction.put.bind(transaction),
+          delete: transaction.delete.bind(transaction),
+          list: transaction.list.bind(transaction),
+          scan: transaction.scan.bind(transaction),
+        })
+      ),
+  }
+}
+
 function startedRuntime(provider, activities, options = {}) {
   const store = new WorkflowJobStore(provider)
   const runtime = new EmbeddedWorkflowRuntime({
@@ -232,6 +255,72 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
+  test('keeps active runs within the claim limit across polling intervals', async () => {
+    await withRuntime(async ({ provider }) => {
+      const executionIds = [
+        'exe_01JABCDEF0123456789ABCDEFG',
+        'exe_01JABCDEF0123456789ABCDEFH',
+        'exe_01JABCDEF0123456789ABCDEFJ',
+      ]
+      const entered = []
+      const releases = new Map()
+      let runtimeClockReads = 0
+      const now = () => {
+        runtimeClockReads += 1
+        return new Date().toISOString()
+      }
+      const { activities } = fakeActivities(
+        (input) =>
+          new Promise((resolve) => {
+            entered.push(input.executionId)
+            releases.set(input.executionId, () => resolve({ outcome: 'completed' }))
+          })
+      )
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities, {
+        claimLimit: 1,
+        pollIntervalMs: 10,
+        now,
+      })
+
+      await Promise.all(
+        executionIds.map((jobExecutionId) =>
+          dispatcher.submit({
+            ...workflowInput,
+            executionId: jobExecutionId,
+            workflowId: `wfl_${jobExecutionId.slice(4)}`,
+          })
+        )
+      )
+      await runtime.start()
+
+      try {
+        for (
+          let expectedEntered = 1;
+          expectedEntered <= executionIds.length;
+          expectedEntered += 1
+        ) {
+          await waitFor(() => entered.length === expectedEntered)
+          // Observe several queue scans while the current run stays blocked.
+          // No later job may enter until the active run releases its capacity.
+          const clockReadsAtEntry = runtimeClockReads
+          await waitFor(() => runtimeClockReads >= clockReadsAtEntry + 3)
+          expect(entered).toHaveLength(expectedEntered)
+          releases.get(entered.at(-1))()
+        }
+
+        await waitFor(async () =>
+          Promise.all(executionIds.map((jobExecutionId) => store.get(jobExecutionId))).then(
+            (jobs) => jobs.every((job) => job?.status === 'succeeded')
+          )
+        )
+        expect(new Set(entered)).toEqual(new Set(executionIds))
+      } finally {
+        for (const release of releases.values()) release()
+        await runtime.stop()
+      }
+    })
+  })
+
   test('parks on awaiting_input and resumes when the interaction response arrives', async () => {
     await withRuntime(async ({ provider }) => {
       const { activities } = fakeActivities(() => ({
@@ -270,6 +359,34 @@ describe('EmbeddedWorkflowRuntime', () => {
       expect(job.outcome.status).toBe('cancelled')
       const cancel = activities.calls.find(([name]) => name === 'cancelActive')
       expect(cancel[1].reason).toBe('user_request')
+      await runtime.stop()
+    })
+  })
+
+  test('cancellation stops parked interaction reads while the runtime keeps running', async () => {
+    await withRuntime(async ({ provider }) => {
+      let interactionReads = 0
+      const observedProvider = observeInteractionReads(provider, () => {
+        interactionReads += 1
+      })
+      const { activities } = fakeActivities(() => ({
+        outcome: 'awaiting_input',
+        interactionId,
+      }))
+      const { store, runtime, dispatcher } = startedRuntime(observedProvider, activities)
+      await runtime.start()
+      await dispatcher.submit(workflowInput)
+      await waitFor(async () => (await store.get(executionId))?.status === 'waiting')
+      await waitFor(() => interactionReads > 0)
+
+      await dispatcher.cancel(cancellationCommand)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      const readsAfterCancellation = interactionReads
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(interactionReads).toBe(readsAfterCancellation)
+      expect((await runtime.health()).ready).toBe(true)
       await runtime.stop()
     })
   })
@@ -314,24 +431,47 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
-  test('terminates after the final attempt and stops reclaiming', async () => {
+  test('uses a persisted retry budget lower than the runtime maximum', async () => {
     await withRuntime(async ({ provider }) => {
       const { activities } = fakeActivities(() => {
         throw new Error('PERMANENT_RUNTIME_FAULT')
       })
-      const { store, runtime, dispatcher } = startedRuntime(provider, activities, {
-        maximumAttempts: 2,
-      })
+      const { store, runtime } = startedRuntime(provider, activities, { maximumAttempts: 5 })
+      const dispatcher = new EmbeddedExecutionWorkflowDispatcher({ store, maximumAttempts: 2 })
       await runtime.start()
       await dispatcher.submit(workflowInput)
-      await waitFor(async () => (await store.get(executionId))?.status === 'failed')
       await waitFor(async () => (await store.get(executionId))?.runAt === undefined)
       const job = await store.get(executionId)
+      expect(job.maximumAttempts).toBe(2)
       expect(job.attempt).toBe(2)
       expect(job.lastError.message).toBe('PERMANENT_RUNTIME_FAULT')
       const dispatches = activities.calls.filter(([name]) => name === 'dispatch').length
       await new Promise((resolve) => setTimeout(resolve, 60))
       expect(activities.calls.filter(([name]) => name === 'dispatch').length).toBe(dispatches)
+      await runtime.stop()
+    })
+  })
+
+  test('uses a persisted retry budget higher than the runtime maximum', async () => {
+    await withRuntime(async ({ provider }) => {
+      let attempts = 0
+      const { activities } = fakeActivities(() => {
+        attempts += 1
+        if (attempts < 4) throw new Error('TRANSIENT_RUNTIME_FAULT')
+        return { outcome: 'completed' }
+      })
+      const { store, runtime } = startedRuntime(provider, activities, { maximumAttempts: 2 })
+      const dispatcher = new EmbeddedExecutionWorkflowDispatcher({ store, maximumAttempts: 4 })
+      await runtime.start()
+      await dispatcher.submit(workflowInput)
+      await waitFor(async () => {
+        const job = await store.get(executionId)
+        return job?.status === 'succeeded' || (job?.status === 'failed' && job.runAt === undefined)
+      })
+      const job = await store.get(executionId)
+      expect(job.maximumAttempts).toBe(4)
+      expect(job.status).toBe('succeeded')
+      expect(job.attempt).toBe(4)
       await runtime.stop()
     })
   })

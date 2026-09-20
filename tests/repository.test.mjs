@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
-import { readFile, unlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
 import {
@@ -87,6 +98,7 @@ test('defines root quality and build commands', async () => {
 
   assert.match(manifest.scripts['type-check'], /turbo run build openapi:check/)
   assert.match(manifest.scripts['type-check'], /bun run db:check/)
+  assert.match(manifest.scripts['requirements:check'], /--check-issues/)
   assert.match(manifest.scripts['db:check'], /packages\/database/)
   assert.match(manifest.scripts['test:unit'], /--coverage/)
   assert.match(manifest.scripts.test, /--parallel/)
@@ -201,6 +213,98 @@ test('enforces deterministic Bun seeds and forbids automatic retries', () => {
   assert.throws(() => normalizedBunTestArguments(['--retry', '1']), /automatic retries/i)
   assert.throws(() => normalizedBunTestArguments(['--rerun-each=2']), /automatic retries/i)
 })
+
+test('preserves a failed lane budget status when coverage passes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'control-plane-lane-budget-'))
+  await Promise.all([
+    mkdir(join(root, '.github'), { recursive: true }),
+    mkdir(join(root, 'apps', 'fixture'), { recursive: true }),
+    mkdir(join(root, 'packages'), { recursive: true }),
+    mkdir(join(root, 'scripts'), { recursive: true }),
+  ])
+
+  try {
+    await Promise.all([
+      copyFile(
+        new URL('../scripts/run-bun-test-group.mjs', import.meta.url),
+        join(root, 'scripts', 'run-bun-test-group.mjs')
+      ),
+      copyFile(
+        new URL('../scripts/check-budgets.mjs', import.meta.url),
+        join(root, 'scripts', 'check-budgets.mjs')
+      ),
+      copyFile(
+        new URL('../scripts/check-coverage.mjs', import.meta.url),
+        join(root, 'scripts', 'check-coverage.mjs')
+      ),
+      writeFile(
+        join(root, 'apps', 'fixture', 'fixture.mjs'),
+        'export const fixture = () => true\n'
+      ),
+      writeFile(
+        join(root, 'apps', 'fixture', 'fixture.test.mjs'),
+        "import { expect, test } from 'bun:test'\nimport { fixture } from './fixture.mjs'\ntest('fixture passes', () => expect(fixture()).toBe(true))\n"
+      ),
+      writeFile(
+        join(root, 'budgets.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          lanes: { unit: { ceilingSeconds: -1, baselineSeconds: 0 } },
+        })
+      ),
+      writeFile(join(root, '.github', 'code-foundry.yml'), 'coverage_minimum: 0\n'),
+      writeFile(
+        join(root, 'bunfig.toml'),
+        '[test]\ncoverageReporter = ["text", "lcov"]\ncoverageDir = "coverage"\n'
+      ),
+    ])
+
+    const result = spawnSync(
+      process.execPath,
+      ['scripts/run-bun-test-group.mjs', 'unit', '--coverage'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, BUDGETS_FILE: join(root, 'budgets.json'), CI: 'true' },
+      }
+    )
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+
+    assert.equal(result.status, 1, output)
+    assert.match(output, /BUDGET EXCEEDED/)
+    assert.match(output, /Coverage goal met/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test('runs recalibration from any checkout with a configurable output directory', async () => {
+  const script = await readFile(
+    new URL('../docs/evals/recalibration/run-recalibration.mts', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(script, /from ['"]\/Users\//)
+  assert.match(script, /\.\.\/\.\.\/\.\.\/packages\/production-readiness/)
+  assert.match(script, /RECALIBRATION_OUTPUT_DIR/)
+
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'control-plane-recalibration-'))
+  try {
+    const result = spawnSync(process.execPath, ['docs/evals/recalibration/run-recalibration.mts'], {
+      cwd: fileURLToPath(new URL('../', import.meta.url)),
+      encoding: 'utf8',
+      env: { ...process.env, RECALIBRATION_OUTPUT_DIR: outputDirectory },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
+    assert.equal((await readdir(join(outputDirectory, 'sealed'))).length, 8)
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(join(outputDirectory, 'verdicts.json'), 'utf8'))),
+      ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8']
+    )
+  } finally {
+    await rm(outputDirectory, { recursive: true, force: true })
+  }
+}, 30_000)
 
 test('enforces aggregate line and function coverage from LCOV', () => {
   const summary = summarizeLcov(`

@@ -181,7 +181,7 @@ if (import.meta.main) {
       }
     )
     if (budget.error) throw budget.error
-    if (budget.status !== 0 && collectsCoverage === false) process.exitCode = budget.status ?? 1
+    if (budget.status !== 0) process.exitCode = budget.status ?? 1
   } else if (result.status === 0) {
     console.log(
       `lane ${group}: ${elapsedSeconds}s (budget check is CI-only; SKIP_LANE_BUDGET=1 also skips)`
@@ -198,6 +198,6 @@ if (import.meta.main) {
       }
     )
     if (coverage.error) throw coverage.error
-    process.exitCode = coverage.status ?? 1
+    if (coverage.status !== 0) process.exitCode ??= coverage.status ?? 1
   }
 }

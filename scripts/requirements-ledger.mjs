@@ -45,6 +45,10 @@ const validationLanes = new Set([
 ])
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const ledgerPath = resolve(repositoryRoot, 'docs/requirements/control-plane-requirements.v1.json')
+const architecturePath = resolve(
+  repositoryRoot,
+  'docs/architecture/control-plane-architecture.v1.json'
+)
 const reportPath = resolve(repositoryRoot, 'docs/requirements/control-plane-requirements.md')
 
 export async function validateRequirementsLedger(ledger, options = {}) {
@@ -267,21 +271,67 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   return { errors, warnings }
 }
 
-export function refreshPriorMilestoneAudits(ledger, issues) {
+export async function listGitHubIssues(options = {}) {
+  const fetchImplementation = options.fetch ?? globalThis.fetch
+  const repository = options.repository ?? 'adea-ai/control-plane'
+  const token = options.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  const issues = []
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetchImplementation(
+      `https://api.github.com/repos/${repository}/issues?state=all&per_page=100&page=${page}`,
+      {
+        headers: {
+          accept: 'application/vnd.github+json',
+          'user-agent': 'control-plane-requirements-ledger',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+      }
+    )
+    if (!response.ok) {
+      throw new Error(`Unable to query GitHub issues (${response.status})`)
+    }
+    const pageItems = await response.json()
+    if (!Array.isArray(pageItems)) throw new Error('GitHub issues response was not an array')
+    issues.push(
+      ...pageItems
+        .filter((issue) => issue.pull_request === undefined)
+        .map((issue) => ({
+          number: issue.number,
+          title: issue.title,
+          milestone: issue.milestone && { title: issue.milestone.title },
+          url: issue.html_url,
+          state: String(issue.state).toUpperCase(),
+          closedAt: issue.closed_at,
+        }))
+    )
+    if (pageItems.length < 100) break
+  }
+  return issues
+}
+
+export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {
   const issueByNumber = new Map(issues.map((issue) => [issue.number, issue]))
   const gapIssues = [
-    ...ledger.sources,
-    ...ledger.deploymentProfiles,
-    ...ledger.requirements,
-    ...ledger.priorMilestoneAudits,
+    ...[
+      ...ledger.sources,
+      ...ledger.deploymentProfiles,
+      ...ledger.requirements,
+      ...ledger.priorMilestoneAudits,
+    ]
+      .map(({ gap }) => gap?.issue)
+      .filter((issue) => issue !== undefined),
+    ...additionalGapIssues,
   ]
-    .map(({ gap }) => gap?.issue)
-    .filter((issue) => issue !== undefined)
-  for (const issueNumber of new Set(gapIssues)) {
+  if (gapIssues.length > 0) gapIssues.push(197)
+  const invalidGapIssues = [...new Set(gapIssues)].flatMap((issueNumber) => {
     const issue = issueByNumber.get(issueNumber)
-    if (issue?.state !== 'OPEN' || !(issue.milestone?.title ?? '').startsWith('M11:')) {
-      throw new Error(`Gap issue #${issueNumber} must be open and assigned to M11`)
-    }
+    if (issue?.state === 'OPEN' && (issue.milestone?.title ?? '').startsWith('M11:')) return []
+    return [
+      `#${issueNumber} (${issue?.state ?? 'MISSING'}, ${issue?.milestone?.title ?? 'no milestone'})`,
+    ]
+  })
+  if (invalidGapIssues.length > 0) {
+    throw new Error(`Gap issues must be open and assigned to M11: ${invalidGapIssues.join(', ')}`)
   }
   const inventory = issues
     .filter(({ milestone }) => /^M(?:10|[1-9]):/.test(milestone?.title ?? ''))
@@ -432,6 +482,17 @@ function validateGap(errors, row, label = 'gap') {
   }
 }
 
+function collectGapIssues(value, issues = []) {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectGapIssues(entry, issues)
+    return issues
+  }
+  if (!value || typeof value !== 'object') return issues
+  if (Number.isInteger(value.gap?.issue)) issues.push(value.gap.issue)
+  for (const entry of Object.values(value)) collectGapIssues(entry, issues)
+  return issues
+}
+
 function numeric(left, right) {
   return left - right
 }
@@ -474,26 +535,15 @@ function escapeCell(value) {
 
 async function main() {
   let ledger = JSON.parse(await readFile(ledgerPath, 'utf8'))
-  if (process.argv.includes('--refresh-issues')) {
-    const result = spawnSync(
-      'gh',
-      [
-        'issue',
-        'list',
-        '--state',
-        'all',
-        '--limit',
-        '300',
-        '--json',
-        'number,title,milestone,url,state,closedAt',
-      ],
-      { cwd: repositoryRoot, encoding: 'utf8' }
-    )
-    if (result.error) throw result.error
-    if (result.status !== 0)
-      throw new Error(result.stderr.trim() || 'Unable to query GitHub issues')
-    ledger = refreshPriorMilestoneAudits(ledger, JSON.parse(result.stdout))
-    await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+  const architecture = JSON.parse(await readFile(architecturePath, 'utf8'))
+  const architectureGapIssues = collectGapIssues(architecture)
+  const refreshIssues = process.argv.includes('--refresh-issues')
+  const checkIssues = process.argv.includes('--check-issues')
+  if (refreshIssues || checkIssues) {
+    ledger = refreshPriorMilestoneAudits(ledger, await listGitHubIssues(), architectureGapIssues)
+    if (refreshIssues) {
+      await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+    }
   }
   const { errors, warnings } = await validateRequirementsLedger(ledger, {
     repositoryRoot: new URL('..', import.meta.url),

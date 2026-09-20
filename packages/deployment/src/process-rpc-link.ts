@@ -178,6 +178,7 @@ export class ProcessRpcLink<Request, Result, Message> {
   #failure: Error | undefined
   #detached = false
   #endedHandled = false
+  #exitNotified = false
   #lastSignal: NodeJS.Signals | undefined
   #stopPromise: Promise<boolean> | undefined
 
@@ -199,7 +200,7 @@ export class ProcessRpcLink<Request, Result, Message> {
       if (this.#permanentFailures()) this.#fail(mapped)
       else {
         this.#sweep(mapped)
-        options.onExit?.(mapped)
+        this.#notifyExit(mapped)
       }
     })
     child.once('exit', (code, signal) => this.#handleEnd(code, signal))
@@ -435,15 +436,21 @@ export class ProcessRpcLink<Request, Result, Message> {
       this.#detach()
       this.#sweep(error)
     }
-    this.#options.onExit?.(error)
+    this.#notifyExit(error)
     this.#endedResolve?.()
   }
 
   #failFatal(error: Error): void {
     const first = this.#failure === undefined
     this.#fail(error)
-    if (first) this.#options.onExit?.(error)
+    if (first) this.#notifyExit(error)
     this.#sendSignal(this.#options.protocolFailureSignal ?? 'SIGTERM')
+  }
+
+  #notifyExit(error: Error): void {
+    if (this.#exitNotified) return
+    this.#exitNotified = true
+    this.#options.onExit?.(error)
   }
 
   #fail(error: Error): void {
