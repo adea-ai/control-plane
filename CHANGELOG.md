@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.0...workspace-v1.30.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** resolve promotion default branch ([#587](https://github.com/adea-ai/control-plane/issues/587)) ([92b94bc](https://github.com/adea-ai/control-plane/commit/92b94bc4011da1564023a06ae01caa1ec83ea730))
+
 ## [1.30.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.29.1...workspace-v1.30.0) (2026-09-20)
 
 
