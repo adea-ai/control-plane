@@ -1,4 +1,5 @@
 export * from './authentication.js'
+export * from './canonical-json.js'
 export * from './control-api.js'
 export * from './context-providers.js'
 export * from './decision-resolution.js'

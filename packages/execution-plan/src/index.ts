@@ -662,6 +662,8 @@ function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// plan digests cover constraints.context (z.record free-form keys) and plan contentDigest values are persisted
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

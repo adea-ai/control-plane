@@ -141,6 +141,8 @@ export class RelayExecutionCommandProcessor implements RelayHostCommandProcessor
     } catch {
       throw new RelayEnvelopeError('RELAY_ENVELOPE_INVALID')
     }
+    // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+    // insertion-order stringify of a schema-pinned envelope; replay comparisons persist these strings byte-for-byte
     const canonical = JSON.stringify(envelope)
     const inFlight = this.#inFlight.get(envelope.commandId)
     if (inFlight !== undefined) {

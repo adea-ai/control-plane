@@ -327,6 +327,8 @@ export function hashExecutionEventPayload(payload: Readonly<Record<string, unkno
 
 export * from './runtime-ingestion.js'
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// payload is z.record(string, z.json()) with free-form keys; payloadHash is persisted and non-JSON values throw
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value)
