@@ -16,6 +16,9 @@ import {
   type GatewayProgressEnvelope,
   type GatewayProtocolVersion,
   type GatewayResultEnvelope,
+  GrantReferenceSchema,
+  RuntimeErrorDataSchema,
+  type RuntimeErrorData,
 } from '@control-plane/runtime-gateway-protocol'
 import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
@@ -31,34 +34,10 @@ import {
 } from './index.js'
 
 const MaximumGatewayOperations = 1_024
-const GrantReferenceSchema = z
-  .string()
-  .min(16)
-  .max(128)
-  .regex(/^grant:[A-Za-z0-9._:-]+$/)
 const SessionReferenceSchema = z
   .string()
   .regex(/^nses_[0-9A-HJKMNP-TV-Z]{26}$/, 'Expected an opaque ACP session reference')
 const NativeSessionIdSchema = z.string().min(1).max(512)
-const RuntimeErrorDataSchema = z
-  .object({
-    code: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
-    classification: z.enum([
-      'validation',
-      'unsupported',
-      'unavailable',
-      'conflict',
-      'timeout',
-      'cancelled',
-      'runtime',
-      'infrastructure',
-      'unknown',
-    ]),
-    message: z.string().min(1).max(4096),
-    retryable: z.boolean(),
-  })
-  .strict()
-
 export type AcpGatewayConnectionState = 'online' | 'offline' | 'revoked'
 export type AcpLocalProjectGrantState = 'granted' | 'missing' | 'revoked'
 
@@ -1021,7 +1000,7 @@ function successResult(
 function failureResult(
   command: GatewayCommandEnvelope,
   code: string,
-  classification: z.output<typeof RuntimeErrorDataSchema>['classification'],
+  classification: RuntimeErrorData['classification'],
   retryable: boolean,
   completedAt: string
 ): GatewayResultEnvelope {
@@ -1045,7 +1024,7 @@ function failureResult(
 
 function runtimeError(
   code: string,
-  classification: z.output<typeof RuntimeErrorDataSchema>['classification'],
+  classification: RuntimeErrorData['classification'],
   retryable: boolean
 ): RuntimeAdapterError {
   return new RuntimeAdapterError({ code, classification, message: code, retryable })
@@ -1089,7 +1068,7 @@ function withGatewayTimeout<Value>(
 
 function errorData(
   code: string,
-  classification: z.output<typeof RuntimeErrorDataSchema>['classification'],
+  classification: RuntimeErrorData['classification'],
   retryable: boolean
 ) {
   return RuntimeErrorDataSchema.parse({ code, classification, message: code, retryable })

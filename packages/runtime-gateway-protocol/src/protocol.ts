@@ -526,3 +526,35 @@ function forbiddenKeyMatches(
     ].includes(normalizedKey)
   )
 }
+
+/**
+ * Shared gateway protocol schemas (M13 #405 hoist): the grant reference shape
+ * and the canonical runtime-error envelope, byte-identical across the ACP and
+ * managed-Pi gateway clients.
+ */
+export const GrantReferenceSchema = z
+  .string()
+  .min(16)
+  .max(128)
+  .regex(/^grant:[A-Za-z0-9._:-]+$/)
+export type GrantReference = z.output<typeof GrantReferenceSchema>
+
+export const RuntimeErrorDataSchema = z
+  .object({
+    code: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+    classification: z.enum([
+      'validation',
+      'unsupported',
+      'unavailable',
+      'conflict',
+      'timeout',
+      'cancelled',
+      'runtime',
+      'infrastructure',
+      'unknown',
+    ]),
+    message: z.string().min(1).max(4096),
+    retryable: z.boolean(),
+  })
+  .strict()
+export type RuntimeErrorData = z.output<typeof RuntimeErrorDataSchema>

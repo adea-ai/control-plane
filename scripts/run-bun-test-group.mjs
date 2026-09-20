@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks'
 import { spawnSync } from 'node:child_process'
 import { readdir } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
@@ -152,6 +153,7 @@ if (import.meta.main) {
   const files = await discoverTestFiles(group)
   const collectsCoverage = bunArguments.includes('--coverage')
   const testArguments = normalizedBunTestArguments(bunArguments)
+  const startedAt = performance.now()
   const result = spawnSync(
     process.execPath,
     ['test', ...testArguments, ...files.map((path) => `./${path}`)],
@@ -161,11 +163,31 @@ if (import.meta.main) {
       env: process.env,
     }
   )
+  const elapsedSeconds = Math.round((performance.now() - startedAt) / 100) / 10
 
   if (result.error) throw result.error
   if (result.status !== 0) {
     process.exitCode = result.status ?? 1
-  } else if (collectsCoverage) {
+  } else if (process.env.CI === 'true' && process.env.SKIP_LANE_BUDGET !== '1') {
+    // Budgets are calibrated to CI runner timings; local hosts are too contended
+    // for a hard gate, so enforcement is CI-only.
+    const budget = spawnSync(
+      process.execPath,
+      ['scripts/check-budgets.mjs', 'lane', '--group', group, '--seconds', String(elapsedSeconds)],
+      {
+        cwd: repositoryRoot,
+        stdio: 'inherit',
+        env: process.env,
+      }
+    )
+    if (budget.error) throw budget.error
+    if (budget.status !== 0 && collectsCoverage === false) process.exitCode = budget.status ?? 1
+  } else if (result.status === 0) {
+    console.log(
+      `lane ${group}: ${elapsedSeconds}s (budget check is CI-only; SKIP_LANE_BUDGET=1 also skips)`
+    )
+  }
+  if (result.status === 0 && collectsCoverage) {
     const coverage = spawnSync(
       process.execPath,
       ['scripts/check-coverage.mjs', 'coverage/lcov.info'],

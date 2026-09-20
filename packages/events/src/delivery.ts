@@ -1,3 +1,4 @@
+import { computeBackoffDelayMs } from '@control-plane/domain'
 import {
   AgentHqExecutionEventEnvelopeSchema,
   type AgentHqExecutionEventEnvelope,
@@ -221,7 +222,11 @@ export class ExecutionEventDispatcher {
       return 'quarantined'
     }
     const nextAttemptAt = new Date(
-      Date.parse(attemptedAt) + this.#baseDelayMs * 2 ** event.publication.attempts
+      Date.parse(attemptedAt) +
+        computeBackoffDelayMs({
+          baseDelayMs: this.#baseDelayMs,
+          attempt: event.publication.attempts,
+        })
     ).toISOString()
     const failed = await this.#publicationService.recordPublicationFailure({
       eventId: event.eventId,
