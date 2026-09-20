@@ -51,9 +51,10 @@ describe('container promotion', () => {
     const requests = []
     const client = createRailwayClient({
       token: 'project-token',
+      workspaceToken: 'workspace-token',
       fetchImpl: async (_url, options) => {
         const request = JSON.parse(options.body)
-        requests.push(request)
+        requests.push({ ...request, headers: options.headers })
         if (request.query.includes('serviceConnect')) {
           return Response.json({ data: { serviceConnect: { id: request.variables.id } } })
         }
@@ -71,11 +72,14 @@ describe('container promotion', () => {
     await client.updateSource('control-api', { image: null, repo: null })
 
     assert.match(requests[0].query, /serviceConnect/)
+    assert.equal(requests[0].headers.Authorization, 'Bearer workspace-token')
+    assert.equal(requests[0].headers['Project-Access-Token'], undefined)
     assert.deepEqual(requests[0].variables.input, {
       image: `ghcr.io/adea-ai/control-plane-control-api@sha256:${'a'.repeat(64)}`,
       repo: null,
     })
     assert.match(requests[1].query, /serviceDisconnect/)
+    assert.equal(requests[1].headers.Authorization, 'Bearer workspace-token')
   })
 
   test('waits for the updated source before triggering deployment', async () => {
