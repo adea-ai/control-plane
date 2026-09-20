@@ -281,7 +281,9 @@ async function waitForRestate(
 
 async function inspectRestateVersion(executablePath: string): Promise<string> {
   const { stdout } = await execFileAsync(executablePath, ['--version'], {
-    timeout: 5_000,
+    // Parallel validation can CPU-starve even this lightweight probe. Keep it
+    // bounded, but align the bound with other local dependency startup probes.
+    timeout: 15_000,
     maxBuffer: 4_096,
   })
   const match = stdout.match(/(?:restate-server\s+)?(\d+\.\d+\.\d+)/)
