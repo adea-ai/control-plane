@@ -486,7 +486,8 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.match(workflow, /startsWith\(github\.event\.release\.tag_name, 'workspace-v'\)/)
   assert.match(workflow, /test "\$PRERELEASE" = false/)
   assert.match(workflow, /\^workspace-v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
-  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA"/)
+  assert.match(workflow, /DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}/)
+  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" "origin\/\$DEFAULT_BRANCH"/)
   assert.match(
     workflow,
     /RELEASE_NAME: \$\{\{ github\.event\.release\.tag_name \|\| github\.ref_name \}\}/
