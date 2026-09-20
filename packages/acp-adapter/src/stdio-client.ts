@@ -1,15 +1,20 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { isAbsolute } from 'node:path'
 import {
   enforceNodeProcessSpawnPolicy,
+  ProcessRpcDecodeError,
+  ProcessRpcLink,
   type NodeProcessSpawnPolicy,
+  type ProcessRpcFrameCodec,
 } from '@control-plane/deployment'
+import process from 'node:process'
 import { z } from 'zod'
 
 type Json = z.util.JSONType
 type RpcParams = Record<string, Json> | Json[]
 type RpcId = string | number
-type Pending = { resolve(value: Json): void; reject(error: Error): void }
+type AcpMessage = z.infer<typeof MessageSchema>
+
 const MessageLimit = 1_048_576
 const PendingLimit = 128
 const IdSchema = z.union([z.string().max(256), z.number().int().safe()])
@@ -25,6 +30,51 @@ const MessageSchema = z
       .optional(),
   })
   .strict()
+
+/** Wire payload for link writes: outbound requests, notifications, and responses. */
+interface AcpRequestPayload {
+  readonly jsonrpc: '2.0'
+  readonly id?: RpcId
+  readonly method?: string
+  readonly params?: RpcParams
+  readonly result?: Json
+  readonly error?: { readonly code: number; readonly message: string }
+}
+
+/**
+ * JSON-RPC 2.0 framing for the shared process link. Every decode failure is a
+ * fatal protocol error; late results and native server-to-client requests are
+ * reported as unmatched lines and routed by the client.
+ */
+const AcpFrameCodec: ProcessRpcFrameCodec<AcpRequestPayload, Json, AcpMessage> = {
+  encode: (payload, id) =>
+    JSON.stringify(MessageSchema.parse(id === undefined ? payload : { ...payload, id })),
+  decode: (line) => {
+    let message: AcpMessage
+    try {
+      message = MessageSchema.parse(JSON.parse(line))
+    } catch {
+      throw new ProcessRpcDecodeError('ACP_PROCESS_PROTOCOL_ERROR')
+    }
+    if (message.method !== undefined) {
+      if ('result' in message || message.error !== undefined) {
+        throw new ProcessRpcDecodeError('ACP_PROCESS_PROTOCOL_ERROR')
+      }
+      return { kind: 'unmatched', message }
+    }
+    if (message.id === undefined || 'result' in message === (message.error !== undefined)) {
+      throw new ProcessRpcDecodeError('ACP_PROCESS_PROTOCOL_ERROR')
+    }
+    if (message.error !== undefined) {
+      return {
+        kind: 'response',
+        id: message.id,
+        error: new Error(`ACP_PROCESS_RPC_ERROR:${message.error.code}`),
+      }
+    }
+    return { kind: 'response', id: message.id, result: message.result ?? null }
+  },
+}
 
 export interface AcpStdioClientOptions {
   readonly executablePath: string
@@ -44,17 +94,13 @@ export interface AcpStdioClientOptions {
 /** Bounded JSON-RPC framing only; native ACP session semantics belong to the transport. */
 export class AcpStdioClient {
   readonly #options: AcpStdioClientOptions
-  readonly #pending = new Map<RpcId, Pending>()
   readonly #lateResults = new Map<RpcId, (value: Json) => void>()
   readonly #incoming = new Set<RpcId>()
-  #child: ChildProcessWithoutNullStreams | undefined
-  #buffer = Buffer.alloc(0)
+  #link: ProcessRpcLink<AcpRequestPayload, Json, AcpMessage> | undefined
   #sequence = 0
   #started = false
-  #lastSignal?: NodeJS.Signals
-  #failure?: Error
-  #closed: Promise<void> = Promise.resolve()
-  #close?: Promise<void>
+  #failure: Error | undefined
+  #close: Promise<void> | undefined
 
   constructor(options: AcpStdioClientOptions) {
     if (!isAbsolute(options.executablePath) || !isAbsolute(options.cwd)) {
@@ -68,7 +114,7 @@ export class AcpStdioClient {
   }
 
   get connected(): boolean {
-    return this.#child !== undefined && this.#failure === undefined
+    return this.#link?.connected ?? false
   }
 
   async start(): Promise<void> {
@@ -89,18 +135,33 @@ export class AcpStdioClient {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
-    this.#child = child
-    this.#closed = new Promise((resolve) => {
-      child.once('close', () => {
-        this.#fail(new Error('ACP_PROCESS_CLOSED'))
-        this.#child = undefined
-        resolve()
-      })
+    this.#link = new ProcessRpcLink({
+      child,
+      codec: AcpFrameCodec,
+      maxFrameBytes: MessageLimit,
+      writeLimitBytes: MessageLimit,
+      formatFrameError: () => new Error('ACP_PROCESS_PROTOCOL_ERROR'),
+      formatExitError: () => new Error('ACP_PROCESS_CLOSED'),
+      formatTimeoutError: () => new Error('ACP_PROCESS_REQUEST_TIMEOUT'),
+      formatAbortError: () => new Error('ACP_PROCESS_ABORTED'),
+      formatChildError: () => new Error('ACP_PROCESS_START_FAILED'),
+      notRunningError: () => new Error('ACP_PROCESS_NOT_STARTED'),
+      onStdinError: () => this.#link?.fail(new Error('ACP_PROCESS_WRITE_FAILED')),
+      onLine: (message) => this.#route(message),
+      onFail: (error) => {
+        this.#failure ??= error
+        this.#incoming.clear()
+        this.#lateResults.clear()
+      },
+      onResponseMiss: (id, response) => {
+        const lateResult = this.#lateResults.get(id)
+        this.#lateResults.delete(id)
+        if (response.error === undefined) lateResult?.(response.result ?? null)
+      },
+      signalStrategy: 'process-group',
+      protocolFailureSignal: 'SIGTERM',
+      unrefStopTimers: false,
     })
-    child.stderr.resume()
-    child.stdin.on('error', () => this.#fail(new Error('ACP_PROCESS_WRITE_FAILED')))
-    child.stdout.on('data', (chunk: Buffer) => this.#read(chunk))
-    child.on('error', () => this.#fail(new Error('ACP_PROCESS_START_FAILED')))
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve)
       child.once('error', () => reject(new Error('ACP_PROCESS_START_FAILED')))
@@ -116,57 +177,47 @@ export class AcpStdioClient {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3_600_000) {
       return Promise.reject(new Error('ACP_PROCESS_INVALID_TIMEOUT'))
     }
-    if (!this.connected)
-      return Promise.reject(this.#failure ?? new Error('ACP_PROCESS_NOT_STARTED'))
+    const link = this.#link
+    if (link === undefined || !link.connected) {
+      return Promise.reject(this.#failure ?? link?.failure ?? new Error('ACP_PROCESS_NOT_STARTED'))
+    }
     if (options.signal?.aborted) return Promise.reject(new Error('ACP_PROCESS_ABORTED'))
-    if (this.#pending.size >= PendingLimit)
+    if (link.pendingCount >= PendingLimit) {
       return Promise.reject(new Error('ACP_PROCESS_BACKPRESSURE'))
-    if (options.onLateResult && this.#lateResults.size >= PendingLimit)
+    }
+    if (options.onLateResult !== undefined && this.#lateResults.size >= PendingLimit) {
       return Promise.reject(new Error('ACP_PROCESS_LATE_RESULT_LIMIT'))
+    }
     const id = `cp:${++this.#sequence}`
-    if (options.onLateResult) this.#lateResults.set(id, options.onLateResult)
-    return new Promise((resolve, reject) => {
-      const finish = (callback: () => void, retainLate = false) => {
-        if (!this.#pending.delete(id)) return
-        if (!retainLate) this.#lateResults.delete(id)
-        clearTimeout(timer)
-        options.signal?.removeEventListener('abort', aborted)
-        callback()
+    if (options.onLateResult !== undefined) this.#lateResults.set(id, options.onLateResult)
+    return link.request(
+      { jsonrpc: '2.0', method, params },
+      {
+        id,
+        timeoutMs,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        onSettled: (reason) => {
+          // Timeouts and aborts keep the late-result registration alive so a
+          // straggling response still reaches onLateResult exactly once.
+          if (reason !== 'timeout' && reason !== 'abort') this.#lateResults.delete(id)
+        },
       }
-      const aborted = () => finish(() => reject(new Error('ACP_PROCESS_ABORTED')), true)
-      const timer = setTimeout(
-        () => finish(() => reject(new Error('ACP_PROCESS_REQUEST_TIMEOUT')), true),
-        timeoutMs
-      )
-      timer.unref()
-      this.#pending.set(id, {
-        resolve: (value) => finish(() => resolve(value)),
-        reject: (error) => finish(() => reject(error)),
-      })
-      options.signal?.addEventListener('abort', aborted, { once: true })
-      try {
-        this.#write({ jsonrpc: '2.0', id, method, params })
-      } catch (error) {
-        this.#pending
-          .get(id)
-          ?.reject(error instanceof Error ? error : new Error('ACP_PROCESS_WRITE_FAILED'))
-      }
-    })
+    )
   }
 
   notify(method: string, params: RpcParams): void {
-    this.#write({ jsonrpc: '2.0', method, params })
+    this.#requireLink().write({ jsonrpc: '2.0', method, params })
   }
 
   respond(id: RpcId, result: Json): void {
     if (!this.#incoming.has(id)) throw new Error('ACP_PROCESS_REQUEST_UNKNOWN')
-    this.#write({ jsonrpc: '2.0', id, result })
+    this.#requireLink().write({ jsonrpc: '2.0', id, result })
     this.#incoming.delete(id)
   }
 
   respondError(id: RpcId, code: number, message: string): void {
     if (!this.#incoming.has(id)) throw new Error('ACP_PROCESS_REQUEST_UNKNOWN')
-    this.#write({ jsonrpc: '2.0', id, error: { code, message } })
+    this.#requireLink().write({ jsonrpc: '2.0', id, error: { code, message } })
     this.#incoming.delete(id)
   }
 
@@ -176,112 +227,44 @@ export class AcpStdioClient {
   }
 
   async #stop(): Promise<void> {
-    this.#fail(new Error('ACP_PROCESS_CLOSING'))
-    if (!this.#child) return
-    this.#signal('SIGTERM')
-    if (await this.#waitClosed(2_000)) return
-    this.#signal('SIGKILL')
-    if (!(await this.#waitClosed(2_000))) throw new Error('ACP_PROCESS_CLEANUP_UNCONFIRMED')
+    const link = this.#link
+    if (link === undefined) {
+      this.#failure ??= new Error('ACP_PROCESS_CLOSING')
+      return
+    }
+    const confirmed = await link.stop({
+      failure: new Error('ACP_PROCESS_CLOSING'),
+      graceMs: 2_000,
+      finalWaitMs: 2_000,
+    })
+    if (!confirmed) throw new Error('ACP_PROCESS_CLEANUP_UNCONFIRMED')
   }
 
-  async #waitClosed(timeoutMs: number): Promise<boolean> {
-    let timer: ReturnType<typeof setTimeout> | undefined
+  #requireLink(): ProcessRpcLink<AcpRequestPayload, Json, AcpMessage> {
+    const link = this.#link
+    if (link === undefined) throw new Error('ACP_PROCESS_NOT_STARTED')
+    return link
+  }
+
+  #route(message: AcpMessage): void {
     try {
-      return await Promise.race([
-        this.#closed.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), timeoutMs)
-        }),
-      ])
-    } finally {
-      clearTimeout(timer)
+      this.#deliver(message)
+    } catch {
+      // Every routing failure is a protocol failure; the cause stays internal.
+      throw new ProcessRpcDecodeError('ACP_PROCESS_PROTOCOL_ERROR')
     }
   }
 
-  #signal(signal: NodeJS.Signals): void {
-    const child = this.#child
-    if (!child?.pid) return
-    if (this.#lastSignal === signal) return
-    try {
-      if (process.platform === 'win32') child.kill(signal)
-      else process.kill(-child.pid, signal)
-      this.#lastSignal = signal
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  #deliver(message: AcpMessage): void {
+    if (message.method === undefined) return
+    if (message.id === undefined) {
+      this.#options.onNotification(message.method, message.params ?? null)
+      return
     }
-  }
-
-  #write(message: unknown): void {
-    if (!this.connected) throw this.#failure ?? new Error('ACP_PROCESS_NOT_STARTED')
-    const encoded = `${JSON.stringify(MessageSchema.parse(message))}\n`
-    if (Buffer.byteLength(encoded) > MessageLimit) throw new Error('ACP_PROCESS_MESSAGE_TOO_LARGE')
-    const child = this.#child!
-    if (child.stdin.writableLength + Buffer.byteLength(encoded) > MessageLimit) {
+    if (this.#incoming.has(message.id) || this.#incoming.size >= PendingLimit) {
       throw new Error('ACP_PROCESS_BACKPRESSURE')
     }
-    child.stdin.write(encoded)
-  }
-
-  #read(chunk: Buffer): void {
-    if (this.#failure) return
-    try {
-      // Split before concatenating so many small valid frames do not count as one frame.
-      let start = 0
-      for (let end = chunk.indexOf(10); end !== -1; end = chunk.indexOf(10, start)) {
-        this.#append(chunk.subarray(start, end))
-        const line = new TextDecoder('utf-8', { fatal: true }).decode(this.#buffer)
-        this.#buffer = Buffer.alloc(0)
-        this.#message(JSON.parse(line))
-        if (this.#failure) return
-        start = end + 1
-      }
-      this.#append(chunk.subarray(start))
-    } catch {
-      this.#fail(new Error('ACP_PROCESS_PROTOCOL_ERROR'))
-      this.#signal('SIGTERM')
-    }
-  }
-
-  #append(chunk: Buffer): void {
-    if (this.#buffer.length + chunk.length > MessageLimit)
-      throw new Error('ACP_PROCESS_MESSAGE_TOO_LARGE')
-    this.#buffer = Buffer.concat([this.#buffer, chunk])
-  }
-
-  #message(input: unknown): void {
-    const message = MessageSchema.parse(input)
-    if (message.method !== undefined) {
-      if ('result' in message || message.error !== undefined)
-        throw new Error('ACP_PROCESS_PROTOCOL_ERROR')
-      if (message.id === undefined)
-        this.#options.onNotification(message.method, message.params ?? null)
-      else {
-        if (this.#incoming.has(message.id) || this.#incoming.size >= PendingLimit)
-          throw new Error('ACP_PROCESS_BACKPRESSURE')
-        this.#incoming.add(message.id)
-        this.#options.onRequest(message.id, message.method, message.params ?? null)
-      }
-      return
-    }
-    if (message.id === undefined || 'result' in message === (message.error !== undefined)) {
-      throw new Error('ACP_PROCESS_PROTOCOL_ERROR')
-    }
-    const pending = this.#pending.get(message.id)
-    if (!pending) {
-      const lateResult = this.#lateResults.get(message.id)
-      this.#lateResults.delete(message.id)
-      if (!message.error) lateResult?.(message.result ?? null)
-      return
-    }
-    if (message.error) pending.reject(new Error(`ACP_PROCESS_RPC_ERROR:${message.error.code}`))
-    else pending.resolve(message.result ?? null)
-  }
-
-  #fail(error: Error): void {
-    this.#failure ??= error
-    for (const pending of this.#pending.values()) pending.reject(this.#failure)
-    this.#incoming.clear()
-    this.#lateResults.clear()
-    this.#buffer = Buffer.alloc(0)
+    this.#incoming.add(message.id)
+    this.#options.onRequest(message.id, message.method, message.params ?? null)
   }
 }

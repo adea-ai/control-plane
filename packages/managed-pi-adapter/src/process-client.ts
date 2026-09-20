@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -10,7 +10,10 @@ import {
 } from '@control-plane/runtime-sdk'
 import {
   enforceNodeProcessSpawnPolicy,
+  ProcessRpcDecodeError,
+  ProcessRpcLink,
   type NodeProcessSpawnPolicy,
+  type ProcessRpcFrameCodec,
 } from '@control-plane/deployment'
 import {
   ManagedPiConfigurationSchema,
@@ -535,6 +538,37 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 }
 
+/**
+ * Pi RPC framing for the shared process link: simple `{ type, id, success }`
+ * records. Non-JSON output tolerantly rejects outstanding requests, and every
+ * non-response record is an execution event.
+ */
+const PiRpcCodec: ProcessRpcFrameCodec<
+  Record<string, unknown>,
+  Record<string, unknown>,
+  Record<string, unknown>
+> = {
+  encode: (command, id) => JSON.stringify({ ...command, id }),
+  decode: (line) => {
+    let value: unknown
+    try {
+      value = JSON.parse(line)
+    } catch {
+      // Stray non-JSON output rejects outstanding requests without killing the runtime.
+      throw new ProcessRpcDecodeError('PI_RPC_INVALID_JSON', false)
+    }
+    const record = asRecord(value)
+    if (record === undefined) return null
+    if (record['type'] === 'response' && typeof record['id'] === 'string') {
+      if (record['success'] === true) {
+        return { kind: 'response', id: record['id'], result: record }
+      }
+      return { kind: 'response', id: record['id'], error: new Error('PI_RPC_REJECTED') }
+    }
+    return { kind: 'unmatched', message: record }
+  },
+}
+
 class PiRpcProcess {
   readonly #args: readonly string[]
   readonly #cwd: string
@@ -543,13 +577,10 @@ class PiRpcProcess {
   readonly #spawnPolicy: NodeProcessSpawnPolicy | undefined
   readonly #listeners = new Set<(event: Record<string, unknown>) => void>()
   readonly #exitListeners = new Set<(error: Error) => void>()
-  readonly #pending = new Map<
-    string,
-    { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }
-  >()
-  #child: ChildProcessWithoutNullStreams | undefined
+  #link:
+    | ProcessRpcLink<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
+    | undefined
   #counter = 0
-  #stdout = ''
 
   constructor(options: {
     executablePath: string
@@ -574,7 +605,7 @@ class PiRpcProcess {
   }
 
   async start(): Promise<void> {
-    if (this.#child !== undefined) throw new Error('PI_RPC_ALREADY_STARTED')
+    if (this.#link !== undefined) throw new Error('PI_RPC_ALREADY_STARTED')
     if (this.#spawnPolicy !== undefined) {
       await enforceNodeProcessSpawnPolicy(this.#spawnPolicy, {
         executable: this.#executablePath,
@@ -588,119 +619,40 @@ class PiRpcProcess {
       env: { ...this.#environment },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
-    this.#child = child
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => this.#read(chunk))
-    child.stderr.resume()
-    child.once('error', (error) => this.#exited(error))
-    child.once('exit', (code, signal) => {
-      this.#child = undefined
-      this.#exited(
-        new Error(`PI_RPC_EXITED:${code === null ? 'signal' : String(code)}:${signal ?? 'none'}`)
-      )
+    this.#link = new ProcessRpcLink({
+      child,
+      codec: PiRpcCodec,
+      maxFrameBytes: MAX_RPC_FRAME_BYTES,
+      formatFrameError: () => new Error('PI_RPC_FRAME_TOO_LARGE'),
+      formatExitError: ({ code, signal }) =>
+        new Error(`PI_RPC_EXITED:${code === null ? 'signal' : String(code)}:${signal ?? 'none'}`),
+      formatTimeoutError: (command) => new Error(`PI_RPC_TIMEOUT:${String(command['type'])}`),
+      notRunningError: () => new Error('PI_RPC_NOT_RUNNING'),
+      onLine: (event) => {
+        for (const listener of this.#listeners) listener(event)
+      },
+      onExit: (error) => {
+        for (const listener of this.#exitListeners) listener(error)
+      },
+      signalStrategy: 'child',
+      protocolFailureSignal: 'SIGKILL',
+      strictUtf8: false,
+      stripCarriageReturn: true,
+      skipEmptyLines: true,
+      exitIsPermanentFailure: false,
+      writeFailureRejectsPending: true,
     })
   }
 
   request(command: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>> {
-    const child = this.#child
-    if (child === undefined) return Promise.reject(new Error('PI_RPC_NOT_RUNNING'))
+    const link = this.#link
+    if (link === undefined) return Promise.reject(new Error('PI_RPC_NOT_RUNNING'))
     const id = `control-plane-${++this.#counter}`
-    return new Promise((resolvePromise, rejectPromise) => {
-      const timeout = setTimeout(() => {
-        this.#pending.delete(id)
-        rejectPromise(new Error(`PI_RPC_TIMEOUT:${String(command['type'])}`))
-      }, timeoutMs)
-      timeout.unref()
-      this.#pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timeout)
-          resolvePromise(value)
-        },
-        reject: (error) => {
-          clearTimeout(timeout)
-          rejectPromise(error)
-        },
-      })
-      child.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
-        if (error === null || error === undefined) return
-        this.#pending.delete(id)
-        clearTimeout(timeout)
-        rejectPromise(error)
-      })
-    })
+    return link.request(command, { id, timeoutMs })
   }
 
   async stop(): Promise<void> {
-    const child = this.#child
-    if (child === undefined) return
-    this.#child = undefined
-    child.kill('SIGTERM')
-    await new Promise<void>((resolvePromise) => {
-      const timeout = setTimeout(() => {
-        child.kill('SIGKILL')
-        resolvePromise()
-      }, 2_000)
-      timeout.unref()
-      child.once('exit', () => {
-        clearTimeout(timeout)
-        resolvePromise()
-      })
-    })
-  }
-
-  #read(chunk: string): void {
-    this.#stdout += chunk
-    let newline = this.#stdout.indexOf('\n')
-    while (newline >= 0) {
-      const line = this.#stdout.slice(0, newline).replace(/\r$/, '')
-      this.#stdout = this.#stdout.slice(newline + 1)
-      if (Buffer.byteLength(line) > MAX_RPC_FRAME_BYTES) {
-        this.#protocolFailure(new Error('PI_RPC_FRAME_TOO_LARGE'))
-        return
-      }
-      if (line.length > 0) this.#line(line)
-      newline = this.#stdout.indexOf('\n')
-    }
-    if (Buffer.byteLength(this.#stdout) > MAX_RPC_FRAME_BYTES) {
-      this.#protocolFailure(new Error('PI_RPC_FRAME_TOO_LARGE'))
-    }
-  }
-
-  #line(line: string): void {
-    let value: unknown
-    try {
-      value = JSON.parse(line)
-    } catch {
-      this.#rejectAll(new Error('PI_RPC_INVALID_JSON'))
-      return
-    }
-    const record = asRecord(value)
-    if (record === undefined) return
-    if (record['type'] === 'response' && typeof record['id'] === 'string') {
-      const pending = this.#pending.get(record['id'])
-      if (pending === undefined) return
-      this.#pending.delete(record['id'])
-      if (record['success'] === true) pending.resolve(record)
-      else pending.reject(new Error('PI_RPC_REJECTED'))
-      return
-    }
-    for (const listener of this.#listeners) listener(record)
-  }
-
-  #rejectAll(error: Error): void {
-    for (const pending of this.#pending.values()) pending.reject(error)
-    this.#pending.clear()
-  }
-
-  #exited(error: Error): void {
-    this.#rejectAll(error)
-    for (const listener of this.#exitListeners) listener(error)
-  }
-
-  #protocolFailure(error: Error): void {
-    this.#stdout = ''
-    this.#exited(error)
-    this.#child?.kill('SIGKILL')
+    await this.#link?.stop({ graceMs: 2_000, finalWaitMs: 0 })
   }
 }
 
