@@ -22,6 +22,9 @@ const SOURCE_QUERY = `query($serviceId: String!, $environmentId: String!) {
 const UPDATE_MUTATION = `mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
   serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
 }`
+const DEPLOY_MUTATION = `mutation($serviceId: String!, $environmentId: String!) {
+  serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+}`
 const ROLLBACK_MUTATION = `mutation($id: String!) { deploymentRollback(id: $id) }`
 const REMOVE_MUTATION = `mutation($id: String!) { deploymentRemove(id: $id) }`
 
@@ -262,6 +265,7 @@ export async function promoteRailwayImages({
       const expectedImage = `${manifest.image}@${manifest.digest}`
       intents.push(target)
       await railway.updateSource(target, { image: expectedImage, repo: null })
+      await railway.deploySource(target)
       await waitForExpectedDeployment({
         target,
         expectedImage,
@@ -346,6 +350,14 @@ export function createRailwayClient({ token, fetchImpl = fetch }) {
         input: { source },
       })
       assertMutationSucceeded(data, 'serviceInstanceUpdate')
+    },
+    async deploySource(target) {
+      const { serviceId, environmentId } = variablesForTarget(target)
+      const data = await request(DEPLOY_MUTATION, { serviceId, environmentId })
+      if (typeof data.serviceInstanceDeployV2 !== 'string' || !data.serviceInstanceDeployV2) {
+        throw new Error('Railway mutation serviceInstanceDeployV2 returned no deployment ID')
+      }
+      return data.serviceInstanceDeployV2
     },
     async rollbackDeployment(_target, id) {
       const data = await request(ROLLBACK_MUTATION, { id })
