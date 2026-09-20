@@ -48,6 +48,15 @@ function matchesExpectedDeployment(deployment, expectedImage, expectedDigest) {
   return deployment.meta?.image === expectedImage && deployment.meta?.imageDigest === expectedDigest
 }
 
+async function waitForExpectedSource({ target, expectedSource, railway, sleep, verifyRetries }) {
+  for (let attempt = 0; attempt < verifyRetries; attempt += 1) {
+    const source = normalizeSource(await railway.getSource(target))
+    if (isDeepStrictEqual(source, expectedSource)) return
+    await sleep(10_000)
+  }
+  throw new Error(`Timed out waiting for ${target} source configuration to become active`)
+}
+
 async function waitForExpectedDeployment({
   target,
   expectedImage,
@@ -263,8 +272,16 @@ export async function promoteRailwayImages({
     for (const target of Object.keys(SERVICE_IDS)) {
       const manifest = byTarget.get(target)
       const expectedImage = `${manifest.image}@${manifest.digest}`
+      const expectedSource = { image: expectedImage, repo: null }
       intents.push(target)
-      await railway.updateSource(target, { image: expectedImage, repo: null })
+      await railway.updateSource(target, expectedSource)
+      await waitForExpectedSource({
+        target,
+        expectedSource,
+        railway,
+        sleep,
+        verifyRetries,
+      })
       await railway.deploySource(target)
       await waitForExpectedDeployment({
         target,

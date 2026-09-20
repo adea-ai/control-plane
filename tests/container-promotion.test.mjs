@@ -46,6 +46,62 @@ describe('container promotion', () => {
     )
   })
 
+  test('waits for the updated source before triggering deployment', async () => {
+    const sources = new Map(
+      manifests.map(({ target }) => [target, { image: `${target}@sha256:prior`, repo: null }])
+    )
+    const pendingSources = new Map()
+    const deployments = new Map(
+      manifests.map(({ target }) => [target, [deployment({ id: `${target}-prior` })]])
+    )
+    const sourceReads = new Map()
+
+    const railway = {
+      async getSource(target) {
+        const reads = (sourceReads.get(target) ?? 0) + 1
+        sourceReads.set(target, reads)
+        if (reads >= 3 && pendingSources.has(target)) {
+          sources.set(target, pendingSources.get(target))
+          pendingSources.delete(target)
+        }
+        return sources.get(target)
+      },
+      async listDeployments(target) {
+        return deployments.get(target)
+      },
+      async updateSource(target, source) {
+        pendingSources.set(target, source)
+      },
+      async deploySource(target) {
+        assert.equal(sourceReads.get(target), 3)
+        assert.equal(pendingSources.has(target), false)
+        const manifest = manifests.find((item) => item.target === target)
+        deployments.set(target, [
+          deployment({
+            id: `${target}-promoted`,
+            meta: {
+              image: `${manifest.image}@${manifest.digest}`,
+              imageDigest: manifest.digest,
+            },
+          }),
+        ])
+      },
+      async rollbackDeployment() {},
+      async removeDeployment() {},
+    }
+
+    await promoteRailwayImages({
+      manifests,
+      railway,
+      pullImage: async () => {},
+      sleep: async () => {},
+      verifyRetries: 3,
+    })
+
+    assert.equal(sourceReads.get('control-api'), 3)
+    assert.equal(sourceReads.get('workflow-worker'), 3)
+  })
+
   test('restores every intended service when a later mutation is ambiguous', async () => {
     const sources = new Map([
       ['control-api', { image: 'control-api@sha256:prior', repo: null }],
