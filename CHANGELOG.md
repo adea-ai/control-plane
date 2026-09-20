@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.29.1...workspace-v1.30.0) (2026-09-20)
+
+
+### Features
+
+* artifacts-retention ([#559](https://github.com/adea-ai/control-plane/issues/559)) ([8fb56b9](https://github.com/adea-ai/control-plane/commit/8fb56b9d4aab0729bad5b1e3da3cfdbf817836b9))
+* **hosted:** make the retention sweep cadence configurable ([#562](https://github.com/adea-ai/control-plane/issues/562)) ([fae3fdc](https://github.com/adea-ai/control-plane/commit/fae3fdc081a7f77caa2bdf684691af6d5884a6e8))
+* **local:** SQLite-backed durable execution without Restate + persistence-profile conformance ([#569](https://github.com/adea-ai/control-plane/issues/569)) ([a6ceaf0](https://github.com/adea-ai/control-plane/commit/a6ceaf0ac5d7544ae5196e58995c9a4d81971c49))
+* m558-decision-layer ([#578](https://github.com/adea-ai/control-plane/issues/578)) ([c37de22](https://github.com/adea-ai/control-plane/commit/c37de2297070049eadc4bf248306213b770db9f1))
+* **release:** promote scan-attested image digests ([#585](https://github.com/adea-ai/control-plane/issues/585)) ([a72f6b4](https://github.com/adea-ai/control-plane/commit/a72f6b48d54c931f0a9b1bf875123eb3405c295d))
+* split-eval-verdict-axes ([#570](https://github.com/adea-ai/control-plane/issues/570)) ([ad4f3f3](https://github.com/adea-ai/control-plane/commit/ad4f3f35fbf5e317d2d55dcc4e0bd60f4b4b756b))
+
+
+### Bug Fixes
+
+* **audit:** restore fail-closed acceptance gates ([#584](https://github.com/adea-ai/control-plane/issues/584)) ([7dae3e1](https://github.com/adea-ai/control-plane/commit/7dae3e1967fe5d31d52e0b7352dd11651e58105e))
+* **control-api:** wire database readiness and the retention sweep into the cloud composition ([#566](https://github.com/adea-ai/control-plane/issues/566)) ([a692613](https://github.com/adea-ai/control-plane/commit/a692613ffc5c3a45f4d24c2a23b2fdb3f46a537d))
+* **hosted:** make /ready fail closed when the database is unreachable ([#565](https://github.com/adea-ai/control-plane/issues/565)) ([1005ac0](https://github.com/adea-ai/control-plane/commit/1005ac00b5398fcd817bddf66b999ad0d8ab6e12))
+
+
+### Documentation
+
+* evals-recalibration-kit ([#572](https://github.com/adea-ai/control-plane/issues/572)) ([c7c7f27](https://github.com/adea-ai/control-plane/commit/c7c7f270e3ce87481c559a0df5493e35f6297bd8))
+* **evals:** make the C4/SW-07 calibration scope explicitly verify-only ([#571](https://github.com/adea-ai/control-plane/issues/571)) ([017cf5a](https://github.com/adea-ai/control-plane/commit/017cf5a2f9734066aed26892c7f37dadbf52befd))
+
+
+### Tests
+
+* m194-artifact-retention ([#561](https://github.com/adea-ai/control-plane/issues/561)) ([5ffc778](https://github.com/adea-ai/control-plane/commit/5ffc778642aa47733b884764ae54b2bb56a68689))
+* m194-rpo-rto ([#539](https://github.com/adea-ai/control-plane/issues/539)) ([9cf1598](https://github.com/adea-ai/control-plane/commit/9cf15982a25f8d7f95c1d99dbae1e989b637989e))
+* m194-rpo-rto-events ([#557](https://github.com/adea-ai/control-plane/issues/557)) ([53f7e71](https://github.com/adea-ai/control-plane/commit/53f7e7162f1e3aa5b5dc2d5d05fee0ab1adb8ff8))
+* **m196:** skill-lane evals, evidence contracts, skill registry ([#575](https://github.com/adea-ai/control-plane/issues/575)) ([645b866](https://github.com/adea-ai/control-plane/commit/645b86618e8b0804b492b100d830edef1c56ab26))
+* **m196:** skill-lane evals, evidence-contract upgrade, and skill registry ([645b866](https://github.com/adea-ai/control-plane/commit/645b86618e8b0804b492b100d830edef1c56ab26))
+
+
+### CI
+
+* **security:** pin the trivy scan container by digest ([#577](https://github.com/adea-ai/control-plane/issues/577)) ([a341e9e](https://github.com/adea-ai/control-plane/commit/a341e9ecf9fd7f445acb013d9d49d5df21982a22))
+
+
+### Maintenance
+
+* acp-adapter-module-split ([#574](https://github.com/adea-ai/control-plane/issues/574)) ([0d7db14](https://github.com/adea-ai/control-plane/commit/0d7db143a3c80e4699845ffb2641807dd11c2e55))
+* acp-adapter-schema-split ([#573](https://github.com/adea-ai/control-plane/issues/573)) ([b7328fc](https://github.com/adea-ai/control-plane/commit/b7328fcce815e4619e9a52d86808f37e7243099a))
+* **acp-adapter:** split index.ts into acp-helpers, reference-transport, and acp-utils modules ([0d7db14](https://github.com/adea-ai/control-plane/commit/0d7db143a3c80e4699845ffb2641807dd11c2e55))
+* consolidate child-process RPC plumbing into ProcessRpcLink ([61331fd](https://github.com/adea-ai/control-plane/commit/61331fd6bcccaa2abe07bfaa3a049642d1666d97))
+* consolidate the reconciliation scheduler into packages/deployment ([#568](https://github.com/adea-ai/control-plane/issues/568)) ([5e06e27](https://github.com/adea-ai/control-plane/commit/5e06e270b796a35efc434d8d20e05a56126e6971))
+* **deps:** bump the npm-dependencies group across 1 directory with 9 updates ([#567](https://github.com/adea-ai/control-plane/issues/567)) ([8008fd4](https://github.com/adea-ai/control-plane/commit/8008fd4c063735e362e565d637b3e33367e97e0e))
+* lint-toolchain-standardization ([#560](https://github.com/adea-ai/control-plane/issues/560)) ([563a525](https://github.com/adea-ai/control-plane/commit/563a525a875116eb7713e5c7ffa328782fed8252))
+* **m13:** backoff consolidation, regression budgets, gateway schema hoist ([#579](https://github.com/adea-ai/control-plane/issues/579)) ([02f53f0](https://github.com/adea-ai/control-plane/commit/02f53f0904bb424bf3f83b0274991db999321b76))
+* **m13:** consolidate child-process RPC plumbing into ProcessRpcLink ([#583](https://github.com/adea-ai/control-plane/issues/583)) ([61331fd](https://github.com/adea-ai/control-plane/commit/61331fd6bcccaa2abe07bfaa3a049642d1666d97))
+* **main:** release ([#554](https://github.com/adea-ai/control-plane/issues/554)) ([f92e8ad](https://github.com/adea-ai/control-plane/commit/f92e8adacd174cbdb2262e481670ef3def345403))
+* standardize lint and format toolchain ([563a525](https://github.com/adea-ai/control-plane/commit/563a525a875116eb7713e5c7ffa328782fed8252))
+* toolchain-alignment ([#564](https://github.com/adea-ai/control-plane/issues/564)) ([d30ea64](https://github.com/adea-ai/control-plane/commit/d30ea64356f0aa49d654db0cc69d7618df3ef5f8))
+
 ## [1.29.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.29.0...workspace-v1.29.1) (2026-09-17)
 
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.4.1...managed-pi-adapter-v1.5.0) (2026-09-20)
+
+
+### Features
+
+* artifacts-retention ([#559](https://github.com/adea-ai/control-plane/issues/559)) ([8fb56b9](https://github.com/adea-ai/control-plane/commit/8fb56b9d4aab0729bad5b1e3da3cfdbf817836b9))
+
+
+### Tests
+
+* m194-artifact-retention ([#561](https://github.com/adea-ai/control-plane/issues/561)) ([5ffc778](https://github.com/adea-ai/control-plane/commit/5ffc778642aa47733b884764ae54b2bb56a68689))
+* m194-rpo-rto ([#539](https://github.com/adea-ai/control-plane/issues/539)) ([9cf1598](https://github.com/adea-ai/control-plane/commit/9cf15982a25f8d7f95c1d99dbae1e989b637989e))
+* m194-rpo-rto-events ([#557](https://github.com/adea-ai/control-plane/issues/557)) ([53f7e71](https://github.com/adea-ai/control-plane/commit/53f7e7162f1e3aa5b5dc2d5d05fee0ab1adb8ff8))
+
+
+### Maintenance
+
+* consolidate child-process RPC plumbing into ProcessRpcLink ([61331fd](https://github.com/adea-ai/control-plane/commit/61331fd6bcccaa2abe07bfaa3a049642d1666d97))
+* **deps:** bump the npm-dependencies group across 1 directory with 9 updates ([#567](https://github.com/adea-ai/control-plane/issues/567)) ([8008fd4](https://github.com/adea-ai/control-plane/commit/8008fd4c063735e362e565d637b3e33367e97e0e))
+* **m13:** backoff consolidation, regression budgets, gateway schema hoist ([#579](https://github.com/adea-ai/control-plane/issues/579)) ([02f53f0](https://github.com/adea-ai/control-plane/commit/02f53f0904bb424bf3f83b0274991db999321b76))
+* **m13:** consolidate child-process RPC plumbing into ProcessRpcLink ([#583](https://github.com/adea-ai/control-plane/issues/583)) ([61331fd](https://github.com/adea-ai/control-plane/commit/61331fd6bcccaa2abe07bfaa3a049642d1666d97))
+* toolchain-alignment ([#564](https://github.com/adea-ai/control-plane/issues/564)) ([d30ea64](https://github.com/adea-ai/control-plane/commit/d30ea64356f0aa49d654db0cc69d7618df3ef5f8))
+
 ## [1.4.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.4.0...managed-pi-adapter-v1.4.1) (2026-09-17)
 
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.0](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.6...restate-runtime-v1.2.0) (2026-09-20)
+
+
+### Features
+
+* artifacts-retention ([#559](https://github.com/adea-ai/control-plane/issues/559)) ([8fb56b9](https://github.com/adea-ai/control-plane/commit/8fb56b9d4aab0729bad5b1e3da3cfdbf817836b9))
+
+
+### Bug Fixes
+
+* **audit:** restore fail-closed acceptance gates ([#584](https://github.com/adea-ai/control-plane/issues/584)) ([7dae3e1](https://github.com/adea-ai/control-plane/commit/7dae3e1967fe5d31d52e0b7352dd11651e58105e))
+
+
+### Tests
+
+* m194-artifact-retention ([#561](https://github.com/adea-ai/control-plane/issues/561)) ([5ffc778](https://github.com/adea-ai/control-plane/commit/5ffc778642aa47733b884764ae54b2bb56a68689))
+* m194-rpo-rto ([#539](https://github.com/adea-ai/control-plane/issues/539)) ([9cf1598](https://github.com/adea-ai/control-plane/commit/9cf15982a25f8d7f95c1d99dbae1e989b637989e))
+
+
+### Maintenance
+
+* **deps:** bump the npm-dependencies group across 1 directory with 9 updates ([#567](https://github.com/adea-ai/control-plane/issues/567)) ([8008fd4](https://github.com/adea-ai/control-plane/commit/8008fd4c063735e362e565d637b3e33367e97e0e))
+* toolchain-alignment ([#564](https://github.com/adea-ai/control-plane/issues/564)) ([d30ea64](https://github.com/adea-ai/control-plane/commit/d30ea64356f0aa49d654db0cc69d7618df3ef5f8))
+
 ## [1.1.6](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.5...restate-runtime-v1.1.6) (2026-09-17)
 
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.12.1...local-control-plane-v1.13.0) (2026-09-20)
+
+
+### Features
+
+* artifacts-retention ([#559](https://github.com/adea-ai/control-plane/issues/559)) ([8fb56b9](https://github.com/adea-ai/control-plane/commit/8fb56b9d4aab0729bad5b1e3da3cfdbf817836b9))
+* **local:** SQLite-backed durable execution without Restate + persistence-profile conformance ([#569](https://github.com/adea-ai/control-plane/issues/569)) ([a6ceaf0](https://github.com/adea-ai/control-plane/commit/a6ceaf0ac5d7544ae5196e58995c9a4d81971c49))
+
+
+### Bug Fixes
+
+* **hosted:** make /ready fail closed when the database is unreachable ([#565](https://github.com/adea-ai/control-plane/issues/565)) ([1005ac0](https://github.com/adea-ai/control-plane/commit/1005ac00b5398fcd817bddf66b999ad0d8ab6e12))
+
+
+### Tests
+
+* m194-artifact-retention ([#561](https://github.com/adea-ai/control-plane/issues/561)) ([5ffc778](https://github.com/adea-ai/control-plane/commit/5ffc778642aa47733b884764ae54b2bb56a68689))
+* m194-rpo-rto ([#539](https://github.com/adea-ai/control-plane/issues/539)) ([9cf1598](https://github.com/adea-ai/control-plane/commit/9cf15982a25f8d7f95c1d99dbae1e989b637989e))
+
+
+### Maintenance
+
+* consolidate the reconciliation scheduler into packages/deployment ([#568](https://github.com/adea-ai/control-plane/issues/568)) ([5e06e27](https://github.com/adea-ai/control-plane/commit/5e06e270b796a35efc434d8d20e05a56126e6971))
+* **deps:** bump the npm-dependencies group across 1 directory with 9 updates ([#567](https://github.com/adea-ai/control-plane/issues/567)) ([8008fd4](https://github.com/adea-ai/control-plane/commit/8008fd4c063735e362e565d637b3e33367e97e0e))
+* toolchain-alignment ([#564](https://github.com/adea-ai/control-plane/issues/564)) ([d30ea64](https://github.com/adea-ai/control-plane/commit/d30ea64356f0aa49d654db0cc69d7618df3ef5f8))
+
 ## [1.12.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.12.0...local-control-plane-v1.12.1) (2026-09-17)
 
 
