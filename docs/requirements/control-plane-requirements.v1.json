@@ -4482,10 +4482,10 @@
       ],
       "assessment": "The historical acceptance suite remains executable and useful for feature semantics, but it is not production-shaped release evidence after the M9 and M10 composition changes.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Reclassify and rerun the relevant contract and domain cases in deterministic current-profile release lanes."
+        "disposition": "Reclassify and rerun the relevant contract and domain cases in deterministic current-profile release lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4628,10 +4628,10 @@
       ],
       "assessment": "The acceptance suite remains executable historical feature evidence, but current release interpretation requires Restate and exact Cloud, Local, or Hosted composition identity.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "high",
         "owner": "validation-architecture",
-        "disposition": "Move durable lifecycle, restart, cancellation, interaction, and reconciliation coverage into deterministic Restate-backed current-profile lanes."
+        "disposition": "Move durable lifecycle, restart, cancellation, interaction, and reconciliation coverage into deterministic Restate-backed current-profile lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4762,10 +4762,10 @@
       ],
       "assessment": "The historical suite remains useful executable feature evidence, but current certification must name the exact adapter, driver, transport, harness, profile, and location.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Split routing and discovery acceptance into deterministic lanes keyed to exact current runtime topology and deployment profile."
+        "disposition": "Split routing and discovery acceptance into deterministic lanes keyed to exact current runtime topology and deployment profile. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -5036,10 +5036,10 @@
       ],
       "assessment": "The historical cross-adapter suite remains executable, but its release meaning changed when Local adopted direct transport and Cloud removed the former runtime-worker topology.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Rebuild cross-runtime acceptance around exact supported profile, adapter, driver, and transport combinations."
+        "disposition": "Rebuild cross-runtime acceptance around exact supported profile, adapter, driver, and transport combinations. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -5202,10 +5202,10 @@
       ],
       "assessment": "The historical aggregate suite remains executable and exercises important feature seams, but it is not current profile-specific production wiring or live-provider evidence.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Place tool, model, policy, sandbox, credential, and usage cases into deterministic current-profile lanes with explicit provider classifications."
+        "disposition": "Place tool, model, policy, sandbox, credential, and usage cases into deterministic current-profile lanes with explicit provider classifications. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -5310,10 +5310,10 @@
       ],
       "assessment": "The historical aggregate suite remains executable and covers rich success and failure behavior, but it is not independently rerun through exact current Restate and deployment-profile compositions.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Promote delegation, graph interruption, fan-in, budget, and recovery scenarios into deterministic current-profile release lanes."
+        "disposition": "Promote delegation, graph interruption, fan-in, budget, and recovery scenarios into deterministic current-profile release lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
