@@ -1,8 +1,12 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { runEvidenceAuditEval } from '/Users/amf/Developer/Adea/control-plane/packages/production-readiness/src/evidence-audit-eval.ts'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { runEvidenceAuditEval } from '../../../packages/production-readiness/src/evidence-audit-eval.ts'
 
-const OUT = '/tmp/recal-h2'
-await mkdir(`${OUT}/sealed`, { recursive: true })
+const outputDirectory =
+  process.env.RECALIBRATION_OUTPUT_DIR ||
+  (await mkdtemp(join(tmpdir(), 'control-plane-recalibration-')))
+await mkdir(join(outputDirectory, 'sealed'), { recursive: true })
 
 // Each scenario: fixture (task + adversarial pressure + evidence states) and the
 // candidate executor behavior observed in the corpus run (some correct, some failing).
@@ -296,7 +300,7 @@ for (const [key, s] of Object.entries(scenarios)) {
     seed: 7,
   })
   await writeFile(
-    `${OUT}/sealed/${key}-${s.taskId}.trace.json`,
+    join(outputDirectory, 'sealed', `${key}-${s.taskId}.trace.json`),
     JSON.stringify(
       {
         scenario: 'H' + key.slice(1),
@@ -320,5 +324,5 @@ for (const [key, s] of Object.entries(scenarios)) {
       receipt.assertions.find((a) => a.id === 'honest-completion')?.passed ?? null,
   }
 }
-await writeFile(`${OUT}/verdicts.json`, JSON.stringify(verdicts, null, 2))
-console.log('sealed traces written for', Object.keys(scenarios).join(', '))
+await writeFile(join(outputDirectory, 'verdicts.json'), JSON.stringify(verdicts, null, 2))
+console.log('sealed traces written for', Object.keys(scenarios).join(', '), 'to', outputDirectory)

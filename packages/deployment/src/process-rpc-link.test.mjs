@@ -179,7 +179,8 @@ describe('ProcessRpcLink', () => {
   test('sweeps every pending request on a fatal protocol failure and stops reading', async () => {
     await withLink(
       () => startLink(),
-      async ({ link, events }) => {
+      async ({ child, link, events }) => {
+        const closed = new Promise((resolve) => child.once('close', resolve))
         const reasons = []
         const swept = link.request(
           { slow: 300 },
@@ -210,7 +211,8 @@ describe('ProcessRpcLink', () => {
         expect(reasons).toEqual(['failure', 'failure'])
         expect(events.failures).toHaveLength(1)
         expect(events.failures[0]).toBe(fatalOutcome)
-        expect(events.exits[0]).toBe(events.failures[0])
+        await closed
+        expect(events.exits).toEqual([events.failures[0]])
         expect(link.connected).toBe(false)
         expect(link.failure).toBe(events.failures[0])
         const afterFailure = await link.request({ echo: 2 }, { id: 'f3', timeoutMs: 100 }).then(
