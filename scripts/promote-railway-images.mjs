@@ -49,86 +49,133 @@ async function waitForExpectedDeployment({
   target,
   expectedImage,
   expectedDigest,
+  knownDeploymentIds,
   railway,
   sleep,
   verifyRetries,
 }) {
   for (let attempt = 0; attempt < verifyRetries; attempt += 1) {
     const deployments = await railway.listDeployments(target)
-    const match = deployments.find((deployment) => deployment.meta?.image === expectedImage)
-    if (!match) {
-      await sleep(10_000)
-      continue
-    }
-    if (
-      ['FAILED', 'CRASHED', 'REMOVED', 'REMOVING', 'SKIPPED', 'NEEDS_APPROVAL'].includes(
-        match.status
-      )
-    ) {
-      throw new Error(`Deployment for ${target} stopped with ${match.status}`)
-    }
-    if (
-      match.status === 'SUCCESS' &&
-      match.deploymentStopped === false &&
-      matchesExpectedDeployment(match, expectedImage, expectedDigest)
-    ) {
-      return match
+    const matches = deployments.filter((deployment) => deployment.meta?.image === expectedImage)
+    const active = matches.find(
+      (deployment) =>
+        deployment.status === 'SUCCESS' &&
+        deployment.deploymentStopped === false &&
+        matchesExpectedDeployment(deployment, expectedImage, expectedDigest)
+    )
+    if (active) return active
+
+    const newTerminal = matches.find(
+      (deployment) =>
+        !knownDeploymentIds.has(deployment.id) &&
+        ['FAILED', 'CRASHED', 'REMOVED', 'REMOVING', 'SKIPPED', 'NEEDS_APPROVAL'].includes(
+          deployment.status
+        )
+    )
+    if (newTerminal) {
+      throw new Error(`Deployment for ${target} stopped with ${newTerminal.status}`)
     }
     await sleep(10_000)
   }
   throw new Error(`Timed out waiting for ${target} to deploy ${expectedImage}`)
 }
 
-async function waitForPriorState({ target, snapshot, railway, sleep, verifyRetries }) {
+async function reconcilePriorState({
+  target,
+  expectedImage,
+  snapshot,
+  railway,
+  sleep,
+  verifyRetries,
+}) {
+  let stableChecks = 0
+  let lastMutationError
+
   for (let attempt = 0; attempt < verifyRetries; attempt += 1) {
-    const deployments = await railway.listDeployments(target)
     const source = normalizeSource(await railway.getSource(target))
     if (!isDeepStrictEqual(source, snapshot.source)) {
-      await sleep(10_000)
-      continue
+      try {
+        await railway.updateSource(target, snapshot.source)
+      } catch (error) {
+        lastMutationError = error
+      }
     }
 
+    const deployments = await railway.listDeployments(target)
+    const promotionDeployments = deployments.filter(
+      (deployment) =>
+        deployment.meta?.image === expectedImage && deployment.deploymentStopped === false
+    )
+
     if (snapshot.deployment === undefined) {
-      if (deployments.every((deployment) => deployment.deploymentStopped !== false)) return
+      for (const deployment of promotionDeployments) {
+        try {
+          await railway.removeDeployment(target, deployment.id)
+        } catch (error) {
+          lastMutationError = error
+        }
+      }
     } else {
-      const restored = deployments.find(
+      const activePrior = deployments.find(
         (deployment) =>
           deployment.status === 'SUCCESS' &&
           deployment.deploymentStopped === false &&
           deployment.meta?.imageDigest === snapshot.deployment.meta?.imageDigest
       )
-      if (restored) return
+      if (!activePrior || promotionDeployments.length > 0) {
+        const prior = deployments.find((deployment) => deployment.id === snapshot.deployment.id)
+        if (prior?.canRollback === true) {
+          try {
+            await railway.rollbackDeployment(target, snapshot.deployment.id)
+          } catch (error) {
+            lastMutationError = error
+          }
+        }
+      }
+    }
+
+    const verifiedSource = normalizeSource(await railway.getSource(target))
+    const verifiedDeployments = await railway.listDeployments(target)
+    const noActivePromotion = verifiedDeployments.every(
+      (deployment) =>
+        deployment.meta?.image !== expectedImage || deployment.deploymentStopped !== false
+    )
+    const priorStateActive =
+      snapshot.deployment === undefined
+        ? verifiedDeployments.every((deployment) => deployment.deploymentStopped !== false)
+        : verifiedDeployments.some(
+            (deployment) =>
+              deployment.status === 'SUCCESS' &&
+              deployment.deploymentStopped === false &&
+              deployment.meta?.imageDigest === snapshot.deployment.meta?.imageDigest
+          )
+
+    if (
+      isDeepStrictEqual(verifiedSource, snapshot.source) &&
+      noActivePromotion &&
+      priorStateActive
+    ) {
+      stableChecks += 1
+      if (stableChecks >= 3) return
+    } else {
+      stableChecks = 0
     }
     await sleep(10_000)
   }
-  throw new Error(`Rollback verification failed for ${target}`)
+
+  throw new Error(`Rollback reconciliation failed for ${target}`, {
+    cause: lastMutationError,
+  })
 }
 
-async function rollbackTarget({ target, expectedImage, snapshot, railway, sleep, verifyRetries }) {
-  const deployments = await railway.listDeployments(target)
-  const source = normalizeSource(await railway.getSource(target))
-  const promotionDeployments = deployments.filter(
-    (deployment) =>
-      deployment.meta?.image === expectedImage && deployment.deploymentStopped === false
-  )
-  const sourceChanged = source.image === expectedImage
-
-  if (!sourceChanged && promotionDeployments.length === 0) return
-
-  if (snapshot.deployment === undefined) {
-    for (const deployment of promotionDeployments) {
-      await railway.removeDeployment(target, deployment.id)
-    }
-  } else {
-    const prior = deployments.find((deployment) => deployment.id === snapshot.deployment.id)
-    if (prior?.canRollback !== true) {
-      throw new Error(`Prior deployment for ${target} is no longer rollbackable`)
-    }
-    await railway.rollbackDeployment(target, snapshot.deployment.id)
+async function rollbackTarget(options) {
+  const { target, snapshot, railway } = options
+  try {
+    await railway.updateSource(target, snapshot.source)
+  } catch {
+    // A lost response is ambiguous; reconciliation below establishes truth.
   }
-
-  await railway.updateSource(target, snapshot.source)
-  await waitForPriorState({ target, snapshot, railway, sleep, verifyRetries })
+  await reconcilePriorState(options)
 }
 
 function validateManifests(manifests) {
@@ -171,6 +218,7 @@ export async function promoteRailwayImages({
     snapshots.set(target, {
       source: normalizeSource(await railway.getSource(target)),
       deployment: current,
+      knownDeploymentIds: new Set(deployments.map(({ id }) => id)),
     })
   }
 
@@ -184,6 +232,7 @@ export async function promoteRailwayImages({
         target,
         expectedImage,
         expectedDigest: manifest.digest,
+        knownDeploymentIds: snapshots.get(target).knownDeploymentIds,
         railway,
         sleep,
         verifyRetries,

@@ -502,8 +502,12 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.match(promotionClient, /deploymentRemove/)
   assert.match(promotionClient, /canRollback/)
   assert.match(promotionClient, /assertMutationSucceeded/)
-  assert.match(promotionClient, /waitForPriorState/)
+  assert.match(promotionClient, /reconcilePriorState/)
+  assert.match(promotionClient, /knownDeploymentIds/)
+  assert.match(promotionClient, /stableChecks >= 3/)
   assert.match(promotionClient, /deploymentStopped === false/)
+  assert.match(workflow, /timeout-minutes: 60/)
+  assert.match(workflow, /no-cache: true/)
 })
 
 test('retains immutable load, recovery, and container evidence artifacts', async () => {

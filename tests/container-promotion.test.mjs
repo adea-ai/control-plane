@@ -62,6 +62,7 @@ describe('container promotion', () => {
       ],
     ])
     const calls = []
+    const promoted = new Set()
     const rolledBack = new Set()
     let updateCount = 0
     const railway = {
@@ -70,19 +71,18 @@ describe('container promotion', () => {
       },
       async listDeployments(target) {
         const prior = deployments.get(target)[0]
-        const source = sources.get(target)
-        if (
-          source.image?.includes(manifests.find((item) => item.target === target).digest) &&
-          !rolledBack.has(target)
-        ) {
+        if (promoted.has(target) && !rolledBack.has(target)) {
           const manifest = manifests.find((item) => item.target === target)
           return [
             deployment({
               id: `${target}-promoted`,
               canRollback: false,
-              meta: { image: source.image, imageDigest: manifest.digest },
+              meta: {
+                image: `${manifest.image}@${manifest.digest}`,
+                imageDigest: manifest.digest,
+              },
             }),
-            { ...prior, deploymentStopped: true },
+            { ...prior, canRollback: true, deploymentStopped: true },
           ]
         }
         return [prior]
@@ -90,12 +90,14 @@ describe('container promotion', () => {
       async updateSource(target, source) {
         calls.push(['update', target, source])
         sources.set(target, source)
+        if (source.image?.includes('sha256:')) promoted.add(target)
         updateCount += 1
         if (updateCount === 2) throw new Error('response lost after commit')
       },
       async rollbackDeployment(target, id) {
         calls.push(['rollback', target, id])
         rolledBack.add(target)
+        throw new Error('rollback response lost after commit')
       },
       async removeDeployment(target, id) {
         calls.push(['remove', target, id])
@@ -108,7 +110,7 @@ describe('container promotion', () => {
         railway,
         pullImage: async () => {},
         sleep: async () => {},
-        verifyRetries: 1,
+        verifyRetries: 3,
       }),
       /response lost after commit/
     )
@@ -127,28 +129,28 @@ describe('container promotion', () => {
   })
 
   test('returns a first activation to verified standby when no prior deployment exists', async () => {
-    const promotedImage = `${manifests[0].image}@${manifests[0].digest}`
     const calls = []
     const sources = new Map([
       ['control-api', { image: null, repo: null }],
       ['workflow-worker', { image: null, repo: null }],
     ])
+    const activeDeployments = new Set()
     const removed = new Set()
     const railway = {
       async getSource(target) {
         return sources.get(target)
       },
       async listDeployments(target) {
-        if (
-          target === 'control-api' &&
-          sources.get(target).image === promotedImage &&
-          !removed.has('new-control')
-        ) {
+        if (activeDeployments.has(target) && !removed.has(`new-${target}`)) {
+          const manifest = manifests.find((item) => item.target === target)
           return [
             deployment({
-              id: 'new-control',
+              id: `new-${target}`,
               canRollback: false,
-              meta: { image: promotedImage, imageDigest: manifests[0].digest },
+              meta: {
+                image: `${manifest.image}@${manifest.digest}`,
+                imageDigest: manifest.digest,
+              },
             }),
           ]
         }
@@ -157,6 +159,7 @@ describe('container promotion', () => {
       async updateSource(target, source) {
         calls.push(['update', target, source])
         sources.set(target, source)
+        if (source.image !== null) activeDeployments.add(target)
         if (target === 'workflow-worker' && source.image !== null) {
           throw new Error('second service failed')
         }
@@ -167,6 +170,7 @@ describe('container promotion', () => {
       async removeDeployment(target, id) {
         calls.push(['remove', target, id])
         removed.add(id)
+        throw new Error('remove response lost after commit')
       },
     }
 
@@ -176,7 +180,7 @@ describe('container promotion', () => {
         railway,
         pullImage: async () => {},
         sleep: async () => {},
-        verifyRetries: 1,
+        verifyRetries: 3,
       }),
       /second service failed/
     )
@@ -184,7 +188,7 @@ describe('container promotion', () => {
     assert(
       calls.some(
         ([operation, target, id]) =>
-          operation === 'remove' && target === 'control-api' && id === 'new-control'
+          operation === 'remove' && target === 'control-api' && id === 'new-control-api'
       )
     )
     assert(!calls.some(([operation]) => operation === 'rollback'))
