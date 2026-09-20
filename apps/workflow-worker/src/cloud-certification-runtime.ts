@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import {
   ObjectStoreError,
   type ObjectStore,
@@ -139,7 +140,7 @@ function sameRecord(
   left: Readonly<Record<string, string>>,
   right: Readonly<Record<string, string>>
 ): boolean {
-  const leftEntries = Object.entries(left).toSorted(([a], [b]) => a.localeCompare(b))
-  const rightEntries = Object.entries(right).toSorted(([a], [b]) => a.localeCompare(b))
+  const leftEntries = Object.entries(left).toSorted(([a], [b]) => compareCodePointOrder(a, b))
+  const rightEntries = Object.entries(right).toSorted(([a], [b]) => compareCodePointOrder(a, b))
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries)
 }

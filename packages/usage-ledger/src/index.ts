@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const SourceSchema = z
@@ -564,7 +565,7 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => compareCodePointOrder(left, right))
       .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
       .join(',')}}`
   }

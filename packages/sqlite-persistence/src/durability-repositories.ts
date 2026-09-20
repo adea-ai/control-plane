@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
 import {
@@ -160,7 +161,7 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
               event.publication.nextAttemptAt === undefined ||
               event.publication.nextAttemptAt <= dueAt)
         )
-        .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+        .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
         .slice(0, limit)
     )
   }
@@ -291,7 +292,7 @@ function filterPendingDelivery(events: readonly ExecutionEvent[], executionId: s
         event.archivedAt === undefined &&
         ['pending', 'failed'].includes(event.publication.status)
     )
-    .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+    .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
 }
 
 export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
@@ -524,8 +525,8 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
         )
         .toSorted((left, right) =>
           left.issuedAt === right.issuedAt
-            ? left.commandId.localeCompare(right.commandId)
-            : left.issuedAt.localeCompare(right.issuedAt)
+            ? compareCodePointOrder(left.commandId, right.commandId)
+            : compareCodePointOrder(left.issuedAt, right.issuedAt)
         )
         .slice(0, limit)
     )
@@ -544,8 +545,8 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
           .filter((command) => command.attemptId === attemptId)
           .toSorted((left, right) =>
             left.issuedAt === right.issuedAt
-              ? right.commandId.localeCompare(left.commandId)
-              : right.issuedAt.localeCompare(left.issuedAt)
+              ? compareCodePointOrder(right.commandId, left.commandId)
+              : compareCodePointOrder(right.issuedAt, left.issuedAt)
           )[0]
     )
   }

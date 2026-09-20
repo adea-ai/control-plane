@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import type { JsonValue, PersistenceProvider, PersistenceRecord } from '@control-plane/deployment'
 import { z } from 'zod'
 import {
@@ -195,8 +196,8 @@ export class WorkflowJobStore {
       }
       due.sort(
         (left, right) =>
-          (left.job.runAt ?? '').localeCompare(right.job.runAt ?? '') ||
-          left.record.id.localeCompare(right.record.id)
+          compareCodePointOrder(left.job.runAt ?? '', right.job.runAt ?? '') ||
+          compareCodePointOrder(left.record.id, right.record.id)
       )
       const claimed: WorkflowJobRecord[] = []
       for (const candidate of due.slice(0, input.limit)) {

@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -266,8 +267,8 @@ export class InMemoryRuntimeCommandRepository implements RuntimeCommandRepositor
       )
       .toSorted((left, right) =>
         left.issuedAt === right.issuedAt
-          ? left.commandId.localeCompare(right.commandId)
-          : left.issuedAt.localeCompare(right.issuedAt)
+          ? compareCodePointOrder(left.commandId, right.commandId)
+          : compareCodePointOrder(left.issuedAt, right.issuedAt)
       )
       .slice(0, limit)
       .map(clone)

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { compareCodePointOrder } from '@control-plane/contracts'
 
 export const RuntimeCapabilityNameSchema = z.enum([
   'stream.output',
@@ -115,6 +116,6 @@ export function capabilityFingerprint(capabilities: readonly RuntimeCapability[]
   return JSON.stringify(
     capabilities
       .map((capability) => RuntimeCapabilitySchema.parse(capability))
-      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .toSorted((left, right) => compareCodePointOrder(left.name, right.name))
   )
 }

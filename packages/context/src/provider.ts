@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { withTimeout } from '@control-plane/domain'
 import {
   ContextContributionSchema,
@@ -391,7 +392,8 @@ export class ContextProviderResolver {
           freshness(left) - freshness(right) ||
           latencyRank(left) - latencyRank(right) ||
           costRank(left) - costRank(right) ||
-          left.readModel.connection.connectionId.localeCompare(
+          compareCodePointOrder(
+            left.readModel.connection.connectionId,
             right.readModel.connection.connectionId
           )
         )
@@ -443,8 +445,8 @@ export class ContextProviderResolver {
       throw new ContextProviderResolutionError('PROVIDER_BUDGET_EXCEEDED')
     return normalized.toSorted(
       (left, right) =>
-        left.kind.localeCompare(right.kind) ||
-        left.contributionId.localeCompare(right.contributionId)
+        compareCodePointOrder(left.kind, right.kind) ||
+        compareCodePointOrder(left.contributionId, right.contributionId)
     )
   }
 

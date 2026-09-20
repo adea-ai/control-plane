@@ -1,4 +1,5 @@
 export * from './backoff.js'
+export { compareCodePointOrder } from '@control-plane/contracts'
 export * from './with-timeout.js'
 export * from './catalog-models.js'
 export * from './catalog-resolver.js'

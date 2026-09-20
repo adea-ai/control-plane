@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { ContractVersionSchema, IdentifierSchemas } from '@control-plane/contracts'
 import {
   RuntimeCapabilitySchema,
@@ -274,7 +275,7 @@ function normalizeDefinition(input: unknown): RuntimeDefinition {
   return {
     ...definition,
     capabilities: [...definition.capabilities].toSorted((left, right) =>
-      left.name.localeCompare(right.name)
+      compareCodePointOrder(left.name, right.name)
     ),
   }
 }
