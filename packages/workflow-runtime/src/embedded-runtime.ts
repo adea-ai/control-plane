@@ -159,11 +159,14 @@ export class EmbeddedWorkflowRuntime {
   async #tick(): Promise<void> {
     if (!this.#running) return
     try {
+      const availableSlots = this.#claimLimit - this.#activeRuns.size
+      const now = this.#now()
+      if (availableSlots <= 0) return
       const claimed = await this.#store.claimDue({
         owner: this.#owner,
         leaseMs: this.#leaseMs,
-        now: this.#now(),
-        limit: this.#claimLimit,
+        now,
+        limit: availableSlots,
       })
       for (const job of claimed) {
         const run = this.#runJob(job).finally(() => this.#activeRuns.delete(run))

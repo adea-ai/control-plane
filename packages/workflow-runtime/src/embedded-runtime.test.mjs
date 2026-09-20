@@ -232,6 +232,72 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
+  test('keeps active runs within the claim limit across polling intervals', async () => {
+    await withRuntime(async ({ provider }) => {
+      const executionIds = [
+        'exe_01JABCDEF0123456789ABCDEFG',
+        'exe_01JABCDEF0123456789ABCDEFH',
+        'exe_01JABCDEF0123456789ABCDEFJ',
+      ]
+      const entered = []
+      const releases = new Map()
+      let runtimeClockReads = 0
+      const now = () => {
+        runtimeClockReads += 1
+        return new Date().toISOString()
+      }
+      const { activities } = fakeActivities(
+        (input) =>
+          new Promise((resolve) => {
+            entered.push(input.executionId)
+            releases.set(input.executionId, () => resolve({ outcome: 'completed' }))
+          })
+      )
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities, {
+        claimLimit: 1,
+        pollIntervalMs: 10,
+        now,
+      })
+
+      await Promise.all(
+        executionIds.map((jobExecutionId) =>
+          dispatcher.submit({
+            ...workflowInput,
+            executionId: jobExecutionId,
+            workflowId: `wfl_${jobExecutionId.slice(4)}`,
+          })
+        )
+      )
+      await runtime.start()
+
+      try {
+        for (
+          let expectedEntered = 1;
+          expectedEntered <= executionIds.length;
+          expectedEntered += 1
+        ) {
+          await waitFor(() => entered.length === expectedEntered)
+          // Observe several queue scans while the current run stays blocked.
+          // No later job may enter until the active run releases its capacity.
+          const clockReadsAtEntry = runtimeClockReads
+          await waitFor(() => runtimeClockReads >= clockReadsAtEntry + 3)
+          expect(entered).toHaveLength(expectedEntered)
+          releases.get(entered.at(-1))()
+        }
+
+        await waitFor(async () =>
+          Promise.all(executionIds.map((jobExecutionId) => store.get(jobExecutionId))).then(
+            (jobs) => jobs.every((job) => job?.status === 'succeeded')
+          )
+        )
+        expect(new Set(entered)).toEqual(new Set(executionIds))
+      } finally {
+        for (const release of releases.values()) release()
+        await runtime.stop()
+      }
+    })
+  })
+
   test('parks on awaiting_input and resumes when the interaction response arrives', async () => {
     await withRuntime(async ({ provider }) => {
       const { activities } = fakeActivities(() => ({
