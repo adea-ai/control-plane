@@ -19,8 +19,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  candidate:
+    name: Validate tagged candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout complete release history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a final release from main
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease || false }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          test "$PRERELEASE" = false
+          git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$GITHUB_DEFAULT_BRANCH"
+
   build-scan-publish:
     name: Promote ${{ matrix.target }}
+    needs: [candidate]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -35,6 +57,7 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}
       REF: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}:${{ github.sha }}
+      RELEASE_NAME: ${{ github.event.release.tag_name || github.ref_name }}
       TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout the release revision
@@ -86,7 +109,7 @@ jobs:
             --arg image "$IMAGE" \
             --arg digest "$DIGEST" \
             --arg sourceSha "$GITHUB_SHA" \
-            --arg release "${{ github.event.release.tag_name || github.ref_name }}" \
+            --arg release "$RELEASE_NAME" \
             '{target: $target, image: $image, digest: $digest, sourceSha: $sourceSha, release: $release}' \
             > "promotion-$TARGET.json"
 
@@ -115,11 +138,8 @@ jobs:
     timeout-minutes: 30
     environment: control-plane / production
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
       RAILWAY_PROJECT_ID: 18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f
       RAILWAY_ENVIRONMENT_ID: 52f5b0ac-2af0-4792-aa56-30d80e5db31e
-      RAILWAY_CALLER: workflow:container-promotion
-      RAILWAY_AGENT_SESSION: container-promotion-${{ github.run_id }}
     steps:
       - name: Download promotion evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -127,55 +147,139 @@ jobs:
           pattern: promotion-*-${{ github.sha }}
           merge-multiple: true
 
-      - name: Require a tagged production candidate
-        if: github.event_name == 'workflow_dispatch'
-        run: test "$GITHUB_REF_TYPE" = tag
-
-      - name: Install the pinned Railway CLI
-        run: |
-          npm install --global @railway/cli@5.58.0 --foreground-scripts
-          test "$(railway --version)" = 'railway 5.58.0'
-
       - name: Deploy and verify exact image digests
         shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
         run: |
           set -euo pipefail
+
+          railway_api() {
+            local query="$1"
+            local variables="$2"
+            local payload response
+            payload="$(jq -cn --arg query "$query" --argjson variables "$variables" \
+              '{query: $query, variables: $variables}')"
+            response="$(curl --fail-with-body --retry 3 --silent --show-error \
+              https://backboard.railway.com/graphql/v2 \
+              -H 'content-type: application/json' \
+              -H "Project-Access-Token: $RAILWAY_TOKEN" \
+              --data-binary "$payload")"
+            jq -e 'if .errors then error(.errors | tostring) else .data end' <<<"$response"
+          }
+
+          # GraphQL variable markers are intentionally literal in these queries.
+          # shellcheck disable=SC2016
+          DEPLOYMENTS_QUERY='query($input: DeploymentListInput!) {
+            deployments(input: $input, first: 20) {
+              edges { node { id status meta } }
+            }
+          }'
+          # shellcheck disable=SC2016
+          SOURCE_QUERY='query($serviceId: String!, $environmentId: String!) {
+            serviceInstance(serviceId: $serviceId, environmentId: $environmentId) {
+              source { image repo }
+            }
+          }'
+          # shellcheck disable=SC2016
+          UPDATE_MUTATION='mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
+            serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+          }'
+          # shellcheck disable=SC2016
+          ROLLBACK_MUTATION='mutation($id: String!) { deploymentRollback(id: $id) }'
+
+          declare -A SERVICE_IDS=(
+            [control-api]='9167a33b-af0-4780-8614-a5a161697c9c'
+            [workflow-worker]='d733ec0d-bda5-4be5-86b9-637154d282eb'
+          )
+          declare -A EXPECTED_IMAGES=()
+          declare -A EXPECTED_DIGESTS=()
+          declare -A PRIOR_DEPLOYMENTS=()
+          declare -A PRIOR_SOURCES=()
+          UPDATED_TARGETS=()
+
           for MANIFEST in promotion-*.json; do
-            TARGET="$(jq -r .target "$MANIFEST")"
-            IMAGE="$(jq -r .image "$MANIFEST")"
-            DIGEST="$(jq -r .digest "$MANIFEST")"
-            SOURCE_SHA="$(jq -r .sourceSha "$MANIFEST")"
-            EXPECTED_IMAGE="$IMAGE@$DIGEST"
+            TARGET="$(jq -er .target "$MANIFEST")"
+            IMAGE="$(jq -er .image "$MANIFEST")"
+            DIGEST="$(jq -er .digest "$MANIFEST")"
+            [[ -n "${SERVICE_IDS[$TARGET]:-}" ]]
+            EXPECTED_IMAGES[$TARGET]="$IMAGE@$DIGEST"
+            EXPECTED_DIGESTS[$TARGET]="$DIGEST"
+          done
+          test "${#EXPECTED_IMAGES[@]}" = 2
 
-            case "$TARGET" in
-              control-api) SERVICE_ID='9167a33b-af0f-4780-8614-a5a161697c9c' ;;
-              workflow-worker) SERVICE_ID='d733ec0d-bda5-4be5-86b9-637154d282eb' ;;
-              *) echo "Unsupported production target: $TARGET" >&2; exit 1 ;;
-            esac
+          for TARGET in control-api workflow-worker; do
+            EXPECTED_IMAGE="${EXPECTED_IMAGES[$TARGET]}"
+            SERVICE_ID="${SERVICE_IDS[$TARGET]}"
 
-            # The release packages intentionally contain no secrets and must be
-            # public so Railway can pull by digest without a long-lived GHCR
-            # credential. This anonymous pull fails before Railway is changed if
-            # initial package visibility has not been bootstrapped in GitHub.
+            # Release images contain no secrets and are deliberately public so
+            # Railway needs no long-lived registry credential. Fail before any
+            # production mutation when anonymous digest retrieval is unavailable.
             docker pull "$EXPECTED_IMAGE"
 
-            railway environment edit \
-              --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service-config "$SERVICE_ID" source.image "$EXPECTED_IMAGE" \
-              --message "Promote $TARGET from $SOURCE_SHA" \
-              --json
+            VARIABLES="$(jq -cn \
+              --arg projectId "$RAILWAY_PROJECT_ID" \
+              --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+              --arg serviceId "$SERVICE_ID" \
+              '{input: {projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId}}')"
+            DEPLOYMENTS="$(railway_api "$DEPLOYMENTS_QUERY" "$VARIABLES")"
+            PRIOR_DEPLOYMENTS[$TARGET]="$(jq -er \
+              '[.deployments.edges[].node | select(.status == "SUCCESS")][0].id' \
+              <<<"$DEPLOYMENTS")"
+            VARIABLES="$(jq -cn \
+              --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+              --arg serviceId "$SERVICE_ID" \
+              '{environmentId: $environmentId, serviceId: $serviceId}')"
+            SOURCE="$(railway_api "$SOURCE_QUERY" "$VARIABLES")"
+            PRIOR_SOURCES[$TARGET]="$(jq -c '.serviceInstance.source // {image: null, repo: null}' <<<"$SOURCE")"
+          done
+
+          rollback_updated() {
+            local original_status=$?
+            trap - ERR
+            set +e
+            for TARGET in "${UPDATED_TARGETS[@]}"; do
+              PRIOR_ID="${PRIOR_DEPLOYMENTS[$TARGET]}"
+              SERVICE_ID="${SERVICE_IDS[$TARGET]}"
+              VARIABLES="$(jq -cn --arg id "$PRIOR_ID" '{id: $id}')"
+              railway_api "$ROLLBACK_MUTATION" "$VARIABLES" >/dev/null || \
+                echo "Rollback request failed for $TARGET deployment $PRIOR_ID" >&2
+              VARIABLES="$(jq -cn \
+                --arg serviceId "$SERVICE_ID" \
+                --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+                --argjson source "${PRIOR_SOURCES[$TARGET]}" \
+                '{serviceId: $serviceId, environmentId: $environmentId, input: {source: $source}}')"
+              railway_api "$UPDATE_MUTATION" "$VARIABLES" >/dev/null || \
+                echo "Source restoration failed for $TARGET" >&2
+            done
+            exit "$original_status"
+          }
+          trap rollback_updated ERR
+
+          for TARGET in control-api workflow-worker; do
+            SERVICE_ID="${SERVICE_IDS[$TARGET]}"
+            EXPECTED_IMAGE="${EXPECTED_IMAGES[$TARGET]}"
+            DIGEST="${EXPECTED_DIGESTS[$TARGET]}"
+            VARIABLES="$(jq -cn \
+              --arg serviceId "$SERVICE_ID" \
+              --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+              --arg image "$EXPECTED_IMAGE" \
+              '{serviceId: $serviceId, environmentId: $environmentId, input: {source: {image: $image}}}')"
+            railway_api "$UPDATE_MUTATION" "$VARIABLES" >/dev/null
+            UPDATED_TARGETS+=("$TARGET")
 
             STATUS=''
             MATCH=''
             for _ in $(seq 1 60); do
-              DEPLOYMENTS="$(railway deployment list \
-                --project "$RAILWAY_PROJECT_ID" \
-                --environment "$RAILWAY_ENVIRONMENT_ID" \
-                --service "$SERVICE_ID" \
-                --limit 20 --json)"
+              VARIABLES="$(jq -cn \
+                --arg projectId "$RAILWAY_PROJECT_ID" \
+                --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+                --arg serviceId "$SERVICE_ID" \
+                '{input: {projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId}}')"
+              DEPLOYMENTS="$(railway_api "$DEPLOYMENTS_QUERY" "$VARIABLES")"
               MATCH="$(jq -c --arg expected "$EXPECTED_IMAGE" \
-                '[.[] | select(.meta.image == $expected)] | first // empty' <<<"$DEPLOYMENTS")"
+                '[.deployments.edges[].node | select(.meta.image == $expected)] | first // empty' \
+                <<<"$DEPLOYMENTS")"
               if [[ -z "$MATCH" ]]; then
                 sleep 10
                 continue
@@ -186,7 +290,7 @@ jobs:
                 SUCCESS) break ;;
                 FAILED|CRASHED|REMOVED|REMOVING|SKIPPED|NEEDS_APPROVAL)
                   echo "Deployment for $TARGET stopped with $STATUS" >&2
-                  exit 1
+                  false
                   ;;
                 *) sleep 10 ;;
               esac
@@ -198,3 +302,5 @@ jobs:
             test "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE"
             test "$DEPLOYED_DIGEST" = "$DIGEST"
           done
+
+          trap - ERR
