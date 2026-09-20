@@ -90,14 +90,6 @@ jobs:
             '{target: $target, image: $image, digest: $digest, sourceSha: $sourceSha, release: $release}' \
             > "promotion-$TARGET.json"
 
-      - name: Make the release image available to Railway
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          gh api --method PATCH
-          "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/control-plane-${TARGET}"
-          -f visibility=public
-
       - name: Attest the published image digest
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
@@ -160,6 +152,12 @@ jobs:
               workflow-worker) SERVICE_ID='d733ec0d-bda5-4be5-86b9-637154d282eb' ;;
               *) echo "Unsupported production target: $TARGET" >&2; exit 1 ;;
             esac
+
+            # The release packages intentionally contain no secrets and must be
+            # public so Railway can pull by digest without a long-lived GHCR
+            # credential. This anonymous pull fails before Railway is changed if
+            # initial package visibility has not been bootstrapped in GitHub.
+            docker pull "$EXPECTED_IMAGE"
 
             railway environment edit \
               --project "$RAILWAY_PROJECT_ID" \

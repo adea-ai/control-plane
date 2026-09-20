@@ -123,8 +123,11 @@ the candidate commit must be merged to `main` and tagged by the release flow; pr
 identity must exist; the production Neon migration must pass with migration-only authority; Restate
 must have its production volume, stable identity key, and worker registration; and R2 isolation,
 health, smoke, observability, and rollback gates must pass. The container-promotion workflow connects
-each application service only to its scan-attested GHCR digest and verifies the Railway deployment
-record before activation evidence is accepted. On rollback, stop new admission, preserve provider
+each application service only to its scan-attested public GHCR digest and verifies the Railway deployment
+record before activation evidence is accepted. GHCR creates packages as private by default: bootstrap
+`control-plane-control-api` and `control-plane-workflow-worker` with a non-deploying manual workflow
+run, then an organization package administrator must make both packages public before the first
+production promotion. The deployment job proves anonymous digest retrieval before changing Railway. On rollback, stop new admission, preserve provider
 state, return to the prior attested digest (or no active application deployments), and never request a
 fresh build from the same source as a substitute for the recorded artifact.
 
