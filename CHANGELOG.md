@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.31.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.1...workspace-v1.31.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **ledger:** repoint the M1-M10 deterministic-lane gap rows from [#189](https://github.com/adea-ai/control-plane/issues/189) to [#197](https://github.com/adea-ai/control-plane/issues/197) ([#610](https://github.com/adea-ai/control-plane/issues/610)) ([a79badf](https://github.com/adea-ai/control-plane/commit/a79badf9af121ca030dd6ee6b7a0e34a6a3d881e))
+
+
+### Documentation
+
+* **ledger:** adjudicate the 76 rows reopened against [#188](https://github.com/adea-ai/control-plane/issues/188)-[#195](https://github.com/adea-ai/control-plane/issues/195) gap holders ([#607](https://github.com/adea-ai/control-plane/issues/607)) ([f871022](https://github.com/adea-ai/control-plane/commit/f87102287d100ca6ee6466386730304db023173e))
+
+
+### Maintenance
+
+* **m405:** consolidate the duplicated withTimeout race into domain ([#609](https://github.com/adea-ai/control-plane/issues/609)) ([b6af3d5](https://github.com/adea-ai/control-plane/commit/b6af3d5d60546bf094ff015560469bb987b6e5b5))
+
 ## [1.31.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.0...workspace-v1.31.1) (2026-09-20)
 
 
