@@ -366,6 +366,8 @@ function digest(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(serialized).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// principal.attributes and request context are z.record(string, z.json()) free-form maps; decisionId is persisted
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`

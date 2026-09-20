@@ -849,6 +849,8 @@ function hashIdentifier(prefix: string, digest: string): string {
 function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// payload digests cover z.json() state-item values (free-form keys); payloadHash and contentDigest are persisted
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

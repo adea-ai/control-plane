@@ -783,6 +783,8 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// mutation and state-item values are z.json() (free-form keys); mutation inputDigest is persisted for idempotency
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

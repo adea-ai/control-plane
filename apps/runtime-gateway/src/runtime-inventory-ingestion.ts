@@ -522,6 +522,8 @@ function publicNodeStatus(
   return nodeStatus === 'online' || nodeStatus === 'revoked' ? nodeStatus : 'offline'
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// insertion-order stringify of the wire envelope; the inventory fingerprint is persisted for change detection
 function hashInventory(inventory: GatewayInventoryEnvelope): string {
   const normalizeDrivers = (drivers: GatewayInventoryEnvelope['runtimeDrivers']) =>
     drivers

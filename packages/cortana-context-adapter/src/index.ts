@@ -3,6 +3,7 @@ import type { ContextProviderDriver, ContextProviderRequest } from '@control-pla
 import {
   ContextContributionSchema,
   ContextProviderReadModelSchema,
+  canonicalJsonStringify,
   type ContextContribution,
   type ContextProviderReadModel,
 } from '@control-plane/contracts'
@@ -437,7 +438,7 @@ export function createRuntimeNodeContextCommand(
     channelGeneration: binding.channelGeneration,
     commandId: binding.commandId,
     idempotencyKey: binding.idempotencyKey,
-    payloadHash: digest(canonical(semantics)),
+    payloadHash: digest(canonicalJsonStringify(semantics)),
     issuedAt: request.now,
     expiresAt: deadline,
   })
@@ -470,7 +471,7 @@ function bundleDigest(bundle: CortanaContextBundle): string {
   const content = Object.fromEntries(
     Object.entries(bundle).filter(([key]) => key !== 'bundleDigest')
   )
-  return digest(canonical(content))
+  return digest(canonicalJsonStringify(content))
 }
 
 function sumTokens(sum: number, slice: { tokenCount: number }): number {
@@ -479,17 +480,6 @@ function sumTokens(sum: number, slice: { tokenCount: number }): number {
 
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  if (value && typeof value === 'object')
-    return `{${Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-      .join(',')}}`
-  return JSON.stringify(value)
 }
 
 function normalizeAdapterError(error: unknown): CortanaContextAdapterError {

@@ -106,6 +106,8 @@ export function retryDelayMs(
   return Math.min(ceiling, Math.floor(random() * (ceiling + 1)))
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// schema-pinned policy, but schemaVersion/shutdown is a locale-divergent pair (flips under cs); zero callers today — switch to contracts canonicalJsonStringify in a dedicated change
 export function operationalPolicyDigest(policy: OperationalPolicyConfig): `sha256:${string}` {
   const canonical = JSON.stringify(policy, (_key, value: unknown) =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
