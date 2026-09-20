@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.2](https://github.com/adea-ai/control-plane/compare/domain-v1.11.1...domain-v1.11.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **contracts:** locale-independent canonicalJsonStringify + canonical-JSON divergence audit ([#611](https://github.com/adea-ai/control-plane/issues/611)) ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+
+### Maintenance
+
+* **contracts:** add canonicalJsonStringify and consolidate canonical-JSON digests ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/domain-v1.11.0...domain-v1.11.1) (2026-09-20)
 
 
