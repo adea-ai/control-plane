@@ -509,7 +509,7 @@ async function main() {
         '--state',
         'all',
         '--limit',
-        '300',
+        '1000',
         '--json',
         'number,title,milestone,url,state,closedAt',
       ],
