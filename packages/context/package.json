@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/context",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "private": true,
   "files": [
     "dist"

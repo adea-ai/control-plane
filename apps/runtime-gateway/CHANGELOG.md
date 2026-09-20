@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.6.1...runtime-gateway-v1.6.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* replace locale-dependent sort comparators with code-point ordering ([#614](https://github.com/adea-ai/control-plane/issues/614)) ([46897cd](https://github.com/adea-ai/control-plane/commit/46897cd99faeda65c1659c312d80ded809dc61d5))
+
 ## [1.6.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.6.0...runtime-gateway-v1.6.1) (2026-09-20)
 
 
