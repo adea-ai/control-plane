@@ -324,15 +324,18 @@ export async function promoteRailwayImages({
   }
 }
 
-export function createRailwayClient({ token, fetchImpl = fetch }) {
+export function createRailwayClient({ token, workspaceToken, fetchImpl = fetch }) {
   if (!token) throw new Error('RAILWAY_PRODUCTION_TOKEN is required')
+  if (!workspaceToken) throw new Error('RAILWAY_WORKSPACE_TOKEN is required')
 
-  async function request(query, variables) {
+  async function request(query, variables, authentication = 'project') {
     const response = await fetchImpl(RAILWAY_API_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'Project-Access-Token': token,
+        ...(authentication === 'workspace'
+          ? { Authorization: `Bearer ${workspaceToken}` }
+          : { 'Project-Access-Token': token }),
       },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(30_000),
@@ -365,14 +368,14 @@ export function createRailwayClient({ token, fetchImpl = fetch }) {
     async updateSource(target, source) {
       const { serviceId } = variablesForTarget(target)
       if (source.image === null && source.repo === null) {
-        const data = await request(DISCONNECT_MUTATION, { id: serviceId })
+        const data = await request(DISCONNECT_MUTATION, { id: serviceId }, 'workspace')
         if (data.serviceDisconnect?.id !== serviceId) {
           throw new Error('Railway mutation serviceDisconnect returned the wrong service')
         }
         return
       }
 
-      const data = await request(CONNECT_MUTATION, { id: serviceId, input: source })
+      const data = await request(CONNECT_MUTATION, { id: serviceId, input: source }, 'workspace')
       if (data.serviceConnect?.id !== serviceId) {
         throw new Error('Railway mutation serviceConnect returned the wrong service')
       }
@@ -411,7 +414,10 @@ async function main() {
   const manifests = await Promise.all(
     paths.map(async (path) => JSON.parse(await readFile(path, 'utf8')))
   )
-  const railway = createRailwayClient({ token: process.env.RAILWAY_PRODUCTION_TOKEN })
+  const railway = createRailwayClient({
+    token: process.env.RAILWAY_PRODUCTION_TOKEN,
+    workspaceToken: process.env.RAILWAY_WORKSPACE_TOKEN,
+  })
   await promoteRailwayImages({ manifests, railway, pullImage: pullDockerImage })
 }
 

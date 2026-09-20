@@ -161,4 +161,5 @@ jobs:
       - name: Deploy, reconcile, and verify exact image digests
         env:
           RAILWAY_PRODUCTION_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+          RAILWAY_WORKSPACE_TOKEN: ${{ secrets.RAILWAY_WORKSPACE_TOKEN }}
         run: bun scripts/promote-railway-images.mjs promotion-*.json
