@@ -89,19 +89,30 @@ async function reconcilePriorState({
   verifyRetries,
 }) {
   let stableChecks = 0
-  let lastMutationError
+  let lastReconciliationError
+  let lastRollbackAttempt
 
   for (let attempt = 0; attempt < verifyRetries; attempt += 1) {
-    const source = normalizeSource(await railway.getSource(target))
+    let source
+    let deployments
+    try {
+      source = normalizeSource(await railway.getSource(target))
+      deployments = await railway.listDeployments(target)
+    } catch (error) {
+      lastReconciliationError = error
+      stableChecks = 0
+      await sleep(10_000)
+      continue
+    }
+
     if (!isDeepStrictEqual(source, snapshot.source)) {
       try {
         await railway.updateSource(target, snapshot.source)
       } catch (error) {
-        lastMutationError = error
+        lastReconciliationError = error
       }
     }
 
-    const deployments = await railway.listDeployments(target)
     const promotionDeployments = deployments.filter(
       (deployment) =>
         deployment.meta?.image === expectedImage && deployment.deploymentStopped === false
@@ -112,7 +123,7 @@ async function reconcilePriorState({
         try {
           await railway.removeDeployment(target, deployment.id)
         } catch (error) {
-          lastMutationError = error
+          lastReconciliationError = error
         }
       }
     } else {
@@ -122,20 +133,43 @@ async function reconcilePriorState({
           deployment.deploymentStopped === false &&
           deployment.meta?.imageDigest === snapshot.deployment.meta?.imageDigest
       )
-      if (!activePrior || promotionDeployments.length > 0) {
+      const priorInProgress = deployments.some(
+        (deployment) =>
+          deployment.id !== snapshot.deployment.id &&
+          deployment.meta?.imageDigest === snapshot.deployment.meta?.imageDigest &&
+          ['QUEUED', 'INITIALIZING', 'BUILDING', 'DEPLOYING', 'WAITING'].includes(deployment.status)
+      )
+      const rollbackRetryDue =
+        lastRollbackAttempt === undefined || attempt - lastRollbackAttempt >= 6
+      if (
+        (!activePrior || promotionDeployments.length > 0) &&
+        !priorInProgress &&
+        rollbackRetryDue
+      ) {
         const prior = deployments.find((deployment) => deployment.id === snapshot.deployment.id)
         if (prior?.canRollback === true) {
+          lastRollbackAttempt = attempt
           try {
             await railway.rollbackDeployment(target, snapshot.deployment.id)
           } catch (error) {
-            lastMutationError = error
+            lastReconciliationError = error
           }
         }
       }
     }
 
-    const verifiedSource = normalizeSource(await railway.getSource(target))
-    const verifiedDeployments = await railway.listDeployments(target)
+    let verifiedSource
+    let verifiedDeployments
+    try {
+      verifiedSource = normalizeSource(await railway.getSource(target))
+      verifiedDeployments = await railway.listDeployments(target)
+    } catch (error) {
+      lastReconciliationError = error
+      stableChecks = 0
+      await sleep(10_000)
+      continue
+    }
+
     const noActivePromotion = verifiedDeployments.every(
       (deployment) =>
         deployment.meta?.image !== expectedImage || deployment.deploymentStopped !== false
@@ -164,7 +198,7 @@ async function reconcilePriorState({
   }
 
   throw new Error(`Rollback reconciliation failed for ${target}`, {
-    cause: lastMutationError,
+    cause: lastReconciliationError,
   })
 }
 

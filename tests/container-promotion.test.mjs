@@ -64,9 +64,14 @@ describe('container promotion', () => {
     const calls = []
     const promoted = new Set()
     const rolledBack = new Set()
+    let failNextRead = false
     let updateCount = 0
     const railway = {
       async getSource(target) {
+        if (failNextRead) {
+          failNextRead = false
+          throw new Error('transient Railway read failure')
+        }
         return sources.get(target)
       },
       async listDeployments(target) {
@@ -92,7 +97,10 @@ describe('container promotion', () => {
         sources.set(target, source)
         if (source.image?.includes('sha256:')) promoted.add(target)
         updateCount += 1
-        if (updateCount === 2) throw new Error('response lost after commit')
+        if (updateCount === 2) {
+          failNextRead = true
+          throw new Error('response lost after commit')
+        }
       },
       async rollbackDeployment(target, id) {
         calls.push(['rollback', target, id])
