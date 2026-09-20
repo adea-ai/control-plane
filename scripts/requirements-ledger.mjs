@@ -271,6 +271,44 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   return { errors, warnings }
 }
 
+export async function listGitHubIssues(options = {}) {
+  const fetchImplementation = options.fetch ?? globalThis.fetch
+  const repository = options.repository ?? 'adea-ai/control-plane'
+  const token = options.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  const issues = []
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetchImplementation(
+      `https://api.github.com/repos/${repository}/issues?state=all&per_page=100&page=${page}`,
+      {
+        headers: {
+          accept: 'application/vnd.github+json',
+          'user-agent': 'control-plane-requirements-ledger',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+      }
+    )
+    if (!response.ok) {
+      throw new Error(`Unable to query GitHub issues (${response.status})`)
+    }
+    const pageItems = await response.json()
+    if (!Array.isArray(pageItems)) throw new Error('GitHub issues response was not an array')
+    issues.push(
+      ...pageItems
+        .filter((issue) => issue.pull_request === undefined)
+        .map((issue) => ({
+          number: issue.number,
+          title: issue.title,
+          milestone: issue.milestone && { title: issue.milestone.title },
+          url: issue.html_url,
+          state: String(issue.state).toUpperCase(),
+          closedAt: issue.closed_at,
+        }))
+    )
+    if (pageItems.length < 100) break
+  }
+  return issues
+}
+
 export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {
   const issueByNumber = new Map(issues.map((issue) => [issue.number, issue]))
   const gapIssues = [
@@ -502,24 +540,7 @@ async function main() {
   const refreshIssues = process.argv.includes('--refresh-issues')
   const checkIssues = process.argv.includes('--check-issues')
   if (refreshIssues || checkIssues) {
-    const result = spawnSync(
-      'gh',
-      [
-        'issue',
-        'list',
-        '--state',
-        'all',
-        '--limit',
-        '1000',
-        '--json',
-        'number,title,milestone,url,state,closedAt',
-      ],
-      { cwd: repositoryRoot, encoding: 'utf8' }
-    )
-    if (result.error) throw result.error
-    if (result.status !== 0)
-      throw new Error(result.stderr.trim() || 'Unable to query GitHub issues')
-    ledger = refreshPriorMilestoneAudits(ledger, JSON.parse(result.stdout), architectureGapIssues)
+    ledger = refreshPriorMilestoneAudits(ledger, await listGitHubIssues(), architectureGapIssues)
     if (refreshIssues) {
       await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
     }
