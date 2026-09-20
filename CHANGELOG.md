@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.1...workspace-v1.30.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** parse tagged push digests ([#589](https://github.com/adea-ai/control-plane/issues/589)) ([2867908](https://github.com/adea-ai/control-plane/commit/28679085fd3d00e796a00e38c8853474b42eef2b))
+
 ## [1.30.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.0...workspace-v1.30.1) (2026-09-20)
 
 
