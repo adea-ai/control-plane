@@ -87,6 +87,7 @@ test('defines root quality and build commands', async () => {
 
   assert.match(manifest.scripts['type-check'], /turbo run build openapi:check/)
   assert.match(manifest.scripts['type-check'], /bun run db:check/)
+  assert.match(manifest.scripts['requirements:check'], /--check-issues/)
   assert.match(manifest.scripts['db:check'], /packages\/database/)
   assert.match(manifest.scripts['test:unit'], /--coverage/)
   assert.match(manifest.scripts.test, /--parallel/)

@@ -45,6 +45,10 @@ const validationLanes = new Set([
 ])
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const ledgerPath = resolve(repositoryRoot, 'docs/requirements/control-plane-requirements.v1.json')
+const architecturePath = resolve(
+  repositoryRoot,
+  'docs/architecture/control-plane-architecture.v1.json'
+)
 const reportPath = resolve(repositoryRoot, 'docs/requirements/control-plane-requirements.md')
 
 export async function validateRequirementsLedger(ledger, options = {}) {
@@ -267,21 +271,28 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   return { errors, warnings }
 }
 
-export function refreshPriorMilestoneAudits(ledger, issues) {
+export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {
   const issueByNumber = new Map(issues.map((issue) => [issue.number, issue]))
   const gapIssues = [
-    ...ledger.sources,
-    ...ledger.deploymentProfiles,
-    ...ledger.requirements,
-    ...ledger.priorMilestoneAudits,
+    ...[
+      ...ledger.sources,
+      ...ledger.deploymentProfiles,
+      ...ledger.requirements,
+      ...ledger.priorMilestoneAudits,
+    ]
+      .map(({ gap }) => gap?.issue)
+      .filter((issue) => issue !== undefined),
+    ...additionalGapIssues,
   ]
-    .map(({ gap }) => gap?.issue)
-    .filter((issue) => issue !== undefined)
-  for (const issueNumber of new Set(gapIssues)) {
+  const invalidGapIssues = [...new Set(gapIssues)].flatMap((issueNumber) => {
     const issue = issueByNumber.get(issueNumber)
-    if (issue?.state !== 'OPEN' || !(issue.milestone?.title ?? '').startsWith('M11:')) {
-      throw new Error(`Gap issue #${issueNumber} must be open and assigned to M11`)
-    }
+    if (issue?.state === 'OPEN' && (issue.milestone?.title ?? '').startsWith('M11:')) return []
+    return [
+      `#${issueNumber} (${issue?.state ?? 'MISSING'}, ${issue?.milestone?.title ?? 'no milestone'})`,
+    ]
+  })
+  if (invalidGapIssues.length > 0) {
+    throw new Error(`Gap issues must be open and assigned to M11: ${invalidGapIssues.join(', ')}`)
   }
   const inventory = issues
     .filter(({ milestone }) => /^M(?:10|[1-9]):/.test(milestone?.title ?? ''))
@@ -432,6 +443,17 @@ function validateGap(errors, row, label = 'gap') {
   }
 }
 
+function collectGapIssues(value, issues = []) {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectGapIssues(entry, issues)
+    return issues
+  }
+  if (!value || typeof value !== 'object') return issues
+  if (Number.isInteger(value.gap?.issue)) issues.push(value.gap.issue)
+  for (const entry of Object.values(value)) collectGapIssues(entry, issues)
+  return issues
+}
+
 function numeric(left, right) {
   return left - right
 }
@@ -474,7 +496,11 @@ function escapeCell(value) {
 
 async function main() {
   let ledger = JSON.parse(await readFile(ledgerPath, 'utf8'))
-  if (process.argv.includes('--refresh-issues')) {
+  const architecture = JSON.parse(await readFile(architecturePath, 'utf8'))
+  const architectureGapIssues = collectGapIssues(architecture)
+  const refreshIssues = process.argv.includes('--refresh-issues')
+  const checkIssues = process.argv.includes('--check-issues')
+  if (refreshIssues || checkIssues) {
     const result = spawnSync(
       'gh',
       [
@@ -492,8 +518,10 @@ async function main() {
     if (result.error) throw result.error
     if (result.status !== 0)
       throw new Error(result.stderr.trim() || 'Unable to query GitHub issues')
-    ledger = refreshPriorMilestoneAudits(ledger, JSON.parse(result.stdout))
-    await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+    ledger = refreshPriorMilestoneAudits(ledger, JSON.parse(result.stdout), architectureGapIssues)
+    if (refreshIssues) {
+      await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+    }
   }
   const { errors, warnings } = await validateRequirementsLedger(ledger, {
     repositoryRoot: new URL('..', import.meta.url),

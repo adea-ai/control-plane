@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { URL } from 'node:url'
 import {
+  refreshPriorMilestoneAudits,
   validateRequirementsLedger,
   renderRequirementsReport,
 } from '../scripts/requirements-ledger.mjs'
@@ -165,6 +166,42 @@ describe('M11.1 requirements ledger', () => {
         })
       ).errors
     ).toContain(`${unknownLane.requirements[0].id}: invalid validation lane miscellaneous`)
+  })
+
+  test('reports every gap whose live issue is not open in M11', () => {
+    const issueStateFixture = {
+      sources: [],
+      deploymentProfiles: [{ gap: { issue: 188 } }, { gap: { issue: 194 } }],
+      requirements: [],
+      priorIssueInventory: [],
+      priorMilestoneAudits: [],
+    }
+
+    expect(() =>
+      refreshPriorMilestoneAudits(
+        issueStateFixture,
+        [
+          {
+            number: 188,
+            state: 'CLOSED',
+            milestone: { title: 'M11: Feature Completion & Production Audit' },
+          },
+          {
+            number: 192,
+            state: 'CLOSED',
+            milestone: { title: 'M11: Feature Completion & Production Audit' },
+          },
+          {
+            number: 194,
+            state: 'OPEN',
+            milestone: { title: 'M12: Cross-Product Integration & Release' },
+          },
+        ],
+        [192]
+      )
+    ).toThrow(
+      'Gap issues must be open and assigned to M11: #188 (CLOSED, M11: Feature Completion & Production Audit), #194 (OPEN, M12: Cross-Product Integration & Release), #192 (CLOSED, M11: Feature Completion & Production Audit)'
+    )
   })
 
   test('reports only the explicit provenance warning when history is shallow', async () => {
