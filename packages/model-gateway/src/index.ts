@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { withTimeout } from '@control-plane/domain'
 import { ModelRequirementSchema } from '@control-plane/domain'
 import {
   PolicyDecisionSchema,
@@ -280,7 +281,8 @@ export class ManagedModelGateway {
       try {
         completion = await withTimeout(
           adapter.complete(request, deployment),
-          request.settings.timeoutMs
+          request.settings.timeoutMs,
+          () => new ModelProviderError('MODEL_TIMEOUT', true)
         )
       } catch (error) {
         const retryable = error instanceof ModelProviderError && error.retryable
@@ -640,20 +642,6 @@ function normalizeFinishReason(reason: string): ManagedModelResult['finishReason
   if (reason === 'stop' || reason === 'length' || reason === 'tool_call') return reason
   if (reason === 'content_filter' || reason === 'cancelled') return reason
   return 'error'
-}
-
-async function withTimeout<Value>(promise: Promise<Value>, timeoutMs: number): Promise<Value> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new ModelProviderError('MODEL_TIMEOUT', true)), timeoutMs)
-      }),
-    ])
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
 }
 
 function clone<Value>(value: Value): Value {
