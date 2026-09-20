@@ -6,6 +6,10 @@ variable "TAG" {
   default = "local"
 }
 
+variable "SOURCE_SHA" {
+  default = ""
+}
+
 group "default" {
   targets = [
     "control-api",
@@ -20,6 +24,9 @@ target "_service" {
   context    = "."
   dockerfile = "infrastructure/containers/Dockerfile"
   target     = "runtime"
+  args = {
+    COMMIT_SHA = "${SOURCE_SHA}"
+  }
 }
 
 target "control-api" {
