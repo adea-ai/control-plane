@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { ContextPackageReferenceSchema, ContextPackageSchema } from '@control-plane/context'
 import {
   IdentifierSchemas,
@@ -202,7 +203,9 @@ export class ExecutionPlanCompiler {
           semanticVersion: skill.manifest.semanticVersion,
           contentDigest: skill.manifest.contentDigest,
         }))
-        .toSorted((left, right) => left.skillVersionId.localeCompare(right.skillVersionId)),
+        .toSorted((left, right) =>
+          compareCodePointOrder(left.skillVersionId, right.skillVersionId)
+        ),
       contextPackage: contextPin(contextPackage),
       runtimeRequirements,
       constraints: normalizeConstraints(constraints),
@@ -530,7 +533,7 @@ function compileRuntimeRequirements(
 
 function normalizeRuntimeRequirements(requirements: readonly CapabilityRequirement[]) {
   return CapabilityRequirementSetSchema.parse(requirements).toSorted((left, right) =>
-    left.capability.localeCompare(right.capability)
+    compareCodePointOrder(left.capability, right.capability)
   )
 }
 
@@ -601,7 +604,7 @@ function normalizeConstraints(constraints: ExecutionConstraintSet): ExecutionCon
           dataResidency: [...model.providerPolicy.dataResidency].toSorted(),
         },
       }))
-      .toSorted((left, right) => left.alias.localeCompare(right.alias)),
+      .toSorted((left, right) => compareCodePointOrder(left.alias, right.alias)),
     runtime: {
       allowedFamilies: [...constraints.runtime.allowedFamilies].toSorted(),
       allowedLocations: [...constraints.runtime.allowedLocations].toSorted(),

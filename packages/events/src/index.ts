@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { redactTelemetryValue } from '@control-plane/telemetry'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -138,7 +139,7 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
             !event.publication.nextAttemptAt ||
             Date.parse(event.publication.nextAttemptAt) <= Date.parse(dueAt))
       )
-      .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+      .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
       .slice(0, limit)
       .map(clone)
   }

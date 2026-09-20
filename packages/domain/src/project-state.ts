@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 
@@ -711,7 +712,9 @@ function applyOperations(
     ...current,
     revision: current.revision + 1,
     items: [...items.values()].toSorted(
-      (left, right) => left.key.localeCompare(right.key) || left.itemId.localeCompare(right.itemId)
+      (left, right) =>
+        compareCodePointOrder(left.key, right.key) ||
+        compareCodePointOrder(left.itemId, right.itemId)
     ),
     updatedAt: at,
   })

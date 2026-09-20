@@ -3,6 +3,7 @@ import {
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
 } from '@control-plane/context'
+import { compareCodePointOrder } from '@control-plane/domain'
 import {
   agentProfileVersions,
   agentProfiles,
@@ -604,6 +605,6 @@ function byWriteOrder(left: PortableRecord, right: PortableRecord): number {
   ]
   return (
     order.indexOf(identity(left.logicalId)[0]) - order.indexOf(identity(right.logicalId)[0]) ||
-    left.logicalId.localeCompare(right.logicalId)
+    compareCodePointOrder(left.logicalId, right.logicalId)
   )
 }

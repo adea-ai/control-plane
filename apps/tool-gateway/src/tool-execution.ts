@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { type InteractionRepository, type InteractionService } from '@control-plane/domain'
 import { type PolicyDecisionPoint, type PolicySnapshotReference } from '@control-plane/policy'
 import {
@@ -59,7 +60,7 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
   async listByExecution(executionId: string): Promise<readonly ToolCall[]> {
     return [...this.#calls.values()]
       .filter((call) => call.executionId === executionId)
-      .toSorted((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+      .toSorted((left, right) => compareCodePointOrder(left.requestedAt, right.requestedAt))
       .map(clone)
   }
 }

@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { z } from 'zod'
 import { RuntimeCapabilitySchema, type RuntimeCapability } from './capabilities.js'
 import {
@@ -308,7 +309,9 @@ export class InMemoryRuntimeConnectionRepository
   async listByRuntimeNode(runtimeNodeRefId: string): Promise<readonly RuntimeConnection[]> {
     return [...this.#connections.values()]
       .filter((connection) => connection.runtimeNodeRefId === runtimeNodeRefId)
-      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
+      )
       .map(clone)
   }
 

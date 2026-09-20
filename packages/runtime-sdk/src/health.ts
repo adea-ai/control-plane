@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 import { RuntimeCapabilitySchema, type RuntimeCapability } from './capabilities.js'
@@ -561,7 +562,7 @@ function normalizeReport(input: unknown): RuntimeHealthReport {
     capabilitySnapshot: {
       ...report.capabilitySnapshot,
       capabilities: [...report.capabilitySnapshot.capabilities].toSorted((left, right) =>
-        left.name.localeCompare(right.name)
+        compareCodePointOrder(left.name, right.name)
       ),
     },
     diagnostics: [...report.diagnostics].toSorted(),

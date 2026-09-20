@@ -5,6 +5,7 @@ import {
   type ExternalSessionDiscoveryReadModel,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -120,7 +121,9 @@ export class SqliteRuntimeDiscoveryRepository {
             record.runtimeNodeRefId === scope.runtimeNodeRefId)
       )
       .map((record) => structuredClone(record.model))
-      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
+      )
   }
 
   async getRuntimeConnection(
@@ -155,7 +158,9 @@ export class SqliteRuntimeDiscoveryRepository {
             record.runtimeNodeRefId === scope.runtimeNodeRefId)
       )
       .map((record) => structuredClone(record.model))
-      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.externalSessionId, right.externalSessionId)
+      )
   }
 
   async getExternalSession(

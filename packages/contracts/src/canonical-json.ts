@@ -58,3 +58,14 @@ function serialize(value: unknown): string {
     .map(([key, entry]) => `${JSON.stringify(key)}:${serialize(entry)}`)
     .join(',')}}`
 }
+
+/**
+ * Deterministic key comparator: orders strings by Unicode code point,
+ * independent of host locale/ICU. Use anywhere ordering feeds digests,
+ * selection, or cross-host stability guarantees. Never use localeCompare
+ * for these — its collation is locale-dependent (see the divergence fixture
+ * in the tests: ['a-b','ab','a_b','Aa','a!']).
+ */
+export function compareCodePointOrder(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/domain'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
 import { EvalRunSchema } from '@control-plane/production-readiness'
@@ -218,7 +219,7 @@ function normalizeManifestInput(
     ...input,
     componentVersions: Object.fromEntries(
       Object.entries(input.componentVersions).toSorted(([left], [right]) =>
-        left.localeCompare(right)
+        compareCodePointOrder(left, right)
       )
     ),
     compatibility: {
@@ -226,7 +227,9 @@ function normalizeManifestInput(
       requiredCapabilities: [...new Set(input.compatibility.requiredCapabilities)].toSorted(),
     },
     records: [...input.records].toSorted(compareRecord),
-    artifacts: [...input.artifacts].toSorted((left, right) => left.key.localeCompare(right.key)),
+    artifacts: [...input.artifacts].toSorted((left, right) =>
+      compareCodePointOrder(left.key, right.key)
+    ),
     secretReferences: [...input.secretReferences].toSorted((left, right) =>
       `${left.provider}:${left.key}:${left.version ?? ''}`.localeCompare(
         `${right.provider}:${right.key}:${right.version ?? ''}`
@@ -246,7 +249,7 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (typeof value === 'object' && value !== null) {
     return `{${Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => compareCodePointOrder(left, right))
       .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
       .join(',')}}`
   }

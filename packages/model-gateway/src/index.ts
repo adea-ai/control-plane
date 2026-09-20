@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { withTimeout } from '@control-plane/domain'
 import { ModelRequirementSchema } from '@control-plane/domain'
 import {
@@ -620,7 +621,7 @@ function compareDeployments(left: ModelDeployment, right: ModelDeployment): numb
   return (
     left.priority - right.priority ||
     costRank(left.costClass) - costRank(right.costClass) ||
-    left.deploymentId.localeCompare(right.deploymentId)
+    compareCodePointOrder(left.deploymentId, right.deploymentId)
   )
 }
 
