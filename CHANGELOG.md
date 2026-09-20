@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.3...workspace-v1.30.4) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** reconcile Railway source before deploy ([#593](https://github.com/adea-ai/control-plane/issues/593)) ([974e266](https://github.com/adea-ai/control-plane/commit/974e266ca1c9ce720e934f3bc0fe9fde3b36a087))
+
 ## [1.30.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.2...workspace-v1.30.3) (2026-09-20)
 
 
