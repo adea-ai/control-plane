@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.9...workspace-v1.31.10) (2026-09-21)
+
+
+### Maintenance
+
+* **deps:** bump the github-actions group with 4 updates ([#596](https://github.com/adea-ai/control-plane/issues/596)) ([1f2f4aa](https://github.com/adea-ai/control-plane/commit/1f2f4aa810d2e33509d2bb8166de2773c673c314))
+* **m612:** canonical-ordering guard, superseded-gap exemption, marker coverage ([#625](https://github.com/adea-ai/control-plane/issues/625)) ([64df3c5](https://github.com/adea-ai/control-plane/commit/64df3c5bd207683fc8ce3d5b829541126c71b269))
+
 ## [1.31.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.8...workspace-v1.31.9) (2026-09-21)
 
 

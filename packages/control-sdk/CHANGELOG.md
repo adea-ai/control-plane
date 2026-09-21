@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.0...sdk-v1.7.1) (2026-09-21)
+
+
+### Maintenance
+
+* **m612:** canonical-ordering guard, superseded-gap exemption, marker coverage ([#625](https://github.com/adea-ai/control-plane/issues/625)) ([64df3c5](https://github.com/adea-ai/control-plane/commit/64df3c5bd207683fc8ce3d5b829541126c71b269))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.6.2...sdk-v1.7.0) (2026-09-20)
 
 

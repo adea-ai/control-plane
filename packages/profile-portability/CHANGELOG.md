@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.3.1...profile-portability-v1.3.2) (2026-09-21)
+
+
+### Maintenance
+
+* **m612:** canonical-ordering guard, superseded-gap exemption, marker coverage ([#625](https://github.com/adea-ai/control-plane/issues/625)) ([64df3c5](https://github.com/adea-ai/control-plane/commit/64df3c5bd207683fc8ce3d5b829541126c71b269))
+
 ## [1.3.1](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.3.0...profile-portability-v1.3.1) (2026-09-20)
 
 
