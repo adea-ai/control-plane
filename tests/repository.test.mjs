@@ -481,7 +481,7 @@ test('promotes scan-attested container digests to Railway production', async () 
   )
   assert.match(
     workflow,
-    /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661/
+    /actions\/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a/
   )
   assert.match(workflow, /RAILWAY_PRODUCTION_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
   assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
