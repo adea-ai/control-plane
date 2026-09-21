@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.10...workspace-v1.31.11) (2026-09-21)
+
+
+### Maintenance
+
+* acp-gateway-split ([#628](https://github.com/adea-ai/control-plane/issues/628)) ([c83cc35](https://github.com/adea-ai/control-plane/commit/c83cc350c6138ee06d83d68a01fcf752ec6c15a8))
+
 ## [1.31.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.9...workspace-v1.31.10) (2026-09-21)
 
 
