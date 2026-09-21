@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.7...workspace-v1.31.8) (2026-09-21)
+
+
+### Maintenance
+
+* **acp-adapter:** split AcpDriver into focused subsystem modules ([b161ca1](https://github.com/adea-ai/control-plane/commit/b161ca1f19646adc13a1d0e608a4eea04a989753))
+* split AcpDriver into focused modules ([#622](https://github.com/adea-ai/control-plane/issues/622)) ([b161ca1](https://github.com/adea-ai/control-plane/commit/b161ca1f19646adc13a1d0e608a4eea04a989753))
+
 ## [1.31.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.6...workspace-v1.31.7) (2026-09-21)
 
 
