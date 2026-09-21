@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const TimestampSchema = z.iso.datetime()
@@ -338,18 +339,10 @@ function sameContent(left: PublishedGraphDefinition, right: PublishedGraphDefini
 }
 
 function contentDigest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`
+  return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// GraphDefinitionContent contains the divergent pair schemaVersion/schemas, which flips under the DEFAULT locale; contentDigest is persisted
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value)
-}
+// Uses the locale-independent canonical serializer from contracts: the
+// GraphDefinitionContent key set contains schemaVersion/schemas, which
+// localeCompare orders differently per host — the digest was host-dependent
+// before this fix (#612 P0).
