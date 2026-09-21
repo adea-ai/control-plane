@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.9.1...control-api-v1.9.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **type-safety:** strengthen the context-authoring guard ([#619](https://github.com/adea-ai/control-plane/issues/619)) ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+* **type-safety:** strengthen the context-authoring guard in execution validation ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+
 ## [1.9.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.9.0...control-api-v1.9.1) (2026-09-20)
 
 
