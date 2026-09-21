@@ -62,6 +62,7 @@ jobs:
       REF: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}:${{ github.sha }}
       RELEASE_NAME: ${{ github.event.release.tag_name || github.ref_name }}
       TARGET: ${{ matrix.target }}
+      SOURCE_SHA: ${{ github.sha }}
     steps:
       - name: Checkout the release revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -161,4 +162,5 @@ jobs:
       - name: Deploy, reconcile, and verify exact image digests
         env:
           RAILWAY_PRODUCTION_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+          RAILWAY_WORKSPACE_TOKEN: ${{ secrets.RAILWAY_WORKSPACE_TOKEN }}
         run: bun scripts/promote-railway-images.mjs promotion-*.json

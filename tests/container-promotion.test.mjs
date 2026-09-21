@@ -3,6 +3,7 @@ import { describe, test } from 'node:test'
 
 import {
   assertMutationSucceeded,
+  createRailwayClient,
   promoteRailwayImages,
 } from '../scripts/promote-railway-images.mjs'
 
@@ -44,6 +45,41 @@ describe('container promotion', () => {
     assert.doesNotThrow(() =>
       assertMutationSucceeded({ serviceInstanceUpdate: true }, 'serviceInstanceUpdate')
     )
+  })
+
+  test('connects and disconnects the service-level Railway source', async () => {
+    const requests = []
+    const client = createRailwayClient({
+      token: 'project-token',
+      workspaceToken: 'workspace-token',
+      fetchImpl: async (_url, options) => {
+        const request = JSON.parse(options.body)
+        requests.push({ ...request, headers: options.headers })
+        if (request.query.includes('serviceConnect')) {
+          return Response.json({ data: { serviceConnect: { id: request.variables.id } } })
+        }
+        if (request.query.includes('serviceDisconnect')) {
+          return Response.json({ data: { serviceDisconnect: { id: request.variables.id } } })
+        }
+        throw new Error('unexpected request')
+      },
+    })
+
+    await client.updateSource('control-api', {
+      image: `ghcr.io/adea-ai/control-plane-control-api@sha256:${'a'.repeat(64)}`,
+      repo: null,
+    })
+    await client.updateSource('control-api', { image: null, repo: null })
+
+    assert.match(requests[0].query, /serviceConnect/)
+    assert.equal(requests[0].headers.Authorization, 'Bearer workspace-token')
+    assert.equal(requests[0].headers['Project-Access-Token'], undefined)
+    assert.deepEqual(requests[0].variables.input, {
+      image: `ghcr.io/adea-ai/control-plane-control-api@sha256:${'a'.repeat(64)}`,
+      repo: null,
+    })
+    assert.match(requests[1].query, /serviceDisconnect/)
+    assert.equal(requests[1].headers.Authorization, 'Bearer workspace-token')
   })
 
   test('waits for the updated source before triggering deployment', async () => {

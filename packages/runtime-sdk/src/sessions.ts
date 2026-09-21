@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { z } from 'zod'
 import { RuntimeCapabilityNameSchema } from './capabilities.js'
 import { RuntimeEligibilityNodeStatusSchema } from './eligibility.js'
@@ -202,7 +203,9 @@ export class InMemoryExternalSessionRepository implements ExternalSessionReposit
           (scope.runtimeConnectionId === undefined ||
             session.runtimeConnectionId === scope.runtimeConnectionId)
       )
-      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.externalSessionId, right.externalSessionId)
+      )
       .map(clone)
   }
 

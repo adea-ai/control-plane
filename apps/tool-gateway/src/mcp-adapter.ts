@@ -386,6 +386,8 @@ function digest(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// digests cover discovered tool JSON Schemas (arbitrary, server-defined keys)
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`

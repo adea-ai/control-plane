@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { compareCodePointOrder } from '@control-plane/domain'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -164,7 +165,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       (_key, value: unknown) => {
         if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
           return Object.fromEntries(
-            Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
+            Object.entries(value).toSorted(([left], [right]) => compareCodePointOrder(left, right))
           )
         }
         return value

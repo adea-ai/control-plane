@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   ToolDefinitionSchema,
@@ -151,13 +152,15 @@ export class ToolRegistry {
     const scope = IdentifierSchemas.workspaceId.parse(workspaceId)
     const definitions = (await this.repository.listDefinitions())
       .filter((definition) => hasScope(definition, scope))
-      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .toSorted((left, right) => compareCodePointOrder(left.name, right.name))
     return Promise.all(
       definitions.map(async (definition) => ({
         definition: clone(definition),
         versions: (await this.repository.listVersions(definition.toolDefinitionId))
           .filter(({ lifecycle }) => lifecycle !== 'revoked')
-          .toSorted((left, right) => left.semanticVersion.localeCompare(right.semanticVersion))
+          .toSorted((left, right) =>
+            compareCodePointOrder(left.semanticVersion, right.semanticVersion)
+          )
           .map(clone),
       }))
     )
@@ -397,6 +400,8 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// drafts embed author-defined JSON Schemas (arbitrary keys); contentDigest is persisted in the registry
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`

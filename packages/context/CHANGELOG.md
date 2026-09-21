@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.9.3](https://github.com/adea-ai/control-plane/compare/context-v1.9.2...context-v1.9.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* replace locale-dependent sort comparators with code-point ordering ([#614](https://github.com/adea-ai/control-plane/issues/614)) ([46897cd](https://github.com/adea-ai/control-plane/commit/46897cd99faeda65c1659c312d80ded809dc61d5))
+
+## [1.9.2](https://github.com/adea-ai/control-plane/compare/context-v1.9.1...context-v1.9.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **contracts:** locale-independent canonicalJsonStringify + canonical-JSON divergence audit ([#611](https://github.com/adea-ai/control-plane/issues/611)) ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+
+### Maintenance
+
+* **contracts:** add canonicalJsonStringify and consolidate canonical-JSON digests ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+## [1.9.1](https://github.com/adea-ai/control-plane/compare/context-v1.9.0...context-v1.9.1) (2026-09-20)
+
+
+### Maintenance
+
+* **m405:** consolidate the duplicated withTimeout race into domain ([#609](https://github.com/adea-ai/control-plane/issues/609)) ([b6af3d5](https://github.com/adea-ai/control-plane/commit/b6af3d5d60546bf094ff015560469bb987b6e5b5))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/context-v1.8.1...context-v1.9.0) (2026-09-20)
 
 

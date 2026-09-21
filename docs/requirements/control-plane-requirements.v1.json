@@ -261,10 +261,10 @@
         }
       ],
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "hosted-control-plane",
-        "disposition": "Run commit-pinned clean-VPS saturation, soak, recovery, and capacity certification."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     },
     {
@@ -283,10 +283,10 @@
         }
       ],
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "hosted-control-plane",
-        "disposition": "Run commit-pinned clean-VPS saturation, soak, recovery, and PostgreSQL/S3 capacity certification."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     }
   ],
@@ -320,7 +320,7 @@
       "heading": "Explicit promotion (section 2)",
       "requirement": "Moving Local, Self-hosted or external bytes into cloud storage requires explicit promotion/upload authorization and provenance/policy checks; remote control alone does not authorize upload.",
       "normativeState": "accepted",
-      "classification": "planned",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -328,13 +328,27 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "artifact promotion without an authorized promotion gate is denied (PROMOTION_DENIED); sandbox uploads are path-bounded and storage-capped"
+        },
+        {
+          "kind": "document",
+          "path": "packages/sandbox/src/index.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/index.test.mjs",
+          "name": "fails closed when provider content does not match the stored checksum"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
+        "disposition": "The Control Plane-side upload boundary is proven in-repo: SandboxCoordinator.promote delegates to an explicitly authorized ArtifactPromoter port and fails closed with PROMOTION_DENIED without one (adversarial probe), uploads are path-bounded and storage-capped, and stored content is checksum-verified; the relay has no upload/promotion operation, so remote control alone cannot authorize upload. Remaining: the cloud promotion consumer surface (M12) with scoped capability issuance, promotion failure/cancel semantics on the live R2 path, and live provenance evidence for objects promoted into cloud storage."
       }
     },
     {
@@ -343,7 +357,7 @@
       "heading": "Local grant boundary (sections 2 and 11)",
       "requirement": "Local and Self-hosted Artifact references resolve only through a current authorized LocalProjectGrant or local-artifact grant on the owning execution host.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -351,14 +365,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "local grant admission: malformed grant references never become a usable client; a well-formed but unregistered grant fails closed as missing; a revoked grant reports unavailable and dispatches nothing; commands bound to a foreign workspace are rejected at dispatch"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "name": "denies revoked, expired and not-yet-issued grants; denies when no current grant matches the principal and workspace"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-authoring-composition.test.mjs",
+          "name": "local composition wires a grants-backed authority from administration-provisioned stores (revoked grant denies authoring)"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m6-runtime-adapters.test.mjs",
+          "name": "normalizes interactions, cancellation, crashes, disconnects, and revoked grants (LOCAL_PROJECT_GRANT_REVOKED excluded from routing, zero commands dispatched)"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
-      }
+      ]
     },
     {
       "id": "CP-ART-004",
@@ -389,7 +417,7 @@
       "heading": "Durable identity (sections 3 and 12)",
       "requirement": "Control Plane state references Artifact IDs or provider-neutral candidates rather than treating provider URLs, signed URLs, absolute paths or access tokens as durable Artifact identity.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "artifact-integration",
       "lane": "contract/schema",
       "issueRefs": [188, 190, 194, 195],
@@ -397,14 +425,22 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "artifact keys are content-addressed, so traversal keys never escape the root"
+        },
+        {
+          "kind": "document",
+          "path": "packages/contracts/src/envelopes.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "name": "maps available artifacts from the composition-owned store (identity is opaque artifactId + sha256 contentDigest)"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
-      }
+      ]
     },
     {
       "id": "CP-ART-006",
@@ -412,7 +448,7 @@
       "heading": "Independent cloud authority (sections 5 and 14)",
       "requirement": "Control Plane cloud storage uses independently scoped buckets or environment-isolated bucket sets, credentials and lifecycle controls; its ObjectStore bucket and credentials do not substitute for Agent HQ Artifact authority.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "infrastructure/live-provider certification",
       "issueRefs": [188, 190, 194, 195],
@@ -420,13 +456,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/config/src/managed-cloud.test.mjs",
+          "name": "R2_PREFIX validation (safe environment-separation prefixes accepted, unsafe rejected)"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/index.test.mjs",
+          "name": "applies the environment prefix to every provider address while exposing visible keys; rejects unsafe environment prefixes at construction"
+        },
+        {
+          "kind": "document",
+          "path": "infrastructure/railway/environment.json",
+          "name": "staging sets R2_PREFIX=staging/, production unprefixed"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "In-repo, environment-isolated key prefixes are validated at configuration load and applied to every object address across staging/production per the Railway manifest, and the ObjectStore bucket holds only Control Plane artifacts (no Agent HQ authority delegation path exists). Remaining: live deployment evidence that staging and production use distinct credentials and that a staging-credential read against production keys is denied, plus lifecycle-control evidence on the deployed buckets — these require the deployed pair and cannot be produced in-repo."
       }
     },
     {
@@ -458,7 +509,7 @@
       "heading": "Private cloud access (section 5)",
       "requirement": "Cloud objects remain private and access is mediated by the owning product authorization boundary; physical bucket names, account IDs and endpoints are deployment configuration rather than domain identity.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -466,13 +517,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/index.test.mjs",
+          "name": "constructs an S3-compatible client without exposing configuration on the store; normalizes not-found and provider failures without retaining raw errors"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "name": "marks artifacts unauthorized without a current grant or declared scope match"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "In-repo, object access is mediated exclusively through the authorization boundary (artifact resolution requires a current grant and scope match; the promotion path requires an authorized gate) and physical endpoints, bucket names, and credentials exist only as validated deployment configuration that the store does not expose; no public-URL or ACL surface exists in the ObjectStore contract. Remaining: live evidence that the deployed buckets are private and that the deployed credential cannot be used to bypass the product authorization boundary."
       }
     },
     {
@@ -550,7 +611,7 @@
       "heading": "Local availability (section 11)",
       "requirement": "Local references become unavailable when the node is offline, the grant is revoked, the file digest changes or the file is deleted.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -558,13 +619,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "a revoked grant reports unavailable and dispatches nothing"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m6-runtime-adapters.test.mjs",
+          "name": "transport.disconnect() yields health 'unavailable'; revoked grants excluded from routing with no dispatched commands"
+        },
+        {
+          "kind": "document",
+          "path": "packages/managed-pi-adapter/src/gateway.ts",
+          "name": "health is 'unavailable' unless connection is online AND grant state is granted"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Node-offline (transport disconnect) and grant-revoked both map local references to unavailable with nothing dispatched, proven by adversarial probes and adapter acceptance tests. Remaining: digest-change and file-deletion unavailability triggers, which live in the RuntimeNode host-side local-artifact file resolution surface (M12 desktop host) that does not exist standalone on main, so no in-repo flow can exercise them."
       }
     },
     {
@@ -573,7 +649,7 @@
       "heading": "Host-only path resolution (section 11)",
       "requirement": "Remote Control Plane services never store absolute local Artifact paths; only the trusted execution host maps opaque local_reference_id values to canonical paths inside the approved grant.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -581,13 +657,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "malformed grant references never become a usable client (grant:/etc/passwd, grant:.., absolute and path-shaped references rejected)"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Remote Control Plane state references artifacts and grants only through opaque validated identifiers (art_ ULIDs, grant:<opaque> refs; path-shaped references are rejected at the boundary), and no Control Plane schema stores absolute local paths. Remaining: the trusted-execution-host half — the RuntimeNode host mapping opaque local_reference_id values to canonical paths inside the approved grant — is the M12 desktop host surface and cannot be implemented or probed standalone."
       }
     },
     {
@@ -635,13 +716,23 @@
         {
           "kind": "test",
           "path": "tests/m11-context-authoring-composition.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "packages/context/src/authority.ts",
+          "name": "only a state=='available' verifiable descriptor parses an ArtifactRef; every unavailable state leaves the reference unparsed"
+        },
+        {
+          "kind": "document",
+          "path": "apps/hosted-control-plane/src/composition.ts",
+          "name": "hosted composition wires GrantsBackedContextAuthoringAuthority as the default authority"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "GrantsBackedContextAuthoringAuthority is implemented and wired as the default authority in Local and Hosted compositions (operator-provisioned grants only, no-provider degradation, store-read artifact states); managed-cloud composition wiring, exact-candidate cross-profile evidence and adversarial unavailable-artifact probes remain."
+        "disposition": "Two of the three previously named gaps are closed on main: the managed-cloud composition now wires the grants-backed authority as its default, and the unavailable-artifact evidence exists (quarantined/revoked/unverifiable/failed-verification artifacts map to unavailable states and never present a reference into context, with the composition test proving local wiring end to end). Remaining: the exact-candidate cross-profile evidence run on the frozen release candidate; optionally a hosted-composition-level test directly asserting the default authority instance (hosted tests currently exercise only injected authorities)."
       }
     },
     {
@@ -664,7 +755,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-12: the standalone candidate emits provenance-bearing candidates only and has no cloud promotion flow, so Local/Self-hosted references are authoritative by construction. Scoped capability issuance, promotion failure/cancel semantics and signed-URL redaction arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
+        "disposition": "Adjudicated 2026-09-20 against main: no cloud Artifact promotion flow exists in the candidate (packages/object-store has no promotion path; tests/container-promotion.test.mjs covers container images, not Artifacts; tests/m9-cloud-certification.test.mjs 'proves terminal Neon state, retained R2 integrity, and idempotent API replay' exercises certification fixtures through injected fakes, and scripts/certify-m9-cloud.mjs is operator-run, not a CI lane). Local/Self-hosted references remain authoritative by construction. Promotion failure/cancel semantics arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -735,13 +826,28 @@
         {
           "kind": "document",
           "path": "packages/config/src/managed-cloud.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/index.test.mjs",
+          "name": "applies the environment prefix to every provider address while exposing visible keys; rejects unsafe environment prefixes at construction"
+        },
+        {
+          "kind": "test",
+          "path": "packages/config/src/managed-cloud.test.mjs",
+          "name": "R2_PREFIX validated per component"
+        },
+        {
+          "kind": "document",
+          "path": "infrastructure/railway/environment.json",
+          "name": "staging prefixed, production unprefixed"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "M11 implementation landed: validated per-environment R2 key prefixes (R2_PREFIX) applied to every object address while descriptors expose caller-visible keys, wired through the managed-cloud configuration and the Railway IaC (staging prefixed, production unprefixed), with environment separation documented in the infrastructure manifest. Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed pair."
+        "disposition": "The in-repo half is complete and tested: validated per-environment R2 key prefixes are applied to every physical object address while callers see unprefixed keys, wired through the managed-cloud configuration and the Railway manifest (staging prefixed, production unprefixed). Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed staging/production pair."
       }
     },
     {
@@ -758,13 +864,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/deployment/src/retention-sweep.test.mjs",
+          "scope": "M11.9 retention sweep covers only command inbox and execution events; no per-Artifact-class retention model exists in the candidate."
+        },
+        {
+          "kind": "document",
+          "path": "scripts/certify-m9-cloud.mjs",
+          "scope": "Certification artifact fixture sets an explicit retentionExpiresAt (30 days) — the only explicit artifact retention in the candidate."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "Adjudicated 2026-09-20: the only explicit product retention in the candidate is the M11.9 RetentionSweep (command inbox + execution events, packages/deployment/src/retention-sweep.ts, #194) and the 30-day certification-artifact fixture retention. No explicit per-Artifact-class retention policy (generated outputs, temporary execution files, audit evidence, benchmark fixtures) exists; provider defaults do not replace it because no artifact-class retention configuration exists at all. Remaining: extract the Control Plane/consumer-boundary retention-class obligation and implement explicit classes with the M12 artifact surface. Owner artifact-integration."
       }
     },
     {
@@ -804,13 +920,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/index.test.mjs",
+          "scope": "'fails closed when provider content does not match the stored checksum' — the digest-verification primitive a future migration would reuse; no dual-read/dual-write migration flow exists."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-12: no multi-provider artifact store exists in the candidate; provider migration with digest/size verification is planned with the M12 artifact store evolution. Owner artifact-integration."
+        "disposition": "Adjudicated 2026-09-20: still no multi-provider artifact store or migration flow in the candidate (no dual-read/dual-write code anywhere; packages/object-store supports R2/S3-compatible and filesystem providers but one authoritative provider per composition). The read-path checksum-verification primitive exists and is tested. Provider migration with digest/size verification, ID/reference preservation and single authoritative location remains planned with the M12 artifact store evolution. Owner artifact-integration."
       }
     },
     {
@@ -819,7 +940,7 @@
       "heading": "Untrusted content precedence (section 10)",
       "requirement": "Parsed or indexed Artifact document content remains data and cannot override execution authority or higher-priority instructions.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -827,13 +948,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m9-production-hardening.test.mjs",
+          "name": "rejects cross-workspace prompt injection before policy evaluation"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "name": "normalizes degraded output without making it ProjectState or canonical memory; rejects forged digests, token underclaims, and UTF-8 byte overflow before caching"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m2-core-domain.test.mjs",
+          "name": "catalog digest pinning rejects tampered skill instructions"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Canonical Control Plane or consumer-boundary obligation extracted; map current composition and verify exact-candidate standalone fixtures without taking over Agent HQ authority."
+        "disposition": "The content-as-data principle is enforced and probed for every in-repo ingestion path: provider contributions are validated, digest-pinned, scope-bounded data that never becomes ProjectState or instructions, cross-workspace prompt injection is rejected before policy evaluation, and catalog content tampering fails digest verification. Remaining: no parsed/indexed Artifact document ingestion path exists on main (there is no indexer), so a dedicated adversarial probe where artifact document content attempts to override execution authority or higher-priority instructions has no surface to exercise and remains open for the M12 document-ingestion consumer."
       }
     },
     {
@@ -842,7 +978,7 @@
       "heading": "Product promotion admission (sections 5, 7 and 18)",
       "requirement": "An Agent HQ promotion request respects its 100 MiB ordinary bound or explicitly enabled 1 GiB multipart lane; consumer fixtures must not turn unsupported size/file classes, expired capabilities or failed verification/scanning into an available Artifact.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "artifact-integration",
       "lane": "security/adversarial",
       "issueRefs": [188, 190, 194, 195],
@@ -850,14 +986,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/artifact-storage-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "name": "maps unverifiable, quarantined and revoked artifact evidence to unavailable states; marks artifacts unauthorized without a current grant or declared scope match"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "bodies above the configured cap are rejected before touching the store"
+        },
+        {
+          "kind": "test",
+          "path": "packages/object-store/src/filesystem.test.mjs",
+          "name": "rejects traversal and oversized bodies; preserves identity, metadata, integrity, and owner-only permissions"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-12: Agent HQ promotion lanes are M12 surface. The M11 standalone obligation is the consumer-boundary fixture class: unavailable/quarantined/expired content never becomes an available Artifact (covered through the artifact-state consumption path). Owner artifact-integration."
-      }
+      ]
     },
     {
       "id": "CP-CONS-001",
@@ -865,7 +1010,7 @@
       "heading": "Command inbox scope (section 4)",
       "requirement": "State-changing commands enter durable CommandInbox before effects; caller service, workspace, operation and idempotency key define the replay scope.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -873,14 +1018,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/command-inbox.test.mjs",
+          "scope": "'returns the original accepted execution for identical retries', 'records and rejects an idempotency key reused with a different payload hash', 'concurrent duplicate submissions converge on one command and execution', 'recovers after a committed response is lost without revalidating or duplicating work'; replay scope is {callerPrincipalId, operation, workspaceId, projectId, idempotencyKey} (commandScope)."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m9-production-hardening.test.mjs",
+          "scope": "'injects failures at the durable command acceptance boundary and recovers exactly once' — before-accept injection persists nothing; after-accept injection replays."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'atomically accepts one execution for concurrent duplicate commands and audits conflicts'; 'commits inbox and outbox writes atomically and rolls them back together'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs",
+          "scope": "'runs one authenticated, correlated execution through a mock runtime and survives restart'; 'rejects payload conflicts without duplicating the accepted execution'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-002",
@@ -888,7 +1047,7 @@
       "heading": "Atomic acceptance and conflict (section 4)",
       "requirement": "Validation, authorization, inbox insertion and logical execution creation are atomic where possible; conflicting payload hash reuse is rejected and replay returns the recorded response or processing state.",
       "normativeState": "accepted",
-      "classification": "partially_verified",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -902,14 +1061,38 @@
           "path": "docs/requirements/execution-consistency-acceptance-map.md",
           "commit": "5c3b505fdb3ac88e3895d7caef6d0a7c033d7343",
           "scope": "SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/command-inbox.test.mjs",
+          "scope": "'fails closed before persistence for an invalid plan scope or version reference'; 'returns current processing, terminal, and reconciliation-required outcomes on replay'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'recovers a committed command after the accepting process exits before replying'; 'atomically accepts one execution for concurrent duplicate commands and audits conflicts'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/repositories.test.mjs",
+          "scope": "'recovers acceptance after process exit immediately following the commit'; 'serializes concurrent acceptance and replays it after a full reopen'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m9-production-hardening.test.mjs",
+          "scope": "before/after-accept failure injection recovers exactly once."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-standalone-e2e.test.mjs",
+          "scope": "'SDK response settles a real Restate interaction and replays a lost HTTP ACK without another runtime input' — authenticated reply loss over real HTTP+Restate."
+        },
+        {
+          "kind": "test",
+          "path": "tests/cp1-embedded-durable-execution.test.mjs",
+          "scope": "Profile conformance matrix (cloud, hosted-server, local, hosted-simple) runs the same acceptance/workflow contract cases; Postgres legs execute in the Migrate Neon Branch CI lane."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Partial evidence at 5c3b505: SQLite and PostgreSQL subprocess tests prove retained acceptance and conflicting-payload rejection after post-commit process exit. Fixture plan validation only; public auth/validation atomicity, authenticated HTTP/IPC reply loss, billing/attempt settlement and deployed all-profile acceptance remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-003",
@@ -917,7 +1100,7 @@
       "heading": "Inbox retention (section 4)",
       "requirement": "Persist sufficient retry response data across restarts for at least 30 days and no less than the protected logical execution retention.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -925,13 +1108,43 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/command-inbox.test.mjs",
+          "scope": "'uses trusted acceptance time for the persisted retention floor' (exactly 30 days), 'accepts the canonical retention floor or longer', rejects sub-30-day retention; floor enforced in packages/domain/src/command-inbox.ts (max(requestedRetention, acceptedAt+30d), 'Command retention must cover at least 30 days after receipt')."
+        },
+        {
+          "kind": "test",
+          "path": "packages/deployment/src/retention-sweep.test.mjs",
+          "scope": "M11.9 RetentionSweep physically deletes past-retention inbox commands and events on non-overlapping passes."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/repositories.test.mjs",
+          "scope": "'deleteExpiredInbox removes only past-retention commands and their index'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/durability-repositories.test.mjs",
+          "scope": "'deleteExpiredEvents removes only events past their retention deadline'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'deleteExpiredInbox removes only past-retention commands idempotently'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/index.test.mjs",
+          "scope": "'archives only retained events while preserving replay identity'."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Adjudicated 2026-09-20: the ≥30-day inbox retention floor is enforced at acceptance and physically swept on both backends (SQLite + PostgreSQL, CI: unit group, integration group, M9 recovery matrix). Remaining: no product constant or test ties inbox retention to a distinct protected logical-execution retention floor — the candidate has a single 30-day floor and no separate execution-retention configuration, so the 'no less than the protected logical execution retention' clause is unexercised until execution retention exists as a distinct setting."
       }
     },
     {
@@ -940,7 +1153,7 @@
       "heading": "Attempt identity and usage (section 5)",
       "requirement": "Runtime retries retain execution identity and create new attempt identities; transport duplicates do not create additional billable attempts and reassignment records explicit routing rationale.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -948,13 +1161,38 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "apps/workflow-worker/src/execution-workflow.test.mjs",
+          "scope": "'activity retry reuses stable effect keys instead of creating another attempt'; 'replay after worker restart converges on one attempt and dispatch effect'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/usage-ledger/src/index.test.mjs",
+          "scope": "'deduplicates one billable effect across retry and rejects identity conflicts'; 'reserves before work and reconciles settlement by releasing the unused amount'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists lifecycle transitions and multiple runtime attempts with optimistic concurrency' — new attempt identities under the same execution."
+        },
+        {
+          "kind": "test",
+          "path": "packages/workflow-runtime/src/embedded-runtime.test.mjs",
+          "scope": "'retries a failed run and completes on a later attempt'; 'replays journaled activities instead of re-executing them on a retry'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/routing.test.mjs",
+          "scope": "'ranks only eligible candidates and returns explainable alternatives'; 'is invariant to candidate order and breaks exact ties by connection ID' — explainable deterministic routing at selection."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
+        "disposition": "Adjudicated 2026-09-20: retries retain execution identity with per-attempt identities (Postgres optimistic-concurrency attempts, embedded-runtime later-attempt retries); transport duplicates neither duplicate effects nor billable attempts (usage-ledger idempotent dedupe, effect-key reuse in workflow-worker/managed-pi/ACP redelivery). Remaining: explicit attempt reassignment that records routing rationale is not a modeled operation — routing decisions are explainable at selection time only; reassignment identity is tracked separately under CP-RNODE-020. Owner durable-execution."
       }
     },
     {
@@ -963,7 +1201,7 @@
       "heading": "Normalized event envelope (section 6)",
       "requirement": "Normalized events carry stable identities, schema version, execution-scoped sequence, occurred and observed timestamps, correlation and source references, plan/workflow references where applicable, and sensitivity/redaction metadata; unrelated executions have no global ordering guarantee.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "execution-events",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -971,14 +1209,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/index.test.mjs",
+          "scope": "'appends immutable normalized events in deterministic per-execution order'; 'keeps a stable event identity across publication retries'; 'rejects oversized payloads and non-normalized event names'. Schema (packages/events/src/index.ts): schemaVersion, per-execution sequence, occurredAt+recordedAt, correlation{workspaceId, projectId, taskId, agentId, requestId, commandId?, traceId}, workflowId, sensitivity+redaction classification metadata."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/durability-repositories.test.mjs",
+          "scope": "'round-trips event sensitivity metadata and keeps legacy events valid'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/delivery.test.mjs",
+          "scope": "'delivers a versioned normalized envelope and marks the retained event published'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "execution-events",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-006",
@@ -986,7 +1233,7 @@
       "heading": "Unknown-outcome reconciliation (sections 1 and 8)",
       "requirement": "After restart or reconnect reconcile active execution against workflow, command ledger and authoritative runtime state; ambiguous non-idempotent effects require reconciliation rather than automatic retry or fabricated progress.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -994,14 +1241,38 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/execution-reconciliation.test.mjs",
+          "scope": "'resumes the existing workflow for accepted-but-unstarted work without creating an execution'; 'marks stale running work reconciling and waits when the runtime confirms it is still running'; 'recovers a runtime terminal outcome once after a lost acknowledgement'; 'replays terminal-but-undelivered events without reapplying the terminal outcome'; 'detects a stalled workflow independently of a healthy runtime heartbeat'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs",
+          "scope": "'moves stale work into explicit idempotent reconciliation' (stale_heartbeat → wait_for_runtime, replay-identical)."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-reconciliation-parity.test.mjs",
+          "scope": "'the pinned semantic outcomes hold for both implementations' — lost-ACK never fabricates a terminal claim on Postgres or SQLite (#518/#520 characterization)."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists reconciliation checkpoints and replays the decision without repeating effects'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/failure-injection.test.mjs",
+          "scope": "'routes an ambiguous committed provider outcome to reconciliation'."
+        },
+        {
+          "kind": "test",
+          "path": "apps/runtime-gateway/src/reconnect-reconciliation.test.mjs",
+          "scope": "'redelivers queued and provably unacknowledged commands after restart'; 'makes acknowledged-without-outcome and unknown-ledger states explicit'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-007",
@@ -1009,7 +1280,7 @@
       "heading": "Cancellation terminal precedence (section 9)",
       "requirement": "If execution completion wins a cancellation race, return the existing terminal result without rewriting it as cancelled.",
       "normativeState": "accepted",
-      "classification": "partially_verified",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1023,14 +1294,23 @@
           "path": "docs/evidence/m11-native-pi-terminal-cancellation-2026-09-08.md",
           "commit": "79d454e401c126f6f2cd15b1bf0c7f5317804a55",
           "scope": "Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs",
+          "scope": "'makes cancellation/terminal races and expired interactions deterministic' — concurrent cancelled-vs-completed transitions under the same expected version resolve with exactly one winner."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/interactions.test.mjs",
+          "scope": "'terminal execution result wins deterministically over later cancellation' — resolved terminal state is retained and later responses reject."
+        },
+        {
+          "kind": "test",
+          "path": "apps/workflow-worker/src/execution-workflow.test.mjs",
+          "scope": "'rechecks terminal control after activity completion before persisting success'; 'lets terminal control cancel a pending dispatch before completion can be persisted'; 'cancels the active attempt when terminal control wins an interaction wait'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Partial evidence at 79d454e: Native Pi terminal cancellation replay after cleanup/client recreation retains original output and usage without another model request. Isolated model endpoint with native tools disabled; active cancellation races, ACP behavior and managed-cloud/Self-hosted public control paths remain unverified."
-      }
+      ]
     },
     {
       "id": "CP-CONS-008",
@@ -1038,7 +1318,7 @@
       "heading": "Durable input validity (section 9)",
       "requirement": "Input submission references an explicit pending interaction and rejects stale, answered, unauthorized or schema-incompatible input under durable idempotency rules.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1046,14 +1326,33 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/interactions.test.mjs",
+          "scope": "'records one authorized response and replays duplicates without repeating effects'; 'rejects expired, stale, wrong-attempt, conflicting, and unauthorized responses'; 'rejects non-JSON input and actions that do not match the interaction kind'; 'expires pending interactions deterministically across restart and replay'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs",
+          "scope": "respond to an expired interaction rejects with INTERACTION_TERMINAL under durable idempotency."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/interaction-delivery.test.mjs",
+          "scope": "'ambiguous delivery retains the response and retries its exact stored identity'; 'principal and payload spoofing cannot persist or signal a response'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/workflow-runtime/src/embedded-runtime.test.mjs",
+          "scope": "'rejects signals that are not confirmed responses'; 'parks on awaiting_input and resumes when the interaction response arrives'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-standalone-e2e.test.mjs",
+          "scope": "'SDK response settles a real Restate interaction and replays a lost HTTP ACK without another runtime input'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-009",
@@ -1061,7 +1360,7 @@
       "heading": "ProjectState compare-and-swap (section 14)",
       "requirement": "ProjectState mutations require expected revision; stale writers receive current revision and conflict metadata, while successful mutations increment aggregate revision and emit project_state.updated.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "project-state",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1069,14 +1368,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/project-state.test.mjs",
+          "scope": "'allows only one conflicting writer at an expected revision'; 'retries identical appends without another revision or event'; 'merges disjoint stale appends deterministically'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'records project_state.updated in the outbox only when the revision CAS commits'; 'persists ProjectState history, mutation replay, and promotion CAS across restart'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/repositories.test.mjs",
+          "scope": "'records a durable project_state.updated entry inside the successful CAS transaction'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "project-state",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-010",
@@ -1084,7 +1392,7 @@
       "heading": "Pinned context authority (sections 14 and 15)",
       "requirement": "Immutable ExecutionPlan pins ContextPackage, ProjectState versions and provider decision; context changes create a new version recorded on the attempt, and graph nodes cannot independently substitute mutable state.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1092,14 +1400,33 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/execution-plan/src/index.test.mjs",
+          "scope": "'pins exact profile, skill, context, policy, constraint, and compiler versions'; 'requires child context to be equal to or derived from the parent package'; 'allows child derivation to narrow authority and rejects every expansion dimension'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m2-core-domain.test.mjs",
+          "scope": "'compiles and retrieves an immutable plan from an authenticated Agent HQ intent'; 'fails stale, unauthorized, and over-budget context before plan compilation'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'pins the exact ProjectState revision and selected item revisions'; 'retrieves and pins evidence through the real resolver without widening authority'; 'resolves trusted provider policy and persists the omission decision'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists immutable ContextPackages across restart and fails closed on tampering'; 'persists immutable execution plans across repository restart'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-graph-composition.test.mjs",
+          "scope": "'Local and Hosted Simple resume graph approval from their own SQLite database after reconstruction' — graph nodes resume from the durable pinned package rather than substituting state."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-011",
@@ -1107,7 +1434,7 @@
       "heading": "Context reuse validation (section 15)",
       "requirement": "Retry reuse requires valid ProjectState, authorization, provider mapping, contribution revision/digest, freshness and degradation policy; required-provider outage or revoked scope cannot silently select stale cached context.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1115,14 +1442,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'revalidates cached contributions and preserves safe token overestimates'; 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'rejects expired or unauthorized decisions before reading state'; 'excludes stale optional items without resolving their unavailable artifacts'; 'fails closed for unavailable lifecycle states and expired policy decisions'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "scope": "'maps unverifiable, quarantined and revoked artifact evidence to unavailable states'; 'marks artifacts unauthorized without a current grant or declared scope match'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/cortana-context-adapter/src/index.test.mjs",
+          "scope": "'does not reuse cached evidence across pinned corpus revisions'; 'retrieves fresh data if client identity or any required revision pin is unavailable'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-012",
@@ -1130,7 +1471,7 @@
       "heading": "Provider contribution cache identity (section 15.1)",
       "requirement": "Contribution cache identity includes provider definition/contract, connection, mapped scope, request/objective, policy, capabilities, freshness, budget, authoritative revision/validator and adapter/compiler version; changed dimensions or selected items invalidate reuse.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1138,14 +1479,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'reuses only scope- and policy-bound contribution cache entries'; 'does not cache drivers without an authoritative cache identity'; 'invalidates cached data when the authoritative revision identity changes'; 'does not populate cache when the revision changes during retrieval'; 'rechecks revision identity after an asynchronous cache lookup'; 'does not reuse a contribution across execution locations'; 'retrieves and caches independently for each objective'; 'per-read identity and deadline stay out of the cache identity'; 'ranks explicit connections before provider preference and reachability'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/cortana-context-adapter/src/index.test.mjs",
+          "scope": "'separates cached data by adapter project, transport, client identity, and output bound'; 'reuses one authorized command across retries and allocates distinct commands for new reads'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.ts",
+          "scope": "Cache identity composition and invalidation implementation under test."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-013",
@@ -1153,7 +1503,7 @@
       "heading": "Provider retrieval non-mutation (section 15.1)",
       "requirement": "Provider retrieval creates neither state-promotion nor memory-write proposals nor provider-native memory; no-provider or disabled policy makes no provider request.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1161,14 +1511,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'normalizes degraded output without making it ProjectState or canonical memory'; 'preserves the no-provider execution path when disabled or unconfigured' (no provider request possible)."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'composes provider contributions without mutating ProjectState authority'; 'records disabled and unavailable preferred policies with the real empty resolver'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "scope": "'omits the provider request for retired registrations, scope drift and unsupported locations'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/memory-writeback/src/index.test.mjs",
+          "scope": "'keeps proposals non-canonical and deduplicates duplicate delivery' — retrieval-side write proposals never touch canonical memory."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-014",
@@ -1176,7 +1540,7 @@
       "heading": "Memory-write proposal replay (section 15.1)",
       "requirement": "Same-scope identical-content proposal delivery converges; conflicting reuse fails closed, and approval binds the exact proposal and becomes invalid when stale, revoked or already decided.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1184,14 +1548,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/memory-writeback/src/index.test.mjs",
+          "scope": "'keeps proposals non-canonical and deduplicates duplicate delivery' (same-scope identical content converges; conflicting reuse rejects MEMORY_PROPOSAL_CONFLICT); 'uses durable approval, denial, expiry, and revocation lifecycles' (approval binds the exact proposal via its interaction; revocation invalidates); 'rejects cross-scope authority, unbounded content, source documents, and conflicting dedupe'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists memory proposals with workspace dedupe and optimistic transitions'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-015",
@@ -1199,7 +1567,7 @@
       "heading": "Approved memory-write reconciliation (section 15.1)",
       "requirement": "Approved writes require advertised capability, stable idempotency, bounded payload and recorded policy/principal; ambiguous outcomes enter reconciliation_required without blind repetition.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1207,14 +1575,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/memory-writeback/src/index.test.mjs",
+          "scope": "'rejects absent and read-only providers while ordinary execution remains independent' (advertised-capability gate); 'commits with one stable idempotent effect and reconciles timeout-after-effect'; 'durably records rejection and ambiguous non-effects for reconciliation' (reconciliation_required, writeCount stays 1 — no blind repetition); 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'keeps unknown and unavailable status reconciliation parked without replay'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/failure-injection.test.mjs",
+          "scope": "'routes an ambiguous committed provider outcome to reconciliation'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-016",
@@ -1222,7 +1594,7 @@
       "heading": "Permanent rejection and dead letters (section 16)",
       "requirement": "Permanent validation, schema, scope, authorization and digest failures are rejected or quarantined immediately; continuously retryable delivery reaches manual remediation after 24 hours unless intentionally in a valid durable wait.",
       "normativeState": "accepted",
-      "classification": "partially_verified",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1238,14 +1610,18 @@
         {
           "kind": "test",
           "path": "packages/events/src/delivery.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/telemetry/src/consistency.ts",
+          "scope": "control.event.quarantine.count with bounded reason_category/attempted labels; emitted by the dispatcher (recordQuarantine) and wired via createConsistencyMetricEmitter into all four compositions (apps/local-control-plane, apps/hosted-control-plane, apps/workflow-worker, apps/runtime-gateway)."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-consistency-metric-wiring.test.mjs",
+          "scope": "Composed-gateway emission proven end to end with bounded labels."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Escalation landed: a retryable delivery continuously failing past the configured window (default 24h from recording) is quarantined with evidence retained, regardless of attempt budget, and the window is validated at construction. Remaining: cross-profile evidence from a frozen candidate and wiring the escalation metric into operator alerting."
-      }
+      ]
     },
     {
       "id": "CP-CONS-017",
@@ -1253,7 +1629,7 @@
       "heading": "Persistence authority (section 20)",
       "requirement": "Execution, Attempt, ExecutionEvent and CommandInbox remain inspectable authority through SQLite for Local/Hosted simple and PostgreSQL for Hosted server/cloud; Restate history and optional graph checkpoints do not replace those records.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [188, 194, 195],
@@ -1261,14 +1637,33 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/durability-repositories.test.mjs",
+          "scope": "'persists ordered outbox events and publication state across reopen'; 'persists runtime commands and inventory checkpoints across reopen'; 'persists reconciliation decisions with observation-hash CAS across reopen'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/repositories.test.mjs",
+          "scope": "'serializes concurrent acceptance and replays it after a full reopen' — CommandInbox as inspectable SQLite authority."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'recovers a committed command after the accepting process exits before replying'; 'commits execution transitions and ordered outbox events atomically' — PostgreSQL authority for Hosted server/cloud."
+        },
+        {
+          "kind": "test",
+          "path": "tests/cp1-embedded-durable-execution.test.mjs",
+          "scope": "'completes an accepted execution through the embedded queue with no Restate'; 'SQLite profiles run the workflow contract cases identically'; the Postgres conformance matrix ('matches the cloud Postgres baseline...') runs in the Migrate Neon Branch lane — records, not Restate history, are the queried authority."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-recovery-rpo-rto.test.mjs",
+          "scope": "Backup/restore preserves commands and events as the inspectable authority on the SQLite profile."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Canonical requirement extracted; current implementation mapping and exact-candidate cross-profile failure/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-018",
@@ -1276,7 +1671,7 @@
       "heading": "Provider failure defaults (section 15.1)",
       "requirement": "Preferred provider policy defaults to continue_without, required defaults to fail, and await_input requires explicit pinned policy.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1284,14 +1679,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'never broadens scope and applies pinned failure behavior' — required+fail rejects PROVIDER_UNAVAILABLE, required+await_input resolves awaiting_input; 'preserves the no-provider execution path when disabled or unconfigured'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/contracts/src/context-providers.ts",
+          "scope": "failureBehavior enum ['continue_without','fail','await_input'] with .default('continue_without') — preferred default; compositions (apps/local-control-plane/src/composition.ts, apps/hosted-control-plane/src/composition.ts) pin continue_without."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'fails closed for missing required providers and explicit input requests'; 'records disabled and unavailable preferred policies with the real empty resolver'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "scope": "'degrades to the no-provider path when the provider policy is disabled'; 'derives the provider request solely from the grant, registration and policy' — await_input only enters via an explicit pinned policy."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-019",
@@ -1299,7 +1708,7 @@
       "heading": "Provider discovery authority (section 15.1)",
       "requirement": "Provider discovery or installation alone never authorizes retrieval.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1307,14 +1716,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "scope": "'denies when no current grant matches the principal and workspace'; 'denies revoked, expired and not-yet-issued grants'; 'derives the provider request solely from the grant, registration and policy'; 'never derives provider fields from request payload values'; 'omits the provider request for retired registrations, scope drift and unsupported locations'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'rejects caller-supplied authorization and policy fields'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-020",
@@ -1322,7 +1735,7 @@
       "heading": "Deterministic provider selection (section 15.1)",
       "requirement": "Provider selection follows the pinned policy deterministically and is not delegated to an LLM.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1330,14 +1743,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'selects by scope, policy, location, capability, health, and budget'; 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'provides two fake profiles and a reusable conformance harness' — runContextProviderConformance asserts {bounded, deterministic, scopePreserved}."
+        },
+        {
+          "kind": "test",
+          "path": "packages/cortana-context-adapter/src/index.test.mjs",
+          "scope": "'cancels timed-out requests and passes provider conformance' — the real Cortana adapter passes the same deterministic-selection conformance."
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/routing.test.mjs",
+          "scope": "'is invariant to candidate order and breaks exact ties by connection ID' — deterministic, order-invariant selection."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-021",
@@ -1345,7 +1767,7 @@
       "heading": "Provider read envelope (section 15.1)",
       "requirement": "Every provider read carries stable request/correlation identity, workspace and mapped scope, contract version, capability requirements, budget, deadline and policy snapshot.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1353,14 +1775,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'every provider read carries an operation identity and an explicit deadline'; 'per-read identity and deadline stay out of the cache identity'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/cortana-context-adapter/src/index.test.mjs",
+          "scope": "'forwards the stable operation identity through each transport and binding'; 'binds all read semantics into the payload hash and caps the command deadline'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/context-command.test.mjs",
+          "scope": "'creates a bounded context-read record without fabricated runtime identities'; 'rejects inconsistent chronology, delivery, terminal metadata, and oversized commands' — workspace/mapped scope, capability, budget and policy snapshot are schema-pinned on the durable read command."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-022",
@@ -1368,7 +1799,7 @@
       "heading": "Provider authority invalidation (section 15.1)",
       "requirement": "Provider removal, replacement or revocation invalidates affected future retrieval and write authority without implicitly deleting provider-owned data.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1376,13 +1807,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/authority.test.mjs",
+          "scope": "'denies revoked, expired and not-yet-issued grants'; 'omits the provider request for retired registrations, scope drift and unsupported locations'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists scoped provider registrations with concurrent capacity and permanent revocation'; 'persists immutable context grants and permanent revocation across repositories'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "scope": "'a revoked grant reports unavailable and dispatches nothing'."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+        "disposition": "Adjudicated 2026-09-20: partial. Revocation/retirement permanently invalidates future retrieval authority and is durable on both backends; dispatch of revoked grants fails closed. Remaining: (1) provider replacement semantics are modeled only as registration retirement + re-grant, not an explicit replacement flow; (2) write-authority invalidation rides the memory-write surface, whose provider-side revocation propagation arrives with M12 provider-write evolution; (3) the no-implicit-deletion property holds by construction (the candidate contains no provider-data deletion path) rather than by test. Owner context-provider."
       }
     },
     {
@@ -1391,7 +1837,7 @@
       "heading": "Provider substitution contract (sections 15.1 and 18)",
       "requirement": "Cortana, another conforming provider and no provider preserve the same Task and Execution contracts; replacement changes only adapter/configuration and contribution metadata.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1399,14 +1845,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'provides two fake profiles and a reusable conformance harness' — runContextProviderConformance {bounded:true, deterministic:true, scopePreserved:true} is the substitution contract."
+        },
+        {
+          "kind": "test",
+          "path": "packages/cortana-context-adapter/src/index.test.mjs",
+          "scope": "'cancels timed-out requests and passes provider conformance' (Cortana passes the same contract); 'disabling or removing the adapter restores ordinary no-provider behavior'; 'accepts the checked-in golden ContextBundle schema snapshot' (adapter-neutral fixture)."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-composition.test.mjs",
+          "scope": "'composed gateway and node deliver a context command end to end from administration-provisioned stores' — the same Task/Execution transport contract with the real adapter."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'persists a no-provider package using authoritative state and decisions'; 'composes provider contributions without mutating ProjectState authority' — no-provider path yields the same ContextPackage/ExecutionPlan shapes."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-024",
@@ -1414,7 +1874,7 @@
       "heading": "Terminal disagreement precedence (section 8)",
       "requirement": "Record terminal-state disagreement as an incident and resolve it in favor of the authoritative Control Plane execution result unless an explicit administrative override exists.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1422,13 +1882,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-reconciliation-parity.test.mjs",
+          "scope": "'the pinned semantic outcomes hold for both implementations' — a terminal runtime claim without its result reference is treated as unknown and never adopted; absent runtime record never yields completed."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/execution-reconciliation.test.mjs",
+          "scope": "'recovers a runtime terminal outcome once after a lost acknowledgement'; 'emits manual intervention counts and isolates metrics exporter failures' (execution.manual_intervention as the incident signal)."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m10-operability.test.mjs",
+          "scope": "'publishes checkpoint, incident, rollback, and host-loss operator contracts' — operator-facing incident contract documentation."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+        "disposition": "Adjudicated 2026-09-20: partial. The authoritative-resolution half is proven: the Control Plane record wins, runtime terminal claims without recorded references are never adopted, lost-ACK outcomes are recovered exactly once, and disagreements park in reconciliation_required with manual-intervention metrics and operator incident contracts. Remaining: no first-class incident record type for terminal-state disagreement and no explicit administrative override path exist in the candidate — override semantics are currently operator-runbook level (docs/operations.md). Owner durable-execution."
       }
     },
     {
@@ -1437,7 +1912,7 @@
       "heading": "Reconciliation job safety (section 8)",
       "requirement": "Reconciliation jobs are idempotent, rate limited, observable and safe to rerun.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1445,14 +1920,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/execution-reconciliation.test.mjs",
+          "scope": "'scheduled batches use the same idempotent reconciliation path'; 'poll timestamps do not repeat remediation for the same durable facts'; 'rejects invalid rate limit bounds before any reconciliation runs'; 'bounds each scheduled batch to the remaining sliding-window budget'; 'emits one checkpoint metric per reconciliation outcome'; 'emits manual intervention counts and isolates metrics exporter failures'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/deployment/src/reconciliation-scheduler.test.mjs",
+          "scope": "'never overlaps passes and reschedules only after a pass settles'; 'a failed pass reports a fixed diagnostic and later passes still run'; 'drains the in-flight pass and refuses restart after close'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'persists reconciliation checkpoints and replays the decision without repeating effects'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "durable-execution",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-026",
@@ -1460,7 +1944,7 @@
       "heading": "Provider proposal reconciliation (section 8)",
       "requirement": "Reconcile non-terminal MemoryWriteProposals against authoritative provider status where supported; do not promote proposals to canonical memory or reconstruct missing provider evidence without authority.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1468,14 +1952,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/memory-writeback/src/index.test.mjs",
+          "scope": "'reconciles an ambiguous idempotent write through status without replaying the effect' (providerMemoryRef adopted only when provider status confirms); 'fails a status-rejected reconciliation without replaying the write'; 'keeps unknown and unavailable status reconciliation parked without replay'; 'keeps proposals non-canonical and deduplicates duplicate delivery' (never promoted to canonical memory)."
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/failure-injection.test.mjs",
+          "scope": "'routes an ambiguous committed provider outcome to reconciliation'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-027",
@@ -1483,7 +1971,7 @@
       "heading": "Contribution recovery policy (section 8)",
       "requirement": "After recovery rebuild or reject read-only ContextContributions under pinned freshness/revision policy rather than treating them as durable provider-side effects.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1491,14 +1979,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'revalidates cached contributions and preserves safe token overestimates'; 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'normalizes degraded output without making it ProjectState or canonical memory'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'excludes stale optional items without resolving their unavailable artifacts'; 'composes provider contributions without mutating ProjectState authority'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'atomically retains the first context authoring result and rolls back failed command writes' — authoring recovery rebuilds or rejects without side effects."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-028",
@@ -1522,13 +2019,23 @@
         {
           "kind": "test",
           "path": "packages/context/src/provider.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/workflow-worker/src/execution-workflow.test.mjs",
+          "scope": "'persists bounded runtime failure metadata' — bounded failure metadata persists through the execution path (adjacent to, but not the context-provider gateway result path)."
+        },
+        {
+          "kind": "test",
+          "path": "packages/memory-writeback/src/index.test.mjs",
+          "scope": "Write-side outcome codes (MEMORY_WRITE_REJECTED/AMBIGUOUS, reconciliation_required) exist and are tested, but do not carry the read-path failure-metadata envelope (source layer/retryability/remediation)."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Provider resolution failures now carry bounded failure metadata: retryability, source layer (contract/driver/delivery), bounded remediation guidance, and a malformed-vs-contract-mismatch distinction on OUTPUT_INVALID — additive and tested. Remaining: provider-write reconciliation code paths (the write surface is M12 with the provider-write feature) and exercising the metadata end-to-end through the gateway result path."
+        "disposition": "Adjudicated 2026-09-20: still partial on main. The read-path taxonomy (packages/context/src/provider.ts failureMetadata: retryability, source layer contract/driver/delivery, bounded remediation, malformed-vs-contract-mismatch on OUTPUT_INVALID; distinct codes PROVIDER_UNAVAILABLE/REVOKED/SCOPE_MISMATCH/OUTPUT_STALE/BUDGET_EXCEEDED) is implemented and unit-tested ('derives bounded failure metadata per error code', 'distinguishes malformed payloads from contract mismatches'). Remaining: (1) the metadata envelope is still not exercised end-to-end through the gateway result path (no composition consumes failureMetadata; only adjacent bounded runtime failure metadata persists via workflow-worker); (2) provider-write reconciliation error paths exist in memory-writeback but without the same metadata envelope. Owner context-provider."
       }
     },
     {
@@ -1537,7 +2044,7 @@
       "heading": "Provider rejection and omission (section 16)",
       "requirement": "Permanently reject provider contract, scope, digest or authorization failures rather than retrying; omit a preferred provider only if pinned policy permits and never silently degrade a required provider to none.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -1545,14 +2052,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "scope": "'never broadens scope and applies pinned failure behavior' (required provider failure rejects PROVIDER_UNAVAILABLE — never silently degrades to none); 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'rejects forged digests, token underclaims, and UTF-8 byte overflow before caching'; 'preserves the no-provider execution path when disabled or unconfigured' (omission only when policy permits)."
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/index.test.mjs",
+          "scope": "'fails closed for missing required providers and explicit input requests'; 'resolves trusted provider policy and persists the omission decision'; 'rejects authority expiration while provider resolution is in flight'."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "context-provider",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-CONS-030",
@@ -1576,13 +2087,23 @@
         {
           "kind": "document",
           "path": "packages/database/src/integration.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/runtime-gateway/src/runtime-event-ingestion.test.mjs",
+          "scope": "'persists progress once and classifies duplicate, conflicting, and out-of-order frames' — normalized events carry frame trace correlation end to end."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m9-production-hardening.test.mjs",
+          "scope": "'correlates the critical execution path without recording a secret canary' — the full span chain (execution.root → plan.compile → workflow.run → runtime.route → model.call → tool.authorize → sandbox.execute → usage.settle → execution.cleanup) correlates under one identity."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "observability",
-        "disposition": "Runtime command records now carry first-class optional correlation (trace/request/project/task/agent) extracted from the dispatch envelope, persisted through a PostgreSQL JSONB column (migration 0046) and SQLite JSON records, with integration continuity assertions tying the durable command to the accepted execution correlation. Provider reads always carry operation identity and deadlines (landed in #481). Remaining: thread the original accepted request identity (requestId and request trace) into the runtime dispatch envelope, which currently derives trc(executionId)."
+        "disposition": "Adjudicated 2026-09-20: still partial on main. Durable runtime command records carry first-class correlation (trace/request/project/task/agent) persisted through PostgreSQL JSONB (migration 0046) and SQLite, with continuity assertions tying the durable command to the accepted execution's correlation (packages/database/src/integration.test.mjs 'persists runtime command delivery state across gateway repository restarts'; packages/domain/src/runtime-command.ts derive-from-envelope), provider reads carry operation identity/deadlines, and the critical path correlates in spans. Remaining: the live dispatch producer still derives the trace from the execution, not the accepted request — apps/workflow-worker/src/managed-pi-remote-command.ts builds traceId as identifier('trc', input.executionId), so the original request trace is not yet threaded into the runtime dispatch envelope. Owner observability."
       }
     },
     {
@@ -1591,7 +2112,7 @@
       "heading": "Consistency diagnostics (section 17)",
       "requirement": "Measure Control Plane inbox duplicates, payload conflicts, provider selection/omission/degradation, contribution freshness/rebuild/rejection, provider latency/error/timeout/scope denial, memory-write approval/denial/expiry/duplicate/reconciliation, reconciliation repairs, sequence gaps and dead letters.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "observability",
       "lane": "recovery/chaos",
       "issueRefs": [186, 188, 194, 195],
@@ -1599,13 +2120,33 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/telemetry/src/consistency.ts",
+          "scope": "Cataloged consistency metrics: control.command_inbox.duplicate.count, control.command_inbox.conflict.count, context.provider_resolution.count (outcomes included/degraded/omitted/awaiting_input/disabled × reasons PROVIDER_SELECTED/CACHE_HIT/POLICY_DISABLED/NO_ELIGIBLE_PROVIDER/PROVIDER_UNAVAILABLE/PROVIDER_REVOKED/PROVIDER_SCOPE_MISMATCH/PROVIDER_OUTPUT_INVALID/PROVIDER_OUTPUT_STALE/PROVIDER_BUDGET_EXCEEDED), memory.write.decision.count (approved/denied/expired), control.event.quarantine.count, execution.reconciliation.count, execution.manual_intervention.count — bounded labels by construction."
+        },
+        {
+          "kind": "test",
+          "path": "packages/telemetry/src/index.test.mjs",
+          "scope": "'emits consistency metrics exclusively under cataloged names with bounded labels'; 'exposes every consistency metric name in the catalog'; 'isolates consistency exporter failures per emission'."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-consistency-metric-wiring.test.mjs",
+          "scope": "'the composed gateway emits bounded consistency metrics during a delivery and read scenario' — end-to-end emission through the composed gateway."
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/execution-reconciliation.test.mjs",
+          "scope": "'emits one checkpoint metric per reconciliation outcome'; 'emits manual intervention counts and isolates metrics exporter failures'."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "observability",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
+        "disposition": "Adjudicated 2026-09-20: partial, substantially improved. Covered series: inbox duplicates and payload conflicts, provider selection/omission/degradation (with staleness/scope/budget/revocation reasons), memory-write approval/denial/expiry, dead letters (quarantine with reason categories), reconciliation repairs and manual intervention — all cataloged, bounded-label, exporter-isolated, wired via createConsistencyMetricEmitter into all four compositions and proven end-to-end through the composed gateway in CI. Remaining vs the requirement: no dedicated series for provider latency/error/timeout, contribution rebuild/rejection counters, memory-write duplicate/reconciliation counters, or sequence-gap detection. Owner observability."
       }
     },
     {
@@ -1614,7 +2155,7 @@
       "heading": "Content-safe consistency telemetry (section 17)",
       "requirement": "Exclude secrets, reusable provider credentials, private or synchronized content and keys, HPKE plaintext/private keys, unrestricted contributions, native memory values, private paths, sensitive context and Artifact bytes from logs; relay telemetry may expose bounded ciphertext size/key ID/expiry metadata only.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "observability",
       "lane": "recovery/chaos",
       "issueRefs": [186, 188, 194, 195],
@@ -1622,14 +2163,33 @@
         {
           "kind": "document",
           "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/telemetry/src/index.test.mjs",
+          "scope": "'keeps a secret canary out of structured logs'; 'keeps a secret canary out of LangSmith traces'; 'keeps a secret canary out of captured errors'; 'redacts private filesystem paths from telemetry values'; 'redacts loopback endpoints from telemetry values and attributes'; 'configures Sentry without PII and redacts captured diagnostics'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/events/src/index.test.mjs",
+          "scope": "'keeps a secret canary out of persisted events'; 'redacts compound secret keys before persisting generic event payloads'; sensitivity/redaction classification metadata is classification-only (never payload content)."
+        },
+        {
+          "kind": "test",
+          "path": "scripts/m9-evidence-matrices.mjs",
+          "scope": "Secret-canary sink matrix (logs, traces, events, errors, checkpoints, model_context, public_api) — every sink bound to a named test; executed by bun run test:secret-canaries."
+        },
+        {
+          "kind": "test",
+          "path": "tests/m10-operability.test.mjs",
+          "scope": "'binds encrypted relay recovery and telemetry to content-safe durable identities' — HPKE docs, content-redaction-v1 conformance fixture, operations doc 'must not require plaintext sensitive execution content'."
+        },
+        {
+          "kind": "test",
+          "path": "packages/remote-control-relay/src/index.test.mjs",
+          "scope": "'stores ciphertext-only records and redelivers until acknowledged'; 'accepts concurrent duplicate delivery exactly once and zeroes plaintext afterward'; 'loads and validates private key material only through SecretsProvider leases'; 'does not expose deterministic ephemeral key material through the production API' — HPKE plaintext/keys never in durable records or telemetry."
         }
-      ],
-      "gap": {
-        "issue": 194,
-        "severity": "high",
-        "owner": "observability",
-        "disposition": "Source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate implementation mapping and cross-profile acceptance evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-RNODE-001",
@@ -2103,7 +2663,7 @@
       "heading": "Command rejection (section 9)",
       "requirement": "Reject commands that are expired, addressed to another node/workspace, incompatible with negotiated protocol/schema or current permissions, or oversized.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2111,14 +2671,18 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "HPKE relay envelopes: roundtrip succeeds and wrong host, workspace, or rotation rejects; expired and clock-violating envelopes reject; lifetime is capped; cross-command ciphertext substitution and malformed frames reject (envelopeVersion/schema downgrade); plaintext and ciphertext caps are enforced; commands bound to a foreign workspace are rejected at dispatch"
+        },
+        {
+          "kind": "test",
+          "path": "packages/remote-control-relay/src/index.test.mjs",
+          "name": "fails closed for wrong recipients, expiry, oversized payloads, and downgrades; rejects a validly encrypted request whose command scope differs from its envelope; acknowledges a malformed external envelope so later commands are not starved; bounds and deduplicates authenticated metadata commands"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "runtime-security",
-        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-RNODE-022",
@@ -2126,7 +2690,7 @@
       "heading": "Provider descriptor privacy (section 12.1)",
       "requirement": "Optional provider capability descriptors expose opaque connection/mapping references, versions, health, operations, location and limitations, but exclude loopback URLs, database/source paths, credentials, corpus contents and native memory.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2134,14 +2698,23 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/health.test.mjs",
+          "name": "rejects unsafe display limitations and free-form diagnostics (native paths rejected)"
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/discovery.test.mjs",
+          "name": "keeps node health distinct while exposing stale capability mismatch remediation; projects revoked external sessions without opaque native state (asserts projection contains no opaqueNativeRef)"
+        },
+        {
+          "kind": "document",
+          "path": "packages/managed-pi-adapter/src/index.ts",
+          "name": "ManagedPiInspectionSchema exposes only runtimeVersion, health, limitations, capabilities"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "runtime-security",
-        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
-      }
+      ]
     },
     {
       "id": "CP-RNODE-023",
@@ -2149,7 +2722,7 @@
       "heading": "Runtime telemetry redaction (section 15)",
       "requirement": "Redact reusable tokens, runtime/provider credentials, private keys, local-content keys/plaintext, loopback endpoints, database/source paths, provider evidence/native memory, environment secrets, raw file content and sensitive command fields from logs/traces; relay diagnostics expose bounded ciphertext metadata only.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2157,13 +2730,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/telemetry/src/index.test.mjs",
+          "name": "redacts secret and prohibited payload fields; redacts compound secret keys and assignments in diagnostic text; keeps a secret canary out of structured logs, LangSmith traces, and captured errors; redacts loopback endpoints; redacts private filesystem paths; configures Sentry without PII"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "canaries are found across nested sinks including error chains; credential scanners catch every token family in operator output"
+        },
+        {
+          "kind": "test",
+          "path": "packages/remote-control-relay/src/index.test.mjs",
+          "name": "stores ciphertext-only records and redelivers until acknowledged; accepts concurrent duplicate delivery exactly once and zeroes plaintext afterward"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation extracted from the revalidated 2026-08-28 revision; exact-candidate composition mapping and boundary/recovery evidence remain required."
+        "disposition": "Redaction is implemented and probed for reusable tokens, provider credentials, private-key material, environment secrets, loopback endpoints, database/filesystem paths, and file-content-bearing diagnostics across structured logs, traces, errors, and Sentry, and relay records hold ciphertext envelopes plus bounded routing metadata only. Remaining: the M12 desktop diagnostic classes — local-content keys/plaintext, provider evidence/native memory, raw file content, and sensitive native command fields on the RuntimeNode host — which have no standalone surface on main to redact or probe."
       }
     },
     {
@@ -2207,13 +2795,43 @@
         {
           "kind": "document",
           "path": "packages/deployment/src/process-runtime.ts"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "managed spawn policy (CP-RNODE-025): symlinked executables outside the allowlist cannot launch; allowlisted entries compared by real path admit their own targets; working directory escapes and relative or missing cwd reject; argument, environment, and injection limits reject before spawn"
+        },
+        {
+          "kind": "test",
+          "path": "packages/deployment/src/index.test.mjs",
+          "name": "managed spawn policy (CP-RNODE-025): allows launches inside the policy and rejects violations before spawning; rejects invalid policy bounds at construction"
+        },
+        {
+          "kind": "document",
+          "path": "apps/local-control-plane/src/composition.ts",
+          "name": "CP-RNODE-025: Restate binary pinned by resolved path and local data directory"
+        },
+        {
+          "kind": "document",
+          "path": "apps/local-control-plane/src/index.ts",
+          "name": "CP-RNODE-025: managed Pi executable pinned to configured binary"
+        },
+        {
+          "kind": "document",
+          "path": "apps/local-control-plane/src/installed-acp-runtime.ts",
+          "name": "CP-RNODE-025: ACP launches pinned to verified node runtime and configured cwd"
+        },
+        {
+          "kind": "document",
+          "path": "packages/managed-pi-adapter/src/process-client.ts",
+          "name": "spawn policy enforced before spawn"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Bounded spawn policy enforcement is implemented in the managed process runtime: executable allowlist compared by resolved real path (symlinks cannot escape denial), working-directory containment, and argument/environment bounds, validated at construction and enforced before any process starts (packages/deployment/src/process-runtime.ts). Remaining: wiring the policy into the local and hosted managed launch sites with pinned executable identities, and the RuntimeNode user-facing process-operation policy which arrives with the M12 desktop host."
+        "disposition": "The previously open wiring gap is closed: all in-repo launch sites (managed Restate, managed Pi, installed ACP node) now pin executable identities and working directories, the policy is enforced before any spawn in the process clients, and four adversarial probes plus construction-validation tests cover allowlist real-path comparison, cwd escapes, and argument/environment/injection bounds; hosted/server compositions spawn no processes at all. Remaining: the RuntimeNode user-facing process-operation policy (approved identities, per-variable environment allowlist, timeout and output-size limits on user-initiated process ops), which is the M12 desktop host surface."
       }
     },
     {
@@ -2240,7 +2858,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "HostSecureHandleSecretsProvider adapter, bounded zeroizing leases, health and file/env providers are implemented and unit-tested; a concrete OS-secure host resolver and supported composition wiring remain open."
+        "disposition": "HostSecureHandleSecretsProvider with bounded zeroizing leases is implemented and unit-tested, and executors receive only opaque handles (the relay loads private key material exclusively through SecretsProvider leases with rotation and immediate revocation). Remaining: a concrete OS-secure host resolver (keychain/credential-manager integration) and supported packaged-Local composition wiring — confirmed absent from packages/secrets on main — plus packaging evidence, so no in-repo proof that secret values land in OS-secure storage exists."
       }
     },
     {
@@ -2295,7 +2913,7 @@
       "heading": "Explicit local-content promotion (section 12)",
       "requirement": "Promotion of local source content into cloud ProjectState or cloud Artifact storage must be explicit, preserve provenance and sensitivity, and enforce workspace authorization and redaction policy.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2303,13 +2921,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-authoring-composition.test.mjs",
+          "name": "local composition wires a grants-backed authority from administration-provisioned stores (grant provisioning, workspace-scoped authoring, revocation denial)"
+        },
+        {
+          "kind": "document",
+          "path": "packages/domain/src/project-state.ts",
+          "name": "StateItemProvenanceSchema: provenance and sensitivity required on every state item; artifact provenance requires an Artifact reference"
+        },
+        {
+          "kind": "test",
+          "path": "packages/context/src/provider.test.mjs",
+          "name": "normalizes degraded output without making it ProjectState or canonical memory"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "For the ProjectState leg, promotion of content is explicit and grant-bound (authoring requires a current administration-provisioned grant with workspace scope), every state item carries mandatory provenance and sensitivity by schema, and provider output is normalized as bounded data that never silently becomes ProjectState. Remaining: the cloud Artifact storage promotion leg (explicit promotion with preserved provenance/sensitivity on the cloud path) is the M12 promotion consumer, and an adversarial probe asserting redaction policy enforcement on promoted local source content has no standalone surface."
       }
     },
     {
@@ -2318,7 +2951,7 @@
       "heading": "Provider revocation without data deletion (section 12.1)",
       "requirement": "Removing or revoking a local provider blocks new requests without deleting provider-owned data.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [186, 188, 190, 194],
@@ -2326,13 +2959,28 @@
         {
           "kind": "document",
           "path": "docs/requirements/runtime-node-source-audit.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-security-probes.test.mjs",
+          "name": "a revoked grant reports unavailable and dispatches nothing"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-context-authoring-composition.test.mjs",
+          "name": "revoking the grant through operator administration denies the same principal's authoring"
+        },
+        {
+          "kind": "document",
+          "path": "packages/domain/src/context-provider-administration.ts",
+          "name": "revoke operation only flips grant/connection state; no deletion path exists"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Accepted source obligation from revision 2026-08-28T07:21:06.166Z, revalidated 2026-09-08. Supported host/driver composition and adversarial evidence remain required; Agent HQ-owned boundaries are consumer contracts, not authority to implement a competing product service."
+        "disposition": "Revocation demonstrably blocks new requests at both the execution host (revoked grant reports unavailable and dispatches zero commands) and authoring (administration revoke denies previously-authorized principals), and the revoke operation is metadata-only by construction — no code path deletes provider-owned data. Remaining: an explicit adversarial probe asserting provider-owned data survives revocation on the host/driver composition (e.g., re-grant restores access to the same data with nothing deleted); the desktop-side local provider data lifecycle is M12 surface."
       }
     },
     {
@@ -2358,7 +3006,7 @@
       "heading": "Documentation Rules",
       "requirement": "Unresolved choices must be marked TBD and significant architecture changes require an ADR plus updates to affected canonical documents.",
       "normativeState": "accepted",
-      "classification": "partially_verified",
+      "classification": "verified",
       "owner": "documentation-governance",
       "lane": "smoke/configuration",
       "issueRefs": [195],
@@ -2366,14 +3014,16 @@
         {
           "kind": "document",
           "path": "docs/architecture.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/infrastructure.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/architecture/diagram-sources.md"
         }
-      ],
-      "gap": {
-        "issue": 195,
-        "severity": "high",
-        "owner": "documentation-governance",
-        "disposition": "Reconcile stale Temporal, AWS, PostgreSQL-only, and gateway language in canonical Drive sources."
-      }
+      ]
     },
     {
       "id": "PI-CP-003",
@@ -2513,7 +3163,7 @@
       "heading": "Source retrieval",
       "requirement": "Retrieve the canonical Control Plane PRD by stable source ID and revision before asserting exhaustive product-requirement coverage.",
       "normativeState": "tbd",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "product-architecture",
       "lane": "smoke/configuration",
       "issueRefs": [186, 195],
@@ -2521,13 +3171,21 @@
         {
           "kind": "document",
           "path": "docs/requirements/control-plane-requirements.v1.json"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/control-plane-prd-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-source-revision-refresh-2026-09-12.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "product-architecture",
-        "disposition": "Index or link the canonical PRD, extract its atomic requirements, and regenerate this ledger."
+        "disposition": "Retrieval is done: canonical Control Plane PRD retrieved by explicit revision ID (rev 40 vs current rev 43) with SHA-256 pins (docs/requirements/control-plane-prd-source-audit.md). Remaining: extract its atomic requirements into the ledger (control-plane-prd currently has exactly one row — this retrieval row) and regenerate; the audit doc itself states 'atomic extraction and current implementation/control mapping incomplete under #195. Those tasks... remain required.'"
       }
     },
     {
@@ -2544,13 +3202,17 @@
         {
           "kind": "document",
           "path": "docs/requirements/control-plane-requirements.v1.json"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-source-revision-refresh-2026-09-12.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "context-integration",
-        "disposition": "Index or link the canonical PRD and reconcile its provider requirements with public contracts."
+        "disposition": "Unchanged: no in-repo source-audit document exists for the Cortana PRD (docs/requirements/ has audits for control-plane-prd, control-plane-tdd, runtime-node, execution-consistency, artifact-storage, security-trust — none for cortana-prd). The 2026-09-12 refresh doc records only metadata_matches (timestamp 2026-08-28T04:57:08.721Z); cortana-prd still has exactly one ledger row. #195 tranche 4 fixed two repo identities in the Drive doc but extracted and reconciled nothing. Close by retrieving/pinning the PRD content with a revision audit and extracting its provider-boundary requirements against public contracts."
       }
     },
     {
@@ -2760,13 +3422,17 @@
         {
           "kind": "document",
           "path": "docs/architecture.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/control-plane-tdd-source-audit.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
-        "owner": "documentation-governance",
-        "disposition": "Update the TDD to name Restate as canonical and retain Temporal only as historical provenance."
+        "owner": "workflow-runtime",
+        "disposition": "Reconciliation complete — no open work. Canonical TDD rev 96 names Restate as the durable outer lifecycle with the single Temporal mention retained as historical migration provenance (source audit substantive change 1; #195 tranche 2 verified in place); docs/architecture.md L62/81/148 and CONTRA-001 ('Restate is canonical; Temporal remains historical provenance only') agree. Gap object retained only because validateGap mandates one for classification 'superseded' — exempt 'superseded' in scripts/requirements-ledger.mjs validateGap (or record supersession another way) to drop it."
       }
     },
     {
@@ -2843,7 +3509,7 @@
       "heading": "Deployment Appendix",
       "requirement": "AWS, ECS, Terraform, pnpm, and PostgreSQL-only deployment are the active universal Control Plane baseline.",
       "normativeState": "superseded",
-      "classification": "superseded",
+      "classification": "partially_verified",
       "owner": "deployment-architecture",
       "lane": "smoke/configuration",
       "issueRefs": [8, 195, 215],
@@ -2851,13 +3517,17 @@
         {
           "kind": "document",
           "path": "docs/infrastructure.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/control-plane-tdd-source-audit.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Replace active appendix claims with Railway/Neon/R2 and profile-specific SQLite/PostgreSQL composition."
+        "disposition": "Deployment-baseline replacement is done (TDD rev 96: 'Railway/Neon/R2/Restate replaces the AWS-first reference'; profile-specific SQLite/PostgreSQL persistence per substantive change 3; #195 tranche 2 verified the deployment-topology section; docs/infrastructure.md documents Railway/Neon/R2 with AWS explicitly unsupported). Residual drift recorded in the in-repo audit doc's 'Remaining contradictions': canonical TDD rev 96 still names pnpm (project uses Bun) — the 0xPlayerOne repo-identity half of that note was fixed in #195 tranche 2, the pnpm half was not addressed in any tranche. Close by reconciling the pnpm reference Drive-side, then apply the superseded-row schema note."
       }
     },
     {
@@ -2891,13 +3561,17 @@
         {
           "kind": "test",
           "path": "packages/domain/src/catalog-resolver.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "medium",
         "owner": "catalog",
-        "disposition": "Map every textual profile field and merge mode to the current split catalog and policy schemas."
+        "disposition": "Unchanged: no field-by-field mapping of the textual spec's profile fields and per-field merge modes to the split catalog/policy schemas exists in-repo. The schemas have no per-field merge-mode concept at all (no mergeStrategy/mergeMode in packages/domain/src/catalog-models.ts or execution-constraints.ts); docs/profiles-and-skills.md documents only the constraint-layer composition rule (lower precedence may narrow, never broaden). The Agent & Skill Specification got only a banned-pattern 'clean' scan + date refresh in #195 tranche 5 — a drift scan is not a field mapping."
       }
     },
     {
@@ -2931,13 +3605,17 @@
         {
           "kind": "test",
           "path": "tests/m4-runtime-fabric.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/runtime-capabilities.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "medium",
         "owner": "runtime-contracts",
-        "disposition": "Document and verify how rich capability metadata maps across catalog, policy, and RuntimeConnection schemas."
+        "disposition": "Unchanged: rich capability metadata (risk, sensitivity, approval, constraint, compatibility) is not mapped across catalog, policy, and RuntimeConnection schemas. In-repo: catalog-models.ts carries executionConstraints plus compatibility fields (compatibleProfileSchemaVersions/compatibleContractMajorVersions); contracts/runtime-discovery.ts carries capabilityDetails/capabilitySummary (name/state/TTL); risk/sensitivity/approval fields are absent from the catalog schema and no document performs the cross-schema mapping. docs/runtime-capabilities.md covers capability health/requirements, not the source-spec rich metadata mapping."
       }
     },
     {
@@ -3039,13 +3717,21 @@
         {
           "kind": "test",
           "path": "packages/contracts/src/control-api.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "packages/contracts/src/control-api.ts"
+        },
+        {
+          "kind": "document",
+          "path": "packages/contracts/src/versioning.ts"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "medium",
         "owner": "public-contracts",
-        "disposition": "Update the source to point to the machine-readable Control API 2.0 schemas while preserving semantic ownership."
+        "disposition": "Unresolved and the disposition is itself stale: the canonical Data Model & API prose still has not been pointed at the machine-readable contract. In-repo CONTRA-005 (current main, routed to #195) still records 'prose retains semantic inventory pending reconciliation'. #195 tranche 3 only banned-pattern-scanned the doc and refreshed its date. Note the machine contract has advanced past the disposition's '2.0' — packages/contracts/src/versioning.ts current is major 3 (history 1 -> 3). Close by updating the prose source to reference the machine-readable schemas at their current major while preserving semantic ownership, then update CONTRA-005."
       }
     },
     {
@@ -3054,7 +3740,7 @@
       "heading": "Source retrieval",
       "requirement": "Retrieve the canonical RuntimeNode protocol source and reconcile it against current direct-local, remote-gateway, and HPKE relay contracts.",
       "normativeState": "tbd",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "runtime-protocol",
       "lane": "contract/schema",
       "issueRefs": [187, 195],
@@ -3062,13 +3748,17 @@
         {
           "kind": "test",
           "path": "tests/m5-runtime-gateway.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "runtime-protocol",
-        "disposition": "Index the canonical source, pin its revision, and extract exact node, driver, transport, and relay requirements."
+        "disposition": "Retrieval and most extraction are done: source retrieved and revision-pinned (revalidations 2026-09-07/09-08), CP-RNODE-001..030 extracted. Remaining per the audit doc's own verdict: detailed message/envelope fields, local-provider command/result metadata, audit/metric coverage, and the full section 17 acceptance mapping 'still require reconciliation'; the doc states 'the original retrieval/reconciliation umbrella requirement remains open' and that recovered access 'does not resolve every production transport implementation choice'."
       }
     },
     {
@@ -3077,7 +3767,7 @@
       "heading": "Source retrieval",
       "requirement": "Retrieve the canonical consistency source and reconcile command, event, replay, CAS, and reconciliation requirements.",
       "normativeState": "tbd",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "durable-execution",
       "lane": "integration",
       "issueRefs": [187, 195],
@@ -3085,13 +3775,21 @@
         {
           "kind": "test",
           "path": "tests/m3-durable-execution.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-acceptance-map.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Index the canonical source, pin its revision, and compare every exact consistency rule with current contracts."
+        "disposition": "Retrieval and extraction largely done: CP-CONS-001..032 extracted and revalidated; the section 18 acceptance map records all 15 baseline scenarios with ledger references, ownership boundaries and missing proof. Remaining per the audit doc: cross-system interface obligations, detailed event field mappings, remaining lifecycle details and the complete scenario-to-evidence mapping 'still require extraction/reconciliation'; 'the existing retrieval/reconciliation umbrella and reopened #186 stay open'; 'all scenarios remain unverified at their full scope'."
       }
     },
     {
@@ -3100,7 +3798,7 @@
       "heading": "Source retrieval",
       "requirement": "Retrieve the canonical Artifact source and reconcile identity, authorization, promotion, integrity, retention, and deletion requirements.",
       "normativeState": "tbd",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "artifact-integration",
       "lane": "contract/schema",
       "issueRefs": [187, 195],
@@ -3108,13 +3806,17 @@
         {
           "kind": "document",
           "path": "docs/architecture.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
         }
       ],
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Index the canonical source and audit it against provider-neutral ObjectStore and external Artifact authority."
+        "disposition": "Retrieval and extraction are done (CP-ART-001..024; ownership boundary against Agent HQ product Artifacts documented). Remaining per the audit doc: implementation reconciliation is a 'starting map, not evidence sufficient to upgrade any CP-ART row from tbd' — the boundary table lists evidence still required for Local/Hosted/managed-cloud bytes, provider boundary, and context admission, plus COMPAT-CONTEXT-COMPILER-REACHABILITY (no production composition caller found for ContextPackageCompiler)."
       }
     },
     {
@@ -3123,7 +3825,7 @@
       "heading": "Source retrieval",
       "requirement": "Retrieve the canonical Security and Trust source and map every objective, credential class, boundary, and threat to current controls.",
       "normativeState": "tbd",
-      "classification": "tbd",
+      "classification": "verified",
       "owner": "security",
       "lane": "security/adversarial",
       "issueRefs": [190, 195],
@@ -3131,14 +3833,18 @@
         {
           "kind": "document",
           "path": "docs/security-hardening.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/requirements/security-trust-source-audit.md",
+          "name": "canonical Security & Trust Model retrieved (full read 2026-09-13, revision 2026-08-28) with STM-001..035 control matrix covering objectives (s1-s13), credential classes (s4/s7), boundaries (boundary notes), and threats (STM-034 s12 catalog)"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-requirements-ledger.test.mjs",
+          "name": "covers every normative source and prior milestone; records actionable disposition for every non-verified row"
         }
-      ],
-      "gap": {
-        "issue": 190,
-        "severity": "high",
-        "owner": "security",
-        "disposition": "Index the canonical source and complete the M11 authorization and adversarial control matrix."
-      }
+      ]
     },
     {
       "id": "CP-EVAL-001",
@@ -3154,13 +3860,33 @@
         {
           "kind": "test",
           "path": "packages/production-readiness/src/evaluations.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/evidence-audit-eval.ts"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evaluation-dimensions.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evals/calibration-kit.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evals/calibration-scoring-sheet.json"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evals/recalibration/run-recalibration.mts"
         }
       ],
       "gap": {
         "issue": 191,
         "severity": "medium",
         "owner": "production-readiness",
-        "disposition": "Add reliability, efficiency, handoff, and reviewer-feedback dimensions to versioned eval evidence."
+        "disposition": "Executed evals still produce no reliability, efficiency, handoff-quality, or reviewer-feedback metric values: the metric enum (packages/production-readiness/src/evaluations.ts:17-44) and docs/evaluation-dimensions.md accept these dimensions, and harness 2.0.0 executes reporting_honesty/behavior_compliance/task_outcome/latency, but no executed eval populates the remaining four. Close by executing evals that emit those values under version-pinned configs; blinded human recalibration on harness 2.0.0 (target kappa >= 0.6) remains open on #191."
       }
     },
     {
@@ -3183,7 +3909,7 @@
         "issue": 191,
         "severity": "medium",
         "owner": "orchestration-evals",
-        "disposition": "Run versioned direct-versus-graph comparative tasks before changing routing defaults."
+        "disposition": "Unchanged: run versioned direct-versus-graph comparative tasks (quality, reliability, wall-clock) before changing orchestration routing defaults. No comparative orchestration eval exists in-repo (docs/evals/ has only evidence-audit/skill/calibration lanes; tests/m8-multi-agent-orchestration.test.mjs is acceptance unit testing, not comparative evaluation)."
       }
     },
     {
@@ -3200,13 +3926,29 @@
         {
           "kind": "test",
           "path": "packages/production-readiness/src/evaluations.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/release-gates.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/evidence-audit-eval.ts"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evals/skill-evals/run-skill-evals.mts"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evals/calibration-kit.md"
         }
       ],
       "gap": {
         "issue": 191,
         "severity": "medium",
         "owner": "production-readiness",
-        "disposition": "Define task-class thresholds and controlled live-provider evidence without inventing unsupported global thresholds."
+        "disposition": "Remaining: (1) committed baseline scorecards for approved profiles/skills/adapters (skill-eval scorecards currently go to /tmp; no baselines are checked in); (2) controlled live-provider evidence (the executed harness is offline-only); (3) blinded human recalibration on harness 2.0.0 — current calibration rests on AI-reviewer kappa=0.750 plus a human session at kappa=-0.25 on harness 1.0.0, and #191 was reopened 2026-09-20 rejecting owner-ratification as a substitute for human calibration."
       }
     },
     {
@@ -3223,13 +3965,21 @@
         {
           "kind": "document",
           "path": "docs/testing.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/adversarial-corpus-v1.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/evidence-audit-eval.ts"
         }
       ],
       "gap": {
         "issue": 191,
         "severity": "medium",
         "owner": "evaluation",
-        "disposition": "Create and review the versioned corpus, rubrics, hidden rotation, and reproducibility metadata."
+        "disposition": "Unchanged in substance: the 28-task draft corpus (docs/adversarial-corpus-v1.md, within the 24-32 range, four families, anti-overdelegation cases SW-01/RE-01/WR-01/PL-01) is explicitly 'a draft task specification, not an executed benchmark'. Required to close: versioned per-task fixtures, rubric versions, hidden/rotating cases, reproducibility metadata, and independent execution — the doc's own 'Remaining' list. A draft corpus is not evidence of a maintained corpus."
       }
     },
     {
@@ -3359,8 +4109,8 @@
       "gap": {
         "issue": 195,
         "severity": "high",
-        "owner": "documentation-governance",
-        "disposition": "Add a superseding Restate ADR and mark ADR-025 historical without discarding its durable semantics."
+        "owner": "workflow-runtime",
+        "disposition": "Reconciliation complete — no open work. #195 tranche 5 records the ADR-record action exactly as dispositioned: 'ADR-025 (Temporal) ... superseded by ADR-034 Restate — deliberately unchanged per ADR-record rules', with repo references updated and date annotated; durable semantics retained in the record. In-repo corroboration: docs/architecture.md (Restate canonical, Temporal historical-only) and resolved CONTRA-001. Gap object retained only because validateGap mandates one for classification 'superseded' — apply the same schema exemption note as CP-TDD-005."
       }
     },
     {
@@ -3369,7 +4119,7 @@
       "heading": "ADR-027 Deployment Baseline",
       "requirement": "pnpm, AWS, ECS, RDS, S3, KMS, and Terraform are the active first-party deployment baseline.",
       "normativeState": "superseded",
-      "classification": "superseded",
+      "classification": "partially_verified",
       "owner": "deployment-architecture",
       "lane": "smoke/configuration",
       "issueRefs": [215, 217, 195],
@@ -3383,7 +4133,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Supersede ADR-027 with Bun and Railway/Neon/R2/Restate plus portable Local and Hosted profiles."
+        "disposition": "The new baseline is documented in-repo (docs/infrastructure.md: Bun/Railway/Neon/R2/Restate first-party, AWS unsupported, Local/Hosted profiles; resolved CONTRA-002), but the disposition's specific ADR-record action is not evidenced: #195 tranche 5 lists 'ADR-025 (Temporal) and AWS-alternatives text = dated decision provenance — deliberately unchanged' and names a superseding ADR only for ADR-025, not for ADR-027. Close by recording an explicit supersession for ADR-027 in the Drive ADR record (a superseding deployment-baseline ADR or superseded-by annotation), then apply the superseded-row schema note."
       }
     },
     {
@@ -3550,10 +4300,10 @@
       ],
       "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, Neon, R2, and Restate, while M10 added Local and Hosted profiles.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "architecture-cleanup",
-        "disposition": "Retain only necessary migration provenance and remove any remaining code or active claims that imply the M1 deployment baseline is supported."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -3732,10 +4482,10 @@
       ],
       "assessment": "The historical acceptance suite remains executable and useful for feature semantics, but it is not production-shaped release evidence after the M9 and M10 composition changes.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Reclassify and rerun the relevant contract and domain cases in deterministic current-profile release lanes."
+        "disposition": "Reclassify and rerun the relevant contract and domain cases in deterministic current-profile release lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -3802,10 +4552,10 @@
       ],
       "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "workflow-runtime",
-        "disposition": "Remove stale Temporal implementation and active claims while retaining only migration provenance needed to explain the Restate replacement."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -3878,10 +4628,10 @@
       ],
       "assessment": "The acceptance suite remains executable historical feature evidence, but current release interpretation requires Restate and exact Cloud, Local, or Hosted composition identity.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "high",
         "owner": "validation-architecture",
-        "disposition": "Move durable lifecycle, restart, cancellation, interaction, and reconciliation coverage into deterministic Restate-backed current-profile lanes."
+        "disposition": "Move durable lifecycle, restart, cancellation, interaction, and reconciliation coverage into deterministic Restate-backed current-profile lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4012,10 +4762,10 @@
       ],
       "assessment": "The historical suite remains useful executable feature evidence, but current certification must name the exact adapter, driver, transport, harness, profile, and location.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Split routing and discovery acceptance into deterministic lanes keyed to exact current runtime topology and deployment profile."
+        "disposition": "Split routing and discovery acceptance into deterministic lanes keyed to exact current runtime topology and deployment profile. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4178,10 +4928,10 @@
       ],
       "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "runtime-architecture",
-        "disposition": "Remove stale Local-through-Gateway code and claims while preserving the remote-gateway implementation for non-co-located RuntimeNodes."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -4248,10 +4998,10 @@
       ],
       "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "runtime-architecture",
-        "disposition": "Remove stale Local ACP-through-Gateway paths and claims while retaining explicitly remote Runtime Gateway support."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -4286,10 +5036,10 @@
       ],
       "assessment": "The historical cross-adapter suite remains executable, but its release meaning changed when Local adopted direct transport and Cloud removed the former runtime-worker topology.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Rebuild cross-runtime acceptance around exact supported profile, adapter, driver, and transport combinations."
+        "disposition": "Rebuild cross-runtime acceptance around exact supported profile, adapter, driver, and transport combinations. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4452,10 +5202,10 @@
       ],
       "assessment": "The historical aggregate suite remains executable and exercises important feature seams, but it is not current profile-specific production wiring or live-provider evidence.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Place tool, model, policy, sandbox, credential, and usage cases into deterministic current-profile lanes with explicit provider classifications."
+        "disposition": "Place tool, model, policy, sandbox, credential, and usage cases into deterministic current-profile lanes with explicit provider classifications. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4506,10 +5256,10 @@
       ],
       "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "workflow-orchestration",
-        "disposition": "Remove stale Temporal-specific boundary code and terminology while retaining and simplifying the Restate-to-LangGraph segment behavior."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -4560,10 +5310,10 @@
       ],
       "assessment": "The historical aggregate suite remains executable and covers rich success and failure behavior, but it is not independently rerun through exact current Restate and deployment-profile compositions.",
       "gap": {
-        "issue": 189,
+        "issue": 197,
         "severity": "medium",
         "owner": "validation-architecture",
-        "disposition": "Promote delegation, graph interruption, fan-in, budget, and recovery scenarios into deterministic current-profile release lanes."
+        "disposition": "Promote delegation, graph interruption, fan-in, budget, and recovery scenarios into deterministic current-profile release lanes. Deterministic Code Foundry lanes (Validation, Foundation Acceptance, M9 Production Readiness, M10 Operability) now execute this coverage on current profiles; the M11.4 lane-rebuild defects found by the 2026-09-20 audit were fixed via #584 and #605. Final-audit review of this evidence tracked under #197."
       }
     },
     {
@@ -4680,10 +5430,10 @@
       ],
       "assessment": "Synthetic 2,000-operation profiles, telemetry overhead, a five-request live staging sample, resource snapshots, and a short cost projection exist, but they do not establish sustained production scale, saturation, autoscaling, or reliable monthly cost baselines.",
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "performance",
-        "disposition": "Execute representative sustained, saturation, backpressure, capacity, and cost tests across exact release profiles with reproducible budgets and attribution."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     },
     {

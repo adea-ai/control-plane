@@ -4,6 +4,7 @@ import {
   type ExternalSessionDiscoveryReadModel,
   type RuntimeConnectionDiscoveryReadModel,
 } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { RuntimeCapabilityNameSchema, type RuntimeCapabilityName } from './capabilities.js'
 import { RuntimeNodeHealthStatusSchema } from './health.js'
 import {
@@ -119,7 +120,7 @@ export function projectRuntimeConnectionDiscovery(
           ? {}
           : { limitations: uniqueCodes(capability.limitations) }),
       }))
-      .toSorted((left, right) => left.name.localeCompare(right.name)),
+      .toSorted((left, right) => compareCodePointOrder(left.name, right.name)),
     compatibility: {
       state: connection.compatibilityState,
       limitations: uniqueCodes([
@@ -295,7 +296,7 @@ function remediationFor(reasons: readonly string[]) {
     add('CONTACT_ADMINISTRATOR', 'Contact a workspace administrator')
   }
   return [...remediation]
-    .toSorted(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => compareCodePointOrder(left, right))
     .map(([code, label]) => ({ code, label }))
 }
 

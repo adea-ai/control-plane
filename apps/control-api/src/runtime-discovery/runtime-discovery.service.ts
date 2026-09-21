@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import {
   ExternalSessionDiscoveryReadModelSchema,
   ExternalSessionGetRequestSchema,
@@ -55,7 +56,9 @@ export class RuntimeDiscoveryService {
           },
         ]
       })
-      .toSorted((left, right) => left.runtimeNodeRefId.localeCompare(right.runtimeNodeRefId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.runtimeNodeRefId, right.runtimeNodeRefId)
+      )
     return RuntimeListResponseSchema.parse({
       ...responseContext(input),
       data: { runtimes: models },
@@ -68,7 +71,9 @@ export class RuntimeDiscoveryService {
     const models = (await this.repository.listRuntimeConnections(scope))
       .map((model) => RuntimeConnectionDiscoveryReadModelSchema.parse(model))
       .filter((model) => matchesRuntimeFilters(model, input.parameters))
-      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
+      )
     const page = paginate(models, input.parameters.cursor, input.parameters.limit, (model) =>
       String(model.runtimeConnectionId)
     )
@@ -102,7 +107,9 @@ export class RuntimeDiscoveryService {
             model.runtimeConnectionId === input.parameters.runtimeConnectionId) &&
           (input.parameters.states.length === 0 || input.parameters.states.includes(model.state))
       )
-      .toSorted((left, right) => left.externalSessionId.localeCompare(right.externalSessionId))
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.externalSessionId, right.externalSessionId)
+      )
     const page = paginate(models, input.parameters.cursor, input.parameters.limit, (model) =>
       String(model.externalSessionId)
     )

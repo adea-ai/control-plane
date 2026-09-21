@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 import {
@@ -306,7 +307,10 @@ function uniqueSorted<Value extends { code: string; capability?: string | undefi
 ): Value[] {
   const unique = new Map(values.map((value) => [`${value.code}:${value.capability ?? ''}`, value]))
   return [...unique.values()].toSorted((left, right) =>
-    `${left.code}:${left.capability ?? ''}`.localeCompare(`${right.code}:${right.capability ?? ''}`)
+    compareCodePointOrder(
+      `${left.code}:${left.capability ?? ''}`,
+      `${right.code}:${right.capability ?? ''}`
+    )
   )
 }
 
@@ -316,7 +320,7 @@ function digestEligibilityInput(input: RuntimeEligibilityInput): string {
     executionPlan: {
       ...input.executionPlan,
       runtimeRequirements: [...input.executionPlan.runtimeRequirements].toSorted((left, right) =>
-        left.capability.localeCompare(right.capability)
+        compareCodePointOrder(left.capability, right.capability)
       ),
     },
     candidate: {
@@ -324,7 +328,7 @@ function digestEligibilityInput(input: RuntimeEligibilityInput): string {
       connection: {
         ...input.candidate.connection,
         capabilities: [...input.candidate.connection.capabilities].toSorted((left, right) =>
-          left.name.localeCompare(right.name)
+          compareCodePointOrder(left.name, right.name)
         ),
         limitations: [...input.candidate.connection.limitations].toSorted(),
         diagnostics: [...(input.candidate.connection.diagnostics ?? [])].toSorted(),

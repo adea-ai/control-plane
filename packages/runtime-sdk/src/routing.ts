@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 import {
@@ -182,13 +183,15 @@ export function routeRuntimeConnections(inputValue: unknown): RuntimeRoutingDeci
       runtimeConnectionId: candidate.runtimeConnectionId,
       eligibilityReasons: candidate.eligibility.reasons.map(({ code }) => code).toSorted(),
     }))
-    .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId))
+    .toSorted((left, right) =>
+      compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
+    )
   const ranked = eligible
     .map((candidate) => scoreCandidate(input, candidate))
     .toSorted(
       (left, right) =>
         right.score - left.score ||
-        left.runtimeConnectionId.localeCompare(right.runtimeConnectionId)
+        compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
     )
     .map((candidate, index) => ({ ...candidate, rank: index + 1 }))
 
@@ -351,7 +354,9 @@ function normalizeRoutingInput(input: RuntimeRoutingInput) {
           degradations: [...candidate.eligibility.degradations].toSorted(compareCoded),
         },
       }))
-      .toSorted((left, right) => left.runtimeConnectionId.localeCompare(right.runtimeConnectionId)),
+      .toSorted((left, right) =>
+        compareCodePointOrder(left.runtimeConnectionId, right.runtimeConnectionId)
+      ),
   }
 }
 

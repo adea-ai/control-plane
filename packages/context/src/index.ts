@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import {
   ContextContributionSchema,
   ContextProviderPolicySchema,
@@ -198,7 +199,7 @@ export class ContextPackageCompiler {
       (left, right) =>
         Number(right.required) - Number(left.required) ||
         right.priority - left.priority ||
-        left.itemId.localeCompare(right.itemId)
+        compareCodePointOrder(left.itemId, right.itemId)
     )
     for (const candidate of candidates) {
       const item = stateById.get(candidate.itemId)
@@ -245,9 +246,11 @@ export class ContextPackageCompiler {
         projectId: parsed.projectState.projectId,
         revision: parsed.projectState.revision,
       },
-      stateItems: selected.toSorted((left, right) => left.itemId.localeCompare(right.itemId)),
+      stateItems: selected.toSorted((left, right) =>
+        compareCodePointOrder(left.itemId, right.itemId)
+      ),
       artifactRefs: [...selectedArtifacts.values()].toSorted((left, right) =>
-        left.artifactId.localeCompare(right.artifactId)
+        compareCodePointOrder(left.artifactId, right.artifactId)
       ),
       constraints: normalizeConstraints(parsed.constraints),
       permissions: [...parsed.permissions].toSorted(),
@@ -356,9 +359,9 @@ export function composeProviderContextPackage(
     fail('CONTRADICTORY_CONTEXT_REFERENCE', 'provider-contribution')
   const contributions = [...composition.contributions].toSorted(
     (left, right) =>
-      left.providerId.localeCompare(right.providerId) ||
-      left.kind.localeCompare(right.kind) ||
-      left.contributionId.localeCompare(right.contributionId)
+      compareCodePointOrder(left.providerId, right.providerId) ||
+      compareCodePointOrder(left.kind, right.kind) ||
+      compareCodePointOrder(left.contributionId, right.contributionId)
   )
   const usage = addProviderUsage(package_.usage, contributions)
   if (usage.bytes > package_.budgets.maximumBytes || usage.tokens > package_.budgets.maximumTokens)
@@ -849,6 +852,8 @@ function hashIdentifier(prefix: string, digest: string): string {
 function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// payload digests cover z.json() state-item values (free-form keys); payloadHash and contentDigest are persisted
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

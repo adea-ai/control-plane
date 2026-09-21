@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/domain'
 import { ExecutionConstraintSetSchema } from '@control-plane/domain'
 import {
   CapabilityRequirementSetSchema,
@@ -116,11 +117,11 @@ export function translateExecutionPlanToManagedPi(
     executionPlanDigest: executionPlan.contentDigest,
     profile: executionPlan.profile,
     skills: [...executionPlan.skills].toSorted((left, right) =>
-      left.skillVersionId.localeCompare(right.skillVersionId)
+      compareCodePointOrder(left.skillVersionId, right.skillVersionId)
     ),
     contextPackage: executionPlan.contextPackage,
     runtimeRequirements: [...executionPlan.runtimeRequirements].toSorted((left, right) =>
-      left.capability.localeCompare(right.capability)
+      compareCodePointOrder(left.capability, right.capability)
     ),
     contextPolicy: constraints.context,
     runtimePolicy: constraints.runtime,
@@ -527,7 +528,7 @@ function canonicalConstraints(
           dataResidency: [...model.providerPolicy.dataResidency].toSorted(),
         },
       }))
-      .toSorted((left, right) => left.alias.localeCompare(right.alias)),
+      .toSorted((left, right) => compareCodePointOrder(left.alias, right.alias)),
     runtime: {
       ...constraints.runtime,
       allowedFamilies: [...constraints.runtime.allowedFamilies].toSorted(),

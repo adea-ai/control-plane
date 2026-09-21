@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { type InteractionRepository, type InteractionService } from '@control-plane/domain'
 import { type PolicyDecisionPoint, type PolicySnapshotReference } from '@control-plane/policy'
 import {
@@ -59,7 +60,7 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
   async listByExecution(executionId: string): Promise<readonly ToolCall[]> {
     return [...this.#calls.values()]
       .filter((call) => call.executionId === executionId)
-      .toSorted((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+      .toSorted((left, right) => compareCodePointOrder(left.requestedAt, right.requestedAt))
       .map(clone)
   }
 }
@@ -534,6 +535,8 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// request.input is arbitrary tool-call JSON (free-form keys); inputDigest is persisted with tool calls
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`

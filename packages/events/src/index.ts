@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { redactTelemetryValue } from '@control-plane/telemetry'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -138,7 +139,7 @@ export class InMemoryExecutionEventRepository implements ExecutionEventRepositor
             !event.publication.nextAttemptAt ||
             Date.parse(event.publication.nextAttemptAt) <= Date.parse(dueAt))
       )
-      .toSorted((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+      .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
       .slice(0, limit)
       .map(clone)
   }
@@ -327,6 +328,8 @@ export function hashExecutionEventPayload(payload: Readonly<Record<string, unkno
 
 export * from './runtime-ingestion.js'
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// payload is z.record(string, z.json()) with free-form keys; payloadHash is persisted and non-JSON values throw
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value)

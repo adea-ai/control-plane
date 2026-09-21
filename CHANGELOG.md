@@ -1,5 +1,112 @@
 # Changelog
 
+## [1.31.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.7...workspace-v1.31.8) (2026-09-21)
+
+
+### Maintenance
+
+* **acp-adapter:** split AcpDriver into focused subsystem modules ([b161ca1](https://github.com/adea-ai/control-plane/commit/b161ca1f19646adc13a1d0e608a4eea04a989753))
+* split AcpDriver into focused modules ([#622](https://github.com/adea-ai/control-plane/issues/622)) ([b161ca1](https://github.com/adea-ai/control-plane/commit/b161ca1f19646adc13a1d0e608a4eea04a989753))
+
+## [1.31.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.6...workspace-v1.31.7) (2026-09-21)
+
+
+### Tests
+
+* add e2e coverage for tool-gateway, runtime-worker, and control-api marketplace ([#621](https://github.com/adea-ai/control-plane/issues/621)) ([a13c4c7](https://github.com/adea-ai/control-plane/commit/a13c4c707fd13b29f82e5123ef9e5468f8bc656a))
+
+## [1.31.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.5...workspace-v1.31.6) (2026-09-21)
+
+
+### Bug Fixes
+
+* **type-safety:** strengthen the context-authoring guard ([#619](https://github.com/adea-ai/control-plane/issues/619)) ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+* **type-safety:** strengthen the context-authoring guard in execution validation ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+
+## [1.31.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.4...workspace-v1.31.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* **m612:** graph-catalog digests are now locale-independent ([#618](https://github.com/adea-ai/control-plane/issues/618)) ([32f9ab3](https://github.com/adea-ai/control-plane/commit/32f9ab389f5f382198b2107b30994148192ec0a8))
+
+
+### Documentation
+
+* **ledger:** record [#192](https://github.com/adea-ai/control-plane/issues/192)/[#193](https://github.com/adea-ai/control-plane/issues/193) completion evidence ([#616](https://github.com/adea-ai/control-plane/issues/616)) ([5ce1b5f](https://github.com/adea-ai/control-plane/commit/5ce1b5f08ede5959ffa73e323dd7187c6c55cfae))
+* **ledger:** record [#192](https://github.com/adea-ai/control-plane/issues/192)/[#193](https://github.com/adea-ai/control-plane/issues/193) consolidation and audit completion evidence ([5ce1b5f](https://github.com/adea-ai/control-plane/commit/5ce1b5f08ede5959ffa73e323dd7187c6c55cfae))
+
+## [1.31.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.3...workspace-v1.31.4) (2026-09-20)
+
+
+### Bug Fixes
+
+* replace locale-dependent sort comparators with code-point ordering ([#614](https://github.com/adea-ai/control-plane/issues/614)) ([46897cd](https://github.com/adea-ai/control-plane/commit/46897cd99faeda65c1659c312d80ded809dc61d5))
+
+## [1.31.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.2...workspace-v1.31.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* **contracts:** locale-independent canonicalJsonStringify + canonical-JSON divergence audit ([#611](https://github.com/adea-ai/control-plane/issues/611)) ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+
+### Maintenance
+
+* **contracts:** add canonicalJsonStringify and consolidate canonical-JSON digests ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+## [1.31.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.1...workspace-v1.31.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **ledger:** repoint the M1-M10 deterministic-lane gap rows from [#189](https://github.com/adea-ai/control-plane/issues/189) to [#197](https://github.com/adea-ai/control-plane/issues/197) ([#610](https://github.com/adea-ai/control-plane/issues/610)) ([a79badf](https://github.com/adea-ai/control-plane/commit/a79badf9af121ca030dd6ee6b7a0e34a6a3d881e))
+
+
+### Documentation
+
+* **ledger:** adjudicate the 76 rows reopened against [#188](https://github.com/adea-ai/control-plane/issues/188)-[#195](https://github.com/adea-ai/control-plane/issues/195) gap holders ([#607](https://github.com/adea-ai/control-plane/issues/607)) ([f871022](https://github.com/adea-ai/control-plane/commit/f87102287d100ca6ee6466386730304db023173e))
+
+
+### Maintenance
+
+* **m405:** consolidate the duplicated withTimeout race into domain ([#609](https://github.com/adea-ai/control-plane/issues/609)) ([b6af3d5](https://github.com/adea-ai/control-plane/commit/b6af3d5d60546bf094ff015560469bb987b6e5b5))
+
+## [1.31.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.0...workspace-v1.31.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **m189:** run the Postgres persistence-profile conformance matrix in CI ([#605](https://github.com/adea-ai/control-plane/issues/605)) ([f1a7f21](https://github.com/adea-ai/control-plane/commit/f1a7f219b1adff63c359de9eeed036481c02afb3))
+
+## [1.31.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.7...workspace-v1.31.0) (2026-09-20)
+
+
+### Features
+
+* **m405:** executable startup and RSS budget probe ([#602](https://github.com/adea-ai/control-plane/issues/602)) ([48d611b](https://github.com/adea-ai/control-plane/commit/48d611b0d2b68539e726635344de9cf5c8b1cc0d))
+
+## [1.30.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.6...workspace-v1.30.7) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** bake the source commit into promoted images ([#601](https://github.com/adea-ai/control-plane/issues/601)) ([b6e7bd8](https://github.com/adea-ai/control-plane/commit/b6e7bd879a3d8157a9a97a0fa755c4e2a8d14794))
+
+## [1.30.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.5...workspace-v1.30.6) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** split Railway mutation credentials ([#599](https://github.com/adea-ai/control-plane/issues/599)) ([aa15f7b](https://github.com/adea-ai/control-plane/commit/aa15f7b9700bcf37806b40fbdd1587cb3a7d7a7a))
+
+## [1.30.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.4...workspace-v1.30.5) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** connect Railway image source ([#597](https://github.com/adea-ai/control-plane/issues/597)) ([9a1c4e6](https://github.com/adea-ai/control-plane/commit/9a1c4e649294604c3feb4d7c9076a84aadccc881))
+
 ## [1.30.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.30.3...workspace-v1.30.4) (2026-09-20)
 
 

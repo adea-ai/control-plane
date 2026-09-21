@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.2.3](https://github.com/adea-ai/control-plane/compare/orchestration-v1.2.2...orchestration-v1.2.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* **m612:** graph-catalog digests are now locale-independent ([#618](https://github.com/adea-ai/control-plane/issues/618)) ([32f9ab3](https://github.com/adea-ai/control-plane/commit/32f9ab389f5f382198b2107b30994148192ec0a8))
+
+## [1.2.2](https://github.com/adea-ai/control-plane/compare/orchestration-v1.2.1...orchestration-v1.2.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* replace locale-dependent sort comparators with code-point ordering ([#614](https://github.com/adea-ai/control-plane/issues/614)) ([46897cd](https://github.com/adea-ai/control-plane/commit/46897cd99faeda65c1659c312d80ded809dc61d5))
+
+## [1.2.1](https://github.com/adea-ai/control-plane/compare/orchestration-v1.2.0...orchestration-v1.2.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **contracts:** locale-independent canonicalJsonStringify + canonical-JSON divergence audit ([#611](https://github.com/adea-ai/control-plane/issues/611)) ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+
+### Maintenance
+
+* **contracts:** add canonicalJsonStringify and consolidate canonical-JSON digests ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.1.4...orchestration-v1.2.0) (2026-09-20)
 
 

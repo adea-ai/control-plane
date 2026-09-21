@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { ServiceUnavailableException } from '@nestjs/common'
 
 export const marketplaceArtifactNames = [
@@ -123,7 +124,7 @@ export function digest(value: unknown): string {
 export function bytesDigest(files: ReadonlyMap<string, Uint8Array>): string {
   const hash = createHash('sha256')
   for (const [path, bytes] of [...files.entries()].toSorted(([left], [right]) =>
-    left.localeCompare(right)
+    compareCodePointOrder(left, right)
   )) {
     hash.update(`${path.length}:${path}:${bytes.byteLength}:`)
     hash.update(bytes)

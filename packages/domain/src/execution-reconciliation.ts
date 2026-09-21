@@ -1,4 +1,4 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import { IdentifierSchemas, canonicalJsonStringify } from '@control-plane/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type {
@@ -592,28 +592,12 @@ function hashObservation(observation: ReconciliationObservation, decision: Decis
   }
   return createHash('sha256')
     .update(
-      canonicalJson({
+      canonicalJsonStringify({
         ...durableFacts,
         decision: { reason: decision.reason, action: decision.action },
       })
     )
     .digest('hex')
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return JSON.stringify(value)
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .filter(([, nested]) => nested !== undefined)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
-      .join(',')}}`
-  }
-  throw new Error('RECONCILIATION_OBSERVATION_MUST_BE_JSON')
 }
 
 function clone<Value>(value: Value): Value {
