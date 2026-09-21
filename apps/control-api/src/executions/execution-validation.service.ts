@@ -84,7 +84,8 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     const existing = await this.options.commands.get(scope)
     if (existing) return replayResponse(request, scope, payloadHash, existing)
 
-    if (request.payload.contextInputs && !this.options.contextAuthoring) {
+    const authoring = this.options.contextAuthoring
+    if (!authoring && (request.payload.contextInputs || !request.payload.contextPackage)) {
       throw new ServiceUnavailableException({
         code: 'CONTEXT_AUTHORING_NOT_CONFIGURED',
         message: 'Context input authoring is unavailable',
@@ -117,18 +118,17 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     }
 
     try {
+      // authoring is defined here: the guard above throws when it's
+      // undefined and either contextInputs are present or no contextPackage
+      // was provided (the only case where the call below is reached).
       const reference =
         request.payload.contextPackage ??
-        (await this.options.contextAuthoring!.createForCommand(
-          callerPrincipalId,
-          request.idempotencyKey,
-          {
-            ...request.payload.contextInputs,
-            workspaceId: request.workspaceId,
-            projectId,
-            projectStateRevision: request.payload.projectState.revision,
-          }
-        ))
+        (await authoring!.createForCommand(callerPrincipalId, request.idempotencyKey, {
+          ...request.payload.contextInputs,
+          workspaceId: request.workspaceId,
+          projectId,
+          projectStateRevision: request.payload.projectState.revision,
+        }))
       const contextPackage = await this.options.contextPackages.get(reference)
       if (
         !contextPackage ||
