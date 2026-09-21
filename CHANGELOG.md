@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.11...workspace-v1.31.12) (2026-09-21)
+
+
+### Maintenance
+
+* **managed-pi-adapter:** split gateway.ts into focused gateway modules ([#630](https://github.com/adea-ai/control-plane/issues/630)) ([639acc0](https://github.com/adea-ai/control-plane/commit/639acc00a1f0abedea3e6fccc7e095832bdf9308))
+* **runtime-worker:** split hosted-managed-pi.ts into focused modules ([#632](https://github.com/adea-ai/control-plane/issues/632)) ([280ec72](https://github.com/adea-ai/control-plane/commit/280ec729321b11436f169c79ceb8091b2a00b8c9))
+
 ## [1.31.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.10...workspace-v1.31.11) (2026-09-21)
 
 
