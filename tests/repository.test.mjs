@@ -163,6 +163,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-composition.test.mjs',
     'tests/m11-context-transport-e2e.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
+    'tests/service-lifecycle-e2e.test.mjs',
   ])
   assert.deepEqual(smoke, [
     'tests/agent-skill-library.test.mjs',
