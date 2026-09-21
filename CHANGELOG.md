@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.8...workspace-v1.31.9) (2026-09-21)
+
+
+### Maintenance
+
+* **deps:** bump the npm-dependencies group with 4 updates ([#595](https://github.com/adea-ai/control-plane/issues/595)) ([d754692](https://github.com/adea-ai/control-plane/commit/d7546929d62c1656047e53af046e0e86bfbc7244))
+
 ## [1.31.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.7...workspace-v1.31.8) (2026-09-21)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/telemetry-v1.5.0...telemetry-v1.5.1) (2026-09-21)
+
+
+### Maintenance
+
+* **deps:** bump the npm-dependencies group with 4 updates ([#595](https://github.com/adea-ai/control-plane/issues/595)) ([d754692](https://github.com/adea-ai/control-plane/commit/d7546929d62c1656047e53af046e0e86bfbc7244))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/telemetry-v1.4.1...telemetry-v1.5.0) (2026-09-20)
 
 
