@@ -315,10 +315,20 @@ describe('M11.1 requirements ledger', () => {
   test('records actionable disposition for every non-verified row', () => {
     for (const row of [...ledger.requirements, ...ledger.priorMilestoneAudits]) {
       if (row.classification === 'verified') continue
+      // Superseded rows carry their supersession record as the disposition and
+      // are exempt from gap references (validateGap), mirroring that exemption.
+      if (row.classification === 'superseded') continue
       expect(typeof row.gap.issue, row.id).toBe('number')
       expect(row.gap.severity, row.id).toMatch(/^(critical|high|medium|low)$/)
       expect(typeof row.gap.owner, row.id).toBe('string')
       expect(typeof row.gap.disposition, row.id).toBe('string')
+    }
+  })
+
+  test('exempts superseded rows from gap references', () => {
+    for (const row of [...ledger.requirements, ...ledger.priorMilestoneAudits]) {
+      if (row.classification !== 'superseded') continue
+      expect(row.gap, row.id).toBeUndefined()
     }
   })
 

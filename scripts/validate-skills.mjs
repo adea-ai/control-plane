@@ -1,6 +1,7 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative } from 'node:path'
+import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const skillsRoot = join(repositoryRoot, '.agents', 'skills')
@@ -102,7 +103,10 @@ export async function discoverSkillLibrary() {
       skillMdBytes: Buffer.byteLength(skillMd, 'utf8'),
     })
   }
-  return { skills: skills.toSorted((left, right) => left.name.localeCompare(right.name)), errors }
+  return {
+    skills: skills.toSorted((left, right) => compareCodePointOrder(left.name, right.name)),
+    errors,
+  }
 }
 
 export async function validateSkillLibrary(options = {}) {

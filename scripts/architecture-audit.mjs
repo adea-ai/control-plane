@@ -5,6 +5,7 @@ import { access, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -193,7 +194,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
     )
   )
     .flat()
-    .toSorted((left, right) => left.name.localeCompare(right.name))
+    .toSorted((left, right) => compareCodePointOrder(left.name, right.name))
   const { ControlApiOperations } = await import(
     pathToFileURL(resolve(root, 'packages/control-sdk/src/operations.ts')).href
   )
@@ -204,7 +205,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
       method: value.method,
       path: value.path,
     }))
-    .toSorted((left, right) => left.operation.localeCompare(right.operation))
+    .toSorted((left, right) => compareCodePointOrder(left.operation, right.operation))
   const { PublicContractManifest } = await import(
     pathToFileURL(resolve(root, 'packages/contracts/src/versioning.ts')).href
   )
@@ -229,7 +230,7 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
           operation.requestBody?.content?.['application/json']?.schema !== undefined,
       }))
     )
-    .toSorted((left, right) => left.operationId.localeCompare(right.operationId))
+    .toSorted((left, right) => compareCodePointOrder(left.operationId, right.operationId))
   const controllerFiles = (await walk(resolve(root, 'apps/control-api/src'))).filter((path) =>
     path.endsWith('.controller.ts')
   )

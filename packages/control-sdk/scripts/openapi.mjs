@@ -1,7 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { ErrorResponseEnvelopeSchema, PublicContractManifest } from '@control-plane/contracts'
+import {
+  compareCodePointOrder,
+  ErrorResponseEnvelopeSchema,
+  PublicContractManifest,
+} from '@control-plane/contracts'
 import { z } from 'zod'
 import { ControlApiOperations } from '../src/operations.ts'
 
@@ -245,7 +249,7 @@ function sortObject(value) {
   if (typeof value !== 'object' || value === null) return value
   return Object.fromEntries(
     Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => compareCodePointOrder(left, right))
       .map(([key, child]) => [key, sortObject(child)])
   )
 }

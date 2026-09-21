@@ -360,6 +360,10 @@ function normalizeRoutingInput(input: RuntimeRoutingInput) {
   }
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// compareCoded ordering flows into decisionDigest, which is persisted and re-verified
+// on read (ROUTING_DECISION_DIGEST_MISMATCH); digest also uses insertion-order
+// stringify — both need a digest-versioned migration (#612), not an in-place swap
 function compareCoded(
   left: { code: string; capability?: string | undefined },
   right: { code: string; capability?: string | undefined }

@@ -3,6 +3,7 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -469,6 +470,9 @@ function requireFields(errors, value, fields) {
 }
 
 function validateGap(errors, row, label = 'gap') {
+  // A superseded row's disposition is its supersession record; it carries no open
+  // gap, so requiring a gap reference would be dead weight (#612).
+  if (row.classification === 'superseded') return
   for (const field of ['issue', 'severity', 'owner', 'disposition']) {
     if (row.gap?.[field] === undefined || row.gap[field] === '') {
       errors.push(
@@ -503,7 +507,7 @@ function countBy(rows, key) {
 
 function formatCounts(counts) {
   return Object.entries(counts)
-    .toSorted(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => compareCodePointOrder(left, right))
     .map(([key, value]) => `${value} ${key}`)
     .join(', ')
 }
