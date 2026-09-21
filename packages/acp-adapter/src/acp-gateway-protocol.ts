@@ -150,7 +150,10 @@ export function inlineParameters(command: GatewayCommandEnvelope): Record<string
   return command.payload.parameters
 }
 
-export function assertExchange(command: GatewayCommandEnvelope, exchange: AcpGatewayExchange): void {
+export function assertExchange(
+  command: GatewayCommandEnvelope,
+  exchange: AcpGatewayExchange
+): void {
   GatewayAcknowledgementEnvelopeSchema.parse(exchange.ack)
   if (
     exchange.ack.commandId !== command.commandId ||
