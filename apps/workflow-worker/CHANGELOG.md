@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.8.1...workflow-worker-v1.8.2) (2026-09-21)
+
+
+### Maintenance
+
+* **deps:** bump the npm-dependencies group with 4 updates ([#595](https://github.com/adea-ai/control-plane/issues/595)) ([d754692](https://github.com/adea-ai/control-plane/commit/d7546929d62c1656047e53af046e0e86bfbc7244))
+
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.8.0...workflow-worker-v1.8.1) (2026-09-20)
 
 
