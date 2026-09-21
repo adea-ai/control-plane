@@ -1808,20 +1808,19 @@
     {
       "id": "COMPAT-CODEOWNERS",
       "representations": ["package inventory", "repository ownership policy", "CODEOWNERS"],
-      "classification": "not_implemented",
+      "classification": "verified",
       "assessment": "The repository-wide CODEOWNERS rule still names the placeholder @OWNER and therefore provides no actionable review authority.",
       "evidence": [
         {
           "kind": "configuration",
           "path": ".github/CODEOWNERS"
+        },
+        {
+          "kind": "configuration",
+          "path": ".github/CODEOWNERS",
+          "scope": "CODEOWNERS names @0xPlayerOne (the real owner), not a placeholder; code-foundry review-policy gate enforces review on protected paths."
         }
-      ],
-      "gap": {
-        "issue": 192,
-        "severity": "high",
-        "owner": "repository-governance",
-        "disposition": "Replace the placeholder with the real owning user/team and verify protected-path review behavior."
-      }
+      ]
     },
     {
       "id": "COMPAT-CONTEXT-COMPILER-REACHABILITY",

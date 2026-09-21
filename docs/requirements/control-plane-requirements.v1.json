@@ -261,7 +261,7 @@
         }
       ],
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "hosted-control-plane",
         "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
@@ -283,7 +283,7 @@
         }
       ],
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "hosted-control-plane",
         "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
@@ -4300,7 +4300,7 @@
       ],
       "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, Neon, R2, and Restate, while M10 added Local and Hosted profiles.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "architecture-cleanup",
         "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
@@ -4552,7 +4552,7 @@
       ],
       "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "workflow-runtime",
         "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
@@ -4928,7 +4928,7 @@
       ],
       "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "runtime-architecture",
         "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
@@ -4998,7 +4998,7 @@
       ],
       "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "runtime-architecture",
         "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
@@ -5256,7 +5256,7 @@
       ],
       "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker.",
       "gap": {
-        "issue": 192,
+        "issue": 197,
         "severity": "medium",
         "owner": "workflow-orchestration",
         "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
@@ -5430,7 +5430,7 @@
       ],
       "assessment": "Synthetic 2,000-operation profiles, telemetry overhead, a five-request live staging sample, resource snapshots, and a short cost projection exist, but they do not establish sustained production scale, saturation, autoscaling, or reliable monthly cost baselines.",
       "gap": {
-        "issue": 193,
+        "issue": 197,
         "severity": "high",
         "owner": "performance",
         "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
