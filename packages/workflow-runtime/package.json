@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workflow-runtime",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "files": [
     "dist"
@@ -27,7 +27,7 @@
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
-    "@restatedev/restate-sdk": "1.17.0",
+    "@restatedev/restate-sdk": "1.17.1",
     "zod": "4.6.5"
   },
   "devDependencies": {

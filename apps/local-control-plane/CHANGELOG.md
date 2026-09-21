@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.13.0...local-control-plane-v1.13.1) (2026-09-21)
+
+
+### Maintenance
+
+* **deps:** bump the npm-dependencies group with 4 updates ([#595](https://github.com/adea-ai/control-plane/issues/595)) ([d754692](https://github.com/adea-ai/control-plane/commit/d7546929d62c1656047e53af046e0e86bfbc7244))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.12.1...local-control-plane-v1.13.0) (2026-09-20)
 
 
