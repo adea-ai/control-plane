@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.7.1...acp-adapter-v1.7.2) (2026-09-21)
+
+
+### Maintenance
+
+* acp-gateway-split ([#628](https://github.com/adea-ai/control-plane/issues/628)) ([c83cc35](https://github.com/adea-ai/control-plane/commit/c83cc350c6138ee06d83d68a01fcf752ec6c15a8))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.7.0...acp-adapter-v1.7.1) (2026-09-21)
 
 
