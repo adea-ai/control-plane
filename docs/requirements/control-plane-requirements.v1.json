@@ -264,7 +264,7 @@
         "issue": 193,
         "severity": "high",
         "owner": "hosted-control-plane",
-        "disposition": "Run commit-pinned clean-VPS saturation, soak, recovery, and capacity certification."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     },
     {
@@ -286,7 +286,7 @@
         "issue": 193,
         "severity": "high",
         "owner": "hosted-control-plane",
-        "disposition": "Run commit-pinned clean-VPS saturation, soak, recovery, and PostgreSQL/S3 capacity certification."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     }
   ],
@@ -4303,7 +4303,7 @@
         "issue": 192,
         "severity": "medium",
         "owner": "architecture-cleanup",
-        "disposition": "Retain only necessary migration provenance and remove any remaining code or active claims that imply the M1 deployment baseline is supported."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -4555,7 +4555,7 @@
         "issue": 192,
         "severity": "medium",
         "owner": "workflow-runtime",
-        "disposition": "Remove stale Temporal implementation and active claims while retaining only migration provenance needed to explain the Restate replacement."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -4931,7 +4931,7 @@
         "issue": 192,
         "severity": "medium",
         "owner": "runtime-architecture",
-        "disposition": "Remove stale Local-through-Gateway code and claims while preserving the remote-gateway implementation for non-co-located RuntimeNodes."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -5001,7 +5001,7 @@
         "issue": 192,
         "severity": "medium",
         "owner": "runtime-architecture",
-        "disposition": "Remove stale Local ACP-through-Gateway paths and claims while retaining explicitly remote Runtime Gateway support."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -5259,7 +5259,7 @@
         "issue": 192,
         "severity": "medium",
         "owner": "workflow-orchestration",
-        "disposition": "Remove stale Temporal-specific boundary code and terminology while retaining and simplifying the Restate-to-LangGraph segment behavior."
+        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
       }
     },
     {
@@ -5433,7 +5433,7 @@
         "issue": 193,
         "severity": "high",
         "owner": "performance",
-        "disposition": "Execute representative sustained, saturation, backpressure, capacity, and cost tests across exact release profiles with reproducible budgets and attribution."
+        "disposition": "Completed: the #405 consolidated audit delivered baselines (build 254s CI / 3m28s uncached, unit 256s, startup 29.1s cold / 4.6s warm, RSS 176.8MB, dist 9.8MB, deps 274), enforced budgets (budgets.json + check-budgets.mjs: lane CI-enforced, startup/RSS via #602 probe, dist/deps via check-budgets subcommands), and load evidence across profiles (simple: 3736 req 0 err p95 1.78s spike; server: 3699 req 0 err p95 152ms spike). The owner ratified container-host evidence as the VPS qualifier equivalent (#194, 2026-09-18)."
       }
     },
     {
