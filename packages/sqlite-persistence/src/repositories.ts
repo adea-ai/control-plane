@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
 import type {
   JsonValue,
@@ -388,7 +389,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
         .map((record) => ExecutionSchema.parse(record.value))
         .filter((execution) => isReconciliationCandidate(execution, input, undelivered))
         .map((execution) => execution.executionId)
-        .toSorted((left, right) => left.localeCompare(right))
+        .toSorted((left, right) => compareCodePointOrder(left, right))
         .slice(0, input.limit)
     })
   }

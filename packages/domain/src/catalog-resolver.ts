@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { AgentProfileVersionSchema, type SkillVersion } from './catalog-models.js'
 import {
   ExecutionConstraintSetSchema,
@@ -146,7 +147,7 @@ export async function resolveCatalogManifest(input: {
       .toSorted(
         (left, right) =>
           compareVersions(right.manifest.semanticVersion, left.manifest.semanticVersion) ||
-          left.skillVersionId.localeCompare(right.skillVersionId)
+          compareCodePointOrder(left.skillVersionId, right.skillVersionId)
       )
     const version = versions[0]
     if (!version)
@@ -161,7 +162,9 @@ export async function resolveCatalogManifest(input: {
     if (!reason) throw new CatalogResolutionError('SKILL_REQUEST_MISSING', [skillId])
     reasons.set(skillId, reason)
     for (const dependency of [...version.manifest.dependencies].toSorted(
-      (a, b) => a.skillId.localeCompare(b.skillId) || a.versionRange.localeCompare(b.versionRange)
+      (a, b) =>
+        compareCodePointOrder(a.skillId, b.skillId) ||
+        compareCodePointOrder(a.versionRange, b.versionRange)
     )) {
       const dependencyRequests = requests.get(dependency.skillId) ?? []
       dependencyRequests.push({
@@ -202,7 +205,9 @@ export async function resolveCatalogManifest(input: {
     contentDigest: version.manifest.contentDigest,
     dependencies: [...version.manifest.dependencies]
       .toSorted(
-        (a, b) => a.skillId.localeCompare(b.skillId) || a.versionRange.localeCompare(b.versionRange)
+        (a, b) =>
+          compareCodePointOrder(a.skillId, b.skillId) ||
+          compareCodePointOrder(a.versionRange, b.versionRange)
       )
       .map((dependency) => ({ ...dependency, source: 'dependency' as const })),
   }))
@@ -244,7 +249,7 @@ function topologicalOrder(selected: Map<string, SkillVersion>): SkillVersion[] {
     const version = selected.get(skillId)
     if (!version) return
     for (const dependency of [...version.manifest.dependencies].toSorted((a, b) =>
-      a.skillId.localeCompare(b.skillId)
+      compareCodePointOrder(a.skillId, b.skillId)
     ))
       visit(dependency.skillId)
     result.push(version)
@@ -278,7 +283,7 @@ function compareVersions(left: string, right: string): number {
   if (a[3] === b[3]) return 0
   if (!a[3]) return 1
   if (!b[3]) return -1
-  return a[3].localeCompare(b[3])
+  return compareCodePointOrder(a[3], b[3])
 }
 
 function satisfies(version: string, range: string): boolean {

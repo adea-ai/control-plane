@@ -956,6 +956,8 @@ function stable(value: unknown): string {
   return JSON.stringify(value)
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// values are z.json() (arbitrary keys); serializations cross a process boundary and feed artifact fingerprints
 function canonicalJson(value: z.util.JSONType): string {
   return JSON.stringify(canonicalValue(value))
 }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import type { RuntimeConnectionDiscoveryReadModel } from '@control-plane/contracts'
 import type { Execution, ExecutionAttempt } from '@control-plane/domain'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
@@ -48,7 +49,7 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       executionPlanId: input.executionPlan.executionPlanId,
       executionPlanDigest: input.executionPlan.contentDigest,
       runtimeRequirements: [...input.executionPlan.runtimeRequirements].toSorted((left, right) =>
-        left.capability.localeCompare(right.capability)
+        compareCodePointOrder(left.capability, right.capability)
       ),
       constraints: {
         allowedFamilies: [...input.executionPlan.constraints.runtime.allowedFamilies].toSorted(),
@@ -163,7 +164,10 @@ function locationAllowed(
 
 function compareCandidates(left: Candidate, right: Candidate): number {
   if (left.degraded !== right.degraded) return left.degraded ? 1 : -1
-  return left.connection.runtimeConnectionId.localeCompare(right.connection.runtimeConnectionId)
+  return compareCodePointOrder(
+    left.connection.runtimeConnectionId,
+    right.connection.runtimeConnectionId
+  )
 }
 
 function digest(value: unknown): `sha256:${string}` {

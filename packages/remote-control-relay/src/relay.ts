@@ -392,6 +392,8 @@ export class RelayMetadataCommandProcessor<Result> {
     ) {
       throw new RelayMetadataCommandError('RELAY_COMMAND_EXPIRED')
     }
+    // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+    // insertion-order stringify of a schema-pinned command; replay comparisons persist these strings byte-for-byte
     const canonical = JSON.stringify(command)
     const replay = await this.repository.get(command.commandId)
     if (replay !== undefined) {

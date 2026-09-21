@@ -176,6 +176,14 @@ jobs:
           } finally { await sql.end(); }
           '
 
+      - name: Verify cross-profile conformance matrix (Postgres)
+        if: steps.credentials.outputs.available == 'true'
+        env:
+          RUN_M10_POSTGRES_CONFORMANCE: 'true'
+        run: |
+          bun run build
+          bun test tests/cp1-embedded-durable-execution.test.mjs
+
       - name: Verify migrations and transactions
         if: steps.credentials.outputs.available == 'true'
         run: |

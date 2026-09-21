@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   ExecutionLifecycleError,
@@ -126,7 +127,7 @@ export class InMemoryDelegationRepository implements DelegationRepository {
   async listByParent(parentExecutionId: string): Promise<readonly DelegationRecord[]> {
     return [...this.#records.values()]
       .filter((record) => record.parentExecutionId === parentExecutionId)
-      .toSorted((left, right) => left.delegationId.localeCompare(right.delegationId))
+      .toSorted((left, right) => compareCodePointOrder(left.delegationId, right.delegationId))
       .map((record) => structuredClone(record))
   }
 
@@ -679,6 +680,8 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// childPlan is z.unknown() (arbitrary keys); inputDigest is persisted for replay conflict detection
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value !== null && typeof value === 'object') {

@@ -344,6 +344,8 @@ function isTerminal(status: ContextCommandRecord['status']): boolean {
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// Semantics payload.parameters has a z.json() catchall (free-form keys); payloadHash is persisted in the command envelope
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (typeof value === 'object' && value !== null)

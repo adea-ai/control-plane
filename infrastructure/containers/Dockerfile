@@ -16,7 +16,9 @@ RUN bun run build
 FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS runtime
 
 ARG APP_NAME
+ARG COMMIT_SHA
 ENV APP_NAME=${APP_NAME} \
+    COMMIT_SHA=${COMMIT_SHA} \
     APP_ENV=production \
     NODE_ENV=production
 

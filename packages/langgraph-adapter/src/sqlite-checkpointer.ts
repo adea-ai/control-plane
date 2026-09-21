@@ -4,6 +4,9 @@ import { BaseCheckpointSaver, WRITES_IDX_MAP } from '@langchain/langgraph-checkp
 import type { PersistenceProvider, PersistenceRecord } from '@control-plane/deployment'
 import { z } from 'zod'
 
+const compareCodePointOrder = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0
+
 type Config = Parameters<BaseCheckpointSaver['getTuple']>[0]
 type Tuple = NonNullable<Awaited<ReturnType<BaseCheckpointSaver['getTuple']>>>
 type ListOptions = Parameters<BaseCheckpointSaver['list']>[1]
@@ -51,7 +54,7 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
           row.ns === ns &&
           (checkpointId === undefined || row.checkpointId === checkpointId)
       )
-      .toSorted((a, b) => b.checkpointId.localeCompare(a.checkpointId))[0]
+      .toSorted((a, b) => compareCodePointOrder(b.checkpointId, a.checkpointId))[0]
     return checkpoint === undefined ? undefined : this.#tuple(checkpoint, rows)
   }
 
@@ -65,7 +68,7 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
     const rows = await this.#rows(thread)
     for (const row of rows
       .filter((candidateRow) => candidateRow.kind === 'checkpoint')
-      .toSorted((a, b) => b.checkpointId.localeCompare(a.checkpointId))) {
+      .toSorted((a, b) => compareCodePointOrder(b.checkpointId, a.checkpointId))) {
       if (remaining === 0) break
       if (explicitNs !== undefined && row.ns !== explicitNs) continue
       if (checkpointId !== undefined && row.checkpointId !== checkpointId) continue
@@ -198,7 +201,8 @@ export class LangGraphSqliteCheckpointSaver extends BaseCheckpointSaver {
           item.kind === 'write' && item.ns === row.ns && item.checkpointId === row.checkpointId
       )
       .toSorted(
-        (a, b) => (a.task ?? '').localeCompare(b.task ?? '') || (a.index ?? 0) - (b.index ?? 0)
+        (a, b) =>
+          compareCodePointOrder(a.task ?? '', b.task ?? '') || (a.index ?? 0) - (b.index ?? 0)
       )) {
       if (write.task === undefined || write.channel === undefined)
         throw new Error('GRAPH_CHECKPOINT_CORRUPT')

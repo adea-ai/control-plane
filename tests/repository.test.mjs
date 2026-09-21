@@ -163,6 +163,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-composition.test.mjs',
     'tests/m11-context-transport-e2e.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
+    'tests/service-lifecycle-e2e.test.mjs',
   ])
   assert.deepEqual(smoke, [
     'tests/agent-skill-library.test.mjs',
@@ -499,7 +500,10 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.doesNotMatch(workflow, /npm install --global @railway\/cli/)
   assert.match(promotionClient, /Bun\.spawn\(\['docker', 'pull', reference\]/)
   assert.match(promotionClient, /Project-Access-Token/)
-  assert.match(promotionClient, /ServiceInstanceUpdateInput/)
+  assert.match(promotionClient, /Authorization: `Bearer \$\{workspaceToken\}`/)
+  assert.match(workflow, /RAILWAY_WORKSPACE_TOKEN: \$\{\{ secrets\.RAILWAY_WORKSPACE_TOKEN \}\}/)
+  assert.match(promotionClient, /ServiceConnectInput/)
+  assert.match(promotionClient, /serviceDisconnect/)
   assert.match(promotionClient, /deploymentRollback/)
   assert.match(promotionClient, /deploymentRemove/)
   assert.match(promotionClient, /canRollback/)
@@ -510,6 +514,20 @@ test('promotes scan-attested container digests to Railway production', async () 
   assert.match(promotionClient, /deploymentStopped === false/)
   assert.match(workflow, /timeout-minutes: 60/)
   assert.match(workflow, /no-cache: true/)
+  // The promoted image bakes its source commit so /health metadata stays
+  // truthful without service-level variable pinning (#584 provenance audit).
+  assert.match(workflow, /SOURCE_SHA: \$\{\{ github\.sha \}\}/)
+  const dockerfile = await readFile(
+    new URL('../infrastructure/containers/Dockerfile', import.meta.url),
+    'utf8'
+  )
+  assert.match(dockerfile, /ARG COMMIT_SHA/)
+  assert.match(dockerfile, /COMMIT_SHA=\$\{COMMIT_SHA\}/)
+  const bake = await readFile(
+    new URL('../infrastructure/containers/docker-bake.hcl', import.meta.url),
+    'utf8'
+  )
+  assert.match(bake, /COMMIT_SHA = "\$\{SOURCE_SHA\}"/)
 })
 
 test('retains immutable load, recovery, and container evidence artifacts', async () => {

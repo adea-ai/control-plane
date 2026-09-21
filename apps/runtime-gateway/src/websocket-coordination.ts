@@ -1,4 +1,5 @@
 import type { GatewayProtocolVersion } from '@control-plane/runtime-gateway-protocol'
+import { compareCodePointOrder } from '@control-plane/domain'
 import type { RuntimeChannelOwnershipRepository } from '@control-plane/runtime-sdk'
 
 /** Repository ownership is authoritative; lifecycle sweeps reconcile without push delivery. */
@@ -198,7 +199,7 @@ export class RecordingGatewayMetrics implements GatewayMetrics {
 
 function metricKey(name: string, labels: Readonly<Record<string, string>>): string {
   const suffix = Object.entries(labels)
-    .toSorted(([left], [right]) => left.localeCompare(right))
+    .toSorted(([left], [right]) => compareCodePointOrder(left, right))
     .map(([key, value]) => `${key}=${value}`)
     .join(',')
   return `${name}{${suffix}}`

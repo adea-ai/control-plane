@@ -339,6 +339,8 @@ export function evidenceAuditMetrics(input: unknown) {
   }
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// intentionally different canonical form: keys sorted into [key, value] pair arrays, not canonical JSON objects
 function digest(input: unknown): string {
   const canonical = (value: unknown): unknown =>
     Array.isArray(value)

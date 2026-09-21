@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 
@@ -711,7 +712,9 @@ function applyOperations(
     ...current,
     revision: current.revision + 1,
     items: [...items.values()].toSorted(
-      (left, right) => left.key.localeCompare(right.key) || left.itemId.localeCompare(right.itemId)
+      (left, right) =>
+        compareCodePointOrder(left.key, right.key) ||
+        compareCodePointOrder(left.itemId, right.itemId)
     ),
     updatedAt: at,
   })
@@ -783,6 +786,8 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// mutation and state-item values are z.json() (free-form keys); mutation inputDigest is persisted for idempotency
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

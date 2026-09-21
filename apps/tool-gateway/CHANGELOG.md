@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.2](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.3.1...tool-gateway-v1.3.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* replace locale-dependent sort comparators with code-point ordering ([#614](https://github.com/adea-ai/control-plane/issues/614)) ([46897cd](https://github.com/adea-ai/control-plane/commit/46897cd99faeda65c1659c312d80ded809dc61d5))
+
+## [1.3.1](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.3.0...tool-gateway-v1.3.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **contracts:** locale-independent canonicalJsonStringify + canonical-JSON divergence audit ([#611](https://github.com/adea-ai/control-plane/issues/611)) ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
+
+### Maintenance
+
+* **contracts:** add canonicalJsonStringify and consolidate canonical-JSON digests ([549645b](https://github.com/adea-ai/control-plane/commit/549645b1e8295541d22f9d345b482f148a396560))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.2.5...tool-gateway-v1.3.0) (2026-09-20)
 
 

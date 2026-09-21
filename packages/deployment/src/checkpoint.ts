@@ -178,6 +178,8 @@ function finalizeManifest(
   profile: FilesystemCheckpointProfile,
   entries: readonly FilesystemCheckpointEntry[]
 ): FilesystemCheckpointManifest {
+  // CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+  // plain stringify of a fixed literal; the digest is persisted on disk — changing the byte format invalidates existing checkpoints
   const canonical = JSON.stringify({ schemaVersion: 1, profile, entries })
   return { schemaVersion: 1, profile, entries, contentDigest: digest(canonical) }
 }

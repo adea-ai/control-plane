@@ -19,8 +19,11 @@ const SOURCE_QUERY = `query($serviceId: String!, $environmentId: String!) {
     source { image repo }
   }
 }`
-const UPDATE_MUTATION = `mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
-  serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+const CONNECT_MUTATION = `mutation($id: String!, $input: ServiceConnectInput!) {
+  serviceConnect(id: $id, input: $input) { id }
+}`
+const DISCONNECT_MUTATION = `mutation($id: String!) {
+  serviceDisconnect(id: $id) { id }
 }`
 const DEPLOY_MUTATION = `mutation($serviceId: String!, $environmentId: String!) {
   serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
@@ -321,15 +324,18 @@ export async function promoteRailwayImages({
   }
 }
 
-export function createRailwayClient({ token, fetchImpl = fetch }) {
+export function createRailwayClient({ token, workspaceToken, fetchImpl = fetch }) {
   if (!token) throw new Error('RAILWAY_PRODUCTION_TOKEN is required')
+  if (!workspaceToken) throw new Error('RAILWAY_WORKSPACE_TOKEN is required')
 
-  async function request(query, variables) {
+  async function request(query, variables, authentication = 'project') {
     const response = await fetchImpl(RAILWAY_API_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'Project-Access-Token': token,
+        ...(authentication === 'workspace'
+          ? { Authorization: `Bearer ${workspaceToken}` }
+          : { 'Project-Access-Token': token }),
       },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(30_000),
@@ -360,13 +366,19 @@ export function createRailwayClient({ token, fetchImpl = fetch }) {
       return data.deployments.edges.map(({ node }) => node)
     },
     async updateSource(target, source) {
-      const { serviceId, environmentId } = variablesForTarget(target)
-      const data = await request(UPDATE_MUTATION, {
-        serviceId,
-        environmentId,
-        input: { source },
-      })
-      assertMutationSucceeded(data, 'serviceInstanceUpdate')
+      const { serviceId } = variablesForTarget(target)
+      if (source.image === null && source.repo === null) {
+        const data = await request(DISCONNECT_MUTATION, { id: serviceId }, 'workspace')
+        if (data.serviceDisconnect?.id !== serviceId) {
+          throw new Error('Railway mutation serviceDisconnect returned the wrong service')
+        }
+        return
+      }
+
+      const data = await request(CONNECT_MUTATION, { id: serviceId, input: source }, 'workspace')
+      if (data.serviceConnect?.id !== serviceId) {
+        throw new Error('Railway mutation serviceConnect returned the wrong service')
+      }
     },
     async deploySource(target) {
       const { serviceId, environmentId } = variablesForTarget(target)
@@ -402,7 +414,10 @@ async function main() {
   const manifests = await Promise.all(
     paths.map(async (path) => JSON.parse(await readFile(path, 'utf8')))
   )
-  const railway = createRailwayClient({ token: process.env.RAILWAY_PRODUCTION_TOKEN })
+  const railway = createRailwayClient({
+    token: process.env.RAILWAY_PRODUCTION_TOKEN,
+    workspaceToken: process.env.RAILWAY_WORKSPACE_TOKEN,
+  })
   await promoteRailwayImages({ manifests, railway, pullImage: pullDockerImage })
 }
 
