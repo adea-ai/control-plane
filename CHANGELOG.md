@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.31.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.4...workspace-v1.31.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* **m612:** graph-catalog digests are now locale-independent ([#618](https://github.com/adea-ai/control-plane/issues/618)) ([32f9ab3](https://github.com/adea-ai/control-plane/commit/32f9ab389f5f382198b2107b30994148192ec0a8))
+
+
+### Documentation
+
+* **ledger:** record [#192](https://github.com/adea-ai/control-plane/issues/192)/[#193](https://github.com/adea-ai/control-plane/issues/193) completion evidence ([#616](https://github.com/adea-ai/control-plane/issues/616)) ([5ce1b5f](https://github.com/adea-ai/control-plane/commit/5ce1b5f08ede5959ffa73e323dd7187c6c55cfae))
+* **ledger:** record [#192](https://github.com/adea-ai/control-plane/issues/192)/[#193](https://github.com/adea-ai/control-plane/issues/193) consolidation and audit completion evidence ([5ce1b5f](https://github.com/adea-ai/control-plane/commit/5ce1b5f08ede5959ffa73e323dd7187c6c55cfae))
+
 ## [1.31.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.3...workspace-v1.31.4) (2026-09-20)
 
 
