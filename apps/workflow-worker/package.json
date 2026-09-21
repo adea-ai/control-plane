@@ -29,7 +29,7 @@
     "@control-plane/telemetry": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@opentelemetry/api": "1.9.1",
-    "@restatedev/restate-sdk": "1.17.0"
+    "@restatedev/restate-sdk": "1.17.1"
   },
   "engines": {
     "node": "24.18.0"
