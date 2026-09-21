@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.6...workspace-v1.31.7) (2026-09-21)
+
+
+### Tests
+
+* add e2e coverage for tool-gateway, runtime-worker, and control-api marketplace ([#621](https://github.com/adea-ai/control-plane/issues/621)) ([a13c4c7](https://github.com/adea-ai/control-plane/commit/a13c4c707fd13b29f82e5123ef9e5468f8bc656a))
+
 ## [1.31.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.5...workspace-v1.31.6) (2026-09-21)
 
 
