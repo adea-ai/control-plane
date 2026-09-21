@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.5.2...managed-pi-adapter-v1.5.3) (2026-09-21)
+
+
+### Maintenance
+
+* **managed-pi-adapter:** split gateway.ts into focused gateway modules ([#630](https://github.com/adea-ai/control-plane/issues/630)) ([639acc0](https://github.com/adea-ai/control-plane/commit/639acc00a1f0abedea3e6fccc7e095832bdf9308))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.5.1...managed-pi-adapter-v1.5.2) (2026-09-21)
 
 

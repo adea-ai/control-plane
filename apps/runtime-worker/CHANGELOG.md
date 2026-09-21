@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.1...runtime-worker-v1.8.2) (2026-09-21)
+
+
+### Maintenance
+
+* **runtime-worker:** split hosted-managed-pi.ts into focused modules ([#632](https://github.com/adea-ai/control-plane/issues/632)) ([280ec72](https://github.com/adea-ai/control-plane/commit/280ec729321b11436f169c79ceb8091b2a00b8c9))
+
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.0...runtime-worker-v1.8.1) (2026-09-20)
 
 
