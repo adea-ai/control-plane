@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
 import {
   DurableFailureHarness,
   runLoadProfile,
@@ -38,7 +39,9 @@ const profiles = [
     Array.from({ length: 16 }, (_, index) => ({
       id: `runtime-${index}`,
       priority: (sequence + index) % 7,
-    })).toSorted((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))
+    })).toSorted(
+      (left, right) => right.priority - left.priority || compareCodePointOrder(left.id, right.id)
+    )
   ),
   profile(
     'model-tool-stream',

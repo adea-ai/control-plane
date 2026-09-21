@@ -493,6 +493,9 @@ export class ManagedPiAdapter extends TransportedRuntimeAdapter {
   }
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// canonicalConstraints sorts grant keys with localeCompare and feeds persisted policy
+// fingerprints; needs a digest-versioned migration (#612), not an in-place swap
 function canonicalConstraints(
   constraintsInput: z.input<typeof ExecutionConstraintSetSchema>
 ): z.output<typeof ExecutionConstraintSetSchema> {

@@ -204,6 +204,10 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
   return manifest
 }
 
+// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
+// digestJson is persisted and verified on read (PORTABLE_MANIFEST_DIGEST_INVALID);
+// stableJson sorts keys with localeCompare, so migrating needs a digest-versioned
+// cutover for previously published manifests (#612), not an in-place swap
 export function digestJson(value: unknown): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`
 }

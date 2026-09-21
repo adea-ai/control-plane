@@ -99,7 +99,9 @@ export async function discoverTestInventory() {
   )
   const inventory = groups
     .flatMap(({ primaryLane, files }) => files.map((path) => ({ path, primaryLane })))
-    .toSorted((left, right) => left.path.localeCompare(right.path))
+    // Code-point ordering (not localeCompare): this script is copied into temp
+    // fixture repos by tests, so shared-package imports are unavailable here.
+    .toSorted((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
   const duplicates = inventory.filter(
     ({ path }, index) => inventory.findIndex((candidate) => candidate.path === path) !== index
   )

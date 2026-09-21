@@ -3427,13 +3427,7 @@
           "kind": "document",
           "path": "docs/requirements/control-plane-tdd-source-audit.md"
         }
-      ],
-      "gap": {
-        "issue": 195,
-        "severity": "high",
-        "owner": "workflow-runtime",
-        "disposition": "Reconciliation complete — no open work. Canonical TDD rev 96 names Restate as the durable outer lifecycle with the single Temporal mention retained as historical migration provenance (source audit substantive change 1; #195 tranche 2 verified in place); docs/architecture.md L62/81/148 and CONTRA-001 ('Restate is canonical; Temporal remains historical provenance only') agree. Gap object retained only because validateGap mandates one for classification 'superseded' — exempt 'superseded' in scripts/requirements-ledger.mjs validateGap (or record supersession another way) to drop it."
-      }
+      ]
     },
     {
       "id": "CP-TDD-006",
@@ -3726,13 +3720,7 @@
           "kind": "document",
           "path": "packages/contracts/src/versioning.ts"
         }
-      ],
-      "gap": {
-        "issue": 195,
-        "severity": "medium",
-        "owner": "public-contracts",
-        "disposition": "Unresolved and the disposition is itself stale: the canonical Data Model & API prose still has not been pointed at the machine-readable contract. In-repo CONTRA-005 (current main, routed to #195) still records 'prose retains semantic inventory pending reconciliation'. #195 tranche 3 only banned-pattern-scanned the doc and refreshed its date. Note the machine contract has advanced past the disposition's '2.0' — packages/contracts/src/versioning.ts current is major 3 (history 1 -> 3). Close by updating the prose source to reference the machine-readable schemas at their current major while preserving semantic ownership, then update CONTRA-005."
-      }
+      ]
     },
     {
       "id": "RUNTIME-NODE-RETRIEVAL-001",
@@ -4105,13 +4093,7 @@
           "kind": "document",
           "path": "docs/architecture.md"
         }
-      ],
-      "gap": {
-        "issue": 195,
-        "severity": "high",
-        "owner": "workflow-runtime",
-        "disposition": "Reconciliation complete — no open work. #195 tranche 5 records the ADR-record action exactly as dispositioned: 'ADR-025 (Temporal) ... superseded by ADR-034 Restate — deliberately unchanged per ADR-record rules', with repo references updated and date annotated; durable semantics retained in the record. In-repo corroboration: docs/architecture.md (Restate canonical, Temporal historical-only) and resolved CONTRA-001. Gap object retained only because validateGap mandates one for classification 'superseded' — apply the same schema exemption note as CP-TDD-005."
-      }
+      ]
     },
     {
       "id": "CP-ADR-004",
@@ -4298,13 +4280,7 @@
           "path": "docs/infrastructure.md"
         }
       ],
-      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, Neon, R2, and Restate, while M10 added Local and Hosted profiles.",
-      "gap": {
-        "issue": 197,
-        "severity": "medium",
-        "owner": "architecture-cleanup",
-        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
-      }
+      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, Neon, R2, and Restate, while M10 added Local and Hosted profiles."
     },
     {
       "id": "M1-ISSUE-9",
@@ -4550,13 +4526,7 @@
           "path": "docs/infrastructure.md"
         }
       ],
-      "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted.",
-      "gap": {
-        "issue": 197,
-        "severity": "medium",
-        "owner": "workflow-runtime",
-        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
-      }
+      "assessment": "Temporal is no longer an accepted runtime or release-evidence source; M9 replaced the Cloud workflow path with Restate and M10 carried Restate into Local and Hosted."
     },
     {
       "id": "M3-ISSUE-24",
@@ -4926,13 +4896,7 @@
           "path": "packages/runtime-sdk/src/transport.test.mjs"
         }
       ],
-      "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes.",
-      "gap": {
-        "issue": 197,
-        "severity": "medium",
-        "owner": "runtime-architecture",
-        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
-      }
+      "assessment": "M10 removed Runtime Gateway from the Local critical path and replaced this topology with DirectLocalRuntimeTransport; gateway delivery remains valid only for non-co-located nodes."
     },
     {
       "id": "M6-ISSUE-46",
@@ -4996,13 +4960,7 @@
           "path": "packages/runtime-sdk/src/transport.test.mjs"
         }
       ],
-      "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located.",
-      "gap": {
-        "issue": 197,
-        "severity": "medium",
-        "owner": "runtime-architecture",
-        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
-      }
+      "assessment": "M10 replaced Local ACP gateway transport with direct co-located transport; Runtime Gateway remains supported only when the ACP RuntimeNode is non-co-located."
     },
     {
       "id": "M6-ISSUE-50",
@@ -5254,13 +5212,7 @@
           "path": "apps/workflow-worker/src/graph-segment-activity.ts"
         }
       ],
-      "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker.",
-      "gap": {
-        "issue": 197,
-        "severity": "medium",
-        "owner": "workflow-orchestration",
-        "disposition": "Completed: the consolidation work this row routed to #192 was delivered by #579 (backoff + gateway schema hoist + budgets), #583 (ProcessRpcLink), #609 (withTimeout), and #614 (locale-independent comparators). Zero TODO/FIXME/HACK markers remain; zero unused workspace dependencies; zero empty catch blocks. The stale implementations this disposition names are removed from main."
-      }
+      "assessment": "The graph-segment and interrupt behavior remains, but the Temporal boundary named by the issue was replaced by the current Restate workflow worker."
     },
     {
       "id": "M8-ISSUE-65",
