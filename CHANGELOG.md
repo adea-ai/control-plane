@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.5...workspace-v1.31.6) (2026-09-21)
+
+
+### Bug Fixes
+
+* **type-safety:** strengthen the context-authoring guard ([#619](https://github.com/adea-ai/control-plane/issues/619)) ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+* **type-safety:** strengthen the context-authoring guard in execution validation ([279b59f](https://github.com/adea-ai/control-plane/commit/279b59ff9b77d0c2c8296f32591af7b76cdb7c90))
+
 ## [1.31.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.4...workspace-v1.31.5) (2026-09-21)
 
 
