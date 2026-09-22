@@ -493,9 +493,10 @@ export class ManagedPiAdapter extends TransportedRuntimeAdapter {
   }
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// canonicalConstraints sorts grant keys with localeCompare and feeds persisted policy
-// fingerprints; needs a digest-versioned migration (#612), not an in-place swap
+// canonicalConstraints normalizes constraint arrays into persisted plan
+// content; grant ordering is now code-point (host-independent). Plans built
+// before this change verify through the execution-plan legacy digest path
+// (#612).
 function canonicalConstraints(
   constraintsInput: z.input<typeof ExecutionConstraintSetSchema>
 ): z.output<typeof ExecutionConstraintSetSchema> {
@@ -515,7 +516,8 @@ function canonicalConstraints(
           requiredCapabilities: [...grant.requiredCapabilities].toSorted(),
         }))
         .toSorted((left, right) =>
-          `${left.tool.toolId}:${left.tool.versionRange}`.localeCompare(
+          compareCodePointOrder(
+            `${left.tool.toolId}:${left.tool.versionRange}`,
             `${right.tool.toolId}:${right.tool.versionRange}`
           )
         ),

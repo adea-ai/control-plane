@@ -589,7 +589,8 @@ function normalizeConstraints(constraints: ExecutionConstraintSet): ExecutionCon
           requiredCapabilities: [...grant.requiredCapabilities].toSorted(),
         }))
         .toSorted((left, right) =>
-          `${left.tool.toolId}@${left.tool.versionRange}`.localeCompare(
+          compareCodePointOrder(
+            `${left.tool.toolId}@${left.tool.versionRange}`,
             `${right.tool.toolId}@${right.tool.versionRange}`
           )
         ),
@@ -629,9 +630,17 @@ function finalizePlan(input: Record<string, unknown>): ExecutionPlan {
 function assertPlanIntegrity(plan: ExecutionPlan): void {
   const content = omitIdentity(plan, 'executionPlanId')
   const expectedDigest = sha256(normalize(content))
+  // Dual-accept (#612): plans persisted before the code-point cutover carry
+  // digests over the legacy locale-dependent serialization.
+  const verifiedDigest =
+    plan.contentDigest === expectedDigest
+      ? expectedDigest
+      : sha256Legacy(normalizeLegacy(content)) === plan.contentDigest
+        ? plan.contentDigest
+        : undefined
   if (
-    plan.contentDigest !== expectedDigest ||
-    plan.executionPlanId !== hashIdentifier('pln', expectedDigest)
+    verifiedDigest === undefined ||
+    plan.executionPlanId !== hashIdentifier('pln', verifiedDigest)
   ) {
     throw new Error('EXECUTION_PLAN_INTEGRITY_ERROR')
   }
@@ -677,11 +686,38 @@ function normalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .toSorted(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => compareCodePointOrder(left, right))
         .map(([key, entry]) => [key, normalize(entry)])
     )
   }
   return value
+}
+
+// CANONICAL-JSON: verification-only legacy form (#612 transition window).
+// Plans persisted before the code-point cutover carry digests over the
+// locale-dependent serialization; sha256Legacy reproduces those bytes so
+// stored plans keep verifying. Drop once pre-cutover plans leave retention.
+function normalizeLegacy(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeLegacy)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, normalizeLegacy(entry)])
+    )
+  }
+  return value
+}
+
+function sha256Legacy(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(canonicalLegacy(value)))
+    .digest('hex')}`
+}
+
+function canonicalLegacy(value: unknown): string {
+  return JSON.stringify(normalizeLegacy(value))
 }
 
 function safeReason(error: unknown): string | undefined {
