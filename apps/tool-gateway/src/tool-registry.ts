@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
@@ -396,23 +397,12 @@ function executorKey(type: ToolExecutorType, reference: string): string {
   return `${type}:${reference}`
 }
 
+// contentDigest is write-once in the registry (never re-verified), so digests
+// use the shared host-independent canonical form directly (#612).
 function digest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
-}
-
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// drafts embed author-defined JSON Schemas (arbitrary keys); contentDigest is persisted in the registry
-function canonical(value: unknown): string {
-  if (value === undefined) return 'null'
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
 }
 
 function clone<Value>(value: Value): Value {

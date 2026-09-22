@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { type InteractionRepository, type InteractionService } from '@control-plane/domain'
 import { type PolicyDecisionPoint, type PolicySnapshotReference } from '@control-plane/policy'
@@ -263,7 +264,11 @@ export class PolicyControlledToolExecutionService {
     const key = idempotencyIndex(request.workspaceId, request.idempotencyKey)
     const active = this.#inFlight.get(key)
     if (active) {
-      if (active.requestDigest !== requestDigest) fail('IDEMPOTENCY_CONFLICT')
+      if (
+        active.requestDigest !== requestDigest &&
+        active.requestDigest !== toolRequestDigestLegacy(request)
+      )
+        fail('IDEMPOTENCY_CONFLICT')
       return active.promise
     }
     const promise = this.#executePrepared(request, prepared, requestDigest)
@@ -282,7 +287,11 @@ export class PolicyControlledToolExecutionService {
   ): Promise<DurableToolExecutionOutcome> {
     let call = await this.calls.getByIdempotencyKey(request.workspaceId, request.idempotencyKey)
     if (call) {
-      if (call.requestDigest !== requestDigest) fail('IDEMPOTENCY_CONFLICT')
+      if (
+        call.requestDigest !== requestDigest &&
+        call.requestDigest !== toolRequestDigestLegacy(request)
+      )
+        fail('IDEMPOTENCY_CONFLICT')
       const terminal = terminalOutcome(call)
       if (terminal) return terminal
       if (call.status === 'executing') return { state: 'in_progress', call }
@@ -474,6 +483,28 @@ function authorizationRequest(
 }
 
 function toolRequestDigest(request: DurableToolCallRequest): string {
+  return digestV2({
+    toolCallId: request.toolCallId,
+    executionId: request.executionId,
+    attemptId: request.attemptId,
+    workspaceId: request.workspaceId,
+    profileId: request.profileId,
+    principalRef: request.audit.principalRef,
+    toolDefinitionId: request.toolDefinitionId,
+    toolVersionId: request.toolVersionId,
+    operation: request.operation,
+    input: request.input,
+    idempotencyKey: request.idempotencyKey,
+    policySnapshotRef: request.policySnapshotRef,
+  })
+}
+
+/**
+ * Legacy-form request digest (#612 transition helper): reproduces the bytes
+ * stored before the code-point cutover so the idempotency verifier can accept
+ * calls persisted before the migration.
+ */
+export function toolRequestDigestLegacy(request: DurableToolCallRequest): string {
   return digest({
     toolCallId: request.toolCallId,
     executionId: request.executionId,
@@ -532,11 +563,19 @@ function idempotencyIndex(workspaceId: string, idempotencyKey: string): string {
 }
 
 function digest(value: unknown): string {
+  // Legacy form, retained so calls persisted pre-cutover still replay.
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// request.input is arbitrary tool-call JSON (free-form keys); inputDigest is persisted with tool calls
+function digestV2(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+}
+
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
+// request.input is arbitrary tool-call JSON (free-form keys); the idempotency
+// verifier dual-accepts the legacy locale-dependent form and the V2 code-point form.
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
