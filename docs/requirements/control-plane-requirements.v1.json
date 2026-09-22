@@ -3197,13 +3197,13 @@
       "classification": "partially_verified",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195, 196],
+      "issueRefs": [195, 188],
       "evidence": [
         { "kind": "test", "path": "packages/domain/src/index.test.mjs" },
         { "kind": "test", "path": "tests/m2-core-domain.test.mjs" }
       ],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "Catalog creation is exercised, but this PRD source mapping is not independently verified as a complete product lifecycle."
@@ -3218,13 +3218,13 @@
       "classification": "partially_verified",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195, 196],
+      "issueRefs": [195, 188],
       "evidence": [
         { "kind": "document", "path": "docs/profiles-and-skills.md" },
         { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
       ],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "Version behavior is documented/tested; complete PRD source mapping remains partial."
@@ -3239,13 +3239,13 @@
       "classification": "partially_verified",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195, 196],
+      "issueRefs": [195, 188],
       "evidence": [
         { "kind": "document", "path": "docs/profiles-and-skills.md" },
         { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
       ],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "Validation behavior has component evidence; caller/operator lifecycle mapping is not independently verified."
@@ -3260,10 +3260,10 @@
       "classification": "tbd",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195],
+      "issueRefs": [195, 188],
       "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "Catalog publish/version methods are not proof of an approval actor or decision contract; authoritative approval lifecycle evidence is missing."
@@ -3278,13 +3278,13 @@
       "classification": "partially_verified",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195, 196],
+      "issueRefs": [195, 188],
       "evidence": [
         { "kind": "document", "path": "docs/profiles-and-skills.md" },
         { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
       ],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "Deprecation/revocation fields are represented, but attributable operator lifecycle evidence is not independently verified."
@@ -3299,10 +3299,10 @@
       "classification": "tbd",
       "owner": "catalog",
       "lane": "contract/schema",
-      "issueRefs": [195, 196],
+      "issueRefs": [195, 188],
       "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
       "gap": {
-        "issue": 196,
+        "issue": 188,
         "severity": "high",
         "owner": "catalog",
         "disposition": "No focused public inspection contract and evidence were identified for the complete catalog lifecycle."

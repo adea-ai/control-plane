@@ -70,7 +70,7 @@ describe('M11.1 requirements ledger', () => {
     expect(ledger.requirements.find(({ id }) => id === 'CP-PRD-PROFILE-APPROVE-001')).toMatchObject(
       {
         classification: 'tbd',
-        gap: { issue: 196 },
+        gap: { issue: 188 },
       }
     )
     expect(ledger.requirements.find(({ id }) => id === 'CP-PRD-PROFILE-APPROVE-001')).toMatchObject(
