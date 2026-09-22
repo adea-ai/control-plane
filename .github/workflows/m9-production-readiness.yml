@@ -18,6 +18,9 @@ concurrency:
 jobs:
   core:
     name: Core hardening
+    permissions:
+      contents: read
+      issues: read
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -33,6 +36,8 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run type-check
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: bun run test:unit
       - run: bun run test:isolation-matrix
       - run: bun run test:secret-canaries
