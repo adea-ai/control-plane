@@ -114,6 +114,22 @@ cross-process restore lock: operators must still use trusted checkpoints and sto
 other database users before restoring. Filesystem failures during replacement and
 host-loss recovery require the retained operator checkpoint.
 
+SQLite schema v2 appends partial expiry indexes for command-inbox and execution-event
+records without changing the shipped v1 migration or record payloads. The indexes cover
+canonical UTC millisecond strings (`YYYY-MM-DDTHH:mm:ss.sssZ`) only; other timestamp
+representations remain retained and need explicit normalization before this access path
+can cover them. Index membership is a coarse filter, not calendar validation or deletion
+authority. Candidate readers must validate dates, order by expiry and ID, and bound their
+results; the migration tests demonstrate both index paths with `EXPLAIN QUERY PLAN`.
+No production deletion or eligibility decision is enabled by this migration.
+
+Valid v1 backups are upgraded on the disposable restore copy before replacing the live
+database. Envelope/database version mismatches, future versions, changed migration history,
+and missing or altered v2 indexes are rejected. Retain a pre-upgrade v1 backup before
+deployment: a v1 binary cannot open a v2 database, and rollback requires that checkpoint
+plus the matching old binary. No automatic downgrade or preservation of post-checkpoint
+writes during rollback is claimed.
+
 ## Schema and naming conventions
 
 The PostgreSQL implementation remains grouped by domain boundary under `packages/database/src/schema`. Schema details are implementation-owned and must not leak into the public API/SDK. SQLite may use a physically different representation where PostgreSQL-only features have no equivalent, but adapter conformance must preserve the public/domain behavior.

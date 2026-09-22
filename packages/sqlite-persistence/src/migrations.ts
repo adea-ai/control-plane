@@ -18,6 +18,20 @@ export const SCHEMA_STATEMENTS = {
     ON control_plane_records(namespace, updated_at, id)`,
 }
 
+// Added in v2; never fold these into SCHEMA_STATEMENTS because v1's checksum is immutable.
+export const EXPIRY_INDEX_STATEMENTS = {
+  control_plane_records_command_expiry: `CREATE INDEX IF NOT EXISTS control_plane_records_command_expiry
+    ON control_plane_records(namespace, json_extract(value, '$.retentionExpiresAt'), id)
+    WHERE namespace = 'command-inbox'
+      AND json_type(value, '$.retentionExpiresAt') = 'text'
+      AND json_extract(value, '$.retentionExpiresAt') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'`,
+  control_plane_records_event_expiry: `CREATE INDEX IF NOT EXISTS control_plane_records_event_expiry
+    ON control_plane_records(namespace, json_extract(value, '$.retentionExpiresAt'), id)
+    WHERE namespace = 'execution-events'
+      AND json_type(value, '$.retentionExpiresAt') = 'text'
+      AND json_extract(value, '$.retentionExpiresAt') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'`,
+} as const
+
 interface SqliteMigration {
   readonly version: number
   readonly statements: readonly string[]
@@ -26,6 +40,7 @@ interface SqliteMigration {
 // Append new versions. Never edit a migration that has shipped.
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 1, statements: Object.values(SCHEMA_STATEMENTS) },
+  { version: 2, statements: Object.values(EXPIRY_INDEX_STATEMENTS) },
 ]
 export const SCHEMA_VERSION = SQLITE_MIGRATIONS.length
 
