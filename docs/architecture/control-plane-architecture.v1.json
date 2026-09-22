@@ -2105,9 +2105,9 @@
     {
       "id": "PERSIST-RETENTION",
       "postgresql": "Typed retention expiry, soft deletion, and publication attempt metadata",
-      "sqlite": "Retention values may exist inside JSON but no indexed expiry/deletion lifecycle",
-      "classification": "not_implemented",
-      "assessment": "SQLite cannot enforce or sweep accepted retention/deletion semantics at the persistence boundary.",
+      "sqlite": "Transactional expiry sweeps for command inbox and execution events over JSON records; no indexed expiry/deletion metadata",
+      "classification": "partially_verified",
+      "assessment": "Reviewed at f5c9ace on 2026-09-22: SQLite implements command-inbox expiry deletion with by-execution index cleanup and execution-event expiry deletion. Focused tests cover expired versus live records and event sweep idempotency, but age-only deletion does not establish terminal-state, rejection-key, publication, reference or hold safety. Indexed expiry/deletion metadata, restart/recovery sweep evidence, and lifecycle coverage for the remaining durable data classes are not established. This is partial component evidence, not safe deployed retention acceptance.",
       "evidence": [
         {
           "kind": "source",
@@ -2116,13 +2116,29 @@
         {
           "kind": "source",
           "path": "packages/sqlite-persistence/src/schema.ts"
+        },
+        {
+          "kind": "source",
+          "path": "packages/sqlite-persistence/src/repositories.ts"
+        },
+        {
+          "kind": "source",
+          "path": "packages/sqlite-persistence/src/durability-repositories.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/repositories.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/durability-repositories.test.mjs"
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "sqlite-retention",
-        "disposition": "Add indexed expiry/deletion metadata and deterministic sweep/recovery tests."
+        "disposition": "Correct unsafe age-only deletion, add indexed expiry/deletion metadata and sweep restart/recovery tests, and complete every durable class in docs/evidence/m11-retention-coverage-2026-09-22.md; certify deployed profile lifecycle behavior. Existing inbox/event deletion primitives do not close this gap."
       }
     },
     {
