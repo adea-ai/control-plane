@@ -5,6 +5,7 @@ import {
   InMemoryRuntimeCommandRepository,
 } from '@control-plane/domain'
 import {
+  hashExecutionEventPayload,
   InMemoryExecutionEventRepository,
   InMemoryRuntimeEventEffectSink,
 } from '@control-plane/events'
@@ -51,6 +52,45 @@ describe('Runtime Gateway event ingestion', () => {
 
     expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toHaveLength(2)
     expect(fixture.quarantine.records).toHaveLength(1)
+  })
+
+  test('emits s2 frame hashes with the legacy candidate for replay verification', async () => {
+    const fixture = await setup()
+    const captured = []
+    const inner = new InMemoryRuntimeEventEffectSink({
+      lifecycle: fixture.lifecycle,
+      events: fixture.events,
+    })
+    const ingestion = new RuntimeEventIngestionService({
+      commands: fixture.commands,
+      executions: fixture.executions,
+      effects: {
+        async applyProgress(effect) {
+          captured.push(effect)
+          return inner.applyProgress(effect)
+        },
+        async applyTerminal(effect) {
+          captured.push(effect)
+          return inner.applyTerminal(effect)
+        },
+      },
+      normalizer: new FixtureNormalizer(),
+      channelAuthority: fixture.authority,
+      quarantine: fixture.quarantine,
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-08-25T12:00:04.000Z'),
+    })
+
+    expect(await ingestion.ingestProgress(golden.progress, source)).toMatchObject({
+      outcome: 'applied',
+    })
+    const effect = captured.at(-1)
+    expect(effect.frameHash).toMatch(/^s2:[0-9a-f]{64}$/)
+    // The legacy candidate reproduces the exact pre-cutover bytes so receipts
+    // written before the migration still verify as duplicates on replay.
+    expect(effect.legacyFrameHash).toBe(
+      `sha256:${hashExecutionEventPayload(JSON.parse(JSON.stringify(golden.progress)))}`
+    )
   })
 
   test('applies one normalized terminal result and one usage payload across duplicate delivery', async () => {

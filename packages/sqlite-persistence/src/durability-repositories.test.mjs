@@ -267,6 +267,45 @@ describe('SQLite standalone durability repositories', () => {
     })
   })
 
+  test('receipts written pre-cutover replay as duplicates via the legacy frame hash', async () => {
+    await withReopen(async ({ current }) => {
+      const executions = new SqliteExecutionRepository(current())
+      const lifecycle = new ExecutionLifecycleService(executions)
+      await lifecycle.createExecution(executionInput())
+      const effects = new SqliteRuntimeEventEffectSink(current())
+      // Pre-cutover receipt: stored under the legacy sha256 form only.
+      expect(
+        await effects.applyProgress({
+          commandId: ids.commandId,
+          eventSequence: 2,
+          frameHash: `sha256:${'a'.repeat(64)}`,
+          draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
+        })
+      ).toMatchObject({ outcome: 'applied' })
+      // Post-cutover replay: the s2 form plus the recomputed legacy candidate
+      // must resolve to duplicate, never conflict (#612).
+      expect(
+        await effects.applyProgress({
+          commandId: ids.commandId,
+          eventSequence: 2,
+          frameHash: `s2:${'b'.repeat(64)}`,
+          legacyFrameHash: `sha256:${'a'.repeat(64)}`,
+          draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
+        })
+      ).toMatchObject({ outcome: 'duplicate' })
+      // A genuinely different frame under the same key still conflicts.
+      expect(
+        await effects.applyProgress({
+          commandId: ids.commandId,
+          eventSequence: 2,
+          frameHash: `s2:${'c'.repeat(64)}`,
+          legacyFrameHash: `sha256:${'d'.repeat(64)}`,
+          draft: eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'),
+        })
+      ).toEqual({ outcome: 'conflict' })
+    })
+  })
+
   test('atomically persists runtime event receipts and terminal state across reopen', async () => {
     await withReopen(async ({ current, reopened }) => {
       const executions = new SqliteExecutionRepository(current())
