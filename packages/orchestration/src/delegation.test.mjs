@@ -12,6 +12,7 @@ import {
 } from '@control-plane/execution-plan'
 import {
   DelegationService,
+  delegationInputLegacyDigest,
   InMemoryDelegationRepository,
   decideDelegationFailure,
 } from './delegation.ts'
@@ -198,6 +199,35 @@ describe('durable parent and child delegation', () => {
         retryable: false,
       })
     ).toBe('fail_parent')
+  })
+
+  test('a delegation persisted pre-cutover replays via the legacy digest', async () => {
+    const fixture = await createFixture()
+    const input = delegationInput(fixture)
+    const legacyDigest = delegationInputLegacyDigest(input)
+    const inner = new InMemoryDelegationRepository()
+    const preCutover = {
+      async insert(record) {
+        // First write simulates a record stored before the code-point cutover.
+        return inner.insert({ ...record, inputDigest: legacyDigest })
+      },
+      async get(id) {
+        return inner.get(id)
+      },
+    }
+    const service = new DelegationService({
+      delegations: preCutover,
+      lifecycle: fixture.lifecycle,
+      plans: fixture.plans,
+      events: fixture.events,
+    })
+
+    const first = await service.delegate(input)
+    expect(first.record.inputDigest).toBe(legacyDigest)
+    // Replay computes the current s2 form plus the legacy candidate: the
+    // pre-cutover receipt must resolve to replay, never DELEGATION_CONFLICT.
+    const replay = await service.delegate(input)
+    expect(replay.record.delegationId).toBe(first.record.delegationId)
   })
 
   test('cascades parent cancellation only when the immutable delegation policy requires it', async () => {
