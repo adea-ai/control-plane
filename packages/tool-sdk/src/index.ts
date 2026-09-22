@@ -96,6 +96,12 @@ export const ToolSourceSchema = z
     sourceToolName: z.string().min(1).max(256),
     sourceToolVersion: z.string().min(1).max(128).optional(),
     schemaDigest: DigestSchema,
+    /**
+     * Pre-cutover digest of the same discovery snapshot (#612): the gateway
+     * recomputes both forms so versions registered before the code-point
+     * cutover still execute without spurious MCP_SCHEMA_CHANGED.
+     */
+    legacySchemaDigest: DigestSchema.optional(),
     discoveredAt: TimestampSchema,
   })
   .strict()

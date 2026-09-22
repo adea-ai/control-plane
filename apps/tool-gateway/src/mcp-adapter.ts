@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { Buffer } from 'node:buffer'
 import { managedCloudOperationalPolicy } from '@control-plane/config'
 import {
@@ -173,7 +174,14 @@ export class McpAdapter implements ToolExecutor {
     if (binding.availability === 'disconnected') {
       throw new ToolExecutorError('MCP_DISCONNECTED', true, 'none')
     }
-    if (binding.latest?.source?.schemaDigest !== source.schemaDigest) {
+    // Any matching pair (current/legacy on either side) means the schema is
+    // unchanged; pre-cutover versions carry only the legacy form (#612).
+    const digestsMatch =
+      binding.latest?.source?.schemaDigest === source.schemaDigest ||
+      binding.latest?.source?.schemaDigest === source.legacySchemaDigest ||
+      binding.latest?.source?.legacySchemaDigest === source.schemaDigest ||
+      binding.latest?.source?.legacySchemaDigest === source.legacySchemaDigest
+    if (!digestsMatch) {
       throw new ToolExecutorError('MCP_SCHEMA_CHANGED', false, 'none')
     }
     try {
@@ -199,16 +207,24 @@ export class McpAdapter implements ToolExecutor {
   }
 
   async #import(tool: McpDiscoveredTool): Promise<ToolVersion> {
-    const schemaDigest = digest({
+    // New registrations hash with the host-independent code-point form; the
+    // legacy candidate keeps pre-cutover registrations from churning (#612).
+    const discoverySnapshot = {
       inputSchema: tool.inputSchema,
       outputSchema: tool.outputSchema,
       sourceToolVersion: tool.version,
       requiredCapabilities: [...(tool.capabilities ?? [])].map(canonicalName),
       readOnly: tool.readOnly === true,
-    })
+    }
+    const schemaDigest = digestV2(discoverySnapshot)
+    const legacySchemaDigest = digest(discoverySnapshot)
     let binding = this.#bindings.get(tool.name)
     const current = binding?.latest
-    if (binding && current?.source?.schemaDigest === schemaDigest) {
+    if (
+      binding &&
+      (current?.source?.schemaDigest === schemaDigest ||
+        current?.source?.schemaDigest === legacySchemaDigest)
+    ) {
       binding.availability = 'available'
       return structuredClone(current)
     }
@@ -256,6 +272,7 @@ export class McpAdapter implements ToolExecutor {
         sourceToolName: tool.name,
         ...(tool.version === undefined ? {} : { sourceToolVersion: tool.version }),
         schemaDigest,
+        legacySchemaDigest,
         discoveredAt: now,
       },
       limits: this.#limits,
@@ -383,11 +400,19 @@ function canonicalName(value: string): string {
 }
 
 function digest(value: unknown): `sha256:${string}` {
+  // Legacy form, retained to keep pre-cutover registrations from churning.
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// digests cover discovered tool JSON Schemas (arbitrary, server-defined keys)
+function digestV2(value: unknown): `sha256:${string}` {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+}
+
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
+// Digests cover discovered tool JSON Schemas (arbitrary, server-defined keys); the
+// verifier dual-accepts the legacy locale-dependent form and the V2 code-point form.
 function canonical(value: unknown): string {
   if (value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`

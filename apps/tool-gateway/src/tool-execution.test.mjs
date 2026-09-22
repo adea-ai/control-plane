@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { toolRequestDigestLegacy } from './tool-execution.ts'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import {
   FakeToolExecutor,
@@ -115,6 +116,7 @@ async function fixture({
   executorResponse,
   versionOverrides,
   authorizerOverride,
+  calls: callsOverride,
 } = {}) {
   const registry = new ToolRegistry(new InMemoryToolRegistryRepository())
   await registry.createDefinition(definition)
@@ -122,7 +124,7 @@ async function fixture({
   const executor = new FakeToolExecutor(executorResponse ?? (() => ({ saved: true })))
   const gateway = new ToolGateway(registry)
   gateway.registerExecutor('connector', 'records-v1', executor)
-  const calls = new InMemoryToolCallRepository()
+  const calls = callsOverride ?? new InMemoryToolCallRepository()
   const interactions = new InMemoryInteractionRepository()
   const approvals = new InteractionToolApprovalCoordinator(
     new InteractionService(interactions),
@@ -338,6 +340,45 @@ describe('policy-controlled durable tool execution', () => {
     const outcome = await service.execute(request())
     expect(outcome).toMatchObject({ state: 'succeeded', result: { attempts: 2 } })
     expect(executor.requests).toHaveLength(2)
+  })
+
+  test('a call persisted pre-cutover replays via the legacy request digest', async () => {
+    const input = { value: 'pre-cutover' }
+    const plainRequest = request({ approval: undefined, input })
+    const legacyDigest = toolRequestDigestLegacy(plainRequest)
+    const inner = new InMemoryToolCallRepository()
+    // The first insert simulates a record persisted before the cutover: its
+    // requestDigest carries the legacy locale-dependent bytes (#612).
+    let seeded = false
+    const preCutoverCalls = {
+      async insert(call) {
+        const stored = seeded ? call : { ...call, requestDigest: legacyDigest }
+        seeded = true
+        return inner.insert(stored)
+      },
+      get: (toolCallId) => inner.get(toolCallId),
+      getByIdempotencyKey: (workspaceId, key) => inner.getByIdempotencyKey(workspaceId, key),
+      compareAndSet: (expectedVersion, call) => inner.compareAndSet(expectedVersion, call),
+      listByExecution: (executionId) => inner.listByExecution(executionId),
+    }
+    const { service } = await fixture({
+      versionOverrides: {
+        operations: [
+          {
+            ...version().operations[0],
+            approvalMode: 'never',
+            retryPolicy: { maxAttempts: 1, retryableErrorCodes: [] },
+          },
+        ],
+      },
+      calls: preCutoverCalls,
+    })
+
+    // Replay recomputes the current code-point digest plus the legacy
+    // candidate: the pre-cutover record must resolve to an idempotent
+    // replay, never IDEMPOTENCY_CONFLICT.
+    const replay = await service.execute(plainRequest)
+    expect(replay).toMatchObject({ state: 'succeeded' })
   })
 
   test('rejects idempotency conflicts and enforces rate limits before another effect', async () => {
