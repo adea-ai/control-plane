@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 import { z } from 'zod'
@@ -339,20 +340,11 @@ export function evidenceAuditMetrics(input: unknown) {
   }
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// intentionally different canonical form: keys sorted into [key, value] pair arrays, not canonical JSON objects
+// Eval-internal digests (#612): receipts are regenerated per run and never
+// verified across versions, so the shared host-independent canonical form is
+// safe to adopt in place.
 function digest(input: unknown): string {
-  const canonical = (value: unknown): unknown =>
-    Array.isArray(value)
-      ? value.map(canonical)
-      : value !== null && typeof value === 'object'
-        ? Object.fromEntries(
-            Object.entries(value)
-              .toSorted(([a], [b]) => a.localeCompare(b))
-              .map(([key, child]) => [key, canonical(child)])
-          )
-        : value
   return `sha256:${createHash('sha256')
-    .update(JSON.stringify(canonical(input)))
+    .update(canonicalJsonStringify(input) ?? 'null')
     .digest('hex')}`
 }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 
@@ -362,23 +363,12 @@ function title(value: string): string {
 }
 
 function digest(value: unknown): `sha256:${string}` {
-  const serialized = typeof value === 'string' ? value : canonical(value)
+  // decisionId is an opaque correlation id: persisted but never recomputed and
+  // compared, so the host-independent canonical form from contracts is safe to
+  // adopt in place (#612 write-once disposition).
+  const serialized =
+    typeof value === 'string' ? value : (canonicalJsonStringify(value as never) ?? 'null')
   return `sha256:${createHash('sha256').update(serialized).digest('hex')}`
-}
-
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// principal.attributes and request context are z.record(string, z.json()) free-form maps; decisionId is persisted
-function canonical(value: unknown): string {
-  if (value === undefined) return 'null'
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
 }
 
 function clone<Value>(value: Value): Value {

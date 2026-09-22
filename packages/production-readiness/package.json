@@ -21,6 +21,7 @@
     "test": "bun test src"
   },
   "dependencies": {
+    "@control-plane/contracts": "workspace:*",
     "zod": "4.6.5"
   },
   "engines": {
