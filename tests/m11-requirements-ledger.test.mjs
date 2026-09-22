@@ -106,6 +106,55 @@ describe('M11.1 requirements ledger', () => {
     }
   })
 
+  test('retains extracted Control Plane PRD capability obligations and anchors', () => {
+    const expected = [
+      ['CP-PRD-CONNECTOR-AUTH-001', 'P00095'],
+      ['CP-PRD-CREDENTIAL-BOUNDARY-001', 'P00096'],
+      ['CP-PRD-PROVIDER-SCOPE-001', 'P00097'],
+      ['CP-PRD-TOOL-BRIDGE-001', 'P00098'],
+      ['CP-PRD-EXTERNAL-TOOL-BRIDGE-001', 'P00098'],
+      ['CP-PRD-NO-REUSABLE-SECRETS-001', 'P00099'],
+      ['CP-PRD-PROVIDER-AUTH-001', 'P00100'],
+      ['CP-PRD-MODEL-ROUTING-001', 'P00103'],
+      ['CP-PRD-CREDENTIAL-MODES-001', 'P00104'],
+      ['CP-PRD-USAGE-BUDGETS-001', 'P00105'],
+      ['CP-PRD-ATTEMPT-USAGE-001', 'P00105'],
+      ['CP-PRD-AUTHORITATIVE-USAGE-001', 'P00105'],
+      ['CP-PRD-MODEL-PROVENANCE-001', 'P00106'],
+      ['CP-PRD-SANDBOX-001', 'P00108'],
+      ['CP-PRD-LOCAL-TRANSPORT-001', 'P00109'],
+      ['CP-PRD-REMOTE-GATEWAY-ONLY-001', 'P00109'],
+      ['CP-PRD-LOCAL-PATH-BOUNDARY-001', 'P00109'],
+      ['CP-PRD-LOCAL-DATA-BOUNDARY-001', 'P00110'],
+      ['CP-PRD-OUTPUT-PROMOTION-001', 'P00111'],
+      ['CP-PRD-DURABLE-INTERACTIONS-001', 'P00113'],
+      ['CP-PRD-NORMALIZED-INTERACTION-UX-001', 'P00114'],
+      ['CP-PRD-EXPLICIT-APPROVAL-001', 'P00115'],
+      ['CP-PRD-DIRECT-DEFAULT-001', 'P00117'],
+      ['CP-PRD-DELEGATION-CRITERIA-001', 'P00118'],
+      ['CP-PRD-GRAPH-ORCHESTRATION-001', 'P00119'],
+      ['CP-PRD-GRAPH-AUTHORITY-001', 'P00120'],
+      ['CP-PRD-OUTCOME-ATTRIBUTION-001', 'P00122'],
+      ['CP-PRD-COMPAT-EVIDENCE-001', 'P00123'],
+      ['CP-PRD-BASELINE-COMPARISON-001', 'P00124'],
+      ['CP-PRD-FAILED-GATE-PROMOTION-001', 'P00125'],
+      ['CP-PRD-PUBLIC-CONTRACTS-001', 'P00127'],
+      ['CP-PRD-CONTRACT-INDEPENDENCE-001', 'P00128'],
+      ['CP-PRD-DETERMINISTIC-STUBS-001', 'P00129'],
+      ['CP-PRD-SERVICE-AUTH-001', 'P00130'],
+      ['CP-PRD-API-IDEMPOTENCY-001', 'P00130'],
+      ['CP-PRD-API-PAGINATION-001', 'P00130'],
+      ['CP-PRD-API-COMPATIBILITY-001', 'P00130'],
+      ['CP-PRD-API-TRACE-CORRELATION-001', 'P00130'],
+    ]
+    for (const [id, anchor] of expected) {
+      const row = ledger.requirements.find((entry) => entry.id === id)
+      expect(row?.sourceId).toBe('control-plane-prd')
+      expect(row.heading).toContain(anchor)
+      expect(row.issueRefs).toContain(195)
+    }
+  })
+
   test('distinguishes the recorded audit baseline from later scoped evidence', async () => {
     const report = await renderRequirementsReport(ledger)
     expect(report).toContain('not the current branch head')

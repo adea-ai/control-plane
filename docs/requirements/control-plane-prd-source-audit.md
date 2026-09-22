@@ -44,3 +44,13 @@ whole-profile production acceptance, the remaining PRD sections, or the approval
 caller lifecycle.
 
 No canonical Drive content, permissions, ownership, or folder state was changed.
+
+## Bounded extraction tranche — sections 8.4–8.10
+
+This tranche extracts PRD paragraphs P00095–P00130 into individually testable ledger rows.
+It remains implementation-partial: component evidence is cited where present, while complete
+provider, model, sandbox, orchestration, evaluation, and public-contract profile acceptance remains
+open under #195 and the relevant M11 implementation gaps. Together with the earlier tranche,
+sections 8.1–8.10 now have explicit rows; the rest of the source still needs extraction or reviewed
+equivalence mappings. See the [full-source extraction inventory](control-plane-prd-extraction-inventory.md)
+for pending sections and unresolved contradictions. This does not close the full-source requirement gate.

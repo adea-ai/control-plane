@@ -3615,6 +3615,708 @@
       }
     },
     {
+      "id": "CP-PRD-CONNECTOR-AUTH-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00095)",
+      "requirement": "A user or organization authorizes each external provider account once to the Control Plane or an approved first-party broker.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "integrations",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "integrations",
+        "disposition": "Provider authorization boundary is documented; complete provider-specific implementation evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-BOUNDARY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00096)",
+      "requirement": "The platform stores reusable credentials behind an audited secret boundary and exposes only scoped tool capabilities to executions.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "security",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "security",
+        "disposition": "Secret-boundary documentation exists; complete deployed/provider evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-PROVIDER-SCOPE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00097)",
+      "requirement": "Workspace, Agent, profile, and execution policy may narrow provider scope, resource scope, operations, risk class, rate limits, budgets, and approval requirements.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "execution-policy",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "execution-policy",
+        "disposition": "Policy narrowing tests exist; complete provider-scope integration remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00098)",
+      "requirement": "Managed runtimes receive tools through the Tool Gateway.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "tools",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "tools",
+        "disposition": "Tool-path component evidence exists; complete managed/external bridge parity remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-EXTERNAL-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00098)",
+      "requirement": "Compatible external harnesses may receive the same capabilities through a Control Plane MCP server or another approved tool bridge.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "tools",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/acp-runtime-adapter.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "tools",
+        "disposition": "External tool-bridge boundary is documented; compatible-harness production evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-NO-REUSABLE-SECRETS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00099)",
+      "requirement": "Models and harnesses never receive reusable OAuth refresh tokens, provider secrets, or unrelated connector credentials.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "security",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "security",
+        "disposition": "Redaction and secret-boundary controls are documented; full adversarial evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-PROVIDER-AUTH-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Shared Integrations and Tool Gateway (P00100)",
+      "requirement": "Each provider still requires its own initial authorization and repeated authorization per Agent, model, and harness is eliminated.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "integrations",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "integrations",
+        "disposition": "No complete current provider authorization contract was identified."
+      }
+    },
+    {
+      "id": "CP-PRD-MODEL-ROUTING-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00103)",
+      "requirement": "Use logical model aliases and deterministic eligibility, routing, fallback, and health policy.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "model-gateway",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "packages/model-gateway/src/index.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "model-gateway",
+        "disposition": "Model routing tests exist; full production provider evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-MODES-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00104)",
+      "requirement": "Keep managed inference, user-supplied API credentials, and native external-harness subscription entitlements distinct.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "model-gateway",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "model-gateway",
+        "disposition": "Credential-mode separation lacks complete current evidence."
+      }
+    },
+    {
+      "id": "CP-PRD-USAGE-BUDGETS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00105)",
+      "requirement": "Reserve and enforce execution budgets.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "usage",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "usage",
+        "disposition": "Usage/budget component evidence exists; authoritative settlement across profiles remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-ATTEMPT-USAGE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00105)",
+      "requirement": "Record usage at attempt level.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "usage",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/requirements/execution-consistency-source-audit.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "usage",
+        "disposition": "Attempt usage boundary is documented; complete profile evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-AUTHORITATIVE-USAGE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00105)",
+      "requirement": "Settle authoritative usage without treating provider telemetry as the billing authority.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "usage",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/requirements/execution-consistency-source-audit.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "usage",
+        "disposition": "Authoritative settlement boundary lacks complete current evidence."
+      }
+    },
+    {
+      "id": "CP-PRD-MODEL-PROVENANCE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Model Gateway and Usage Controls (P00106)",
+      "requirement": "Make model and router provenance visible for evaluation and incident review.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "model-gateway",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "model-gateway",
+        "disposition": "No focused current caller/operator evidence was identified."
+      }
+    },
+    {
+      "id": "CP-PRD-SANDBOX-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00108)",
+      "requirement": "Use replaceable sandbox providers for hosted code, shell, browser, and filesystem work.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "sandbox",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "sandbox",
+        "disposition": "Sandbox provider tests exist; hosted production-provider evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-LOCAL-TRANSPORT-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00109)",
+      "requirement": "Use direct local RuntimeAdapter/RuntimeDriver or IPC when Control Plane and runtime are co-located.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-gateway",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m5-runtime-gateway.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-gateway",
+        "disposition": "Transport boundary tests exist; complete profile certification remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-REMOTE-GATEWAY-ONLY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00109)",
+      "requirement": "Use the authenticated Runtime Gateway only for non-co-located RuntimeNodes.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-gateway",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m5-runtime-gateway.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-gateway",
+        "disposition": "Gateway boundary tests exist; complete profile certification remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-LOCAL-PATH-BOUNDARY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00109)",
+      "requirement": "No inbound local service is required and remotely supplied commands cannot choose arbitrary local paths.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [
+        { "kind": "document", "path": "docs/requirements/runtime-node-source-audit.md" }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "The path and inbound-service restrictions require focused current proof."
+      }
+    },
+    {
+      "id": "CP-PRD-LOCAL-DATA-BOUNDARY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00110)",
+      "requirement": "Keep local project access grant-based, bounded, auditable, and explicit. Repositories, prompt/conversation bodies, ProjectState, ContextPackages, ExecutionPlans, local credentials, provider memory, and local artifacts remain on the selected user-controlled execution location by default unless the user explicitly enables transfer or synchronization.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-security",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-security",
+        "disposition": "Grant-boundary evidence exists; full data-location audit remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-OUTPUT-PROMOTION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Sandboxed and Local Execution (P00111)",
+      "requirement": "Promote persistent outputs through explicit Artifact or ProjectState operations rather than ephemeral sandbox/runtime disks.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "artifacts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/requirements/artifact-storage-source-audit.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "artifacts",
+        "disposition": "Promotion boundary is documented; complete runtime integration evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-DURABLE-INTERACTIONS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Human Approval and Input (P00113)",
+      "requirement": "Represent approval and input requests as durable interactions with schema, expiry, authorization, and one-answer semantics.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "interactions",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "packages/domain/src/interactions.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "interactions",
+        "disposition": "Interaction tests exist; full profile evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-NORMALIZED-INTERACTION-UX-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Human Approval and Input (P00114)",
+      "requirement": "Allow clients to present their own UX while preserving one normalized interaction contract.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "interactions",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "packages/contracts/src/interaction-command.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "interactions",
+        "disposition": "Normalized interaction contract evidence exists; client-surface coverage remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-EXPLICIT-APPROVAL-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Human Approval and Input (P00115)",
+      "requirement": "Require explicit approval for configured destructive, external, privileged, or persistent effects.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "execution-policy",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [{ "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" }],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "execution-policy",
+        "disposition": "Policy approval controls exist; complete effect-class coverage remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-DIRECT-DEFAULT-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Multi-Agent Orchestration (P00117)",
+      "requirement": "Default to one direct execution.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "orchestration",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "orchestration",
+        "disposition": "Orchestration tests exist; default-path production evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-DELEGATION-CRITERIA-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Multi-Agent Orchestration (P00118)",
+      "requirement": "Create Workers or child executions only when specialization, parallelism, verification, or cost/latency evidence justifies delegation.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "orchestration",
+      "lane": "eval",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "orchestration",
+        "disposition": "Delegation behavior is tested; evidence-based selection remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-GRAPH-ORCHESTRATION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Multi-Agent Orchestration (P00119)",
+      "requirement": "Support bounded graph definitions, fan-out/fan-in, checkpoints, interrupts, parent/child relationships, independent child runtime selection, and context/budget inheritance.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "orchestration",
+      "lane": "end-to-end",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "orchestration",
+        "disposition": "Graph/orchestration tests exist; complete inheritance and profile evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-GRAPH-AUTHORITY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Multi-Agent Orchestration (P00120)",
+      "requirement": "Keep graph state, durable lifecycle state, ProjectState, and harness session history as separate authorities.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "orchestration",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "orchestration",
+        "disposition": "Authority separation is documented; complete runtime evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-OUTCOME-ATTRIBUTION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Evaluation, Compatibility, and Release Gates (P00122)",
+      "requirement": "Attribute outcomes to exact profiles, skills, context policy, runtime/adapter/driver, model route, tools, policy snapshot, graph definition, and platform version.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "evaluation",
+      "lane": "eval",
+      "issueRefs": [195, 191],
+      "evidence": [
+        { "kind": "test", "path": "packages/profile-portability/src/evaluation.test.mjs" }
+      ],
+      "gap": {
+        "issue": 191,
+        "severity": "high",
+        "owner": "evaluation",
+        "disposition": "Evaluation provenance tests exist; full attribution matrix remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-COMPAT-EVIDENCE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Evaluation, Compatibility, and Release Gates (P00123)",
+      "requirement": "Maintain machine-readable runtime compatibility evidence and explicit support states.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-compatibility",
+      "lane": "contract/schema",
+      "issueRefs": [195, 191],
+      "evidence": [
+        { "kind": "document", "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml" }
+      ],
+      "gap": {
+        "issue": 191,
+        "severity": "high",
+        "owner": "runtime-compatibility",
+        "disposition": "Compatibility evidence exists; complete support-state production mapping remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-BASELINE-COMPARISON-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Evaluation, Compatibility, and Release Gates (P00124)",
+      "requirement": "Compare candidates against approved baselines for quality, safety, reliability, latency, and cost.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "evaluation",
+      "lane": "eval",
+      "issueRefs": [195, 191],
+      "evidence": [
+        { "kind": "test", "path": "packages/profile-portability/src/evaluation.test.mjs" }
+      ],
+      "gap": {
+        "issue": 191,
+        "severity": "high",
+        "owner": "evaluation",
+        "disposition": "Baseline evaluation component evidence exists; complete release scorecard evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-FAILED-GATE-PROMOTION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Evaluation, Compatibility, and Release Gates (P00125)",
+      "requirement": "Allow failed gates to block promotion without deleting candidate versions.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "evaluation",
+      "lane": "eval",
+      "issueRefs": [195, 191],
+      "evidence": [{ "kind": "document", "path": "docs/performance.md" }],
+      "gap": {
+        "issue": 191,
+        "severity": "high",
+        "owner": "evaluation",
+        "disposition": "No focused current promotion-gate test was identified."
+      }
+    },
+    {
+      "id": "CP-PRD-PUBLIC-CONTRACTS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00127)",
+      "requirement": "Expose versioned REST/OpenAPI contracts, normalized events, and a supported TypeScript SDK.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Public contract documentation exists; complete SDK/event certification remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-CONTRACT-INDEPENDENCE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00128)",
+      "requirement": "Keep public contracts independent from internal database schemas, Restate payloads, LangGraph state, ACP objects, and vendor SDK types.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/m10-portability-conformance.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Portability evidence exists; complete public-boundary audit remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-DETERMINISTIC-STUBS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00129)",
+      "requirement": "Provide deterministic stubs and contract tests so third-party applications can integrate without running paid providers.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Deterministic test fixtures exist; complete third-party contract coverage remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-SERVICE-AUTH-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00130)",
+      "requirement": "Support service authentication, caller identity, and tenancy/workspace scope.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Contract-level controls exist; complete cross-surface evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-API-IDEMPOTENCY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00130)",
+      "requirement": "Support idempotency.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Idempotency evidence exists; complete public-surface coverage remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-API-PAGINATION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00130)",
+      "requirement": "Support pagination.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "No focused current pagination evidence was identified."
+      }
+    },
+    {
+      "id": "CP-PRD-API-COMPATIBILITY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00130)",
+      "requirement": "Support compatibility negotiation.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Compatibility contract evidence exists; complete public API coverage remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-API-TRACE-CORRELATION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Public APIs, Events, and SDKs (P00130)",
+      "requirement": "Support trace correlation.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "contracts",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "contracts",
+        "disposition": "Correlation is documented; complete public-surface evidence remains partial."
+      }
+    },
+    {
       "id": "CORTANA-PRD-RETRIEVAL-001",
       "sourceId": "cortana-prd",
       "heading": "Source retrieval",
@@ -7646,6 +8348,158 @@
     },
     {
       "id": "CP-PRD-SESSION-CAPABILITIES-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CONNECTOR-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROVIDER-SCOPE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-EXTERNAL-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-NO-REUSABLE-SECRETS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROVIDER-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-MODEL-ROUTING-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-MODES-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-USAGE-BUDGETS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-ATTEMPT-USAGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-AUTHORITATIVE-USAGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-MODEL-PROVENANCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-SANDBOX-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-TRANSPORT-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-REMOTE-GATEWAY-ONLY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-PATH-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-DATA-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-OUTPUT-PROMOTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DURABLE-INTERACTIONS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-NORMALIZED-INTERACTION-UX-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-EXPLICIT-APPROVAL-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DIRECT-DEFAULT-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DELEGATION-CRITERIA-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-GRAPH-ORCHESTRATION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-GRAPH-AUTHORITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-OUTCOME-ATTRIBUTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-COMPAT-EVIDENCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-BASELINE-COMPARISON-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-FAILED-GATE-PROMOTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PUBLIC-CONTRACTS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CONTRACT-INDEPENDENCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DETERMINISTIC-STUBS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-SERVICE-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-IDEMPOTENCY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-PAGINATION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-COMPATIBILITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-TRACE-CORRELATION-001",
       "sourceId": "control-plane-prd"
     },
     {
