@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.4](https://github.com/adea-ai/control-plane/compare/context-v1.9.3...context-v1.9.4) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** context package digests are versioned with code-point normalization ([#663](https://github.com/adea-ai/control-plane/issues/663)) ([1d05bd2](https://github.com/adea-ai/control-plane/commit/1d05bd28ac3563d52f19e785faad403c35ee5158))
+
 ## [1.9.3](https://github.com/adea-ai/control-plane/compare/context-v1.9.2...context-v1.9.3) (2026-09-20)
 
 

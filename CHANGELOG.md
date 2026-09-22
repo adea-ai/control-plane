@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.32.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.10...workspace-v1.32.11) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** context package digests are versioned with code-point normalization ([#663](https://github.com/adea-ai/control-plane/issues/663)) ([1d05bd2](https://github.com/adea-ai/control-plane/commit/1d05bd28ac3563d52f19e785faad403c35ee5158))
+* **m612:** routing ordering cut over in place; inventory fingerprints versioned ([#661](https://github.com/adea-ai/control-plane/issues/661)) ([8f4fbc4](https://github.com/adea-ai/control-plane/commit/8f4fbc41d7e57abd0c358658fc24c7e4608239e8))
+
 ## [1.32.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.9...workspace-v1.32.10) (2026-09-22)
 
 
