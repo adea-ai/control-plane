@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.7...workspace-v1.32.8) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** context command envelopes verify under both canonical forms ([#655](https://github.com/adea-ai/control-plane/issues/655)) ([15a786d](https://github.com/adea-ai/control-plane/commit/15a786de538c38bc4799008f7207559093b026c0))
+
 ## [1.32.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.6...workspace-v1.32.7) (2026-09-22)
 
 
