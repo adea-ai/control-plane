@@ -35,6 +35,38 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('retention evidence distinguishes fail-closed deletion from scheduler doubles', async () => {
+    const row = ledger.requirements.find(({ id }) => id === 'CP-CONS-003')
+    const evidence = row.evidence.map(({ scope = '' }) => scope).join('\n')
+    for (const [path, code] of [
+      [
+        'packages/database/src/command-inbox-repository.ts',
+        'COMMAND_RETENTION_ELIGIBILITY_REQUIRED',
+      ],
+      [
+        'packages/database/src/execution-event-repository.ts',
+        'EVENT_RETENTION_ELIGIBILITY_REQUIRED',
+      ],
+      ['packages/sqlite-persistence/src/repositories.ts', 'COMMAND_RETENTION_ELIGIBILITY_REQUIRED'],
+      [
+        'packages/sqlite-persistence/src/durability-repositories.ts',
+        'EVENT_RETENTION_ELIGIBILITY_REQUIRED',
+      ],
+    ]) {
+      const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+      if (source.includes(`throw new Error('${code}')`)) {
+        expect(evidence).toContain(code)
+        expect(row.gap.disposition).toContain('fail closed')
+        expect(evidence).not.toContain('physically deletes')
+        expect(evidence).not.toContain('removes only past-retention')
+      }
+    }
+    expect(
+      row.evidence.find(({ path }) => path === 'packages/deployment/src/retention-sweep.test.mjs')
+        .scope
+    ).toContain('repository doubles')
+  })
+
   test('maps exactly the bounded Control Plane PRD sections 8.1-8.3', () => {
     const expectedIds = [
       'CP-PRD-PROFILE-CREATE-001',
