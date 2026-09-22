@@ -47,6 +47,11 @@ Google Docs bookmarks. The implementation baseline for this inventory is
 
 ## Explicit unresolved source contradictions
 
+The [principles crosswalk](control-plane-prd-principle-crosswalk.md) compares
+P00055 and P00057–P00066 against exact existing requirement text. It distinguishes
+joint mappings from still-unmapped clauses; it does not certify implementation or
+complete extraction of any other section.
+
 1. **Default Local durability.** P00136 lists Restate in the desktop bundle; P00169 says
    Local/Self-hosted Restate; P00185 names Restate restart in its acceptance matrix.
    Owner-approved #548 makes embedded SQLite the default Local durability implementation,
