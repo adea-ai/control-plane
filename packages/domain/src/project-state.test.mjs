@@ -6,6 +6,8 @@ import {
   ProjectStateOperationSchema,
   ProjectStateService,
   RecordingProjectStateEventPublisher,
+  projectStateMutationDigestV2,
+  projectStateMutationLegacyDigest,
 } from './index.ts'
 
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
@@ -13,6 +15,44 @@ const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
 const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
 const now = '2026-08-23T12:00:00.000Z'
 const later = '2026-08-23T13:00:00.000Z'
+
+describe('project state digest cutover', () => {
+  test('a mutation persisted pre-cutover replays via the legacy digest', async () => {
+    const repository = new InMemoryProjectStateRepository()
+    const service = new ProjectStateService(
+      repository,
+      new InMemoryStatePromotionProposalRepository(),
+      new RecordingProjectStateEventPublisher()
+    )
+    await service.initialize({ workspaceId, projectId, at: now })
+    // Appended values are free-form JSON: keys 'a-b'/'a_b' order differently
+    // under localeCompare vs code point, so the two forms genuinely diverge.
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', {
+        'a-b': 1,
+        a_b: 2,
+      }),
+    ])
+    const legacyDigest = projectStateMutationLegacyDigest(input)
+    expect(legacyDigest).not.toBe(projectStateMutationDigestV2(input))
+
+    // Intercept the first write to simulate a record stored pre-cutover.
+    const originalCompareAndSet = repository.compareAndSet.bind(repository)
+    repository.compareAndSet = async (expectedRevision, state, record) => {
+      return originalCompareAndSet(expectedRevision, state, {
+        ...record,
+        inputDigest: legacyDigest,
+      })
+    }
+
+    const first = await service.applyMutation(input)
+    expect(first.applied).toBe(true)
+    // Replay computes the V2 form plus the legacy candidate: the pre-cutover
+    // record must resolve to an idempotent replay, never MUTATION_ID_REUSED.
+    const replay = await service.applyMutation(input)
+    expect(replay.applied).toBe(false)
+  })
+})
 
 describe('revisioned ProjectState and promotion proposals', () => {
   test('allows only one conflicting writer at an expected revision', async () => {

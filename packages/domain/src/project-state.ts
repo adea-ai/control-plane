@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
@@ -413,14 +414,18 @@ export class ProjectStateService {
     ) {
       throw new ProjectStateError('PROMOTION_REQUIRED')
     }
-    const inputDigest = digest(mutation)
+    // Dual-accept (#612): records persisted before the code-point cutover
+    // carry the legacy locale-dependent digest of the same mutation.
+    const inputDigest = digestV2(mutation)
+    const legacyInputDigest = digest(mutation)
     const applied = await this.repository.getMutation(
       mutation.workspaceId,
       mutation.projectId,
       mutation.mutationId
     )
     if (applied) {
-      if (applied.inputDigest !== inputDigest) throw new ProjectStateError('MUTATION_ID_REUSED')
+      if (applied.inputDigest !== inputDigest && applied.inputDigest !== legacyInputDigest)
+        throw new ProjectStateError('MUTATION_ID_REUSED')
       const state = await this.repository.getAtRevision(
         mutation.workspaceId,
         mutation.projectId,
@@ -464,7 +469,8 @@ export class ProjectStateService {
           mutation.mutationId
         )
         if (winner) {
-          if (winner.inputDigest !== inputDigest) throw new ProjectStateError('MUTATION_ID_REUSED')
+          if (winner.inputDigest !== inputDigest && winner.inputDigest !== legacyInputDigest)
+            throw new ProjectStateError('MUTATION_ID_REUSED')
           const winnerState = await this.repository.getAtRevision(
             mutation.workspaceId,
             mutation.projectId,
@@ -786,8 +792,28 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// mutation and state-item values are z.json() (free-form keys); mutation inputDigest is persisted for idempotency
+function digestV2(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+}
+
+/**
+ * Legacy-form digest of a parsed mutation input (#612 transition helper):
+ * lets senders and tests reproduce the bytes stored before the code-point
+ * cutover. Drops together with the dual-accept in applyMutation.
+ */
+export function projectStateMutationLegacyDigest(input: unknown): string {
+  return digest(MutationInputSchema.parse(input))
+}
+
+export function projectStateMutationDigestV2(input: unknown): string {
+  return digestV2(MutationInputSchema.parse(input))
+}
+
+// CANONICAL-JSON: verification-only legacy form (#612 transition). applyMutation
+// stores the V2 code-point digest and dual-accepts the legacy locale-dependent
+// form for records persisted before the cutover.
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }

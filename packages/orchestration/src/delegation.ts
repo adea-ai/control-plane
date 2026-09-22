@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
@@ -288,10 +289,14 @@ export class DelegationService {
     readonly plan: ExecutionPlan
   }> {
     const parsed = DelegateInputSchema.parse(input)
-    const inputDigest = digest(parsed)
+    // Dual-accept (#612): records persisted before the code-point cutover
+    // carry the legacy locale-dependent digest of the same delegation.
+    const inputDigest = digestV2(parsed)
+    const legacyInputDigest = digest(parsed)
     const existing = await this.#delegations.get(parsed.delegationId)
     if (existing) {
-      if (existing.inputDigest !== inputDigest) throw new DelegationError('DELEGATION_CONFLICT')
+      if (existing.inputDigest !== inputDigest && existing.inputDigest !== legacyInputDigest)
+        throw new DelegationError('DELEGATION_CONFLICT')
       const execution = await this.#lifecycle.getExecution(existing.childExecutionId)
       const plan = await this.#plans.get({
         executionPlanId: existing.childExecutionPlanId,
@@ -346,7 +351,10 @@ export class DelegationService {
     })
     if (!(await this.#delegations.insert(record))) {
       const replay = await this.#delegations.get(parsed.delegationId)
-      if (!replay || replay.inputDigest !== inputDigest) {
+      if (
+        !replay ||
+        (replay.inputDigest !== inputDigest && replay.inputDigest !== legacyInputDigest)
+      ) {
         throw new DelegationError('DELEGATION_CONFLICT')
       }
       return { record: replay, execution, plan }
@@ -676,12 +684,32 @@ function assertDeadline(
   }
 }
 
+function digestV2(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(value) ?? 'null')
+    .digest('hex')}`
+}
+
+/**
+ * Legacy-form digest of a parsed delegation input (#612 transition helper):
+ * lets senders and tests reproduce the bytes stored before the code-point
+ * cutover. Drops together with the dual-accept in delegate().
+ */
+export function delegationInputLegacyDigest(input: unknown): string {
+  return digest(DelegateInputSchema.parse(input))
+}
+
+export function delegationInputDigestV2(input: unknown): string {
+  return digestV2(DelegateInputSchema.parse(input))
+}
+
 function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// childPlan is z.unknown() (arbitrary keys); inputDigest is persisted for replay conflict detection
+// CANONICAL-JSON: verification-only legacy form (#612 transition). delegate()
+// stores the V2 code-point digest and dual-accepts the legacy locale-dependent
+// form for records persisted before the cutover; childPlan is z.unknown().
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value !== null && typeof value === 'object') {
