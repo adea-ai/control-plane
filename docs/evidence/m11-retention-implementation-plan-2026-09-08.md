@@ -74,9 +74,15 @@ deleting live command data or expiring backups.
 - `packages/database/src/schema/commands.ts` and `events.ts` index expiry;
   `messaging.ts` supplies inbox soft deletion and outbox publication state.
   Schema metadata is not proof of safe deletion or a scheduled worker.
-- SQLite `control_plane_records` has namespace, ID, revision, JSON value, and
-  update time only. `PersistenceTransaction.delete` supports revision checking,
-  but does not evaluate expiry, terminal state, scope, references, or holds.
+- SQLite v2 adds partial expression indexes for canonical UTC-millisecond expiry
+  strings in command-inbox and execution-events records. These are coarse
+  candidate access paths, not calendar validation or deletion authority.
+  `PersistenceTransaction.delete` supports revision checking, but does not
+  evaluate expiry, terminal state, scope, references, or holds. Both SQLite and
+  PostgreSQL age-only inbox/event deletion entry points now fail closed with
+  `*_RETENTION_ELIGIBILITY_REQUIRED` before storage access; safe cleanup is still
+  unimplemented. See the current
+  [per-class coverage matrix](m11-retention-coverage-2026-09-22.md).
 - `CommandInboxService.acceptExecution` first looks up the scoped idempotency
   key. An absent record enters new admission. Requested retention can be extended
   in a new submission; it is not a permanent rejection marker for a deleted key.

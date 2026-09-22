@@ -1742,22 +1742,30 @@
       "id": "COMPAT-SQLITE-SCHEMA",
       "representations": [
         "SQLite Drizzle schema",
-        "SCHEMA_VERSION=1",
+        "SCHEMA_VERSION=2",
         "ordered checksum-verified forward migration registry"
       ],
       "classification": "partially_verified",
-      "assessment": "SQLite startup applies an ordered transactional registry, verifies applied checksums, and adopts exact legacy v1 schemas. Synthetic forward-step failure and repair plus file-backed adoption/backup/reopen are tested; no product schema beyond v1 has shipped.",
+      "assessment": "SQLite startup applies an ordered transactional registry, verifies applied checksums, and adopts exact legacy v1 schemas. The v2 product migration appends canonical-timestamp expiry indexes without changing the v1 checksum. File-backed tests cover v1 row preservation, indexed bounded queries, legacy backup upgrade, snapshot/database version agreement, and rejection of altered v2 indexes without replacing live records. These are component checks, not deployed upgrade, old-binary rollback, or full retention certification.",
       "evidence": [
         {
           "kind": "source",
           "path": "packages/sqlite-persistence/src/index.ts"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/migrations.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/restore-validation.test.mjs"
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "medium",
         "owner": "sqlite-persistence",
-        "disposition": "Certify the actual version-2 product migration and its backup recovery/forward repair before introducing schema version 2."
+        "disposition": "Certify the v2 product migration in the supported deployed profiles, including backup recovery/forward repair and rollback using a retained pre-upgrade v1 checkpoint with the old binary. No automatic downgrade or preservation of post-checkpoint writes is claimed; safe retention eligibility and deletion remain separate open gates."
       }
     },
     {
