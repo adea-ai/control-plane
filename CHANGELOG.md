@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.1...workspace-v1.32.2) (2026-09-22)
+
+
+### Documentation
+
+* **audit:** map atomic PRD execution and runtime obligations ([#643](https://github.com/adea-ai/control-plane/issues/643)) ([19f5586](https://github.com/adea-ai/control-plane/commit/19f5586add0b18789f463b00a05fb982ff3f3548))
+
 ## [1.32.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.0...workspace-v1.32.1) (2026-09-22)
 
 
