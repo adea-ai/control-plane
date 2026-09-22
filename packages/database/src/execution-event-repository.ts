@@ -1,7 +1,7 @@
 import { ExecutionSchema, type Execution } from '@control-plane/domain'
 import {
   ExecutionEventSchema,
-  hashExecutionEventPayload,
+  hashExecutionEventPayloadV2,
   sanitizeExecutionEventDraft,
   type ExecutionEvent,
   type ExecutionEventDraft,
@@ -273,7 +273,7 @@ export async function appendExecutionEventInTransaction(
     ...sanitized,
     sequence: (latest?.sequence ?? 0) + 1,
     payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
-    payloadHash: hashExecutionEventPayload(sanitized.payload),
+    payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
     publication: { status: 'pending', attempts: 0, version: 1 },
   })
   const [inserted] = await transaction

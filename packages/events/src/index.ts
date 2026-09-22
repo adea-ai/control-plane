@@ -2,6 +2,7 @@ import { IdentifierSchemas } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { redactTelemetryValue } from '@control-plane/telemetry'
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
@@ -326,10 +327,22 @@ export function hashExecutionEventPayload(payload: Readonly<Record<string, unkno
   return createHash('sha256').update(canonicalJson(payload)).digest('hex')
 }
 
+/**
+ * Code-point canonical form (#612). Host-independent, so newly written event
+ * rows hash identically everywhere. Event-row payload hashes are write-once
+ * (never recomputed for verification), which made the in-place cutover safe;
+ * the legacy form above is retained only to keep the runtime-gateway frame
+ * replay verification byte-compatible until its versioned migration.
+ */
+export function hashExecutionEventPayloadV2(payload: Readonly<Record<string, unknown>>): string {
+  return createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex')
+}
+
 export * from './runtime-ingestion.js'
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// payload is z.record(string, z.json()) with free-form keys; payloadHash is persisted and non-JSON values throw
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify
+// Retained so runtime-gateway frameHash replay receipts persist verifiable across the
+// #612 cutover; event-row payload hashes migrated to hashExecutionEventPayloadV2
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value)
