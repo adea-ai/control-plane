@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.31.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.12...workspace-v1.31.13) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** event-row payload hashes are now locale-independent; add harness docs ([#635](https://github.com/adea-ai/control-plane/issues/635)) ([62489ae](https://github.com/adea-ai/control-plane/commit/62489ae931c51285099cd3f4396ed7f5d8ecbc90))
+
+
+### Tests
+
+* **hosted:** e2e the hosted control plane HTTP surface over real Postgres ([#633](https://github.com/adea-ai/control-plane/issues/633)) ([fd1df61](https://github.com/adea-ai/control-plane/commit/fd1df6107fe776214ca97416bff1c01c0515c92b))
+
 ## [1.31.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.11...workspace-v1.31.12) (2026-09-21)
 
 
