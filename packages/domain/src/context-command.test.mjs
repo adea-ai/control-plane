@@ -8,6 +8,7 @@ import {
   ContextCommandRecordSchema,
   InMemoryContextCommandRepository,
   contextCommandSemanticHash,
+  contextCommandSemanticHashV2,
   createQueuedContextCommandRecord,
 } from './context-command.ts'
 
@@ -47,6 +48,43 @@ function command(overrides = {}) {
   }
   return { ...value, payloadHash: contextCommandSemanticHash(value) }
 }
+
+describe('context command semantic hash cutover', () => {
+  test('accepts envelopes hashed with the V2 code-point form on divergent keys', () => {
+    const divergent = command({
+      payload: {
+        version: 1,
+        parameters: {
+          operationId: 'context-author:operation-test-0001',
+          principalRef: 'service:author',
+          scopeDigest: `sha256:${'a'.repeat(64)}`,
+          objective: 'Find bounded evidence',
+          'a-b': 1,
+          a_b: 2,
+        },
+      },
+    })
+    // The two canonical forms genuinely diverge on these keys.
+    expect(contextCommandSemanticHashV2(divergent)).not.toBe(contextCommandSemanticHash(divergent))
+    const asV2 = { ...divergent, payloadHash: contextCommandSemanticHashV2(divergent) }
+    expect(() => createQueuedContextCommandRecord(asV2, now)).not.toThrow()
+  })
+
+  test('still accepts legacy-form hashes for envelopes persisted pre-cutover', () => {
+    const value = command()
+    expect(value.payloadHash).toBe(contextCommandSemanticHash(value))
+    expect(() => createQueuedContextCommandRecord(value, now)).not.toThrow()
+  })
+
+  test('rejects a hash under neither canonical form', () => {
+    expect(() =>
+      createQueuedContextCommandRecord(
+        { ...command(), payloadHash: `sha256:${'f'.repeat(64)}` },
+        now
+      )
+    ).toThrow()
+  })
+})
 
 describe('context command ledger', () => {
   test('node inbox preserves uncertainty across recovery and terminal replay', () => {
