@@ -122,11 +122,12 @@
     },
     "apps/runtime-gateway": {
       "name": "@control-plane/runtime-gateway",
-      "version": "1.6.2",
+      "version": "1.6.3",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
+        "@control-plane/contracts": "workspace:*",
         "@control-plane/cortana-context-adapter": "workspace:*",
         "@control-plane/database": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -215,7 +216,7 @@
     },
     "packages/config": {
       "name": "@control-plane/config",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
@@ -269,7 +270,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.19.2",
+      "version": "1.19.3",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -292,11 +293,11 @@
     },
     "packages/deployment": {
       "name": "@control-plane/deployment",
-      "version": "1.7.2",
+      "version": "1.7.3",
     },
     "packages/domain": {
       "name": "@control-plane/domain",
-      "version": "1.11.3",
+      "version": "1.11.5",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -304,7 +305,7 @@
     },
     "packages/events": {
       "name": "@control-plane/events",
-      "version": "1.7.3",
+      "version": "1.7.4",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -314,7 +315,7 @@
     },
     "packages/execution-plan": {
       "name": "@control-plane/execution-plan",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -341,7 +342,7 @@
     },
     "packages/managed-pi-adapter": {
       "name": "@control-plane/managed-pi-adapter",
-      "version": "1.5.3",
+      "version": "1.5.4",
       "dependencies": {
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -382,7 +383,7 @@
     },
     "packages/orchestration": {
       "name": "@control-plane/orchestration",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -393,7 +394,7 @@
     },
     "packages/policy": {
       "name": "@control-plane/policy",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -401,7 +402,7 @@
     },
     "packages/production-readiness": {
       "name": "@control-plane/production-readiness",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "zod": "4.6.5",
@@ -427,7 +428,7 @@
     },
     "packages/remote-control-relay": {
       "name": "@control-plane/remote-control-relay",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -479,7 +480,7 @@
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.12.0",
+      "version": "1.12.1",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",

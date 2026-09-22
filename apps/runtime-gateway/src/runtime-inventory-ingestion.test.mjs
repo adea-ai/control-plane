@@ -13,6 +13,7 @@ import {
   RuntimeInventoryIngestionError,
   RuntimeInventoryIngestionService,
   RuntimeInventoryMaintenance,
+  legacyInventoryDigest,
 } from './index.js'
 
 const nodeId = 'rnr_01JABCDEF0123456789ABCDEFG'
@@ -506,6 +507,22 @@ describe('Runtime Gateway inventory ingestion', () => {
       disappeared: [],
     })
     expect(await fixture.registry.listByRuntimeNode(nodeId)).toHaveLength(1)
+  })
+
+  test('a checkpoint persisted pre-cutover replays via the legacy fingerprint', async () => {
+    const fixture = createFixture()
+    const envelope = inventory(1, [driver(runtimeA)])
+    await fixture.service.ingest(envelope, source())
+    // Rewrite the stored fingerprint to the pre-cutover legacy form: the same
+    // envelope hashed with insertion-order stringify and localeCompare ordering.
+    const stored = await fixture.checkpoints.get(nodeId)
+    const legacyDigest = legacyInventoryDigest(envelope)
+    await fixture.checkpoints.compareAndSet(stored.revision, {
+      ...stored,
+      snapshotDigest: legacyDigest,
+    })
+    const replay = await fixture.service.ingest(envelope, source())
+    expect(replay).toMatchObject({ outcome: 'duplicate', snapshotVersion: 1 })
   })
 
   test('canonicalizes inventory ordering for semantic replay identity', async () => {
