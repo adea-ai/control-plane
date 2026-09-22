@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.4...workspace-v1.32.5) (2026-09-22)
+
+
+### Documentation
+
+* **audit:** trace PRD principles to exact requirement clauses ([#649](https://github.com/adea-ai/control-plane/issues/649)) ([41f3dd1](https://github.com/adea-ai/control-plane/commit/41f3dd1935f9f7d5290b34bdf1eb4e300f0850bc))
+
 ## [1.32.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.3...workspace-v1.32.4) (2026-09-22)
 
 
