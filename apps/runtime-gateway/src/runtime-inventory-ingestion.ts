@@ -529,6 +529,7 @@ function publicNodeStatus(
   return nodeStatus === 'online' || nodeStatus === 'revoked' ? nodeStatus : 'offline'
 }
 
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
 // Dual-form inventory fingerprints (#612): new checkpoints hash with the
 // host-independent code-point canonical form; the legacy form (insertion-order
 // stringify + localeCompare orderings) is recomputed only so a replay of an
