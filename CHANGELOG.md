@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.3...workspace-v1.32.4) (2026-09-22)
+
+
+### Documentation
+
+* **audit:** reconcile fail-closed retention evidence ([#646](https://github.com/adea-ai/control-plane/issues/646)) ([1dce6cc](https://github.com/adea-ai/control-plane/commit/1dce6cc7191897411b521d0742263134c1af9de1))
+
 ## [1.32.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.2...workspace-v1.32.3) (2026-09-22)
 
 
