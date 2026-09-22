@@ -593,7 +593,7 @@ export class LocalControlPlaneComposition {
     this.#started = false
     // Drain the scheduler first: a clean close never abandons an in-flight pass.
     await this.#reconciliationScheduler?.close()
-    this.#retentionSweep?.close()
+    await this.#retentionSweep?.close()
     try {
       await this.remoteControl?.stop()
     } finally {

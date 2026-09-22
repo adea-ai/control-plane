@@ -380,6 +380,11 @@ export class HostedServerControlPlaneComposition {
       }),
     })
     this.executionLifecycleActivities = activities
+    this.#retentionSweep = new RetentionSweep({
+      commandInbox: new PostgresCommandAcceptanceRepository(this.connection.database),
+      executionEvents: new PostgresExecutionEventRepository(this.connection.database),
+      intervalMs: options.retentionSweepIntervalMs ?? 3_600_000,
+    })
     // Reconciliation scheduling is explicit composition configuration: absent
     // configuration enables nothing, and invalid bounds fail closed above.
     // `projection: 'observation'` composes the production adapters over this
@@ -432,11 +437,6 @@ export class HostedServerControlPlaneComposition {
       })
       this.reconciliationSource = source
       this.reconciliationEffects = effects
-      this.#retentionSweep = new RetentionSweep({
-        commandInbox: new PostgresCommandAcceptanceRepository(this.connection.database),
-        executionEvents: new PostgresExecutionEventRepository(this.connection.database),
-        intervalMs: options.retentionSweepIntervalMs ?? 3_600_000,
-      })
       this.#reconciliationScheduler = new ReconciliationScheduler({
         service: this.reconciliationService,
         intervalMs: reconciliation.intervalMs,
@@ -488,7 +488,7 @@ export class HostedServerControlPlaneComposition {
       this.#retentionSweep?.start()
       this.#reconciliationScheduler?.start()
     } catch (error) {
-      this.#retentionSweep?.close()
+      await this.#retentionSweep?.close()
       await this.#reconciliationScheduler?.close().catch(() => undefined)
       await this.remoteControl?.stop()
       await this.workflow.stop().catch(() => undefined)
@@ -544,6 +544,7 @@ export class HostedServerControlPlaneComposition {
     this.#started = false
     // Drain the scheduler first: a clean close never abandons an in-flight pass.
     await this.#reconciliationScheduler?.close()
+    await this.#retentionSweep?.close()
     await this.remoteControl?.stop()
     await this.workflow.stop().catch(() => undefined)
     await this.#endpoint?.shutdown().catch(() => undefined)

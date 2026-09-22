@@ -142,6 +142,14 @@ the existing explicit retention-expired response. Deployments must separately re
 retention and ensure inbox data is retained at least as long as the protected execution. This
 acceptance check alone does not prove cleanup policy or physical retention across profiles.
 
+Hosted Server starts its command-inbox and execution-event retention sweep independently of
+optional execution reconciliation. Its default interval is one hour; the composition option
+`retentionSweepIntervalMs` accepts positive integer milliseconds up to one day. Scheduled
+passes wait for the previous pass to settle before the next interval begins. Shutdown cancels
+future passes and drains the active scheduled pass before closing storage. Local and managed
+cloud use the same scheduler lifecycle. This wiring does not establish deployed retention
+acceptance or SQLite indexed-expiry parity; those remain M11.9 evidence requirements.
+
 ## ExecutionEvent persistence
 
 Execution events are durable, ordered, redacted records. Required state transitions and their durable event/outbox records must commit atomically within the owning persistence adapter's transaction semantics. Raw prompt, credential, file, provider, or unrestricted runtime payloads are not event-log content.
