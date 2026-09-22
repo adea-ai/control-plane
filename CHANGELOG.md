@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.2...workspace-v1.32.3) (2026-09-22)
+
+
+### Documentation
+
+* **audit:** map PRD core capabilities and full-source coverage ([#645](https://github.com/adea-ai/control-plane/issues/645)) ([af61901](https://github.com/adea-ai/control-plane/commit/af6190177f764d938cb3099f443888f4712c942a))
+
 ## [1.32.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.1...workspace-v1.32.2) (2026-09-22)
 
 
