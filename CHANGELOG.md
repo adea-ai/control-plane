@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.5...workspace-v1.32.6) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** frame hashes are versioned so pre-cutover receipts still replay ([#651](https://github.com/adea-ai/control-plane/issues/651)) ([fa51e8c](https://github.com/adea-ai/control-plane/commit/fa51e8c1bfc7249297a2c5608d103a179392e797))
+
 ## [1.32.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.4...workspace-v1.32.5) (2026-09-22)
 
 
