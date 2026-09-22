@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.14...workspace-v1.32.0) (2026-09-22)
+
+
+### Features
+
+* **sqlite:** index expiry candidates and upgrade legacy backups ([#638](https://github.com/adea-ai/control-plane/issues/638)) ([7dc44bb](https://github.com/adea-ai/control-plane/commit/7dc44bbd247c3d0937fae215a744abafb39724ff))
+
 ## [1.31.14](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.13...workspace-v1.31.14) (2026-09-22)
 
 
