@@ -221,7 +221,7 @@ proof of rollback, restart recovery, load, isolation, secret-canary, or cost acc
 
 ## Local operations — M10
 
-Local uses all-in-one Control Plane + SQLite + single-node Restate + filesystem storage + direct RuntimeTransport.
+Local uses all-in-one Control Plane + SQLite's embedded workflow queue (no Restate process) + filesystem storage + direct RuntimeTransport.
 
 ### Ambiguous direct-runtime dispatch
 

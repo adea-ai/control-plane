@@ -1479,7 +1479,7 @@
         "secrets": "Composite environment/private-file SecretsProvider",
         "workflow": "Local Restate"
       },
-      "assessment": "The all-in-one profile uses the shared Local core, rejects remote-gateway transport, and fails execution acceptance explicitly when no direct runtime is configured. Its packaged managed Pi RPC client resolves immutable SQLite inputs and completes through Local Restate; injected managed Pi and ACP direct execution plus SQLite restart recovery also pass.",
+      "assessment": "The all-in-one profile uses the shared Local core, rejects remote-gateway transport, and fails execution acceptance explicitly when no direct runtime is configured. Its packaged managed Pi RPC client resolves immutable SQLite inputs and completes through Local Restate; injected managed Pi and ACP direct execution plus SQLite restart recovery also pass. This hosted-simple row retains Restate because that profile explicitly selects it.",
       "evidence": [
         {
           "kind": "test",
@@ -1516,13 +1516,17 @@
         "processes": "NodeProcessRuntimeProvider",
         "runtimeTransport": "Packaged ManagedPiProcessClient or injected DirectRuntimeActivityPort; unavailable acceptance otherwise",
         "secrets": "Composite environment/private-file SecretsProvider",
-        "workflow": "Local Restate"
+        "workflow": "embedded SQLite queue (default Local); Restate only when explicitly selected"
       },
-      "assessment": "The all-in-one profile shares domain, execution, and Restate code, prohibits remote-gateway transport, and fails execution acceptance explicitly when no direct runtime is configured. Its packaged managed Pi RPC client resolves immutable SQLite inputs and completes through Local Restate; injected managed Pi and ACP direct execution plus SQLite restart recovery also pass.",
+      "assessment": "The all-in-one profile shares domain and execution contracts, prohibits remote-gateway transport, and fails execution acceptance explicitly when no direct runtime is configured. The default Local composition uses the embedded SQLite queue with no Restate process; current embedded-composition and CP1 durable-execution tests cover that path. Explicit Restate-mode evidence remains applicable only when selected, while injected managed Pi and ACP direct execution plus SQLite restart recovery also pass.",
       "evidence": [
         {
           "kind": "test",
-          "path": "apps/local-control-plane/src/index.test.mjs"
+          "path": "apps/local-control-plane/src/embedded-composition.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/cp1-embedded-durable-execution.test.mjs"
         },
         {
           "kind": "environment",

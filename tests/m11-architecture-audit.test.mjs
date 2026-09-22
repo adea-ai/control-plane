@@ -46,6 +46,28 @@ const publicOperations = [
 ]
 
 describe('M11.2 architecture audit', () => {
+  test('enforces embedded Local and Restate Hosted workflow bindings separately', async () => {
+    const discovered = await discoverArchitecture(repositoryRoot)
+    const local = audit.profiles.find(({ id }) => id === 'local')
+    const hosted = audit.profiles.find(({ id }) => id === 'hosted-simple')
+    expect(local.ports.workflow).toBe(
+      'embedded SQLite queue (default Local); Restate only when explicitly selected'
+    )
+    expect(hosted.ports.workflow).toBe('Local Restate')
+    expect((await validateArchitectureAudit(audit, { repositoryRoot, discovered })).errors).toEqual(
+      []
+    )
+    for (const [id, workflow] of [
+      ['local', 'Local Restate'],
+      ['hosted-simple', local.ports.workflow],
+    ]) {
+      const changed = clone(audit)
+      changed.profiles.find((profile) => profile.id === id).ports.workflow = workflow
+      const { errors } = await validateArchitectureAudit(changed, { repositoryRoot, discovered })
+      expect(errors).toContain(`${id}: infrastructure port bindings drifted`)
+    }
+  })
+
   test('matches current workspace and public-operation discovery', async () => {
     const discovered = await discoverArchitecture(repositoryRoot)
     const result = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
