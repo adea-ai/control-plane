@@ -360,15 +360,17 @@ function normalizeRoutingInput(input: RuntimeRoutingInput) {
   }
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// compareCoded ordering flows into decisionDigest, which is persisted and re-verified
-// on read (ROUTING_DECISION_DIGEST_MISMATCH); digest also uses insertion-order
-// stringify — both need a digest-versioned migration (#612), not an in-place swap
+// The digest below serializes fixed-order literals, so verification recomputes
+// over the persisted array order and stored decisions remain verifiable across
+// this ordering change (#612 in-place disposition, same rationale as #618).
 function compareCoded(
   left: { code: string; capability?: string | undefined },
   right: { code: string; capability?: string | undefined }
 ) {
-  return `${left.code}:${left.capability ?? ''}`.localeCompare(
+  // Code-point ordering keeps decision serialization host-independent; stored
+  // decisions always verify against their own persisted array order (#612).
+  return compareCodePointOrder(
+    `${left.code}:${left.capability ?? ''}`,
     `${right.code}:${right.capability ?? ''}`
   )
 }

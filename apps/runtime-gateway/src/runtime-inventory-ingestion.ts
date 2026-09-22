@@ -18,6 +18,7 @@ import {
   type RuntimeConnectionRegistry,
 } from '@control-plane/runtime-sdk'
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
 
 type InventoryDriver = GatewayInventoryEnvelope['runtimeDrivers'][number]
@@ -291,7 +292,8 @@ export class RuntimeInventoryIngestionService {
     prepared?: PreparedInventory
   ): Promise<RuntimeInventoryIngestionResult> {
     this.#assertSource(inventory, source)
-    const inventoryDigest = hashInventory(inventory)
+    const { digest: inventoryDigest, legacyDigest: legacyInventoryDigest } =
+      inventoryHashes(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {
       fail('INVENTORY_SCOPE_MISMATCH')
@@ -300,7 +302,11 @@ export class RuntimeInventoryIngestionService {
       return this.#ignored('stale', inventory.snapshotVersion)
     }
     if (current && inventory.snapshotVersion === current.snapshotVersion) {
-      if (current.snapshotDigest !== inventoryDigest) fail('INVENTORY_VERSION_CONFLICT')
+      if (
+        current.snapshotDigest !== inventoryDigest &&
+        current.snapshotDigest !== legacyInventoryDigest
+      )
+        fail('INVENTORY_VERSION_CONFLICT')
       return this.#ignored('duplicate', inventory.snapshotVersion)
     }
     const mode = inventory.mode ?? 'snapshot'
@@ -369,7 +375,8 @@ export class RuntimeInventoryIngestionService {
       const winner = await this.#checkpoints.get(inventory.nodeId)
       if (
         winner?.snapshotVersion === inventory.snapshotVersion &&
-        winner.snapshotDigest === inventoryDigest
+        (winner.snapshotDigest === inventoryDigest ||
+          winner.snapshotDigest === legacyInventoryDigest)
       ) {
         return this.#ignored('duplicate', inventory.snapshotVersion)
       }
@@ -522,26 +529,53 @@ function publicNodeStatus(
   return nodeStatus === 'online' || nodeStatus === 'revoked' ? nodeStatus : 'offline'
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// insertion-order stringify of the wire envelope; the inventory fingerprint is persisted for change detection
-function hashInventory(inventory: GatewayInventoryEnvelope): string {
-  const normalizeDrivers = (drivers: GatewayInventoryEnvelope['runtimeDrivers']) =>
-    drivers
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
+// Dual-form inventory fingerprints (#612): new checkpoints hash with the
+// host-independent code-point canonical form; the legacy form (insertion-order
+// stringify + localeCompare orderings) is recomputed only so a replay of an
+// envelope ingested pre-cutover still resolves to `duplicate` against its
+// stored pre-cutover fingerprint instead of INVENTORY_VERSION_CONFLICT.
+/**
+ * Legacy-form fingerprint of a parsed inventory envelope (#612 transition
+ * helper): lets tests reproduce the bytes stored before the code-point
+ * cutover. Drops together with the dual-accept in #ingestPrepared.
+ */
+export function legacyInventoryDigest(input: unknown): string {
+  return inventoryHashes(GatewayInventoryEnvelopeSchema.parse(input)).legacyDigest
+}
+
+function inventoryHashes(inventory: GatewayInventoryEnvelope): {
+  digest: string
+  legacyDigest: string
+} {
+  const canonicalize = (compare: (left: string, right: string) => number) => ({
+    ...inventory,
+    runtimeDrivers: inventory.runtimeDrivers
       .map((driver) => ({
         ...driver,
-        capabilities: [...driver.capabilities].toSorted(),
-        limitations: [...driver.limitations].toSorted(),
+        capabilities: [...driver.capabilities].toSorted(compare),
+        limitations: [...driver.limitations].toSorted(compare),
       }))
-      .toSorted((left, right) => left.opaqueRef.localeCompare(right.opaqueRef))
-  const canonical = {
-    ...inventory,
-    runtimeDrivers: normalizeDrivers(inventory.runtimeDrivers),
-    contextProviders: normalizeDrivers(inventory.contextProviders),
+      .toSorted((left, right) => compare(left.opaqueRef, right.opaqueRef)),
+    contextProviders: inventory.contextProviders
+      .map((driver) => ({
+        ...driver,
+        capabilities: [...driver.capabilities].toSorted(compare),
+        limitations: [...driver.limitations].toSorted(compare),
+      }))
+      .toSorted((left, right) => compare(left.opaqueRef, right.opaqueRef)),
     ...(inventory.removedRuntimeRefs === undefined
       ? {}
-      : { removedRuntimeRefs: [...inventory.removedRuntimeRefs].toSorted() }),
+      : { removedRuntimeRefs: [...inventory.removedRuntimeRefs].toSorted(compare) }),
+  })
+  const codePoint = (left: string, right: string) => compareCodePointOrder(left, right)
+  const legacy = (left: string, right: string) => left.localeCompare(right)
+  const hash = (canonical: string) =>
+    `sha256:${createHash('sha256').update(canonical).digest('hex')}`
+  return {
+    digest: hash(canonicalJsonStringify(canonicalize(codePoint)) ?? 'null'),
+    legacyDigest: hash(JSON.stringify(canonicalize(legacy))),
   }
-  return `sha256:${createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`
 }
 
 const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
