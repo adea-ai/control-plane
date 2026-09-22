@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.13.1...local-control-plane-v1.13.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **retention:** contain unsafe deletion and drain scheduled cleanup ([#636](https://github.com/adea-ai/control-plane/issues/636)) ([7d1703e](https://github.com/adea-ai/control-plane/commit/7d1703e076224ef466086b515ea0c6190cb7ba96))
+
 ## [1.13.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.13.0...local-control-plane-v1.13.1) (2026-09-21)
 
 

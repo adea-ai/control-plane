@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.14](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.13...workspace-v1.31.14) (2026-09-22)
+
+
+### Bug Fixes
+
+* **retention:** contain unsafe deletion and drain scheduled cleanup ([#636](https://github.com/adea-ai/control-plane/issues/636)) ([7d1703e](https://github.com/adea-ai/control-plane/commit/7d1703e076224ef466086b515ea0c6190cb7ba96))
+
 ## [1.31.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.12...workspace-v1.31.13) (2026-09-22)
 
 
