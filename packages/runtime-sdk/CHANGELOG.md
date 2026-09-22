@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.3](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.10.2...runtime-sdk-v1.10.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** routing ordering cut over in place; inventory fingerprints versioned ([#661](https://github.com/adea-ai/control-plane/issues/661)) ([8f4fbc4](https://github.com/adea-ai/control-plane/commit/8f4fbc41d7e57abd0c358658fc24c7e4608239e8))
+
 ## [1.10.2](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.10.1...runtime-sdk-v1.10.2) (2026-09-21)
 
 
