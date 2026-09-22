@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.0...workspace-v1.32.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **audit:** align Local durability evidence with embedded SQLite ([#641](https://github.com/adea-ai/control-plane/issues/641)) ([17878c7](https://github.com/adea-ai/control-plane/commit/17878c765754e3ccf6869f9374cc6aa09050df9f))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.31.14...workspace-v1.32.0) (2026-09-22)
 
 
