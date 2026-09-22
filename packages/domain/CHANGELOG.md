@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.5](https://github.com/adea-ai/control-plane/compare/domain-v1.11.4...domain-v1.11.5) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** project-state and delegation digests dual-accept both canonical forms ([#659](https://github.com/adea-ai/control-plane/issues/659)) ([97a8612](https://github.com/adea-ai/control-plane/commit/97a86123929f972ea87ba5d9dbafa198b407cb41))
+
 ## [1.11.4](https://github.com/adea-ai/control-plane/compare/domain-v1.11.3...domain-v1.11.4) (2026-09-22)
 
 
