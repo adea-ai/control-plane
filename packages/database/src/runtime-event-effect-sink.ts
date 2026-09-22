@@ -33,7 +33,8 @@ export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
         effect.commandId,
         'progress',
         effect.eventSequence,
-        effect.frameHash
+        effect.frameHash,
+        effect.legacyFrameHash
       )
       if (replay) return replay
 
@@ -85,7 +86,8 @@ export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
         effect.commandId,
         'terminal',
         effect.messageSequence,
-        effect.frameHash
+        effect.frameHash,
+        effect.legacyFrameHash
       )
       if (replay) return replay
 
@@ -181,7 +183,8 @@ async function replayReceipt(
   commandId: string,
   messageKind: 'progress' | 'terminal',
   messageSequence: number,
-  frameHash: string
+  frameHash: string,
+  legacyFrameHash?: string
 ): Promise<RuntimeEventEffectResult | undefined> {
   const [receipt] = await transaction
     .select()
@@ -195,7 +198,10 @@ async function replayReceipt(
     )
     .limit(1)
   if (!receipt) return undefined
-  if (receipt.frameHash !== frameHash) return { outcome: 'conflict' }
+  // Pre-cutover receipts stored the legacy form; accept either (#612).
+  if (receipt.frameHash !== frameHash && receipt.frameHash !== legacyFrameHash) {
+    return { outcome: 'conflict' }
+  }
   const event = receipt.eventId ? await findEvent(transaction, receipt.eventId) : undefined
   return { outcome: 'duplicate', ...(event ? { event } : {}) }
 }

@@ -18,6 +18,12 @@ export interface RuntimeProgressEffect {
   readonly commandId: string
   readonly eventSequence: number
   readonly frameHash: string
+  /**
+   * Pre-cutover receipts (#612) stored the locale-dependent `sha256:` form;
+   * senders recompute it alongside the current `s2:` form so replays of
+   * frames ingested before the cutover still resolve to `duplicate`.
+   */
+  readonly legacyFrameHash?: string
   readonly draft: ExecutionEventDraft
 }
 
@@ -25,6 +31,8 @@ export interface RuntimeTerminalEffect {
   readonly commandId: string
   readonly messageSequence: number
   readonly frameHash: string
+  /** See RuntimeProgressEffect.legacyFrameHash. */
+  readonly legacyFrameHash?: string
   readonly execution: Execution
   readonly attempt: ExecutionAttempt
   readonly state: 'completed' | 'failed' | 'cancelled'
@@ -71,7 +79,7 @@ export class InMemoryRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyProgress(effect: RuntimeProgressEffect): Promise<RuntimeEventEffectResult> {
     return this.#withLock(effect.commandId, async () => {
       const key = `${effect.commandId}:progress:${effect.eventSequence}`
-      const replay = this.#replay(key, effect.frameHash)
+      const replay = this.#replay(key, effect)
       if (replay) return replay
       if (effect.eventSequence <= (this.#lastProgress.get(effect.commandId) ?? 0)) {
         const result = { outcome: 'out_of_order' } as const
@@ -89,7 +97,7 @@ export class InMemoryRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyTerminal(effect: RuntimeTerminalEffect): Promise<RuntimeEventEffectResult> {
     return this.#withLock(effect.execution.executionId, async () => {
       const key = `${effect.commandId}:terminal:${effect.messageSequence}`
-      const replay = this.#replay(key, effect.frameHash)
+      const replay = this.#replay(key, effect)
       if (replay) return replay
 
       const currentExecution = await this.#lifecycle.getExecution(effect.execution.executionId)
@@ -135,12 +143,16 @@ export class InMemoryRuntimeEventEffectSink implements RuntimeEventEffectSink {
     })
   }
 
-  #replay(key: string, frameHash: string): RuntimeEventEffectResult | undefined {
+  #replay(
+    key: string,
+    effect: RuntimeProgressEffect | RuntimeTerminalEffect
+  ): RuntimeEventEffectResult | undefined {
     const receipt = this.#receipts.get(key)
     if (!receipt) return undefined
-    return receipt.frameHash === frameHash
-      ? { ...receipt.result, outcome: 'duplicate' }
-      : { outcome: 'conflict' }
+    const matches =
+      receipt.frameHash === effect.frameHash ||
+      (effect.legacyFrameHash !== undefined && receipt.frameHash === effect.legacyFrameHash)
+    return matches ? { ...receipt.result, outcome: 'duplicate' } : { outcome: 'conflict' }
   }
 
   async #appendOrGet(draft: ExecutionEventDraft): Promise<ExecutionEvent> {

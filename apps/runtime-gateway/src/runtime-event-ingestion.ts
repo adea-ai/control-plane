@@ -8,6 +8,7 @@ import {
 } from '@control-plane/domain'
 import {
   hashExecutionEventPayload,
+  hashExecutionEventPayloadV2,
   ExecutionEventDraftSchema,
   type ExecutionEventDraft,
   type RuntimeEventEffectResult,
@@ -235,7 +236,7 @@ export class RuntimeEventIngestionService {
     const result = await this.#effects.applyProgress({
       commandId: frame.commandId,
       eventSequence: frame.eventSequence,
-      frameHash: frameHash(frame),
+      ...frameHashes(frame),
       draft: this.#draft(
         context,
         frame,
@@ -404,7 +405,7 @@ export class RuntimeEventIngestionService {
     const result = await this.#effects.applyTerminal({
       commandId: frame.commandId,
       messageSequence: frame.sequence,
-      frameHash: frameHash(frame),
+      ...frameHashes(frame),
       execution: context.execution,
       attempt: context.attempt,
       state: normalized.state,
@@ -473,7 +474,7 @@ export class RuntimeEventIngestionService {
     const candidate = frame as { commandId?: string }
     await this.#quarantine.record({
       ...(candidate.commandId ? { commandId: candidate.commandId } : {}),
-      frameHash: frameHash(frame),
+      frameHash: frameHashes(frame).frameHash,
       reason: code,
       recordedAt: this.#now().toISOString(),
     })
@@ -515,9 +516,18 @@ function progressEventType(type: RuntimeExecutionProgress['type']): string {
   return 'attempt.progressed'
 }
 
-function frameHash(value: unknown): string {
+/**
+ * New receipts hash frames with the host-independent `s2:` form (#612).
+ * `legacyFrameHash` reproduces the pre-cutover `sha256:` bytes so replay
+ * verification accepts receipts written before the cutover; drop it once
+ * no pre-cutover receipts remain in retention.
+ */
+function frameHashes(value: unknown): { frameHash: string; legacyFrameHash: string } {
   const serializable = JSON.parse(JSON.stringify(value)) as Record<string, unknown>
-  return `sha256:${hashExecutionEventPayload(serializable)}`
+  return {
+    frameHash: `s2:${hashExecutionEventPayloadV2(serializable)}`,
+    legacyFrameHash: `sha256:${hashExecutionEventPayload(serializable)}`,
+  }
 }
 
 function deterministicEventId(commandId: string, type: string, sequence: number): string {

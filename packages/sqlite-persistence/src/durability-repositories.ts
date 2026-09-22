@@ -281,7 +281,7 @@ export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyProgress(effect: RuntimeProgressEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
       const key = receiptKey(effect.commandId, 'progress', effect.eventSequence)
-      const replay = await replayReceipt(transaction, key, effect.frameHash)
+      const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
       const latest = (await transaction.list(namespaces.runtimeEventReceipts))
         .map((record) => receipt(record.value))
@@ -319,7 +319,7 @@ export class SqliteRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyTerminal(effect: RuntimeTerminalEffect): Promise<RuntimeEventEffectResult> {
     return this.provider.transaction(async (transaction) => {
       const key = receiptKey(effect.commandId, 'terminal', effect.messageSequence)
-      const replay = await replayReceipt(transaction, key, effect.frameHash)
+      const replay = await replayReceipt(transaction, key, effect.frameHash, effect.legacyFrameHash)
       if (replay !== undefined) return replay
       const executionRecord = await transaction.get(
         'executions',
@@ -673,12 +673,16 @@ async function writeReceipt(
 async function replayReceipt(
   transaction: RecordTransaction,
   key: string,
-  frameHash: string
+  frameHash: string,
+  legacyFrameHash?: string
 ): Promise<RuntimeEventEffectResult | undefined> {
   const record = await transaction.get(namespaces.runtimeEventReceipts, recordId(key))
   if (record === undefined) return undefined
   const stored = receipt(record.value)
-  if (stored.frameHash !== frameHash) return { outcome: 'conflict' }
+  // Pre-cutover receipts stored the legacy form; accept either (#612).
+  if (stored.frameHash !== frameHash && stored.frameHash !== legacyFrameHash) {
+    return { outcome: 'conflict' }
+  }
   const event =
     stored.eventId === undefined ? undefined : await eventById(transaction, stored.eventId)
   return { outcome: 'duplicate', ...(event === undefined ? {} : { event }) }
