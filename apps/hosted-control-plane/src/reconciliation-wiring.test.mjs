@@ -1,4 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
+import { RetentionSweep } from '@control-plane/deployment'
 import { HostedServerControlPlaneComposition } from './index.ts'
 
 function fakeConnection() {
@@ -49,6 +53,62 @@ describe('hosted composition reconciliation wiring', () => {
       reconciliation: reconciliationOptions(),
     })
     expect(configured.reconciliationService).toBeDefined()
+  })
+
+  test('starts retention independently of reconciliation configuration', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-retention-'))
+    const starts = []
+    const closes = []
+    const originalStart = RetentionSweep.prototype.start
+    const originalClose = RetentionSweep.prototype.close
+    RetentionSweep.prototype.start = function () {
+      starts.push(this)
+      return originalStart.call(this)
+    }
+    RetentionSweep.prototype.close = function () {
+      closes.push(this)
+      return originalClose.call(this)
+    }
+    try {
+      for (const reconciliation of [undefined, reconciliationOptions()]) {
+        const composition = new HostedServerControlPlaneComposition({
+          dataDirectory: directory,
+          databaseUrl: 'postgresql://app:secret@postgres/control_plane',
+          requestIdentityPublicKey: identityPublicKey,
+          connection: fakeConnection(),
+          workflowRuntime: {
+            start: async () => undefined,
+            stop: async () => undefined,
+            health: async () => ({ ready: true, component: 'workflow', version: 'test' }),
+          },
+          endpointFactory: {
+            create: async () => ({ run: async () => undefined, shutdown: async () => undefined }),
+          },
+          ...(reconciliation === undefined ? {} : { reconciliation }),
+        })
+        await composition.start()
+        await composition.close()
+      }
+      expect(starts).toHaveLength(2)
+      expect(closes).toHaveLength(2)
+    } finally {
+      RetentionSweep.prototype.start = originalStart
+      RetentionSweep.prototype.close = originalClose
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('validates retention cadence without reconciliation configuration', () => {
+    expect(
+      () =>
+        new HostedServerControlPlaneComposition({
+          dataDirectory,
+          databaseUrl: 'postgresql://app:secret@postgres/control_plane',
+          requestIdentityPublicKey: identityPublicKey,
+          connection: fakeConnection(),
+          retentionSweepIntervalMs: 0,
+        })
+    ).toThrow('RETENTION_SWEEP_INVALID_INTERVAL')
   })
 
   test('fails closed on invalid reconciliation schedule bounds', () => {

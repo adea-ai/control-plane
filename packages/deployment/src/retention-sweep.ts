@@ -23,27 +23,41 @@ export class RetentionSweep {
   readonly #executionEvents: RetentionSweepOptions['executionEvents']
   readonly #intervalMs: number
   readonly #onError: (error: unknown) => void
-  #timer: ReturnType<typeof setInterval> | undefined
+  #timer: ReturnType<typeof setTimeout> | undefined
   #inFlight: Promise<unknown> | undefined
-  #closing = false
+  #closing: Promise<void> | undefined
+  #started = false
 
   constructor(options: RetentionSweepOptions) {
     this.#commandInbox = options.commandInbox
     this.#executionEvents = options.executionEvents
     this.#intervalMs = positiveInterval(options.intervalMs)
-    this.#onError = options.onError ?? (() => {})
+    this.#onError = options.onError ?? (() => console.error('RETENTION_SWEEP_FAILED'))
   }
 
   start(): void {
-    if (this.#closing) throw new Error('RETENTION_SWEEP_CLOSED')
-    if (this.#timer !== undefined) throw new Error('RETENTION_SWEEP_ALREADY_STARTED')
-    this.#timer = setInterval(() => {
-      this.#inFlight = this.run()
-        .catch((error) => this.#onError(error))
+    if (this.#closing !== undefined) throw new Error('RETENTION_SWEEP_CLOSED')
+    if (this.#started) throw new Error('RETENTION_SWEEP_ALREADY_STARTED')
+    this.#started = true
+    this.#schedule()
+  }
+
+  #schedule(): void {
+    this.#timer = setTimeout(() => {
+      this.#timer = undefined
+      this.#inFlight = Promise.resolve()
+        .then(() => this.run())
+        .catch((error) => {
+          try {
+            this.#onError(error)
+          } catch {
+            // Reporting failures must not stop later passes or prevent draining.
+          }
+        })
         .finally(() => {
           this.#inFlight = undefined
+          if (this.#closing === undefined) this.#schedule()
         })
-      this.#inFlight.catch(() => undefined)
     }, this.#intervalMs)
     this.#timer.unref?.()
   }
@@ -56,12 +70,17 @@ export class RetentionSweep {
     return { inbox, events }
   }
 
-  close(): void {
-    this.#closing = true
+  /** Cancels future passes and drains the scheduled pass before storage closes. */
+  close(): Promise<void> {
+    if (this.#closing !== undefined) return this.#closing
     if (this.#timer !== undefined) {
-      clearInterval(this.#timer)
+      clearTimeout(this.#timer)
       this.#timer = undefined
     }
+    this.#closing = (async () => {
+      await this.#inFlight
+    })()
+    return this.#closing
   }
 }
 

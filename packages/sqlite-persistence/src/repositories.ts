@@ -165,36 +165,10 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     })
   }
 
-  /**
-   * Retention worker primitive (M11.9/#194): physically removes command inbox
-   * records whose retention deadline has passed, plus their by-execution index
-   * entries. Unreadable payloads are skipped so the sweep never crashes; the
-   * caller records counts for the retention evidence.
-   */
+  /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredInbox(now: Date): Promise<number> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
-    return this.provider.transaction(async (transaction) => {
-      const records = await transaction.list(namespaces.commands)
-      let deleted = 0
-      for (const record of records) {
-        let command: CommandInboxRecord
-        try {
-          command = CommandInboxRecordSchema.parse(record.value)
-        } catch {
-          continue
-        }
-        const expires = Date.parse(command.retentionExpiresAt)
-        if (!Number.isFinite(expires) || expires > now.getTime()) continue
-        await transaction.delete(namespaces.commands, record.id)
-        const indexId = recordId(command.executionId)
-        const index = await transaction.get(namespaces.commandByExecution, indexId)
-        if (index !== undefined && index.value === record.id) {
-          await transaction.delete(namespaces.commandByExecution, indexId)
-        }
-        deleted += 1
-      }
-      return deleted
-    })
+    throw new Error('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
   }
 
   async #assertNotRetired(transaction: PersistenceTransaction, id: string): Promise<void> {

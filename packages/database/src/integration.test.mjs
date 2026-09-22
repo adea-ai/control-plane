@@ -2697,7 +2697,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
   })
 
-  test('deleteExpiredInbox removes only past-retention commands idempotently', async () => {
+  test('deleteExpiredInbox preserves commands until full deletion eligibility exists', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FCX'
     // receivedAt must sit >=30 days before the retention cutoff (the service
     // enforces the STM-033 inbox minimum).
@@ -2731,11 +2731,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       retentionExpiresAt: '2026-09-01T11:00:00.000Z',
     })
 
-    // Before the cutoff the sweep is a no-op; after it, exactly one row goes,
-    // and repeated sweeps are idempotent.
-    expect(await repository.deleteExpiredInbox(new Date('2026-08-24T11:00:00.000Z'))).toBe(0)
-    expect(await repository.deleteExpiredInbox(new Date('2026-09-01T11:00:00.000Z'))).toBe(1)
-    expect(await repository.deleteExpiredInbox(new Date('2026-09-01T11:00:00.000Z'))).toBe(0)
+    for (const timestamp of [
+      '2026-08-24T11:00:00.000Z',
+      '2026-09-01T11:00:00.000Z',
+      '2026-09-02T11:00:00.000Z',
+    ]) {
+      await expect(repository.deleteExpiredInbox(new Date(timestamp))).rejects.toThrow(
+        'COMMAND_RETENTION_ELIGIBILITY_REQUIRED'
+      )
+      expect(await repository.getByExecutionId(`exe_${suffix}`)).toBeDefined()
+    }
   })
 
   test('recovers a committed command after the accepting process exits before replying', async () => {
