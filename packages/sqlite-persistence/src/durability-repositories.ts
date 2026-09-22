@@ -20,7 +20,7 @@ import {
 import {
   ExecutionEventDraftSchema,
   ExecutionEventSchema,
-  hashExecutionEventPayload,
+  hashExecutionEventPayloadV2,
   sanitizeExecutionEventDraft,
   type ExecutionEvent,
   type ExecutionEventDraft,
@@ -640,7 +640,7 @@ async function appendEvent(
     ...sanitized,
     sequence,
     payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
-    payloadHash: hashExecutionEventPayload(sanitized.payload),
+    payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
     publication: { status: 'pending', attempts: 0, version: 1 },
   })
   await transaction.put({ namespace: namespaces.events, id, value: json(event) })

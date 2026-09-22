@@ -3,6 +3,7 @@ import {
   ExecutionEventError,
   ExecutionEventService,
   hashExecutionEventPayload,
+  hashExecutionEventPayloadV2,
   InMemoryExecutionEventRepository,
 } from './index.ts'
 
@@ -37,6 +38,23 @@ describe('ExecutionEvent log', () => {
     expect(hashExecutionEventPayload({ b: 2, a: { d: 4, c: 3 } })).toBe(
       hashExecutionEventPayload({ a: { c: 3, d: 4 }, b: 2 })
     )
+  })
+
+  test('the v2 canonical form is order-independent and host-independent', () => {
+    expect(hashExecutionEventPayloadV2({ b: 2, a: { d: 4, c: 3 } })).toBe(
+      hashExecutionEventPayloadV2({ a: { c: 3, d: 4 }, b: 2 })
+    )
+    // Code-point ordering: divergent under localeCompare collation.
+    expect(hashExecutionEventPayloadV2({ 'a-b': 1, a_b: 2 })).toBe(
+      hashExecutionEventPayloadV2({ a_b: 2, 'a-b': 1 })
+    )
+  })
+
+  test('v1 and v2 agree on ordinary keys and diverge on locale-collation keys', () => {
+    const ordinary = { progress: 25, detail: { attempts: 2, ok: true } }
+    expect(hashExecutionEventPayloadV2(ordinary)).toBe(hashExecutionEventPayload(ordinary))
+    const divergent = { 'a-b': 1, a_b: 2 }
+    expect(hashExecutionEventPayloadV2(divergent)).not.toBe(hashExecutionEventPayload(divergent))
   })
 
   test('appends immutable normalized events in deterministic per-execution order', async () => {
