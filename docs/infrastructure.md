@@ -202,7 +202,7 @@ A failed schema migration blocks application rollout. Applied production migrati
 
 M10 introduces:
 
-- **Local:** all-in-one Control Plane, Node 24 `node:sqlite`/Drizzle, pinned single-node Restate, filesystem storage, direct RuntimeTransport, no Docker/PostgreSQL/Redis/Temporal/Runtime Gateway requirement for ordinary co-located execution.
+- **Local:** all-in-one Control Plane, Node 24 `node:sqlite`/Drizzle, embedded SQLite workflow queue (no Restate process), filesystem storage, direct RuntimeTransport, no Docker/PostgreSQL/Redis/Temporal/Runtime Gateway requirement for ordinary co-located execution.
 - **Hosted `simple`:** containerized all-in-one, SQLite, Restate, filesystem storage, optional co-located runtimes/Cortana.
 - **Hosted `server`:** PostgreSQL-backed server composition, Restate, filesystem or S3-compatible storage, split services/Runtime Gateway only where topology requires them.
 

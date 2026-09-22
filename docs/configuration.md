@@ -145,7 +145,8 @@ The accepted Cloud process topology has two application services plus one infras
 | `restate`         | private pinned durable-workflow runtime with persistent storage |
 
 The former runtime-worker, runtime-gateway, and tool-gateway process split is not a compatibility
-requirement. Local uses an all-in-one Control Plane plus local Restate, and Hosted selects only the
+requirement. Local uses an all-in-one Control Plane plus the embedded SQLite workflow queue (no
+Restate process), and Hosted selects only the
 processes its implemented topology requires.
 
 If a deployment explicitly starts the optional `runtime-worker` service in staging or production,

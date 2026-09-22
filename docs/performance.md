@@ -32,14 +32,14 @@ the frozen release candidate.
 
 ## M10 Local evidence
 
-Measure the all-in-one Local profile using SQLite + single-node Restate + filesystem storage + direct RuntimeTransport:
+Measure the all-in-one Local profile using SQLite's embedded workflow queue + filesystem storage + direct RuntimeTransport:
 
 - clean start/readiness;
 - idle CPU/RSS/disk;
 - active execution CPU/RSS/disk;
 - SQLite query/lock/WAL growth and backup overhead;
 - direct-local RuntimeTransport latency;
-- Restate process/runtime overhead;
+- embedded workflow runtime and SQLite queue overhead;
 - managed Pi/ACP resource use;
 - filesystem Artifact behavior;
 - restart/recovery latency.

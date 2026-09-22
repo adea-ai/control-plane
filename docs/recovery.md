@@ -5,7 +5,7 @@ Control Plane recovery is profile-specific but preserves one semantic rule: comm
 ## Ownership by milestone
 
 - **M9** proves the managed-cloud Railway + Neon + R2 + Restate recovery path.
-- **M10** adds Local SQLite/Restate and Hosted SQLite/PostgreSQL recovery, backup, restart, and upgrade/rollback behavior.
+- **M10** adds Local embedded-SQLite and Hosted SQLite/PostgreSQL/Restate recovery, backup, restart, and upgrade/rollback behavior.
 - **M11** independently reruns the recovery matrix across all accepted profiles and records measured RPO/RTO or equivalent recovery evidence.
 
 Historical AWS/RDS/ECS recovery text is retained only as decision provenance. It is not executable
@@ -36,7 +36,7 @@ recorded in `docs/evidence/m9-cloud-certification-2026-08-28.md`.
 
 ## Local recovery target — M10
 
-Local uses the all-in-one Control Plane composition, Node 24 `node:sqlite`, single-node Restate, filesystem storage, and direct RuntimeTransport.
+Local uses the all-in-one Control Plane composition, Node 24 `node:sqlite` embedded workflow queue, filesystem storage, and direct RuntimeTransport; it has no Restate process.
 
 Use the integrity-verified create/verify/dry-run/apply procedure in
 [`local-deployment.md`](local-deployment.md); restore into a new directory and never merge checkpoint
@@ -45,7 +45,7 @@ contents into live state.
 Required behavior:
 
 - Control Plane process crash/restart;
-- Restate process crash/restart;
+- embedded workflow runtime crash/restart;
 - full host restart and desktop sleep/wake where applicable;
 - SQLite WAL/transaction integrity;
 - SQLite backup/restore and corruption handling;

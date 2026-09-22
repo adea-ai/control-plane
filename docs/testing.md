@@ -45,7 +45,7 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   integration files; it does not report them as skipped or as passing evidence. The separate
   `bun run test:integration` lane is required for PostgreSQL cross-profile migrations and recovery.
   Passing the credential-free matrix alone cannot satisfy the full M11 acceptance gate.
-  It also runs a Local graph approval through the pinned real Restate runtime, stops/reconstructs
+  It also explicitly selects Restate mode for a Local graph approval through the pinned real Restate runtime, stops/reconstructs
   Local and Restate while awaiting input, and resumes from SQLite checkpoints to an Artifact-backed
   terminal result. An invalid approval is rejected with HTTP 400 before a subsequent valid approval completes the same
   workflow. Interaction value validation runs before durable promise resolution and again on consumption.
@@ -53,6 +53,10 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   It is controlled-restart evidence, not hard-crash, live-provider or
   authenticated public graph-selection acceptance. Finished workflow output is retrieved using
   Restate's documented [workflow attach endpoint](https://docs.restate.dev/services/invocation/http).
+  These explicit Restate-mode scenarios do not establish the default Local embedded-queue path.
+  `apps/local-control-plane/src/embedded-composition.test.mjs` and
+  `tests/cp1-embedded-durable-execution.test.mjs` cover the embedded composition and durable workflow
+  contracts without a Restate process; full frozen-candidate acceptance remains separate.
 - `bun run test:recovery-matrix` runs current disposable recovery fixtures.
 
 The Railway manifest validator checks repository-owned service composition. A green local validation
@@ -86,7 +90,7 @@ a separate release gate.
 M10 profile-aware conformance covers:
 
 - Local `node:sqlite` + Drizzle versus PostgreSQL domain parity;
-- Local single-node Restate versus the accepted M9 cloud Restate semantics;
+- Local embedded SQLite durable execution versus the accepted M9 cloud Restate semantics;
 - all-in-one Local composition from clean state;
 - direct Local RuntimeTransport with no Runtime Gateway process;
 - Hosted `simple` Compose with SQLite;
@@ -166,7 +170,10 @@ Existing M4–M6 suites remain useful for Runtime Fabric, Runtime Gateway, Manag
 
 The Restate workflow tests are active execution-lifecycle evidence. Historical Temporal tests and changelog entries may remain as migration provenance, but do not certify the accepted Railway/Restate deployment. Active evidence must preserve retries, waits, deadlines, cancellation, interactions, restart recovery, idempotency, reconciliation, parent/child execution, and bounded LangGraph integration.
 
-M10.1 then runs the same Restate workflow/conformance behavior in Local and Hosted compositions.
+M10.1 originally brought Restate workflow/conformance behavior to Local and Hosted compositions.
+The later #548 decision makes embedded SQLite durable execution the default for Local, preserving
+the same workflow contracts; Hosted and Cloud retain Restate. Explicit Local Restate-mode tests
+remain compatibility evidence, not a requirement to run Restate in the default Local profile.
 
 ## Security and secret-canary testing
 

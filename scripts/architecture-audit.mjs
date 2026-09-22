@@ -138,7 +138,7 @@ const profilePorts = {
     runtimeTransport:
       'Packaged ManagedPiProcessClient or injected DirectRuntimeActivityPort; unavailable acceptance otherwise',
     secrets: 'Composite environment/private-file SecretsProvider',
-    workflow: 'Local Restate',
+    workflow: 'embedded SQLite queue (default Local); Restate only when explicitly selected',
   },
 }
 
