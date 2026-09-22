@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.5.2...execution-plan-v1.5.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** execution plan digests are versioned with code-point normalization ([#657](https://github.com/adea-ai/control-plane/issues/657)) ([bbf4637](https://github.com/adea-ai/control-plane/commit/bbf463760bbce534cb535516bba660794245b8f6))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.5.1...execution-plan-v1.5.2) (2026-09-20)
 
 

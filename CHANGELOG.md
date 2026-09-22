@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.8...workspace-v1.32.9) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** execution plan digests are versioned with code-point normalization ([#657](https://github.com/adea-ai/control-plane/issues/657)) ([bbf4637](https://github.com/adea-ai/control-plane/commit/bbf463760bbce534cb535516bba660794245b8f6))
+
 ## [1.32.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.7...workspace-v1.32.8) (2026-09-22)
 
 
