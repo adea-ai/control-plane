@@ -29,6 +29,100 @@ const correlation = {
   requestId: ids.requestId,
 }
 
+// Reproduces the pre-cutover canonicalization (#612): keys sorted with
+// localeCompare, double-encoded exactly like the legacy sha256() did, and the
+// same derived identifier. A plan written this way must still verify.
+function legacyNormalize(value) {
+  if (Array.isArray(value)) return value.map(legacyNormalize)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, legacyNormalize(entry)])
+    )
+  }
+  return value
+}
+
+function legacyDigest(content) {
+  const { createHash } = require('node:crypto')
+  const serialized = JSON.stringify(JSON.stringify(legacyNormalize(content)))
+  return `sha256:${createHash('sha256').update(serialized).digest('hex')}`
+}
+
+function legacyIdentifier(digestValue) {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  const bytes = Buffer.from(digestValue.slice(7, 39), 'hex')
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) output += alphabet[(value << (5 - bits)) & 31]
+  return `pln_${output.slice(0, 26)}`
+}
+
+describe('execution plan digest cutover', () => {
+  test('a plan persisted pre-cutover still passes integrity via the legacy digest', async () => {
+    const input = baseInput()
+    // toolIds whose composite sort orders differ between localeCompare and
+    // code-point ('g-a' before 'ga' by code point, after it under ICU), so the
+    // two canonical forms genuinely diverge for this content.
+    const baseGrant = input.constraints.tools.grants[0]
+    // Keep the skill-required grant; append the divergent-ordering pair.
+    input.constraints.tools.grants = [
+      ...input.constraints.tools.grants,
+      { ...baseGrant, tool: { ...baseGrant.tool, toolId: 'ga' } },
+      { ...baseGrant, tool: { ...baseGrant.tool, toolId: 'g-a' } },
+    ]
+    const plan = compile(input)
+    const { executionPlanId, contentDigest, ...content } = plan
+    void executionPlanId
+    void contentDigest
+    const legacyContentDigest = legacyDigest(content)
+    // Real divergence: the legacy bytes differ from the code-point form.
+    expect(legacyContentDigest).not.toBe(plan.contentDigest)
+    const preCutoverPlan = {
+      ...content,
+      contentDigest: legacyContentDigest,
+      executionPlanId: legacyIdentifier(legacyContentDigest),
+    }
+    const verified = await new InMemoryExecutionPlanRepository().put(preCutoverPlan)
+    expect(verified.executionPlanId).toBe(preCutoverPlan.executionPlanId)
+    expect(verified.contentDigest).toBe(legacyContentDigest)
+  })
+
+  test('new plans carry the code-point digest and verify against it', async () => {
+    const plan = compile(baseInput())
+    const repository = new InMemoryExecutionPlanRepository()
+    const reference = await repository.put(plan)
+    expect(reference.contentDigest).toBe(plan.contentDigest)
+    expect(
+      await repository.get({
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+      })
+    ).toMatchObject({ executionPlanId: plan.executionPlanId })
+  })
+
+  test('a tampered digest still fails integrity', async () => {
+    const plan = compile(baseInput())
+    await expect(
+      new InMemoryExecutionPlanRepository().put({
+        ...plan,
+        contentDigest: `sha256:${'0'.repeat(64)}`,
+      })
+    ).rejects.toThrow('EXECUTION_PLAN_INTEGRITY_ERROR')
+  })
+})
+
 describe('immutable ExecutionPlan compilation', () => {
   test('pins exact profile, skill, context, policy, constraint, and compiler versions', () => {
     const plan = compile(baseInput())
