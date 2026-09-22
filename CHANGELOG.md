@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.11...workspace-v1.32.12) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** tool-gateway digests are versioned with code-point normalization ([#664](https://github.com/adea-ai/control-plane/issues/664)) ([d70581e](https://github.com/adea-ai/control-plane/commit/d70581e5bea1d3e26cc35e97f1c12fe4a5ea7737))
+
 ## [1.32.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.10...workspace-v1.32.11) (2026-09-22)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/adea-ai/control-plane/compare/tool-sdk-v1.4.0...tool-sdk-v1.4.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** tool-gateway digests are versioned with code-point normalization ([#664](https://github.com/adea-ai/control-plane/issues/664)) ([d70581e](https://github.com/adea-ai/control-plane/commit/d70581e5bea1d3e26cc35e97f1c12fe4a5ea7737))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/tool-sdk-v1.3.1...tool-sdk-v1.4.0) (2026-09-20)
 
 
