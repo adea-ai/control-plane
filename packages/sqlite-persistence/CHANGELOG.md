@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.12.0...sqlite-persistence-v1.12.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** frame hashes are versioned so pre-cutover receipts still replay ([#651](https://github.com/adea-ai/control-plane/issues/651)) ([fa51e8c](https://github.com/adea-ai/control-plane/commit/fa51e8c1bfc7249297a2c5608d103a179392e797))
+
 ## [1.12.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.11.3...sqlite-persistence-v1.12.0) (2026-09-22)
 
 
