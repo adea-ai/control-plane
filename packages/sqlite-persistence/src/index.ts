@@ -21,6 +21,7 @@ import {
 import { records, sqliteSchema } from './schema.js'
 import {
   applyMigrations,
+  EXPIRY_INDEX_STATEMENTS,
   SCHEMA_STATEMENTS,
   SCHEMA_VERSION,
   SqliteMigrationError,
@@ -158,7 +159,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
 
   async restore(snapshot: PersistenceBackup): Promise<void> {
     if (
-      snapshot.schemaVersion !== SCHEMA_VERSION ||
+      (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== SCHEMA_VERSION) ||
       snapshot.bytes.byteLength === 0 ||
       digest(snapshot.bytes) !== snapshot.digest
     ) {
@@ -173,7 +174,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
       } finally {
         await stagedFile.close()
       }
-      validateRestoreDatabase(temporaryPath)
+      validateRestoreDatabase(temporaryPath, snapshot.schemaVersion)
       // Staging is asynchronous; recheck before touching the live connection.
       if (this.#transactionActive) throw new SqlitePersistenceError('SQLITE_REVISION_CONFLICT')
       this.#native?.close()
@@ -241,7 +242,7 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
   }
 }
 
-function validateRestoreDatabase(path: string): void {
+function validateRestoreDatabase(path: string, expectedSnapshotVersion: number): void {
   let database: DatabaseSync | undefined
   try {
     // A WAL-mode backup may need sidecars even for reads. Only the disposable
@@ -255,7 +256,7 @@ function validateRestoreDatabase(path: string): void {
     const version = database
       .prepare("SELECT value FROM control_plane_metadata WHERE key = 'schema_version'")
       .get()
-    if (version?.['value'] !== String(SCHEMA_VERSION)) {
+    if (version?.['value'] !== String(expectedSnapshotVersion)) {
       throw new Error('Incompatible SQLite schema')
     }
     for (const [name, expected] of Object.entries(SCHEMA_STATEMENTS)) {
@@ -274,6 +275,15 @@ function validateRestoreDatabase(path: string): void {
       .all()
     // Validate history (or adopt legacy v1) on the disposable copy, never after replacement.
     applyMigrations(database)
+    for (const [name, expected] of Object.entries(EXPIRY_INDEX_STATEMENTS)) {
+      const actual = database.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name)
+      if (
+        typeof actual?.['sql'] !== 'string' ||
+        normalizeSchema(actual['sql']) !== normalizeSchema(expected)
+      ) {
+        throw new Error('Incompatible SQLite expiry index')
+      }
+    }
   } catch {
     throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
   } finally {

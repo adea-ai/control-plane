@@ -35,6 +35,14 @@ The scheduler reports a fixed diagnostic, and operators must monitor retained-da
 growth. This removes unsafe age-only behavior but intentionally does not claim that
 retention is implemented. The full eligibility and deletion work below remains open.
 
+The follow-up SQLite schema v2 migration adds partial expiry indexes for canonical
+UTC-millisecond inbox/event values and upgrades valid v1 backups on the staged restore
+copy. Tests cover both indexed query paths, retained legacy rows, malformed-date
+filtering and rejection of tampered backup indexes. It does not supply deletion policy,
+holds/reference decisions, a production candidate reader or external cleanup; other
+timestamp representations still require explicit normalization. This is a storage
+prerequisite, not completion of the indexed eligibility/deletion work below.
+
 1. Fix unsafe expiry-only inbox/event deletion before extending automatic sweep
    activation. PR #636 is held in draft pending this prerequisite; scheduler
    overlap/drain tests do not prove deletion eligibility.

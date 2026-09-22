@@ -110,6 +110,11 @@ describe('SQLite persistence provider', () => {
     )
     instance.close()
     const native = new DatabaseSync(join(directory, 'control-plane.sqlite'))
+    // Reconstruct the actual unjournaled v1 layout, not a v2 database with its
+    // migration history erased (which must remain incompatible).
+    native.exec('DROP INDEX control_plane_records_command_expiry')
+    native.exec('DROP INDEX control_plane_records_event_expiry')
+    native.exec("UPDATE control_plane_metadata SET value = '1' WHERE key = 'schema_version'")
     native.exec("DELETE FROM control_plane_metadata WHERE key LIKE 'migration:%'")
     native.close()
     await instance.migrate()
