@@ -868,7 +868,7 @@
         {
           "kind": "test",
           "path": "packages/deployment/src/retention-sweep.test.mjs",
-          "scope": "M11.9 retention sweep covers only command inbox and execution events; no per-Artifact-class retention model exists in the candidate."
+          "scope": "Scheduler-only tests address inbox/event adapters, not Artifact retention. Current inbox/event deletion primitives fail closed; no per-Artifact-class retention model is proven by this suite."
         },
         {
           "kind": "document",
@@ -880,7 +880,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-20: the only explicit product retention in the candidate is the M11.9 RetentionSweep (command inbox + execution events, packages/deployment/src/retention-sweep.ts, #194) and the 30-day certification-artifact fixture retention. No explicit per-Artifact-class retention policy (generated outputs, temporary execution files, audit evidence, benchmark fixtures) exists; provider defaults do not replace it because no artifact-class retention configuration exists at all. Remaining: extract the Control Plane/consumer-boundary retention-class obligation and implement explicit classes with the M12 artifact surface. Owner artifact-integration."
+        "disposition": "Reconciled 2026-09-22 after #636: the inbox/event scheduler is not Artifact retention evidence, and its deletion primitives currently fail closed. The certification fixture's explicit deadline and operational baseline do not establish per-class policy, eligibility, holds, references or authorized deletion for generated outputs, temporary files, audit evidence and benchmark fixtures. These remain M11 #194 obligations; consumer integration timing does not silently defer Control Plane-owned retention to M12. Product/operator decisions and real provider/profile evidence are still required."
       }
     },
     {
@@ -1117,22 +1117,31 @@
         {
           "kind": "test",
           "path": "packages/deployment/src/retention-sweep.test.mjs",
-          "scope": "M11.9 RetentionSweep physically deletes past-retention inbox commands and events on non-overlapping passes."
+          "scope": "Scheduler tests use repository doubles to prove bounded, non-overlapping passes, failure diagnostics and shutdown drain; they do not prove physical deletion eligibility."
         },
         {
           "kind": "test",
           "path": "packages/sqlite-persistence/src/repositories.test.mjs",
-          "scope": "'deleteExpiredInbox removes only past-retention commands and their index'."
+          "scope": "Expired inbox records and indexes remain intact: deleteExpiredInbox rejects with COMMAND_RETENTION_ELIGIBILITY_REQUIRED until authoritative eligibility exists."
         },
         {
           "kind": "test",
           "path": "packages/sqlite-persistence/src/durability-repositories.test.mjs",
-          "scope": "'deleteExpiredEvents removes only events past their retention deadline'."
+          "scope": "Expired pending and published events remain intact: deleteExpiredEvents rejects with EVENT_RETENTION_ELIGIBILITY_REQUIRED until authoritative eligibility exists."
         },
         {
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs",
-          "scope": "'deleteExpiredInbox removes only past-retention commands idempotently'."
+          "scope": "Real PostgreSQL integration preserves expired inbox records when deletion authority is absent; no age-only deletion is certified."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/retention-safety.test.mjs",
+          "scope": "PostgreSQL inbox/event primitives reject with explicit eligibility-required errors before database access."
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-retention-coverage-2026-09-22.md"
         },
         {
           "kind": "test",
@@ -1144,7 +1153,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Adjudicated 2026-09-20: the ≥30-day inbox retention floor is enforced at acceptance and physically swept on both backends (SQLite + PostgreSQL, CI: unit group, integration group, M9 recovery matrix). Remaining: no product constant or test ties inbox retention to a distinct protected logical-execution retention floor — the candidate has a single 30-day floor and no separate execution-retention configuration, so the 'no less than the protected logical execution retention' clause is unexercised until execution retention exists as a distinct setting."
+        "disposition": "Reconciled 2026-09-22 after #636: the ≥30-day inbox retention floor remains enforced at acceptance, but SQLite and PostgreSQL inbox/event deletion now fail closed with eligibility-required errors before storage access. The earlier claim of physical expiry sweeping is superseded, not current acceptance evidence. Remaining: explicit protected logical-execution retention, indexed eligibility with holds/references/replay protection, authorized physical deletion, and frozen-candidate recovery/profile evidence. Scheduler tests and expiry indexes alone do not satisfy these gates; monitor retained-data growth while deletion is disabled."
       }
     },
     {

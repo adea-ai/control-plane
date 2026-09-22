@@ -29,7 +29,7 @@ restore-time deletion reapplication. Issue #194 requires every class below.
 
 ## Immediate priorities
 
-PR #636 contains a safety mitigation after this source audit: inbox/event deletion
+Merged PR #636 contains a safety mitigation after this source audit: inbox/event deletion
 methods now reject before storage access with explicit eligibility-required errors.
 The scheduler reports a fixed diagnostic, and operators must monitor retained-data
 growth. This removes unsafe age-only behavior but intentionally does not claim that
@@ -43,9 +43,10 @@ holds/reference decisions, a production candidate reader or external cleanup; ot
 timestamp representations still require explicit normalization. This is a storage
 prerequisite, not completion of the indexed eligibility/deletion work below.
 
-1. Fix unsafe expiry-only inbox/event deletion before extending automatic sweep
-   activation. PR #636 is held in draft pending this prerequisite; scheduler
-   overlap/drain tests do not prove deletion eligibility.
+1. Safety containment is merged in #636 at `7d1703e076224ef466086b515ea0c6190cb7ba96`:
+   expiry-only inbox/event deletion is disabled. Keep that fail-closed behavior until
+   authoritative eligibility is implemented; scheduler overlap/drain tests do not
+   prove deletion eligibility.
 2. Introduce indexed, bounded candidates and explicit eligibility/hold/reference
    checks without inventing destructive defaults. Existing 30-day inbox/event,
    7-day terminal-ledger, and 90-day artifact baselines are not sufficient alone.
