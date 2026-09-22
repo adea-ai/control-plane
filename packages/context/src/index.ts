@@ -825,9 +825,17 @@ function assertPackageIntegrity(package_: ContextPackage): void {
     )
   )
   const expectedDigest = sha256(normalize(content))
+  // Dual-accept (#612): packages persisted before the code-point cutover carry
+  // digests over the legacy locale-dependent serialization.
+  const verifiedDigest =
+    package_.contentDigest === expectedDigest
+      ? expectedDigest
+      : sha256Legacy(normalizeLegacy(content)) === package_.contentDigest
+        ? package_.contentDigest
+        : undefined
   if (
-    package_.contentDigest !== expectedDigest ||
-    package_.contextPackageId !== hashIdentifier('ctx', expectedDigest)
+    verifiedDigest === undefined ||
+    package_.contextPackageId !== hashIdentifier('ctx', verifiedDigest)
   ) {
     throw new Error('CONTEXT_PACKAGE_INTEGRITY_ERROR')
   }
@@ -852,8 +860,10 @@ function hashIdentifier(prefix: string, digest: string): string {
 function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
 }
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// payload digests cover z.json() state-item values (free-form keys); payloadHash and contentDigest are persisted
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify.
+// Payload digests cover z.json() state-item values (free-form keys); contentDigest is
+// persisted, so the verifier dual-accepts the legacy locale-dependent form and the V2
+// code-point form (normalize above). Legacy drops with pre-cutover retention.
 function canonical(value: unknown): string {
   return JSON.stringify(normalize(value))
 }
@@ -863,10 +873,35 @@ function normalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .toSorted(([left], [right]) => left.localeCompare(right))
+        .toSorted(([left], [right]) => compareCodePointOrder(left, right))
         .map(([key, entry]) => [key, normalize(entry)])
     )
   return value
+}
+
+// CANONICAL-JSON: verification-only legacy form (#612 transition window).
+// Packages persisted before the code-point cutover carry digests over the
+// locale-dependent serialization; sha256Legacy reproduces those bytes so
+// stored packages keep verifying. Drop once pre-cutover packages leave
+// retention.
+function normalizeLegacy(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeLegacy)
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, normalizeLegacy(entry)])
+    )
+  return value
+}
+
+function canonicalLegacy(value: unknown): string {
+  return JSON.stringify(normalizeLegacy(value))
+}
+
+function sha256Legacy(value: unknown): string {
+  return `sha256:${createHash('sha256').update(canonicalLegacy(value)).digest('hex')}`
 }
 function isAfter(left: string, right: string): boolean {
   return Date.parse(left) > Date.parse(right)

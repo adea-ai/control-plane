@@ -9,6 +9,7 @@ import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
   deriveContextPackage,
+  assertContextPackageIntegrity,
 } from './index.ts'
 
 const now = '2026-08-23T12:00:00.000Z'
@@ -17,6 +18,80 @@ const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
 const itemOneId = 'psi_01JABCDEF0123456789ABCDEFG'
 const itemTwoId = 'psi_01JBBCDEF0123456789ABCDEFG'
 const artifactId = 'art_01JABCDEF0123456789ABCDEFG'
+
+// Reproduces the pre-cutover canonicalization (#612): keys sorted with
+// localeCompare, single-encoded exactly like the legacy sha256() did, and the
+// same derived identifier. A package written this way must still verify.
+function legacyNormalize(value) {
+  if (Array.isArray(value)) return value.map(legacyNormalize)
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, legacyNormalize(entry)])
+    )
+  return value
+}
+
+function legacyDigest(content) {
+  const { createHash } = require('node:crypto')
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(legacyNormalize(content)))
+    .digest('hex')}`
+}
+
+function legacyIdentifier(digestValue) {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  const bytes = Buffer.from(digestValue.slice(7, 39), 'hex')
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) output += alphabet[(value << (5 - bits)) & 31]
+  return `ctx_${output.slice(0, 26)}`
+}
+
+describe('context package digest cutover', () => {
+  test('a package persisted pre-cutover still passes integrity via the legacy digest', () => {
+    const input = baseInput()
+    // State-item values are free-form JSON: keys 'a-b'/'a_b' order differently
+    // under localeCompare vs code point, so the two canonical forms diverge.
+    input.projectState.items[0].value = { 'a-b': 1, a_b: 2 }
+    const plan = compile(input)
+    const { contextPackageId, contentDigest, ...content } = plan
+    void contextPackageId
+    void contentDigest
+    const legacyContentDigest = legacyDigest(content)
+    // Real divergence between the two canonical forms for this content.
+    expect(legacyContentDigest).not.toBe(plan.contentDigest)
+    const preCutoverPackage = {
+      ...content,
+      contentDigest: legacyContentDigest,
+      contextPackageId: legacyIdentifier(legacyContentDigest),
+    }
+    const verified = assertContextPackageIntegrity(preCutoverPackage)
+    expect(verified.contextPackageId).toBe(preCutoverPackage.contextPackageId)
+    expect(verified.contentDigest).toBe(legacyContentDigest)
+  })
+
+  test('a tampered digest still fails integrity', () => {
+    const plan = compile(baseInput())
+    expect(() =>
+      assertContextPackageIntegrity({
+        ...plan,
+        contentDigest: `sha256:${'0'.repeat(64)}`,
+      })
+    ).toThrow('CONTEXT_PACKAGE_INTEGRITY_ERROR')
+  })
+})
 
 describe('trusted pre-validation context authoring', () => {
   function providerRequest(policy = {}) {
