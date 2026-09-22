@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.11.3...sqlite-persistence-v1.12.0) (2026-09-22)
+
+
+### Features
+
+* **sqlite:** index expiry candidates and upgrade legacy backups ([#638](https://github.com/adea-ai/control-plane/issues/638)) ([7dc44bb](https://github.com/adea-ai/control-plane/commit/7dc44bbd247c3d0937fae215a744abafb39724ff))
+
 ## [1.11.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.11.2...sqlite-persistence-v1.11.3) (2026-09-22)
 
 
