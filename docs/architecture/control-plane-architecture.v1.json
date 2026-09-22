@@ -476,7 +476,6 @@
       "exports": ["."],
       "workspaceDependencies": [
         "@control-plane/context",
-        "@control-plane/contracts",
         "@control-plane/database",
         "@control-plane/deployment",
         "@control-plane/domain",
