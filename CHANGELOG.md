@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.9...workspace-v1.32.10) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** project-state and delegation digests dual-accept both canonical forms ([#659](https://github.com/adea-ai/control-plane/issues/659)) ([97a8612](https://github.com/adea-ai/control-plane/commit/97a86123929f972ea87ba5d9dbafa198b407cb41))
+
 ## [1.32.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.8...workspace-v1.32.9) (2026-09-22)
 
 

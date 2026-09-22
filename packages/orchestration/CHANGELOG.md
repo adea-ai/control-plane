@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/adea-ai/control-plane/compare/orchestration-v1.2.3...orchestration-v1.2.4) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** project-state and delegation digests dual-accept both canonical forms ([#659](https://github.com/adea-ai/control-plane/issues/659)) ([97a8612](https://github.com/adea-ai/control-plane/commit/97a86123929f972ea87ba5d9dbafa198b407cb41))
+
 ## [1.2.3](https://github.com/adea-ai/control-plane/compare/orchestration-v1.2.2...orchestration-v1.2.3) (2026-09-21)
 
 
