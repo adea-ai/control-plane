@@ -3185,7 +3185,433 @@
         "issue": 195,
         "severity": "high",
         "owner": "product-architecture",
-        "disposition": "Retrieval is done: canonical Control Plane PRD retrieved by explicit revision ID (rev 40 vs current rev 43) with SHA-256 pins (docs/requirements/control-plane-prd-source-audit.md). Remaining: extract its atomic requirements into the ledger (control-plane-prd currently has exactly one row — this retrieval row) and regenerate; the audit doc itself states 'atomic extraction and current implementation/control mapping incomplete under #195. Those tasks... remain required.'"
+        "disposition": "Retrieval is done: canonical Control Plane PRD retrieved by explicit revision ID (rev 40 vs historical rev 43) with SHA-256 pins (docs/requirements/control-plane-prd-source-audit.md). Sections 8.1–8.3 (P00078–P00092) now have a bounded atomic extraction; the remainder of the PRD and current implementation/control mapping remain incomplete under #195. The revision comparison is historical metadata evidence, not proof that the current PRD has no further product changes."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-CREATE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Create AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "packages/domain/src/index.test.mjs" },
+        { "kind": "test", "path": "tests/m2-core-domain.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "Catalog creation is exercised, but this PRD source mapping is not independently verified as a complete product lifecycle."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-VERSION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Version AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/profiles-and-skills.md" },
+        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "Version behavior is documented/tested; complete PRD source mapping remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-VALIDATE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Validate AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/profiles-and-skills.md" },
+        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "Validation behavior has component evidence; caller/operator lifecycle mapping is not independently verified."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-APPROVE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Approve AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "Catalog publish/version methods are not proof of an approval actor or decision contract; authoritative approval lifecycle evidence is missing."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-DEPRECATE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Deprecate AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "document", "path": "docs/profiles-and-skills.md" },
+        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "Deprecation/revocation fields are represented, but attributable operator lifecycle evidence is not independently verified."
+      }
+    },
+    {
+      "id": "CP-PRD-PROFILE-INSPECT-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00078)",
+      "requirement": "Inspect AgentProfiles and Skills.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "catalog",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "catalog",
+        "disposition": "No focused public inspection contract and evidence were identified for the complete catalog lifecycle."
+      }
+    },
+    {
+      "id": "CP-PRD-PRECEDENCE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00079)",
+      "requirement": "Resolve precedence among platform policy, caller scope, profile constraints, task instructions, skills, context, and runtime-native configuration.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "execution-policy",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [
+        { "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" },
+        { "kind": "document", "path": "docs/profiles-and-skills.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-policy",
+        "disposition": "Policy resolution evidence exists, but the complete PRD precedence chain and runtime-native boundary remain partially verified."
+      }
+    },
+    {
+      "id": "CP-PRD-PLAN-COMPILATION-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00080)",
+      "requirement": "Compile a deterministic immutable ExecutionPlan before durable execution begins.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "execution-plan",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [
+        { "kind": "test", "path": "packages/execution-plan/src/index.test.mjs" },
+        { "kind": "test", "path": "tests/m10-portability-conformance.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-plan",
+        "disposition": "ExecutionPlan compiler and integrity tests exist; durable-before-dispatch remains unverified in this row."
+      }
+    },
+    {
+      "id": "CP-PRD-CONFIG-PROVENANCE-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00081)",
+      "requirement": "Expose configuration provenance to callers and operators.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "execution-policy",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-policy",
+        "disposition": "No focused current test or public caller/operator contract was identified that proves configuration provenance is exposed."
+      }
+    },
+    {
+      "id": "CP-PRD-COMPATIBILITY-REASONS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Profiles, Skills, and Execution Planning (P00081)",
+      "requirement": "Expose compatibility reasons to callers and operators.",
+      "normativeState": "accepted",
+      "classification": "tbd",
+      "owner": "runtime-compatibility",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-compatibility",
+        "disposition": "No focused current test or public caller/operator contract was identified that proves compatibility reasons are exposed."
+      }
+    },
+    {
+      "id": "CP-PRD-IDEMPOTENT-COMMANDS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Durable Execution Lifecycle (P00083)",
+      "requirement": "Accept state-changing commands idempotently and return one logical execution for identical retries.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "durable-execution",
+      "lane": "recovery/chaos",
+      "issueRefs": [195],
+      "evidence": [
+        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
+        { "kind": "test", "path": "packages/domain/src/command-inbox.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Existing durable-execution tests cover replay behavior; full profile evidence is not independently verified."
+      }
+    },
+    {
+      "id": "CP-PRD-LIFECYCLE-STATES-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Durable Execution Lifecycle (P00084)",
+      "requirement": "Support queueing, start, progress, awaiting input, approval, cancellation, timeout, completion, failure, and reconciliation-required states.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "durable-execution",
+      "lane": "end-to-end",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
+        { "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Lifecycle tests exist, but the complete state matrix and profile-independent production evidence remain unverified here."
+      }
+    },
+    {
+      "id": "CP-PRD-RESTART-RECOVERY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Durable Execution Lifecycle (P00085)",
+      "requirement": "Recover from service restarts without relying on a live connection as the source of truth.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "durable-execution",
+      "lane": "recovery/chaos",
+      "issueRefs": [195, 194],
+      "evidence": [
+        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
+        { "kind": "document", "path": "docs/recovery.md" }
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Restart evidence exists but does not independently establish every supported service profile or a live-connection-independent source-of-truth audit."
+      }
+    },
+    {
+      "id": "CP-PRD-NETWORK-RECOVERY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Durable Execution Lifecycle (P00085)",
+      "requirement": "Recover from network interruption without relying on a live connection as the source of truth.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "durable-execution",
+      "lane": "recovery/chaos",
+      "issueRefs": [195, 194],
+      "evidence": [{ "kind": "test", "path": "tests/m3-durable-execution.test.mjs" }],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Network interruption recovery remains only partially mapped to the PRD source and supported profiles."
+      }
+    },
+    {
+      "id": "CP-PRD-INSPECTABLE-RECORDS-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Durable Execution Lifecycle (P00086)",
+      "requirement": "Keep the inspectable execution/event record separate from workflow-engine history.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "durable-execution",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [
+        { "kind": "document", "path": "docs/architecture.md" },
+        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "durable-execution",
+        "disposition": "Separate persistence authorities are documented and tested, but this obligation is not independently verified across all workflow profiles."
+      }
+    },
+    {
+      "id": "CP-PRD-RUNTIME-DISCOVERY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00088)",
+      "requirement": "Discover managed and external runtime connections with explicit health, capability, compatibility, location, and session metadata.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-fabric",
+      "lane": "contract/schema",
+      "issueRefs": [195],
+      "evidence": [
+        { "kind": "test", "path": "packages/runtime-sdk/src/discovery.test.mjs" },
+        { "kind": "test", "path": "tests/m4-runtime-fabric.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-fabric",
+        "disposition": "Runtime discovery evidence exists, but complete metadata coverage for managed and external connections remains partially mapped."
+      }
+    },
+    {
+      "id": "CP-PRD-RUNTIME-ELIGIBILITY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00089)",
+      "requirement": "Filter ineligible runtimes before preference ranking and return classified reasons when no runtime qualifies.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-compatibility",
+      "lane": "contract/schema",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "packages/runtime-sdk/src/eligibility.test.mjs" },
+        { "kind": "test", "path": "packages/runtime-sdk/src/routing.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-compatibility",
+        "disposition": "Runtime SDK eligibility-before-ranking tests prove component behavior; full runtime-fabric classified no-match evidence remains partial."
+      }
+    },
+    {
+      "id": "CP-PRD-MANAGED-PI-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00090)",
+      "requirement": "Support managed Pi as the default managed runtime.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-adapters",
+      "lane": "end-to-end",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" },
+        { "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-adapters",
+        "disposition": "Managed-Pi component tests exist, but default-selection production evidence remains unverified."
+      }
+    },
+    {
+      "id": "CP-PRD-ACP-INTEROPERABILITY-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00090)",
+      "requirement": "Support ACP as the primary interoperability path for compatible external harnesses.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-adapters",
+      "lane": "end-to-end",
+      "issueRefs": [195, 188],
+      "evidence": [
+        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" },
+        { "kind": "document", "path": "docs/acp-runtime-adapter.md" }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "runtime-adapters",
+        "disposition": "ACP component evidence exists; compatible-external-harness production evidence remains unverified."
+      }
+    },
+    {
+      "id": "CP-PRD-HARNESS-OWNERSHIP-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00091)",
+      "requirement": "Preserve external harness authentication, project configuration, tools, and native session ownership.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-adapters",
+      "lane": "security/adversarial",
+      "issueRefs": [195, 190],
+      "evidence": [
+        { "kind": "document", "path": "docs/acp-runtime-adapter.md" },
+        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-adapters",
+        "disposition": "ACP boundary evidence exists, but this row does not verify every authentication, project-configuration, tool, and native-session ownership path."
+      }
+    },
+    {
+      "id": "CP-PRD-SESSION-CAPABILITIES-001",
+      "sourceId": "control-plane-prd",
+      "heading": "Runtime Fabric and Harness Interoperability (P00092)",
+      "requirement": "Treat session list, resume, close, and history access as separate negotiated capabilities.",
+      "normativeState": "accepted",
+      "classification": "partially_verified",
+      "owner": "runtime-compatibility",
+      "lane": "contract/schema",
+      "issueRefs": [195, 190],
+      "evidence": [
+        { "kind": "document", "path": "docs/acp-runtime-adapter.md" },
+        { "kind": "test", "path": "packages/runtime-sdk/src/sessions.test.mjs" }
+      ],
+      "gap": {
+        "issue": 190,
+        "severity": "high",
+        "owner": "runtime-adapters",
+        "disposition": "Capability-negotiation evidence exists for the ACP path; complete cross-adapter/session-operation coverage remains partial."
       }
     },
     {
@@ -7136,6 +7562,90 @@
     },
     {
       "id": "CP-PRD-RETRIEVAL-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-CREATE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-VERSION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-VALIDATE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-APPROVE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-DEPRECATE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROFILE-INSPECT-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PRECEDENCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PLAN-COMPILATION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CONFIG-PROVENANCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-COMPATIBILITY-REASONS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-IDEMPOTENT-COMMANDS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LIFECYCLE-STATES-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-RESTART-RECOVERY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-NETWORK-RECOVERY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-INSPECTABLE-RECORDS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-RUNTIME-DISCOVERY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-RUNTIME-ELIGIBILITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-MANAGED-PI-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-ACP-INTEROPERABILITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-HARNESS-OWNERSHIP-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-SESSION-CAPABILITIES-001",
       "sourceId": "control-plane-prd"
     },
     {

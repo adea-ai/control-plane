@@ -35,6 +35,55 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('maps exactly the bounded Control Plane PRD sections 8.1-8.3', () => {
+    const expectedIds = [
+      'CP-PRD-PROFILE-CREATE-001',
+      'CP-PRD-PROFILE-VERSION-001',
+      'CP-PRD-PROFILE-VALIDATE-001',
+      'CP-PRD-PROFILE-APPROVE-001',
+      'CP-PRD-PROFILE-DEPRECATE-001',
+      'CP-PRD-PROFILE-INSPECT-001',
+      'CP-PRD-PRECEDENCE-001',
+      'CP-PRD-PLAN-COMPILATION-001',
+      'CP-PRD-CONFIG-PROVENANCE-001',
+      'CP-PRD-COMPATIBILITY-REASONS-001',
+      'CP-PRD-IDEMPOTENT-COMMANDS-001',
+      'CP-PRD-LIFECYCLE-STATES-001',
+      'CP-PRD-RESTART-RECOVERY-001',
+      'CP-PRD-NETWORK-RECOVERY-001',
+      'CP-PRD-INSPECTABLE-RECORDS-001',
+      'CP-PRD-RUNTIME-DISCOVERY-001',
+      'CP-PRD-RUNTIME-ELIGIBILITY-001',
+      'CP-PRD-MANAGED-PI-001',
+      'CP-PRD-ACP-INTEROPERABILITY-001',
+      'CP-PRD-HARNESS-OWNERSHIP-001',
+      'CP-PRD-SESSION-CAPABILITIES-001',
+    ]
+    const rows = ledger.requirements.filter(({ id }) => expectedIds.includes(id))
+    expect(rows.map(({ id }) => id)).toEqual(expectedIds)
+    expect(rows).toHaveLength(21)
+    for (const row of rows) {
+      expect(row.sourceId).toBe('control-plane-prd')
+      expect(row.heading).toMatch(/\(P000(?:78|79|80|81|83|84|85|86|88|89|90|91|92)\)$/)
+      expect(row.issueRefs).toContain(195)
+    }
+    expect(ledger.requirements.find(({ id }) => id === 'CP-PRD-PROFILE-APPROVE-001')).toMatchObject(
+      {
+        classification: 'tbd',
+        gap: { issue: 188 },
+      }
+    )
+    expect(ledger.requirements.find(({ id }) => id === 'CP-PRD-PROFILE-APPROVE-001')).toMatchObject(
+      {
+        requirement: 'Approve AgentProfiles and Skills.',
+        heading: 'Profiles, Skills, and Execution Planning (P00078)',
+      }
+    )
+    expect(ledger.requirements.find(({ id }) => id === 'CP-PRD-RETRIEVAL-001')).toMatchObject({
+      gap: { issue: 195 },
+    })
+  })
+
   test('retains individually extracted native host and local-content boundaries', () => {
     const expected = [
       ['024', 'Native invocation boundary (section 11)'],
