@@ -176,6 +176,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-command-contract.test.mjs',
     'tests/m11-graph-composition.test.mjs',
     'tests/m11-native-packaging.test.mjs',
+    'tests/m11-prd-principle-crosswalk.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',
     'tests/m11-reconciliation-parity.test.mjs',
     'tests/cp1-embedded-durable-execution.test.mjs',
@@ -199,6 +200,12 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
       ['unit', 'integration', 'e2e', 'smoke'].includes(primaryLane)
     )
   )
+})
+
+test('M9 live requirements validation has scoped authenticated issue reads', async () => {
+  const workflow = await readFile('.github/workflows/m9-production-readiness.yml', 'utf8')
+  assert.match(workflow, /core:\n[\s\S]*?permissions:\n\s+contents: read\n\s+issues: read/)
+  assert.match(workflow, /run: bun run type-check\n\s+env:\n\s+GH_TOKEN: \$\{\{ github.token \}\}/)
 })
 
 test('enforces deterministic Bun seeds and forbids automatic retries', () => {
