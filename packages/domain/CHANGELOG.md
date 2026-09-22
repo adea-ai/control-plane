@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.4](https://github.com/adea-ai/control-plane/compare/domain-v1.11.3...domain-v1.11.4) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** context command envelopes verify under both canonical forms ([#655](https://github.com/adea-ai/control-plane/issues/655)) ([15a786d](https://github.com/adea-ai/control-plane/commit/15a786de538c38bc4799008f7207559093b026c0))
+
 ## [1.11.3](https://github.com/adea-ai/control-plane/compare/domain-v1.11.2...domain-v1.11.3) (2026-09-20)
 
 
