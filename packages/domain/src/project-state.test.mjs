@@ -25,8 +25,13 @@ describe('project state digest cutover', () => {
       new RecordingProjectStateEventPublisher()
     )
     await service.initialize({ workspaceId, projectId, at: now })
-    const input = mutation('stm_01JABCDEF0123456789ABCDEG', 0, [
-      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    // Appended values are free-form JSON: keys 'a-b'/'a_b' order differently
+    // under localeCompare vs code point, so the two forms genuinely diverge.
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', {
+        'a-b': 1,
+        a_b: 2,
+      }),
     ])
     const legacyDigest = projectStateMutationLegacyDigest(input)
     expect(legacyDigest).not.toBe(projectStateMutationDigestV2(input))

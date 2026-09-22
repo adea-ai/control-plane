@@ -208,18 +208,27 @@ describe('durable parent and child delegation', () => {
     const inner = new InMemoryDelegationRepository()
     const preCutover = {
       async insert(record) {
-        // First write simulates a record stored before the code-point cutover.
+        // The first write simulates a record stored before the cutover.
         return inner.insert({ ...record, inputDigest: legacyDigest })
       },
-      async get(id) {
+      get(id) {
         return inner.get(id)
+      },
+      findByChild(childExecutionId) {
+        return inner.findByChild(childExecutionId)
+      },
+      listByParent(parentExecutionId) {
+        return inner.listByParent(parentExecutionId)
+      },
+      async compareAndSet(expectedRevision, record) {
+        return inner.compareAndSet(expectedRevision, record)
       },
     }
     const service = new DelegationService({
       delegations: preCutover,
       lifecycle: fixture.lifecycle,
       plans: fixture.plans,
-      events: fixture.events,
+      events: { async publish() {} },
     })
 
     const first = await service.delegate(input)
