@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.32.6",
+  "version": "1.32.7",
   "private": true,
   "workspaces": [
     "apps/*",

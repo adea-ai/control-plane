@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/adea-ai/control-plane/compare/policy-v1.3.1...policy-v1.3.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** migrate the write-once digest sites; record insertion-order decisions ([#653](https://github.com/adea-ai/control-plane/issues/653)) ([dd0dc7d](https://github.com/adea-ai/control-plane/commit/dd0dc7d271866f06f53361881a6fc908d6c17f7c))
+
 ## [1.3.1](https://github.com/adea-ai/control-plane/compare/policy-v1.3.0...policy-v1.3.1) (2026-09-20)
 
 

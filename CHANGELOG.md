@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.6...workspace-v1.32.7) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** migrate the write-once digest sites; record insertion-order decisions ([#653](https://github.com/adea-ai/control-plane/issues/653)) ([dd0dc7d](https://github.com/adea-ai/control-plane/commit/dd0dc7d271866f06f53361881a6fc908d6c17f7c))
+
 ## [1.32.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.5...workspace-v1.32.6) (2026-09-22)
 
 
