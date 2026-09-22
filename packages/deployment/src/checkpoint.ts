@@ -1,3 +1,7 @@
+// DECISION (#612): insertion order is CONTRACTUAL here — the serialized bytes
+// are persisted and compared verbatim across versions, so this site must not
+// adopt canonicalJsonStringify; altering the format requires a versioned
+// envelope migration with an explicit cutover.
 import { createHash, randomUUID } from 'node:crypto'
 import {
   chmod,

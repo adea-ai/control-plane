@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const OperationalPolicySchema = z
@@ -106,15 +107,10 @@ export function retryDelayMs(
   return Math.min(ceiling, Math.floor(random() * (ceiling + 1)))
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// schema-pinned policy, but schemaVersion/shutdown is a locale-divergent pair (flips under cs); zero callers today — switch to contracts canonicalJsonStringify in a dedicated change
+// Zero callers today; uses the shared host-independent canonical form so the
+// first consumer inherits code-point ordering (#612).
 export function operationalPolicyDigest(policy: OperationalPolicyConfig): `sha256:${string}` {
-  const canonical = JSON.stringify(policy, (_key, value: unknown) =>
-    value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? Object.fromEntries(
-          Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
-        )
-      : value
-  )
-  return `sha256:${createHash('sha256').update(canonical).digest('hex')}`
+  return `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(policy) ?? 'null')
+    .digest('hex')}`
 }
