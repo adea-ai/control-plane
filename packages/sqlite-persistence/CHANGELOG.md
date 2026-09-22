@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.11.2...sqlite-persistence-v1.11.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **retention:** contain unsafe deletion and drain scheduled cleanup ([#636](https://github.com/adea-ai/control-plane/issues/636)) ([7d1703e](https://github.com/adea-ai/control-plane/commit/7d1703e076224ef466086b515ea0c6190cb7ba96))
+
 ## [1.11.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.11.1...sqlite-persistence-v1.11.2) (2026-09-22)
 
 
