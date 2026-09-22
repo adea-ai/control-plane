@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.2.1...remote-control-relay-v1.2.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** migrate the write-once digest sites; record insertion-order decisions ([#653](https://github.com/adea-ai/control-plane/issues/653)) ([dd0dc7d](https://github.com/adea-ai/control-plane/commit/dd0dc7d271866f06f53361881a6fc908d6c17f7c))
+
 ## [1.2.1](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.2.0...remote-control-relay-v1.2.1) (2026-09-20)
 
 

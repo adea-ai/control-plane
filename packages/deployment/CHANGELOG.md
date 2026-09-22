@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/adea-ai/control-plane/compare/deployment-v1.7.2...deployment-v1.7.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** migrate the write-once digest sites; record insertion-order decisions ([#653](https://github.com/adea-ai/control-plane/issues/653)) ([dd0dc7d](https://github.com/adea-ai/control-plane/commit/dd0dc7d271866f06f53361881a6fc908d6c17f7c))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/deployment-v1.7.1...deployment-v1.7.2) (2026-09-22)
 
 
