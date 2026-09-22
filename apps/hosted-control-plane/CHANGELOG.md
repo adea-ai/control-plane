@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.9.0...hosted-control-plane-v1.9.1) (2026-09-22)
+
+
+### Tests
+
+* **hosted:** e2e the hosted control plane HTTP surface over real Postgres ([#633](https://github.com/adea-ai/control-plane/issues/633)) ([fd1df61](https://github.com/adea-ai/control-plane/commit/fd1df6107fe776214ca97416bff1c01c0515c92b))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.8.1...hosted-control-plane-v1.9.0) (2026-09-20)
 
 

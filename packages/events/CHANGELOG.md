@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/adea-ai/control-plane/compare/events-v1.7.2...events-v1.7.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **m612:** event-row payload hashes are now locale-independent; add harness docs ([#635](https://github.com/adea-ai/control-plane/issues/635)) ([62489ae](https://github.com/adea-ai/control-plane/commit/62489ae931c51285099cd3f4396ed7f5d8ecbc90))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/events-v1.7.1...events-v1.7.2) (2026-09-20)
 
 
