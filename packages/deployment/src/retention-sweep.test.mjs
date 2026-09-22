@@ -1,7 +1,35 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { RetentionSweep } from './retention-sweep.ts'
 
 describe('retention sweep', () => {
+  test('reports a fixed diagnostic by default without exposing storage errors', async () => {
+    let reported
+    const report = new Promise((resolve) => {
+      reported = resolve
+    })
+    const diagnostic = spyOn(console, 'error').mockImplementation(() => {
+      reported()
+    })
+    const sweep = new RetentionSweep({
+      commandInbox: {
+        deleteExpiredInbox: async () => {
+          throw new Error('private storage details')
+        },
+      },
+      executionEvents: { deleteExpiredEvents: async () => 0 },
+      intervalMs: 5,
+    })
+    try {
+      sweep.start()
+      await report
+      await sweep.close()
+      expect(diagnostic).toHaveBeenCalledWith('RETENTION_SWEEP_FAILED')
+      expect(diagnostic).toHaveBeenCalledTimes(1)
+    } finally {
+      await sweep.close()
+      diagnostic.mockRestore()
+    }
+  })
   test('scheduled slow passes do not overlap and close drains the current pass', async () => {
     let release
     const blocked = new Promise((resolve) => {

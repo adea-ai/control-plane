@@ -92,30 +92,10 @@ export class SqliteStatePromotionProposalRepository implements StatePromotionPro
 export class SqliteExecutionEventRepository implements ExecutionEventRepository {
   constructor(readonly provider: PersistenceProvider) {}
 
-  /**
-   * Retention sweep primitive (M11.9/#194): physically removes execution
-   * events whose retention deadline has passed. Returns the number deleted.
-   * Unreadable payloads are skipped so the sweep never crashes.
-   */
+  /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredEvents(now: Date): Promise<number> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
-    return this.provider.transaction(async (transaction) => {
-      const records = await transaction.list(namespaces.events)
-      let deleted = 0
-      for (const record of records) {
-        let event: ExecutionEvent
-        try {
-          event = ExecutionEventSchema.parse(record.value)
-        } catch {
-          continue
-        }
-        const expires = Date.parse(event.retentionExpiresAt)
-        if (!Number.isFinite(expires) || expires > now.getTime()) continue
-        await transaction.delete(namespaces.events, record.id)
-        deleted += 1
-      }
-      return deleted
-    })
+    throw new Error('EVENT_RETENTION_ELIGIBILITY_REQUIRED')
   }
 
   append(input: ExecutionEventDraft): Promise<ExecutionEvent | undefined> {

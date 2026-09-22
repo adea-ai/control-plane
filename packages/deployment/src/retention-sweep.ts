@@ -32,7 +32,7 @@ export class RetentionSweep {
     this.#commandInbox = options.commandInbox
     this.#executionEvents = options.executionEvents
     this.#intervalMs = positiveInterval(options.intervalMs)
-    this.#onError = options.onError ?? (() => {})
+    this.#onError = options.onError ?? (() => console.error('RETENTION_SWEEP_FAILED'))
   }
 
   start(): void {

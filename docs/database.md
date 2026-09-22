@@ -142,13 +142,22 @@ the existing explicit retention-expired response. Deployments must separately re
 retention and ensure inbox data is retained at least as long as the protected execution. This
 acceptance check alone does not prove cleanup policy or physical retention across profiles.
 
-Hosted Server starts its command-inbox and execution-event retention sweep independently of
+Hosted Server starts its command-inbox and execution-event retention scheduler independently of
 optional execution reconciliation. Its default interval is one hour; the composition option
 `retentionSweepIntervalMs` accepts positive integer milliseconds up to one day. Scheduled
 passes wait for the previous pass to settle before the next interval begins. Shutdown cancels
 future passes and drains the active scheduled pass before closing storage. Local and managed
-cloud use the same scheduler lifecycle. This wiring does not establish deployed retention
-acceptance or SQLite indexed-expiry parity; those remain M11.9 evidence requirements.
+cloud use the same scheduler lifecycle. Failures emit the fixed diagnostic
+`RETENTION_SWEEP_FAILED` by default, without raw storage details.
+
+Automatic inbox/event deletion is currently blocked: expiry alone is not deletion authority.
+The repository methods reject with `COMMAND_RETENTION_ELIGIBILITY_REQUIRED` or
+`EVENT_RETENTION_ELIGIBILITY_REQUIRED` until full policy, hold, reference, replay-consumer,
+terminal-state and rejection-identity eligibility can be checked atomically. Existing retirement
+markers or event archival do not by themselves grant deletion authority. This safety containment
+retains records and can increase storage use; operators must monitor capacity. It is not retention
+completion. Safe compaction, SQLite indexed-expiry parity, and deployed acceptance remain M11.9
+requirements; see the [coverage matrix](./evidence/m11-retention-coverage-2026-09-22.md).
 
 ## ExecutionEvent persistence
 

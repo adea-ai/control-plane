@@ -507,7 +507,29 @@ function runtimeInventoryCheckpoint() {
 }
 
 describe('SQLite event retention sweep', () => {
-  test('deleteExpiredEvents removes only events past their retention deadline', async () => {
+  test('deleteExpiredEvents retains expired pending events', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-events-retention-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const repository = new SqliteExecutionEventRepository(provider)
+      const eventId = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FCX'
+      await repository.append({
+        ...eventDraft(eventId),
+        retentionExpiresAt: '2026-08-15T12:00:00.000Z',
+      })
+
+      await expect(
+        repository.deleteExpiredEvents(new Date('2026-09-15T12:00:00.000Z'))
+      ).rejects.toThrow('EVENT_RETENTION_ELIGIBILITY_REQUIRED')
+      expect(await repository.get(eventId)).toBeDefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('deleteExpiredEvents preserves expired and live events without deletion authority', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-events-retention-'))
     const path = join(directory, 'state.sqlite')
     const provider = new SqlitePersistenceProvider({ path })
@@ -521,11 +543,12 @@ describe('SQLite event retention sweep', () => {
       })
 
       const sweepNow = new Date('2026-09-15T12:00:00.000Z')
-      expect(await repository.deleteExpiredEvents(sweepNow)).toBe(1)
-      expect(await repository.deleteExpiredEvents(sweepNow)).toBe(0)
+      await expect(repository.deleteExpiredEvents(sweepNow)).rejects.toThrow(
+        'EVENT_RETENTION_ELIGIBILITY_REQUIRED'
+      )
 
       expect(await repository.get('evt_01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBeDefined()
-      expect(await repository.get('evt_01ARZ3NDEKTSV4RRFFQ69G5FBW')).toBeUndefined()
+      expect(await repository.get('evt_01ARZ3NDEKTSV4RRFFQ69G5FBW')).toBeDefined()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

@@ -699,7 +699,35 @@ describe('project state update records', () => {
 })
 
 describe('SQLite retention sweep', () => {
-  test('deleteExpiredInbox removes only past-retention commands and their index', async () => {
+  test('deleteExpiredInbox retains an expired active command without retirement eligibility', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const repository = new SqliteCommandAcceptanceRepository(provider)
+      const retentionService = new CommandInboxService({
+        repository,
+        executionIdFactory: () => ids.executionId,
+        executionPlanValidator: { validate: async () => true },
+        now: () => receivedAt,
+      })
+      const input = commandInput({
+        idempotencyKey: 'retention-sweep-active-0001',
+        retentionExpiresAt: '2026-09-23T10:01:00.000Z',
+      })
+      await retentionService.acceptExecution(input)
+
+      await expect(
+        repository.deleteExpiredInbox(new Date('2026-09-23T11:00:00.000Z'))
+      ).rejects.toThrow('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
+      expect(await repository.getByExecutionId(ids.executionId)).toBeDefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('deleteExpiredInbox preserves expired and live commands without deletion authority', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retention-'))
     const path = join(directory, 'state.sqlite')
     const provider = new SqlitePersistenceProvider({ path })
@@ -737,10 +765,11 @@ describe('SQLite retention sweep', () => {
       await makeService(liveExecutionId).acceptExecution(live)
 
       // Sweep clock sits after the expired retention cutoff, before the live one.
-      const deleted = await repository.deleteExpiredInbox(new Date('2026-09-23T11:00:00.000Z'))
-      expect(deleted).toBe(1)
+      await expect(
+        repository.deleteExpiredInbox(new Date('2026-09-23T11:00:00.000Z'))
+      ).rejects.toThrow('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
 
-      expect(await repository.getByExecutionId(ids.executionId)).toBeUndefined()
+      expect(await repository.getByExecutionId(ids.executionId)).toBeDefined()
       const surviving = await repository.getByExecutionId(liveExecutionId)
       expect(surviving?.commandId).toBe(liveCommandId)
     } finally {

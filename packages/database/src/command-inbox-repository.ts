@@ -10,7 +10,7 @@ import {
   type CommandInboxScope,
   type Execution,
 } from '@control-plane/domain'
-import { and, eq, lte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
@@ -20,17 +20,10 @@ import { retiredCommandKeys } from './schema/retired-command-keys.js'
 export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
 
-  /**
-   * Retention worker primitive (M11.9/#194): physically removes command inbox
-   * rows whose retention deadline has passed. Returns the number deleted.
-   */
+  /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredInbox(now: Date): Promise<number> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
-    const deleted = await this.database
-      .delete(commandInbox)
-      .where(lte(commandInbox.retentionExpiresAt, now))
-      .returning({ commandId: commandInbox.commandId })
-    return deleted.length
+    throw new Error('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
   }
 
   async accept(

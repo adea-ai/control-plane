@@ -29,6 +29,12 @@ restore-time deletion reapplication. Issue #194 requires every class below.
 
 ## Immediate priorities
 
+PR #636 contains a safety mitigation after this source audit: inbox/event deletion
+methods now reject before storage access with explicit eligibility-required errors.
+The scheduler reports a fixed diagnostic, and operators must monitor retained-data
+growth. This removes unsafe age-only behavior but intentionally does not claim that
+retention is implemented. The full eligibility and deletion work below remains open.
+
 1. Fix unsafe expiry-only inbox/event deletion before extending automatic sweep
    activation. PR #636 is held in draft pending this prerequisite; scheduler
    overlap/drain tests do not prove deletion eligibility.
