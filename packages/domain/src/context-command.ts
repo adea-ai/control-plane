@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { IdentifierSchemas } from '@control-plane/contracts'
+import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const Timestamp = z.iso.datetime()
@@ -59,7 +59,14 @@ const Envelope = z
   })
   .strict()
   .superRefine((command, context) => {
-    if (command.payloadHash !== contextCommandSemanticHash(command))
+    // Dual-accept (#612): envelopes persisted before the code-point cutover
+    // carry the legacy locale-dependent bytes; current senders (the Cortana
+    // adapter already does) emit the host-independent form. Inbox retention
+    // (30-day minimum) bounds how long the legacy candidate must stay.
+    if (
+      command.payloadHash !== contextCommandSemanticHash(command) &&
+      command.payloadHash !== contextCommandSemanticHashV2(command)
+    )
       context.addIssue({ code: 'custom', message: 'Context command payload hash mismatch' })
     if (Buffer.byteLength(JSON.stringify(command), 'utf8') > 262144)
       context.addIssue({ code: 'custom', message: 'Context command exceeds its bounded envelope' })
@@ -201,6 +208,16 @@ export interface ContextCommandRepository {
 
 export function contextCommandSemanticHash(input: unknown): string {
   return digest(canonical(Semantics.parse(input)))
+}
+
+/**
+ * Host-independent semantic hash (#612): same content as
+ * {@link contextCommandSemanticHash} but with code-point key ordering. This is
+ * the form new senders should emit; the legacy form above is retained only so
+ * envelopes persisted before the cutover keep verifying.
+ */
+export function contextCommandSemanticHashV2(input: unknown): string {
+  return digest(canonicalJsonStringify(Semantics.parse(input)) ?? 'undefined')
 }
 export function contextCommandOperationKey(input: ContextCommandScope): string {
   return digest(canonical(ContextCommandScopeSchema.parse(input)))
@@ -344,8 +361,10 @@ function isTerminal(status: ContextCommandRecord['status']): boolean {
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// Semantics payload.parameters has a z.json() catchall (free-form keys); payloadHash is persisted in the command envelope
+// CANONICAL-JSON: verification-only legacy form, see contracts canonicalJsonStringify
+// Semantics payload.parameters has a z.json() catchall (free-form keys); the envelope
+// verifier dual-accepts this legacy locale-dependent form and the V2 code-point form
+// (contextCommandSemanticHashV2). Inbox retention (30-day minimum) bounds the window.
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (typeof value === 'object' && value !== null)
