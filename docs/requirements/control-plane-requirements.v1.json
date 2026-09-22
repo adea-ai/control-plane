@@ -8266,44 +8266,6 @@
       "id": "CP-PRD-RETRIEVAL-001",
       "sourceId": "control-plane-prd"
     },
-    { "id": "CP-PRD-CONNECTOR-AUTH-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-CREDENTIAL-BOUNDARY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-PROVIDER-SCOPE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-TOOL-BRIDGE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-EXTERNAL-TOOL-BRIDGE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-NO-REUSABLE-SECRETS-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-PROVIDER-AUTH-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-MODEL-ROUTING-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-CREDENTIAL-MODES-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-USAGE-BUDGETS-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-ATTEMPT-USAGE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-AUTHORITATIVE-USAGE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-MODEL-PROVENANCE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-SANDBOX-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-LOCAL-TRANSPORT-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-REMOTE-GATEWAY-ONLY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-LOCAL-PATH-BOUNDARY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-LOCAL-DATA-BOUNDARY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-OUTPUT-PROMOTION-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-DURABLE-INTERACTIONS-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-NORMALIZED-INTERACTION-UX-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-EXPLICIT-APPROVAL-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-DIRECT-DEFAULT-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-DELEGATION-CRITERIA-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-GRAPH-ORCHESTRATION-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-GRAPH-AUTHORITY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-OUTCOME-ATTRIBUTION-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-COMPAT-EVIDENCE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-BASELINE-COMPARISON-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-FAILED-GATE-PROMOTION-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-PUBLIC-CONTRACTS-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-CONTRACT-INDEPENDENCE-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-DETERMINISTIC-STUBS-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-SERVICE-AUTH-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-API-IDEMPOTENCY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-API-PAGINATION-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-API-COMPATIBILITY-001", "sourceId": "control-plane-prd" },
-    { "id": "CP-PRD-API-TRACE-CORRELATION-001", "sourceId": "control-plane-prd" },
     {
       "id": "CP-PRD-PROFILE-CREATE-001",
       "sourceId": "control-plane-prd"
@@ -8386,6 +8348,158 @@
     },
     {
       "id": "CP-PRD-SESSION-CAPABILITIES-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CONNECTOR-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROVIDER-SCOPE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-EXTERNAL-TOOL-BRIDGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-NO-REUSABLE-SECRETS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PROVIDER-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-MODEL-ROUTING-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CREDENTIAL-MODES-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-USAGE-BUDGETS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-ATTEMPT-USAGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-AUTHORITATIVE-USAGE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-MODEL-PROVENANCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-SANDBOX-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-TRANSPORT-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-REMOTE-GATEWAY-ONLY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-PATH-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-LOCAL-DATA-BOUNDARY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-OUTPUT-PROMOTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DURABLE-INTERACTIONS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-NORMALIZED-INTERACTION-UX-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-EXPLICIT-APPROVAL-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DIRECT-DEFAULT-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DELEGATION-CRITERIA-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-GRAPH-ORCHESTRATION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-GRAPH-AUTHORITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-OUTCOME-ATTRIBUTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-COMPAT-EVIDENCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-BASELINE-COMPARISON-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-FAILED-GATE-PROMOTION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-PUBLIC-CONTRACTS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-CONTRACT-INDEPENDENCE-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-DETERMINISTIC-STUBS-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-SERVICE-AUTH-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-IDEMPOTENCY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-PAGINATION-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-COMPATIBILITY-001",
+      "sourceId": "control-plane-prd"
+    },
+    {
+      "id": "CP-PRD-API-TRACE-CORRELATION-001",
       "sourceId": "control-plane-prd"
     },
     {
