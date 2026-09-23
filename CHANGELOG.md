@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.12...workspace-v1.32.13) (2026-09-23)
+
+
+### Bug Fixes
+
+* **m612:** final canonical-JSON sites migrated; no localeCompare remains ([#666](https://github.com/adea-ai/control-plane/issues/666)) ([d7dd600](https://github.com/adea-ai/control-plane/commit/d7dd6001343aa2702f1cfb0f36aa96d79aaeb464))
+
 ## [1.32.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.32.11...workspace-v1.32.12) (2026-09-22)
 
 
