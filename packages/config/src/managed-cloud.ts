@@ -29,6 +29,13 @@ export interface ManagedCloudServiceAuthenticationConfiguration {
 
 export interface ManagedCloudRuntimeConfiguration {
   readonly mode: 'certification' | 'disabled' | 'remote'
+  /**
+   * Optional harness pin for remote attempt routing (M12/#670): every
+   * routing attempt must select a runtime exposing this harness id, or fail
+   * closed with HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME. Absent means routing
+   * keeps its unpinned behavior.
+   */
+  readonly pinnedHarnessId?: string
 }
 
 export interface ManagedCloudConfiguration {
@@ -133,7 +140,16 @@ function loadWorkflowRuntimeConfiguration(
       component: 'runtime',
     })
   }
-  return { mode }
+  const pinnedHarnessId = environment['CONTROL_PLANE_PINNED_HARNESS_ID']
+  if (pinnedHarnessId !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(pinnedHarnessId)) {
+    throw new ConfigurationError({
+      code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
+      invalid: ['CONTROL_PLANE_PINNED_HARNESS_ID'],
+      missing: [],
+      component: 'runtime',
+    })
+  }
+  return { mode, ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }) }
 }
 
 function loadServiceAuthenticationConfiguration(
