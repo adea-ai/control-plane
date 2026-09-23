@@ -80,7 +80,12 @@ export function createManagedCloudWorkflowWorkerComposition(
   const discovery = new PostgresRuntimeDiscoveryRepository(connection.database)
   const runtimeRouter =
     configuration.runtime?.mode === 'remote'
-      ? new RuntimeDiscoveryAttemptRouter({ discovery })
+      ? new RuntimeDiscoveryAttemptRouter({
+          discovery,
+          ...(configuration.runtime.pinnedHarnessId === undefined
+            ? {}
+            : { pinnedHarnessId: configuration.runtime.pinnedHarnessId }),
+        })
       : undefined
   const commands = new PostgresRuntimeCommandRepository(connection.database)
   // Consistency metrics flow through the telemetry redaction pipeline with bounded

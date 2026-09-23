@@ -31,6 +31,23 @@ const cloud = {
 }
 
 describe('managed cloud configuration', () => {
+  test('parses the optional pinned harness id and rejects malformed ones', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const withPin = loadManagedCloudConfiguration(
+      { ...remote, CONTROL_PLANE_PINNED_HARNESS_ID: 'deepseek' },
+      'workflow-worker'
+    )
+    expect(withPin.runtime).toEqual({ mode: 'remote', pinnedHarnessId: 'deepseek' })
+    const withoutPin = loadManagedCloudConfiguration(remote, 'workflow-worker')
+    expect(withoutPin.runtime).toEqual({ mode: 'remote' })
+    expect(() =>
+      loadManagedCloudConfiguration(
+        { ...remote, CONTROL_PLANE_PINNED_HARNESS_ID: 'DeepSeek!' },
+        'workflow-worker'
+      )
+    ).toThrow()
+  })
+
   test('publishes a per-service dependency manifest', () => {
     expect(managedCloudEnvironmentManifest()['control-api']).toContain('RESTATE_INGRESS_URL')
     expect(managedCloudEnvironmentManifest()['workflow-worker']).toContain(
