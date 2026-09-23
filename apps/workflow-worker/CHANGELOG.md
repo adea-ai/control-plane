@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.8.2...workflow-worker-v1.9.0) (2026-09-23)
+
+
+### Features
+
+* **m12:** harness pin validation in attempt routing ([#670](https://github.com/adea-ai/control-plane/issues/670) path 1) ([#671](https://github.com/adea-ai/control-plane/issues/671)) ([6880b57](https://github.com/adea-ai/control-plane/commit/6880b57549e842cab982ed91d94fd7638588a69f))
+
 ## [1.8.2](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.8.1...workflow-worker-v1.8.2) (2026-09-21)
 
 

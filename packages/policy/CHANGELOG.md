@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/policy-v1.3.2...policy-v1.4.0) (2026-09-23)
+
+
+### Features
+
+* **m12:** harness pin validation in attempt routing ([#670](https://github.com/adea-ai/control-plane/issues/670) path 1) ([#671](https://github.com/adea-ai/control-plane/issues/671)) ([6880b57](https://github.com/adea-ai/control-plane/commit/6880b57549e842cab982ed91d94fd7638588a69f))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/policy-v1.3.1...policy-v1.3.2) (2026-09-22)
 
 
