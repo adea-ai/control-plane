@@ -296,4 +296,21 @@ describe('Hosted server composition', () => {
       'HOSTED_OBJECT_STORE_KIND_INVALID'
     )
   })
+
+  test('resolves the optional pinned harness id from the environment or options', () => {
+    const base = resolveHostedCompositionConfiguration({
+      DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane',
+    })
+    expect(base.pinnedHarnessId).toBeUndefined()
+    const fromEnv = resolveHostedCompositionConfiguration({
+      DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane',
+      CONTROL_PLANE_PINNED_HARNESS_ID: 'deepseek',
+    })
+    expect(fromEnv.pinnedHarnessId).toBe('deepseek')
+    const fromOptions = resolveHostedCompositionConfiguration(
+      { DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane' },
+      { pinnedHarnessId: 'zcode' }
+    )
+    expect(fromOptions.pinnedHarnessId).toBe('zcode')
+  })
 })
