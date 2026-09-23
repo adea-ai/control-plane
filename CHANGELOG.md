@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.36.0...workspace-v1.36.1) (2026-09-23)
+
+
+### Maintenance
+
+* **discovery:** consolidate the reconciliation projections into one shared implementation ([#677](https://github.com/adea-ai/control-plane/issues/677)) ([ce58d1b](https://github.com/adea-ai/control-plane/commit/ce58d1bd634f6f4424db4c76c56e807b54eff809))
+
 ## [1.36.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.35.0...workspace-v1.36.0) (2026-09-23)
 
 

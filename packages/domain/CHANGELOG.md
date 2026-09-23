@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.7](https://github.com/adea-ai/control-plane/compare/domain-v1.11.6...domain-v1.11.7) (2026-09-23)
+
+
+### Maintenance
+
+* **discovery:** consolidate the reconciliation projections into one shared implementation ([#677](https://github.com/adea-ai/control-plane/issues/677)) ([ce58d1b](https://github.com/adea-ai/control-plane/commit/ce58d1bd634f6f4424db4c76c56e807b54eff809))
+
 ## [1.11.6](https://github.com/adea-ai/control-plane/compare/domain-v1.11.5...domain-v1.11.6) (2026-09-23)
 
 
