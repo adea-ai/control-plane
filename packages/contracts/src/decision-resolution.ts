@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { RuntimeConnectionDiscoveryReadModel } from './runtime-discovery.js'
 import { ServiceCallerAssertionSchema } from './authentication.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
@@ -119,6 +120,38 @@ export const AvailableRuntimeSchema = z
   })
   .strict()
 export type AvailableRuntime = z.output<typeof AvailableRuntimeSchema>
+
+/**
+ * Maps runtime-discovery read models onto the decision layer's runtime view
+ * (#74 / M12 wiring). The discovery `family` is the harness family id — the
+ * same kebab-case shape HarnessIdSchema requires — so a runtime advertising
+ * family `pi` exposes harness id `pi`. Unavailable and revoked connections are
+ * not offered to resolution; degraded ones remain selectable because policy
+ * decides whether a degraded runtime is acceptable.
+ */
+function runtimeKind(model: RuntimeConnectionDiscoveryReadModel): AvailableRuntime['kind'] {
+  // The discovery model's location is local_device | agent_hq_cloud; the
+  // managed/external connection types resolve the remaining distinction.
+  if (model.connectionType === 'managed_cloud') return 'cloud'
+  if (model.connectionType === 'managed_local') return 'local'
+  return model.location === 'local_device' ? 'local' : 'self-hosted'
+}
+
+export function availableRuntimesFromDiscovery(
+  models: readonly RuntimeConnectionDiscoveryReadModel[]
+): AvailableRuntime[] {
+  return models
+    .filter((model) => model.status === 'available' || model.status === 'degraded')
+    .map((model) =>
+      AvailableRuntimeSchema.parse({
+        runtimeDefinitionId: model.runtimeDefinitionId,
+        kind: runtimeKind(model),
+        transport: 'remote-gateway',
+        harnessIds: [model.family],
+        capabilities: [...model.capabilities],
+      })
+    )
+}
 
 export const DecisionResolutionRequestSchema = z
   .object({
