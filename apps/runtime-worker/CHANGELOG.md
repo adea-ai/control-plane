@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.3](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.2...runtime-worker-v1.8.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* **m612:** final canonical-JSON sites migrated; no localeCompare remains ([#666](https://github.com/adea-ai/control-plane/issues/666)) ([d7dd600](https://github.com/adea-ai/control-plane/commit/d7dd6001343aa2702f1cfb0f36aa96d79aaeb464))
+
 ## [1.8.2](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.1...runtime-worker-v1.8.2) (2026-09-21)
 
 

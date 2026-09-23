@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.6](https://github.com/adea-ai/control-plane/compare/domain-v1.11.5...domain-v1.11.6) (2026-09-23)
+
+
+### Bug Fixes
+
+* **m612:** final canonical-JSON sites migrated; no localeCompare remains ([#666](https://github.com/adea-ai/control-plane/issues/666)) ([d7dd600](https://github.com/adea-ai/control-plane/commit/d7dd6001343aa2702f1cfb0f36aa96d79aaeb464))
+
 ## [1.11.5](https://github.com/adea-ai/control-plane/compare/domain-v1.11.4...domain-v1.11.5) (2026-09-22)
 
 
