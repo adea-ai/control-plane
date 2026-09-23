@@ -84,6 +84,36 @@ describe('runtime discovery attempt routing', () => {
       router.resolve({ execution: execution(plan), executionPlan: plan })
     ).rejects.toThrow('WORKFLOW_RUNTIME_UNAVAILABLE')
   })
+
+  test('a pinned harness fails closed when the selected runtime does not expose it', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const discovered = runtimeConnection('rtc_01JABCDEF0123456789ABCDEFA', {
+      access: {
+        localProjectGrant: { required: false, state: 'not_required' },
+        entitlement: { state: 'allowed' },
+      },
+    })
+    const denying = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [discovered],
+      },
+      pinnedHarnessId: 'deepseek',
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+    await expect(
+      denying.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toMatchObject({ code: 'HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME' })
+
+    const accepting = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [discovered],
+      },
+      pinnedHarnessId: 'pi',
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+    const selected = await accepting.resolve({ execution: execution(plan), executionPlan: plan })
+    expect(selected.runtimeDefinitionId).toBeDefined()
+  })
 })
 
 function execution(plan) {

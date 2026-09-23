@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveDecisionLayer } from './index.ts'
+import {
+  DecisionResolutionDeniedError,
+  resolveDecisionLayer,
+  resolveRuntimeHarness,
+} from './index.ts'
 
 const ids = {
   requestId: 'req_01JABCDEF0123456789ABCDEFG',
@@ -233,5 +237,39 @@ describe('decision-layer resolution (#558)', () => {
     const first = resolveDecisionLayer(input, { model: { modelId: 'pi/sol-1' } })
     const second = resolveDecisionLayer(input, { model: { modelId: 'pi/sol-1' } })
     expect(first.resolutionDigest).toBe(second.resolutionDigest)
+  })
+})
+
+describe('narrow runtime harness resolution', () => {
+  const piRuntime = {
+    runtimeDefinitionId: 'rtd_01JABCDEF0123456789ABCDEFG',
+    kind: 'local',
+    transport: 'direct-local',
+    harnessIds: ['pi', 'acp'],
+    capabilities: ['stream.output'],
+  }
+
+  test('resolves the first exposed harness without a pin', () => {
+    expect(resolveRuntimeHarness(piRuntime)).toEqual({ harnessId: 'pi', source: 'policy-default' })
+  })
+
+  test('accepts an exposed pin and rejects an unexposed one', () => {
+    expect(resolveRuntimeHarness(piRuntime, 'acp')).toEqual({
+      harnessId: 'acp',
+      source: 'explicit-pin',
+    })
+    try {
+      resolveRuntimeHarness(piRuntime, 'deepseek')
+      throw new Error('expected denial')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DecisionResolutionDeniedError)
+      expect(error.code).toBe('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
+    }
+  })
+
+  test('denies runtimes exposing no harness at all', () => {
+    expect(() => resolveRuntimeHarness({ ...piRuntime, harnessIds: [] })).toThrow(
+      DecisionResolutionDeniedError
+    )
   })
 })
