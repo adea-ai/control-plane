@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.9.2...contracts-v1.10.0) (2026-09-23)
+
+
+### Features
+
+* **m12:** map runtime discovery onto the decision layer's runtime view ([#668](https://github.com/adea-ai/control-plane/issues/668)) ([5b71259](https://github.com/adea-ai/control-plane/commit/5b712592a5cb6f34b9976eb740c5852ff616b521))
+
 ## [1.9.2](https://github.com/adea-ai/control-plane/compare/contracts-v1.9.1...contracts-v1.9.2) (2026-09-20)
 
 
