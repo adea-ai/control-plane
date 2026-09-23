@@ -83,6 +83,7 @@ export function resolveHostedCompositionConfiguration(
     options.requestIdentityPublicKey ?? environment['RESTATE_REQUEST_IDENTITY_PUBLIC_KEY']
   const workflowDeploymentUri =
     options.workflowDeploymentUri ?? environment['WORKFLOW_DEPLOYMENT_URI']
+  const pinnedHarnessId = options.pinnedHarnessId ?? environment['CONTROL_PLANE_PINNED_HARNESS_ID']
   return {
     dataDirectory:
       options.dataDirectory ??
@@ -93,6 +94,7 @@ export function resolveHostedCompositionConfiguration(
     ...(restateIngressUrl === undefined ? {} : { restateIngressUrl }),
     ...(requestIdentityPublicKey === undefined ? {} : { requestIdentityPublicKey }),
     ...(workflowDeploymentUri === undefined ? {} : { workflowDeploymentUri }),
+    ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }),
     ...resolveHostedObjectStore(environment, options),
     ...optional('workflowEndpointPort'),
     ...optional('endpointFactory'),

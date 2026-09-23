@@ -438,7 +438,7 @@
     {
       "name": "@control-plane/policy",
       "path": "packages/policy",
-      "version": "1.3.2",
+      "version": "1.4.0",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
@@ -778,7 +778,7 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.8.2",
+      "version": "1.9.0",
       "lockVersion": "1.8.2",
       "kind": "application",
       "private": true,
@@ -1463,7 +1463,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:c879cbaa11105de89cb92f726254774bf1f0c09393e56c37f2fd64590e5d6b1c"
+      "sourceDigest": "sha256:2653a503132d8bbd4329c61040f7373d02bd4d82f626db40188a35484bf949d1"
     },
     {
       "id": "hosted-simple",

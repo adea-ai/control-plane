@@ -170,6 +170,12 @@ export interface HostedServerCompositionOptions {
   readonly dataDirectory: string
   readonly databaseUrl: string
   readonly restateAdminUrl?: string
+  /**
+   * Optional harness pin for attempt routing (M12/#670): when set, routing
+   * attempts must select a runtime exposing this harness or fail closed with
+   * HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME.
+   */
+  readonly pinnedHarnessId?: string
   readonly restateIngressUrl?: string
   readonly workflowDeploymentUri?: string
   readonly workflowEndpointPort?: number
@@ -365,6 +371,9 @@ export class HostedServerControlPlaneComposition {
       })
     this.runtimeAttemptRouter = new RuntimeDiscoveryAttemptRouter({
       discovery: this.runtimeDiscoveryRepository,
+      ...(options.pinnedHarnessId === undefined
+        ? {}
+        : { pinnedHarnessId: options.pinnedHarnessId }),
     })
     const activities = new DurableExecutionLifecycleActivities({
       lifecycle: new ExecutionLifecycleService(executions),
