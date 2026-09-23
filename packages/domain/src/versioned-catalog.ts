@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   AgentProfileDefinitionSchema,
   AgentProfilePinSchema,
@@ -519,17 +520,12 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// SkillManifest contains the locale-divergent pair schemaVersion/semanticVersion (flips under cs); undefined entries serialize invalid JSON
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value)
+// CANONICAL-JSON: publish-time code-point form (#612 in-place cutover) —
+// digests are issued once at publish and never recomputed, so stored digests
+// stay valid; pins authored against pre-cutover publications mismatch exactly
+// as cross-host pins did before (same content, non-portable bytes).
+export function canonicalJson(value: unknown): string {
+  return canonicalJsonStringify(value) ?? 'null'
 }
 
 function clone<Value>(value: Value): Value {

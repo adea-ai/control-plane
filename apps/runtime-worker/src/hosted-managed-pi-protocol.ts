@@ -1,4 +1,5 @@
 import { type StoredObjectDescriptor } from '@control-plane/object-store'
+import { canonicalJsonStringify } from '@control-plane/domain'
 import { RuntimeAdapterError, RuntimeArtifactReferenceSchema } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
 
@@ -15,22 +16,14 @@ export function stable(value: unknown): string {
   return JSON.stringify(value)
 }
 
-// CANONICAL-JSON: site-specific semantics, see contracts canonicalJsonStringify
-// values are z.json() (arbitrary keys); serializations cross a process boundary and feed artifact fingerprints
+// CANONICAL-JSON: code-point canonical form since the #612 cutover (contracts
+// canonicalJsonStringify). Artifact fingerprints and cross-process
+// serializations are host-independent; an execution replaying across the
+// cutover boundary with locale-divergent result keys conflicts by design
+// (fail-closed), matching the previous cross-host behavior — pre-cutover
+// artifacts age out with retention.
 export function canonicalJson(value: z.util.JSONType): string {
-  return JSON.stringify(canonicalValue(value))
-}
-
-export function canonicalValue(value: z.util.JSONType): z.util.JSONType {
-  if (Array.isArray(value)) return value.map(canonicalValue)
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalValue(child)])
-    )
-  }
-  return value
+  return canonicalJsonStringify(value) ?? 'null'
 }
 
 export function artifactReference(
