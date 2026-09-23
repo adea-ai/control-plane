@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.35.0...workspace-v1.36.0) (2026-09-23)
+
+
+### Features
+
+* m12-hosted-harness-pin ([#675](https://github.com/adea-ai/control-plane/issues/675)) ([2b6a286](https://github.com/adea-ai/control-plane/commit/2b6a28696706f60b56825724fa7c99a38c570d55))
+* **m12:** exposed harness pin on the hosted composition too ([2b6a286](https://github.com/adea-ai/control-plane/commit/2b6a28696706f60b56825724fa7c99a38c570d55))
+
 ## [1.35.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.34.0...workspace-v1.35.0) (2026-09-23)
 
 
