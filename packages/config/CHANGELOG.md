@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/config-v1.7.2...config-v1.8.0) (2026-09-23)
+
+
+### Features
+
+* **m12:** source the harness pin from managed-cloud configuration ([#673](https://github.com/adea-ai/control-plane/issues/673)) ([773a0b6](https://github.com/adea-ai/control-plane/commit/773a0b6d194edb703062cbd2c08234839488c106))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/config-v1.7.1...config-v1.7.2) (2026-09-22)
 
 
