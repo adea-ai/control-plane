@@ -379,7 +379,11 @@ function cloneOptional<Value>(value: Value | undefined): Value | undefined {
   return value === undefined ? undefined : clone(value)
 }
 
-export { DecisionResolutionDeniedError, resolveDecisionLayer } from './decision-resolution.js'
+export {
+  DecisionResolutionDeniedError,
+  resolveDecisionLayer,
+  resolveRuntimeHarness,
+} from './decision-resolution.js'
 export type { DecisionLayerPolicyDefaults, DecisionOutputKey } from './decision-resolution.js'
 
 export const packageName = 'policy'

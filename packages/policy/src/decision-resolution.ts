@@ -105,23 +105,41 @@ function resolveRuntime(
   return { runtime: preferred, source: 'policy-default' }
 }
 
+/**
+ * Narrow harness resolution against a single runtime (M12/#670 path 1). Same
+ * semantics resolveDecisionLayer applies — an explicit pin must be exposed by
+ * the runtime, otherwise the first exposed harness id is the default — so
+ * routing layers can validate a chosen runtime without assembling a full
+ * decision-resolution request.
+ */
+export function resolveRuntimeHarness(
+  runtime: AvailableRuntime,
+  pinnedHarnessId?: string
+): { harnessId: string; source: ResolutionSource } {
+  if (pinnedHarnessId !== undefined) {
+    if (!runtime.harnessIds.includes(pinnedHarnessId)) {
+      throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
+    }
+    return { harnessId: pinnedHarnessId, source: 'explicit-pin' }
+  }
+  const harnessId = runtime.harnessIds[0]
+  if (harnessId === undefined) {
+    throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
+  }
+  return { harnessId, source: 'policy-default' }
+}
+
 function resolveHarness(
   request: DecisionResolutionRequest,
   policyDefaults: DecisionPins,
   runtime: AvailableRuntime
 ): { value: ResolutionValue<'harness'>; source: ResolutionSource } {
   const { source, pin } = pickPin('harness', request, policyDefaults)
-  if (pin !== undefined) {
-    if (!runtime.harnessIds.includes(pin.harnessId)) {
-      throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
-    }
-    return { value: pin, source }
+  const resolved = resolveRuntimeHarness(runtime, pin?.harnessId)
+  return {
+    value: { harnessId: resolved.harnessId },
+    source: pin === undefined ? resolved.source : source,
   }
-  const harnessId = runtime.harnessIds[0]
-  if (harnessId === undefined) {
-    throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
-  }
-  return { value: { harnessId }, source: 'policy-default' }
 }
 
 function resolveModel(

@@ -3,6 +3,8 @@ import { compareCodePointOrder } from '@control-plane/contracts'
 import type { RuntimeConnectionDiscoveryReadModel } from '@control-plane/contracts'
 import type { Execution, ExecutionAttempt } from '@control-plane/domain'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
+import { availableRuntimesFromDiscovery } from '@control-plane/contracts'
+import { DecisionResolutionDeniedError, resolveRuntimeHarness } from '@control-plane/policy'
 import { RuntimeCapabilitySchema, evaluateCapabilities } from '@control-plane/runtime-sdk'
 import type { RuntimeAttemptRouter } from './cloud-execution-activities.js'
 
@@ -16,6 +18,13 @@ export interface RuntimeDiscoveryReadPort {
 export interface RuntimeDiscoveryAttemptRouterOptions {
   readonly discovery: RuntimeDiscoveryReadPort
   readonly now?: () => string
+  /**
+   * Optional harness pin (M12/#670 path 1): when set, the selected runtime
+   * must expose this harness id, otherwise the attempt fails closed with the
+   * decision layer's HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME denial. No pin
+   * means no behavior change.
+   */
+  readonly pinnedHarnessId?: string
 }
 
 type SelectedRuntime = NonNullable<ExecutionAttempt['runtime']>
@@ -24,9 +33,12 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
   readonly #discovery: RuntimeDiscoveryReadPort
   readonly #now: () => string
 
+  readonly #pinnedHarnessId: string | undefined
+
   constructor(options: RuntimeDiscoveryAttemptRouterOptions) {
     this.#discovery = options.discovery
     this.#now = options.now ?? (() => new Date().toISOString())
+    this.#pinnedHarnessId = options.pinnedHarnessId
   }
 
   async resolve(input: {
@@ -44,6 +56,17 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       .toSorted(compareCandidates)
     const selected = candidates[0]
     if (selected === undefined) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE')
+    if (this.#pinnedHarnessId !== undefined) {
+      // Decision-layer validation (#670 path 1): the chosen runtime must
+      // expose the pinned harness; denial fails the attempt closed.
+      const available = availableRuntimesFromDiscovery(discovered).find(
+        (runtime) => runtime.runtimeDefinitionId === selected.connection.runtimeDefinitionId
+      )
+      if (available === undefined) {
+        throw new DecisionResolutionDeniedError('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME')
+      }
+      resolveRuntimeHarness(available, this.#pinnedHarnessId)
+    }
     const inputDigest = digest({
       executionId: input.execution.executionId,
       executionPlanId: input.executionPlan.executionPlanId,
