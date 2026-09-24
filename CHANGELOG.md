@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.41.1...workspace-v1.41.2) (2026-09-24)
+
+
+### Documentation
+
+* **architecture:** record the promotion triggers and production deploy step ([#694](https://github.com/adea-ai/control-plane/issues/694)) ([646d4cb](https://github.com/adea-ai/control-plane/commit/646d4cb23e01df80ba0347d770a86fb44bf2f218))
+
 ## [1.41.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.41.0...workspace-v1.41.1) (2026-09-24)
 
 
