@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.40.0...workspace-v1.41.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** opt-in catalog approval gate for local and hosted compositions ([#689](https://github.com/adea-ai/control-plane/issues/689)) ([f1136d2](https://github.com/adea-ai/control-plane/commit/f1136d2fc378d4e59462cb8ec59b7eaabded46bd))
+
 ## [1.40.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.39.0...workspace-v1.40.0) (2026-09-24)
 
 
