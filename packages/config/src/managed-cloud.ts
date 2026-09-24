@@ -38,6 +38,16 @@ export interface ManagedCloudRuntimeConfiguration {
   readonly pinnedHarnessId?: string
 }
 
+export interface ManagedCloudCatalogApprovalConfiguration {
+  /**
+   * Whether catalog resolution requires an approved, version-bound decision
+   * (#188). Absent or false leaves resolution unchanged.
+   */
+  readonly required: boolean
+  /** Versions published strictly before this instant are grandfathered. */
+  readonly requiredSince?: string
+}
+
 export interface ManagedCloudConfiguration {
   readonly service: ManagedCloudService
   readonly database?: DatabaseCredentials<'application'>
@@ -45,6 +55,7 @@ export interface ManagedCloudConfiguration {
   readonly restate?: ManagedCloudRestateConfiguration
   readonly runtime?: ManagedCloudRuntimeConfiguration
   readonly serviceAuthentication?: ManagedCloudServiceAuthenticationConfiguration
+  readonly catalogApproval?: ManagedCloudCatalogApprovalConfiguration
   readonly secretEncryptionKey: string
 }
 
@@ -116,6 +127,8 @@ export function loadManagedCloudConfiguration(
     service === 'workflow-worker' ? loadWorkflowRuntimeConfiguration(environment) : undefined
   const serviceAuthentication =
     service === 'control-api' ? loadServiceAuthenticationConfiguration(environment) : undefined
+  const catalogApproval =
+    service === 'control-api' ? loadCatalogApprovalConfiguration(environment) : undefined
 
   return {
     service,
@@ -124,7 +137,36 @@ export function loadManagedCloudConfiguration(
     ...(restate === undefined ? {} : { restate }),
     ...(runtime === undefined ? {} : { runtime }),
     ...(serviceAuthentication === undefined ? {} : { serviceAuthentication }),
+    ...(catalogApproval === undefined ? {} : { catalogApproval }),
     secretEncryptionKey: secretEncryptionKey as string,
+  }
+}
+
+function loadCatalogApprovalConfiguration(
+  environment: RawEnvironment
+): ManagedCloudCatalogApprovalConfiguration | undefined {
+  const requiredValue = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED']
+  if (requiredValue === undefined) return undefined
+  if (requiredValue !== 'true' && requiredValue !== 'false') {
+    throw new ConfigurationError({
+      code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
+      invalid: ['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED'],
+      missing: [],
+      component: 'runtime',
+    })
+  }
+  const requiredSince = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE']
+  if (requiredSince !== undefined && Number.isNaN(Date.parse(requiredSince))) {
+    throw new ConfigurationError({
+      code: 'INVALID_MANAGED_CLOUD_CONFIGURATION',
+      invalid: ['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE'],
+      missing: [],
+      component: 'runtime',
+    })
+  }
+  return {
+    required: requiredValue === 'true',
+    ...(requiredSince === undefined ? {} : { requiredSince }),
   }
 }
 

@@ -31,6 +31,43 @@ const cloud = {
 }
 
 describe('managed cloud configuration', () => {
+  test('parses the optional catalog approval policy and rejects malformed values', () => {
+    const base = { ...cloud }
+    expect(loadManagedCloudConfiguration(base, 'control-api').catalogApproval).toBeUndefined()
+    expect(
+      loadManagedCloudConfiguration(
+        { ...base, CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true' },
+        'control-api'
+      ).catalogApproval
+    ).toEqual({ required: true })
+    expect(
+      loadManagedCloudConfiguration(
+        {
+          ...base,
+          CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
+          CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: '2026-09-01T00:00:00.000Z',
+        },
+        'control-api'
+      ).catalogApproval
+    ).toEqual({ required: true, requiredSince: '2026-09-01T00:00:00.000Z' })
+    expect(() =>
+      loadManagedCloudConfiguration(
+        { ...base, CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'yes' },
+        'control-api'
+      )
+    ).toThrow()
+    expect(() =>
+      loadManagedCloudConfiguration(
+        {
+          ...base,
+          CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
+          CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: 'not-a-date',
+        },
+        'control-api'
+      )
+    ).toThrow()
+  })
+
   test('parses the optional pinned harness id and rejects malformed ones', () => {
     const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
     const withPin = loadManagedCloudConfiguration(

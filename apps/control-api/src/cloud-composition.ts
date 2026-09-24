@@ -6,6 +6,7 @@ import {
 } from '@control-plane/context'
 import {
   createPostgresConnection,
+  PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionEventRepository,
@@ -196,7 +197,16 @@ export function createManagedCloudControlApiComposition(
       projectStates,
       skills: catalog,
     }),
-    profileResolutionService: new RepositoryProfileResolutionService(catalog),
+    profileResolutionService: new RepositoryProfileResolutionService(
+      catalog,
+      configuration.catalogApproval === undefined
+        ? undefined
+        : {
+            approvals: new PostgresCatalogApprovalRepository(connection.database),
+            skills: catalog,
+            policy: configuration.catalogApproval,
+          }
+    ),
     projectStateResolutionService: new RepositoryProjectStateResolutionService(projectStates),
     contextPackageResolutionService: new RepositoryContextPackageResolutionService(contextPackages),
     runtimeDiscoveryRepository: new PostgresRuntimeDiscoveryRepository(connection.database),
