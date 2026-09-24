@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.36.1...workspace-v1.37.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** catalog version approval decisions as separate version-bound records ([#680](https://github.com/adea-ai/control-plane/issues/680)) ([332fa2b](https://github.com/adea-ai/control-plane/commit/332fa2b06660de0e07e5c4e0993d491cb45b84d0))
+
 ## [1.36.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.36.0...workspace-v1.36.1) (2026-09-23)
 
 

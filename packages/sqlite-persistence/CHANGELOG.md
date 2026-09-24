@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.12.2...sqlite-persistence-v1.13.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** catalog version approval decisions as separate version-bound records ([#680](https://github.com/adea-ai/control-plane/issues/680)) ([332fa2b](https://github.com/adea-ai/control-plane/commit/332fa2b06660de0e07e5c4e0993d491cb45b84d0))
+
 ## [1.12.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.12.1...sqlite-persistence-v1.12.2) (2026-09-23)
 
 
