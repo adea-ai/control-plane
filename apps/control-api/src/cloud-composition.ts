@@ -121,6 +121,7 @@ export function createManagedCloudControlApiComposition(
   const retentionIntervalMs = resolveRetentionSweepIntervalMs(process.env)
   const connection = connectionFactory(configuration.database)
   const catalog = new PostgresCatalogRepository(connection.database)
+  const catalogApprovals = new PostgresCatalogApprovalRepository(connection.database)
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const projectStates = new PostgresProjectStateRepository(connection.database)
   const contextPackages = new PostgresContextPackageRepository(connection.database)
@@ -196,13 +197,18 @@ export function createManagedCloudControlApiComposition(
       profiles: catalog,
       projectStates,
       skills: catalog,
+      ...(configuration.catalogApproval === undefined
+        ? {}
+        : {
+            approvalGate: { approvals: catalogApprovals, policy: configuration.catalogApproval },
+          }),
     }),
     profileResolutionService: new RepositoryProfileResolutionService(
       catalog,
       configuration.catalogApproval === undefined
         ? undefined
         : {
-            approvals: new PostgresCatalogApprovalRepository(connection.database),
+            approvals: catalogApprovals,
             skills: catalog,
             policy: configuration.catalogApproval,
           }

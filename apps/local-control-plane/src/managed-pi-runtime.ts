@@ -15,7 +15,10 @@ import {
   type RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
 import type { NodeProcessSpawnPolicy } from '@control-plane/deployment'
-import { resolvePublishedRuntimeInputs } from './published-runtime-inputs.js'
+import {
+  resolvePublishedRuntimeInputs,
+  type LocalRuntimeApprovalGate,
+} from './published-runtime-inputs.js'
 import { LocalRuntimeModelRoute, type LocalModelRouteOptions } from './runtime-model-route.js'
 
 export interface LocalManagedPiRuntimeOptions {
@@ -37,6 +40,8 @@ export interface LocalManagedPiRuntimeRepositories {
   >
   readonly contextPackages: Pick<ContextPackageRepository, 'get'>
   readonly dataDirectory: string
+  /** Optional approval enforcement (#188); absent leaves resolution unchanged. */
+  readonly catalogApproval?: LocalRuntimeApprovalGate
 }
 
 export function createLocalManagedPiRuntime(
@@ -72,21 +77,26 @@ export function createLocalManagedPiRuntime(
 export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcessInputResolver {
   readonly #catalog: LocalManagedPiRuntimeRepositories['catalog']
   readonly #contextPackages: LocalManagedPiRuntimeRepositories['contextPackages']
+  readonly #approval: LocalManagedPiRuntimeRepositories['catalogApproval']
   readonly #route: LocalRuntimeModelRoute
 
   constructor(
-    repositories: Pick<LocalManagedPiRuntimeRepositories, 'catalog' | 'contextPackages'>,
+    repositories: Pick<
+      LocalManagedPiRuntimeRepositories,
+      'catalog' | 'contextPackages' | 'catalogApproval'
+    >,
     model: LocalModelRouteOptions
   ) {
     this.#catalog = repositories.catalog
     this.#contextPackages = repositories.contextPackages
+    this.#approval = repositories.catalogApproval
     this.#route = new LocalRuntimeModelRoute(model, 'MANAGED_PI')
   }
 
   async resolve(configurationInput: unknown) {
     const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
     const [{ profile, skills }, contextPackage] = await Promise.all([
-      resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI'),
+      resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI', this.#approval),
       this.#contextPackages.get(
         ContextPackageReferenceSchema.parse({
           contextPackageId: configuration.contextPackage.contextPackageId,

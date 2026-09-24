@@ -42,6 +42,7 @@ import {
   SqlitePersistenceProvider,
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
+  SqliteCatalogApprovalRepository,
 } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
@@ -68,6 +69,7 @@ import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import type { LocalRuntimeApprovalGate } from './published-runtime-inputs.js'
 
 import {
   GrantsBackedContextAuthoringAuthority,
@@ -197,6 +199,8 @@ export interface LocalControlPlaneCompositionOptions {
     readonly catalog: LocalControlApiComposition['catalog']
     readonly contextPackages: LocalControlApiComposition['contextPackages']
     readonly dataDirectory: string
+    /** Present when catalogApprovalPolicy is configured (#188). */
+    readonly catalogApproval?: LocalRuntimeApprovalGate
   }) => LocalRuntimeTransport
   readonly secrets?: SecretsProvider
   readonly remoteControl?: RemoteControlHostAdapter<unknown>
@@ -364,6 +368,14 @@ export class LocalControlPlaneComposition {
         catalog: controlApi.catalog,
         contextPackages: controlApi.contextPackages,
         dataDirectory: this.dataDirectory,
+        ...(options.catalogApprovalPolicy === undefined
+          ? {}
+          : {
+              catalogApproval: {
+                approvals: new SqliteCatalogApprovalRepository(this.persistence),
+                policy: options.catalogApprovalPolicy,
+              },
+            }),
       })
     if (runtimeTransport?.transportKind === 'remote-gateway') {
       throw new Error('LOCAL_RUNTIME_TRANSPORT_MUST_BE_DIRECT')
