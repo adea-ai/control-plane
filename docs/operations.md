@@ -179,6 +179,29 @@ Railway build/readiness results, Restate registration/restart evidence, resource
 sanitized harness record together in the M9.6 evidence attachment. The harness is not by itself
 proof of rollback, restart recovery, load, isolation, secret-canary, or cost acceptance.
 
+## Catalog approval gate (#188)
+
+Approval is a version-bound decision separate from publication: a catalog profile or skill version is
+either explicitly approved or explicitly rejected by a recorded decision bound to its revision and
+content digest. The gate is **off unless configured**, and it gates execution-time resolution, not
+publication — unapproved versions stay authorable and listable.
+
+- Configuration (control-api): `CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED=true|false` and, optionally,
+  `CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE=<ISO instant>`. Any other value fails startup rather
+  than silently disabling the gate. Versions published strictly before the cutover are grandfathered;
+  the cutover instant itself is not.
+- Production enables the gate with the cutover declared in `.railway/railway.ts`; staging keeps it
+  disabled so reference-environment debugging is never blocked by approvals. Reviewing or changing the
+  cutover is a data-governance decision, not a routine config edit.
+- Record and inspect decisions with the scoped operator tool
+  (`scripts/catalog-approval-admin.mjs`, `approvals.record` / `approvals.show`) against the target
+  database. The request file is validated (absolute path, regular file, size-capped) and the CLI
+  reports a single sanitized failure code; it never echoes database or credential content.
+- With the gate enabled, a version published at or after the cutover denies execution with
+  `*_APPROVAL_MISSING` until a decision exists, and denies with `*_APPROVAL_REJECTED` when a rejection
+  was recorded. Approve deliberately: the decision is append-only and bound to the exact revision and
+  digest, so republishing content invalidates the binding.
+
 ## Neon operations
 
 - Use the dedicated Control Plane Neon project/database, never Adea's database.
