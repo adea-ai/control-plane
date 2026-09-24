@@ -2118,10 +2118,10 @@
     },
     {
       "id": "PERSIST-RETENTION",
-      "postgresql": "Typed retention expiry, soft deletion, and publication attempt metadata",
+      "postgresql": "Typed retention expiry, soft deletion, and publication attempt metadata; inbox/event deletion entry points fail closed pending authoritative eligibility",
       "sqlite": "Schema v2 partial expiry indexes for canonical inbox/event timestamps; automatic deletion blocked pending authoritative eligibility",
       "classification": "partially_verified",
-      "assessment": "Reviewed at f5c9ace on 2026-09-22: SQLite implements command-inbox expiry deletion with by-execution index cleanup and execution-event expiry deletion. Focused tests cover expired versus live records and event sweep idempotency, but age-only deletion does not establish terminal-state, rejection-key, publication, reference or hold safety. Indexed expiry/deletion metadata, restart/recovery sweep evidence, and lifecycle coverage for the remaining durable data classes are not established. This is partial component evidence, not safe deployed retention acceptance.",
+      "assessment": "Reviewed at f5c9ace on 2026-09-22 and reconciled 2026-09-24 after #636: SQLite and PostgreSQL inbox/event deletion entry points fail closed with COMMAND_RETENTION_ELIGIBILITY_REQUIRED and EVENT_RETENTION_ELIGIBILITY_REQUIRED before any storage access, so no age-only physical expiry sweep runs. Focused tests cover expired versus live candidates retained without deletion authority and repeated rejection. The earlier age-only deletion claim is superseded, not current acceptance evidence. Terminal-state, rejection-key, publication, reference and hold safety remain unproven, and indexed eligibility/deletion metadata, restart/recovery sweep evidence and lifecycle coverage for the remaining durable data classes are not established. This is partial component evidence, not safe deployed retention acceptance.",
       "evidence": [
         {
           "kind": "source",
