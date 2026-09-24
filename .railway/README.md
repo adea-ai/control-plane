@@ -21,6 +21,26 @@ never apply a staging plan to production. Production application sources are dis
 definition so a push to `main` cannot silently enable compute. Destructive changes require explicit
 confirmation.
 
+**The engine treats an omitted field as a deletion** (the CLI documents this as "omit=delete"), which
+has two consequences this file must respect:
+
+- Every variable that exists in a live environment must be declared here — as a literal, or as
+  `preserve()` when the value is a secret or provider-owned. Omitting one deletes it. That is how the
+  retired `COMMIT_SHA` service variables reconcile away, and it is why the production
+  `MARKETPLACE_REGISTRY_*` variables are declared as preserved: undeclared, a production apply would
+  have deleted the marketplace registry URL and token.
+- Production image sources are owned by the container-promotion workflow, not by this file, so the
+  production branch declares no `source`. A `config apply` against production therefore always
+  reports `source.image → null` for the application services. Those entries are an artifact of the
+  omit=delete rule, not a desired change: applying them disconnects the promoted digests until the
+  next release reconnects them. Review production plans with `railway config plan` and apply only
+  when the diff is limited to fields this file owns; single-field corrections (for example a
+  `limitOverride` byte value) can go through the provider API without a full apply.
+
+The catalog approval gate (#188) is declared here for control-api: production enables it with a fixed
+cutover instant, staging keeps it disabled. Changing the cutover is a deliberate data-governance
+decision; the operator procedure is in `docs/operations.md`.
+
 Use the runbook in `docs/operations.md` for the complete activation, verification, and
 return-to-standby sequence. Do not enable Railway Serverless as a substitute for no active
 deployments: these long-lived services have not accepted its cold-start and connection semantics.
