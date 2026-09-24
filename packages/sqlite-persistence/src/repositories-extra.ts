@@ -19,6 +19,10 @@ import type {
   PersistenceTransaction,
 } from '@control-plane/deployment'
 import {
+  CatalogApprovalDecisionSchema,
+  type CatalogApprovalDecision,
+  type CatalogApprovalRepository,
+  type CatalogVersionKind,
   AgentProfileSchema,
   AgentProfileVersionSchema,
   AppliedStateMutationSchema,
@@ -41,6 +45,7 @@ const namespaces = {
   profileVersions: 'agent-profile-versions',
   skills: 'skills',
   skillVersions: 'skill-versions',
+  catalogApprovals: 'catalog-approvals',
   contextPackages: 'context-packages',
   projectStates: 'project-states',
   projectStateHistory: 'project-state-history',
@@ -268,6 +273,40 @@ export class SqliteContextAuthoringCommandRepository implements ContextAuthoring
 
 function authoringCommandId(scope: ContextAuthoringCommandScope): string {
   return `r-${contextAuthoringCommandKey(scope)}`
+}
+
+/**
+ * SQLite persistence for catalog approval decisions (#188): append-only per
+ * (versionKind, versionId, revision); the approval record is deliberately
+ * separate from the version lifecycle.
+ */
+export class SqliteCatalogApprovalRepository implements CatalogApprovalRepository {
+  constructor(readonly provider: PersistenceProvider) {}
+
+  insert(decision: CatalogApprovalDecision): Promise<boolean> {
+    const parsed = CatalogApprovalDecisionSchema.parse(decision)
+    return insert(
+      this.provider,
+      namespaces.catalogApprovals,
+      `${parsed.versionKind}:${parsed.versionId}:${parsed.revision}`,
+      parsed
+    )
+  }
+
+  list(
+    versionKind: CatalogVersionKind,
+    versionId: string
+  ): Promise<readonly CatalogApprovalDecision[]> {
+    return list(
+      this.provider,
+      namespaces.catalogApprovals,
+      CatalogApprovalDecisionSchema.parse
+    ).then((decisions) =>
+      decisions.filter(
+        (decision) => decision.versionKind === versionKind && decision.versionId === versionId
+      )
+    )
+  }
 }
 
 export class SqliteContextPackageRepository implements ContextPackageRepository {
