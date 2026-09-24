@@ -92,7 +92,7 @@ async function seeded({ runtimeStatus = 'succeeded' } = {}) {
     correlation,
     executionPlan,
     receivedAt: now,
-    retentionExpiresAt: '2026-10-01T12:00:00.000Z',
+    retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   })
   await executions.insertExecution(execution)
   const lifecycle = new ExecutionLifecycleService(executions)
@@ -271,7 +271,7 @@ describe('SQLite reconciliation projection', () => {
       payload: { state: 'accepted' },
       occurredAt: now,
       recordedAt: now,
-      retentionExpiresAt: '2026-10-01T12:00:00.000Z',
+      retentionExpiresAt: '2099-01-01T00:00:00.000Z',
     })
     expect(await environment.events.summarizePendingDelivery(executionId, 100)).toMatchObject({
       pendingCount: 1,

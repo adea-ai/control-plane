@@ -2543,7 +2543,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         schemaVersion: 1,
       },
       receivedAt: '2026-08-24T14:00:00.000Z',
-      retentionExpiresAt: '2026-09-24T14:00:00.000Z',
+      retentionExpiresAt: '2099-01-01T00:00:00.000Z',
     })
     const observation = {
       executionId: execution.executionId,

@@ -168,7 +168,7 @@ describe('M9 production hardening acceptance', () => {
         schemaVersion: 1,
       },
       receivedAt: '2026-08-25T12:00:00.000Z',
-      retentionExpiresAt: '2026-09-25T12:00:00.000Z',
+      retentionExpiresAt: '2099-01-01T00:00:00.000Z',
     }
     const scope = {
       callerPrincipalId: command.callerPrincipalId,

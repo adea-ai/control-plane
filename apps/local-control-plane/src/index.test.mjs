@@ -705,7 +705,7 @@ describe('Local Control Plane composition', () => {
             schemaVersion: plan.schemaVersion,
           },
           receivedAt: '2026-08-29T00:00:00.000Z',
-          retentionExpiresAt: '2026-09-29T00:00:00.000Z',
+          retentionExpiresAt: '2099-01-01T00:00:00.000Z',
         })
         const executionId = accepted.execution.executionId
         const attemptId = `att_${executionId.slice(4)}`

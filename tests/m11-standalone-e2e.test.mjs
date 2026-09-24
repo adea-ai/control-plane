@@ -1018,7 +1018,7 @@ function command(plan) {
       schemaVersion: plan.schemaVersion,
     },
     receivedAt: observedAt,
-    retentionExpiresAt: '2026-09-30T12:00:00.000Z',
+    retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   }
 }
 
