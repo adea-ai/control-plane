@@ -15,6 +15,7 @@ import type { LocalRuntimeTransport } from './composition.js'
 import type { LocalRuntimeModelRoute } from './runtime-model-route.js'
 import {
   resolvePublishedRuntimeInputs,
+  type LocalRuntimeApprovalGate,
   type LocalRuntimeCatalog,
 } from './published-runtime-inputs.js'
 
@@ -54,7 +55,8 @@ export function createLocalAcpRuntime(options: LocalAcpRuntimeOptions): LocalRun
 export function createRepositoryAcpTaskPromptResolver(
   repository: Pick<ContextPackageRepository, 'get'>,
   catalog?: LocalRuntimeCatalog,
-  modelRoute?: LocalRuntimeModelRoute
+  modelRoute?: LocalRuntimeModelRoute,
+  approval?: LocalRuntimeApprovalGate
 ): NonNullable<AcpDriverOptions['resolvePrompt']> {
   return async (request, signal) => {
     signal.throwIfAborted()
@@ -74,7 +76,9 @@ export function createRepositoryAcpTaskPromptResolver(
     )
       throw new Error('ACP_CONTEXT_PIN_MISMATCH')
     const published =
-      catalog === undefined ? undefined : await resolvePublishedRuntimeInputs(catalog, plan, 'ACP')
+      catalog === undefined
+        ? undefined
+        : await resolvePublishedRuntimeInputs(catalog, plan, 'ACP', approval)
     signal.throwIfAborted()
     const prompt = [
       'Perform the authorized task described by the following JSON task data.',

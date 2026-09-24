@@ -1424,7 +1424,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:562001ea13c587bbccdb1da04d769a80862d5738f13a359bfd2978a918bfbd4f"
+      "sourceDigest": "sha256:32fcdd28780a7ffe37fc024b2abbd7af99a92e6cabdb670fcc17d608b102a3bf"
     },
     {
       "id": "hosted-server",
@@ -1502,7 +1502,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3d87ca737943c5ff36704790c417815b653d9c97c1bbbc06e621c442c524bae6"
+      "sourceDigest": "sha256:4d5469a4b25ea26cd185e1f0f09284aeffda204d514afdf314c124dc87db962b"
     },
     {
       "id": "local",
@@ -1545,7 +1545,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3d87ca737943c5ff36704790c417815b653d9c97c1bbbc06e621c442c524bae6"
+      "sourceDigest": "sha256:4d5469a4b25ea26cd185e1f0f09284aeffda204d514afdf314c124dc87db962b"
     }
   ],
   "ownership": [

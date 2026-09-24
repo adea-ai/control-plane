@@ -1,18 +1,17 @@
-import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import {
   ProfileResolutionRequestSchema,
   ProfileResolutionResponseSchema,
 } from '@control-plane/contracts'
-import {
-  evaluateCatalogApproval,
-  type AgentProfileRepository,
-  type AgentProfileVersion,
-  type CatalogApprovalDecision,
-  type CatalogApprovalPolicy,
-  type CatalogApprovalRepository,
-  type CatalogVersionKind,
-  type SkillRepository,
+import type {
+  AgentProfileRepository,
+  AgentProfileVersion,
+  SkillRepository,
 } from '@control-plane/domain'
+import {
+  assertCatalogVersionApproved,
+  type CatalogApprovalGateOptions,
+} from './catalog-approval-gate.js'
 
 export const PROFILE_RESOLUTION_SERVICE = Symbol('PROFILE_RESOLUTION_SERVICE')
 
@@ -37,10 +36,8 @@ export class UnavailableProfileResolutionService implements ProfileResolutionSer
  * grandfathering, fail closed otherwise). Enforcement here gates consumption
  * of published versions — authoring and publishing flows are unaffected.
  */
-export interface ProfileApprovalGateOptions {
-  readonly approvals: Pick<CatalogApprovalRepository, 'list'>
+export interface ProfileApprovalGateOptions extends CatalogApprovalGateOptions {
   readonly skills: Pick<SkillRepository, 'getSkillVersion'>
-  readonly policy: CatalogApprovalPolicy
 }
 
 export class RepositoryProfileResolutionService implements ProfileResolutionService {
@@ -99,7 +96,7 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
   }
 
   async #assertApproved(
-    kind: CatalogVersionKind,
+    kind: 'agent_profile' | 'skill',
     label: 'PROFILE' | 'SKILL',
     versionId: string,
     version: {
@@ -110,20 +107,7 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
   ): Promise<void> {
     const gate = this.approvalGate
     if (gate === undefined) return
-    const decisions: readonly CatalogApprovalDecision[] = await gate.approvals.list(kind, versionId)
-    const approval = decisions.reduce<CatalogApprovalDecision | undefined>(
-      (latest, candidate) =>
-        latest === undefined || candidate.revision > latest.revision ? candidate : latest,
-      undefined
-    )
-    const { verdict, reason } = evaluateCatalogApproval({
-      policy: gate.policy,
-      version,
-      ...(approval === undefined ? {} : { approval }),
-    })
-    if (verdict === 'approved' || verdict === 'not_required' || verdict === 'grandfathered') return
-    const code = verdict === 'rejected' ? `${label}_APPROVAL_REJECTED` : `${label}_APPROVAL_MISSING`
-    throw new ForbiddenException({ code, message: 'Catalog version approval is required', reason })
+    await assertCatalogVersionApproved(gate, label, kind, versionId, version)
   }
 
   async #resolveVersion(

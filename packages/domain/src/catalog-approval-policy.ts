@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { CatalogApprovalDecision } from './catalog-approval.js'
+import type {
+  CatalogApprovalDecision,
+  CatalogApprovalRepository,
+  CatalogVersionKind,
+} from './catalog-approval.js'
 
 /**
  * Approval gating semantics (#188) as a pure, enforcement-point-agnostic
@@ -99,4 +103,34 @@ export function evaluateCatalogApproval(
     verdict: 'missing',
     reason: approval === undefined ? 'NO_DECISION_RECORDED' : 'DECISION_BINDING_STALE',
   }
+}
+
+/**
+ * Fetches the latest recorded decision for a version and evaluates it against
+ * the policy — the shared read path for every enforcement point. Callers add
+ * their own exception vocabulary (HTTP exceptions in the API, error codes in
+ * the local runtime path).
+ */
+export async function evaluateVersionApproval(input: {
+  readonly approvals: Pick<CatalogApprovalRepository, 'list'>
+  readonly versionKind: CatalogVersionKind
+  readonly versionId: string
+  readonly policy: CatalogApprovalPolicy
+  readonly version: {
+    readonly revision: number
+    readonly contentDigest: string
+    readonly publishedAt?: string | undefined
+  }
+}): Promise<CatalogApprovalEvaluation> {
+  const decisions = await input.approvals.list(input.versionKind, input.versionId)
+  const approval = decisions.reduce<CatalogApprovalDecision | undefined>(
+    (latest, candidate) =>
+      latest === undefined || candidate.revision > latest.revision ? candidate : latest,
+    undefined
+  )
+  return evaluateCatalogApproval({
+    policy: input.policy,
+    version: input.version,
+    ...(approval === undefined ? {} : { approval }),
+  })
 }

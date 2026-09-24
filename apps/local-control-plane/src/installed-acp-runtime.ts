@@ -95,7 +95,8 @@ export function createInstalledLocalAcpRuntime(
     resolvePrompt: createRepositoryAcpTaskPromptResolver(
       repositories.contextPackages,
       repositories.catalog,
-      route
+      route,
+      repositories.catalogApproval
     ),
   })
   const open = runtime.open

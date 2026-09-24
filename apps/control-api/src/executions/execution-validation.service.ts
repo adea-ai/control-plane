@@ -25,6 +25,10 @@ import {
   type SkillRepository,
 } from '@control-plane/domain'
 import {
+  assertCatalogVersionApproved,
+  type CatalogApprovalGateOptions,
+} from '../queries/catalog-approval-gate.js'
+import {
   ExecutionPlanCompiler,
   ExecutionPlanError,
   ExecutionValidationCommandRecordSchema,
@@ -51,6 +55,8 @@ export interface DurableExecutionValidationServiceOptions {
   readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
   readonly projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
   readonly skills: Pick<SkillRepository, 'getSkillVersion'>
+  /** Optional approval enforcement (#188); absent leaves validation unchanged. */
+  readonly approvalGate?: CatalogApprovalGateOptions
 }
 
 export class DurableExecutionValidationService implements ExecutionValidationService {
@@ -103,6 +109,30 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       ),
     ])
     if (!profile || !projectState || skills.some((skill) => !skill)) reject()
+
+    const approvalGate = this.options.approvalGate
+    if (approvalGate !== undefined) {
+      await assertCatalogVersionApproved(
+        approvalGate,
+        'PROFILE',
+        'agent_profile',
+        request.payload.profileVersionId,
+        {
+          revision: profile.revision,
+          contentDigest: profile.contentDigest,
+          publishedAt: profile.lifecycleMetadata.publishedAt,
+        }
+      )
+      for (const [index, skillVersionId] of request.payload.skillVersionIds.entries()) {
+        const skill = skills[index]
+        if (skill === undefined) reject()
+        await assertCatalogVersionApproved(approvalGate, 'SKILL', 'skill', skillVersionId, {
+          revision: skill.revision,
+          contentDigest: skill.manifest.contentDigest,
+          publishedAt: skill.lifecycleMetadata.publishedAt,
+        })
+      }
+    }
 
     const state = ProjectStateSchema.parse(projectState)
     if (state.workspaceId !== request.workspaceId || state.projectId !== projectId) {
