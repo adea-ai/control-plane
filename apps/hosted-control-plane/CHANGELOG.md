@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.10.0...hosted-control-plane-v1.11.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** catalog version approval decisions as separate version-bound records ([#680](https://github.com/adea-ai/control-plane/issues/680)) ([332fa2b](https://github.com/adea-ai/control-plane/commit/332fa2b06660de0e07e5c4e0993d491cb45b84d0))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.9.2...hosted-control-plane-v1.10.0) (2026-09-23)
 
 
