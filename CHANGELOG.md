@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.37.0...workspace-v1.38.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** PostgreSQL persistence for catalog approval decisions ([#682](https://github.com/adea-ai/control-plane/issues/682)) ([63ba8f2](https://github.com/adea-ai/control-plane/commit/63ba8f20098a364aba70660e4bf546cee090b062))
+
 ## [1.37.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.36.1...workspace-v1.37.0) (2026-09-24)
 
 

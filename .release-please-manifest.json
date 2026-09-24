@@ -1,5 +1,5 @@
 {
-  ".": "1.37.0",
+  ".": "1.38.0",
   "apps/control-api": "1.9.3",
   "apps/hosted-control-plane": "1.11.0",
   "apps/local-control-plane": "1.14.0",
@@ -15,7 +15,7 @@
   "packages/control-sdk": "1.7.1",
   "packages/cortana-context-adapter": "1.4.1",
   "packages/credential-vault": "1.2.0",
-  "packages/database": "1.20.0",
+  "packages/database": "1.21.0",
   "packages/deployment": "1.7.3",
   "packages/domain": "1.12.0",
   "packages/events": "1.7.4",
