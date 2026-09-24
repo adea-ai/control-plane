@@ -64,7 +64,7 @@ describe.skipIf(!integrationEnabled)('reconciliation metrics against PostgreSQL 
           schemaVersion: 1,
         },
         receivedAt: '2026-08-24T14:00:00.000Z',
-        retentionExpiresAt: '2026-09-24T14:00:00.000Z',
+        retentionExpiresAt: '2099-01-01T00:00:00.000Z',
       })
       acceptedExecutions.push(execution)
       accepted += 1

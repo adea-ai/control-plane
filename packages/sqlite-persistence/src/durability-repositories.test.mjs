@@ -470,7 +470,7 @@ function eventDraft(eventId = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV') {
     payload: { progress: 25 },
     occurredAt: now,
     recordedAt: now,
-    retentionExpiresAt: '2026-11-30T12:00:00.000Z',
+    retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   }
 }
 

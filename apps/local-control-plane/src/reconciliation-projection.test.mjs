@@ -72,7 +72,7 @@ async function seeded(composition, { runtimeStatus = 'succeeded' } = {}) {
     correlation,
     executionPlan,
     receivedAt: now,
-    retentionExpiresAt: '2026-10-01T12:00:00.000Z',
+    retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   })
   await composition.executions.insertExecution(execution)
   const lifecycle = new ExecutionLifecycleService(composition.executions)

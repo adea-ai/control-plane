@@ -450,7 +450,7 @@ async function commandIdempotency(profile) {
       schemaVersion: 1,
     },
     receivedAt: observedAt,
-    retentionExpiresAt: '2026-09-30T12:00:00.000Z',
+    retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   }
   const first = await service.acceptExecution(input)
   const replay = await service.acceptExecution(input)
