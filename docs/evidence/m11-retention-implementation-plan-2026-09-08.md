@@ -4,6 +4,58 @@ Status: incomplete. This inventory is implementation input, not evidence of a
 working retention service. Scope is every durable data class in issue #194,
 across PostgreSQL, SQLite, workflow storage, object storage, and backups.
 
+## Decided policy and decisions (2026-09-24)
+
+The owner accepted the recommendations that were blocking implementation. The
+machine-readable form is `packages/config/src/retention-policy.ts`
+(`decidedRetentionPolicy`); the decisions are:
+
+- **Durations.** Accepted baselines are reused, not re-invented: command inbox
+  30 days, execution events 30 days, artifacts 90 days, backups 7 days (the
+  Neon PITR window), maximum command lifetime 24 hours. New decisions: context
+  packages and execution plans 90 days after their last reference is released,
+  executions 90 days after a terminal and reconciled outcome, messaging and
+  interaction receipts 30 days after settled delivery or terminal
+  reconciliation, runtime ledgers 30 days after terminal acknowledgement,
+  native terminal snapshots 30 days after settlement, workflow references 30
+  days after workflow completion, evaluation runs 180 days, usage ledger and
+  release audit records 400 days, logs and traces 30 days at the sink.
+- **Unbounded classes.** ProjectState (live revision and referenced history),
+  unresolved state proposals, checkpoints (active and pinned), and native Pi
+  admission fences are retained while a reference or lifecycle state requires
+  them. These are never age-swept; a duration would be a false authorization.
+- **Hold owners.** `workspace-owner` (project state, context packages,
+  proposals), `platform-operator` (plans, executions, events, inbox, messaging,
+  receipts, workflow references, checkpoints, telemetry, backups),
+  `runtime-owner` (runtime ledgers, native fences and snapshots),
+  `billing-owner` (usage), `release-owner` (evaluation runs, artifacts, audit
+  records). A hold is recorded by its owner and blocks eligibility regardless
+  of age.
+- **Bounded rejection-key epoch.** A retired scoped idempotency key may be
+  forgotten only after the longest possible replay of the original command
+  becomes invalid: inbox retention plus the maximum accepted command lifetime
+  (30 days + 24 hours). Encoded as `rejectionKeyEpochMs`.
+- **Restore-time reapplication.** A snapshot predating a deletion cannot
+  contain the later rejection record. The plan: write a payload-free deletion
+  journal (scoped key hashes and deletion outcomes only) to object storage as
+  part of every deletion batch, and reapply it before exposing any restored
+  snapshot; the acceptance test restores an older snapshot plus the journal and
+  asserts the retired key stays rejected. Unimplemented, still a release gate.
+- **Milestone disposition.** Retention stays in M11 (#194 remains the owning
+  issue); it is not relabelled M12 work. The remaining increments are
+  code-shaped and independent of the M12 decision layer.
+- **Monitoring while deletion stays fail-closed.** `scripts/retention-report.mjs`
+  is a read-only report of expired-but-retained candidates and rejection
+  records for both storage backends; it prints a payload-free JSON record,
+  never deletes, and reports one sanitized failure code. It replaces the
+  "monitor retained-data growth" instruction with a tool.
+
+Still required before any physical deletion: indexed eligibility queries with
+terminal-state/reference/hold checks revalidated at deletion time, bounded
+transactional claims, tombstone reservation before payload removal, durable
+external deletion jobs, and per-profile wiring with observable counts. The
+fail-closed guards stay in place until those exist.
+
 ## Increment: SQLite command rejection keys
 
 `SqliteCommandAcceptanceRepository.retireExpiredCommand` now reserves a minimal

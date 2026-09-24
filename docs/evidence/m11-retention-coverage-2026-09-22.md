@@ -53,6 +53,11 @@ prerequisite, not completion of the indexed eligibility/deletion work below.
 3. Configure missing class policies with the owning product/operator; retain and
    report blocked candidates while policy is absent. Do not silently waive any
    class or relabel M11 acceptance as M12 work without an owner decision.
+   **Done 2026-09-24:** the per-class durations and hold owners are decided and recorded
+   in `packages/config/src/retention-policy.ts` and the implementation plan's "Decided
+   policy and decisions" section; the milestone disposition keeps retention in M11.
+   `scripts/retention-report.mjs` is the read-only candidate reader this step asked for
+   (both backends, payload-free JSON, one sanitized failure code, no deletion).
 4. Run file-backed SQLite and real PostgreSQL parity, concurrent retry/deletion,
    crash/restart, actual provider deletion, backup restore and frozen-candidate
    deployed profile checks. Record each environment separately.

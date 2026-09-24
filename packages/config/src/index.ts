@@ -33,5 +33,20 @@ export {
   retryDelayMs,
 } from './operational.js'
 export type { OperationalPolicyConfig } from './operational.js'
+export {
+  decidedRetentionPolicy,
+  loadRetentionPolicy,
+  MAXIMUM_COMMAND_LIFETIME_MS,
+  rejectionKeyEpochMs,
+  RetentionClassIdSchema,
+  RetentionClassPolicySchema,
+  RetentionPolicySchema,
+  retentionClassPolicy,
+} from './retention-policy.js'
+export type {
+  RetentionClassId,
+  RetentionClassPolicy,
+  RetentionPolicyConfig,
+} from './retention-policy.js'
 export { ConfigurationError, loadServiceConfiguration, serviceNames } from './service.js'
 export type { ServiceConfiguration, ServiceName } from './service.js'
