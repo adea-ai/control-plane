@@ -330,6 +330,13 @@
       "when": 1789274723612,
       "tag": "0046_military_puck",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790269239619,
+      "tag": "0047_blushing_demogoblin",
+      "breakpoints": true
     }
   ]
 }

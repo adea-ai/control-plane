@@ -4,6 +4,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   timestamp,
   uniqueIndex,
   varchar,
@@ -16,6 +17,8 @@ export const catalogVersionLifecycle = pgEnum('catalog_version_lifecycle', [
   'revoked',
   'superseded',
 ])
+
+export const catalogApprovalDecision = pgEnum('catalog_approval_decision', ['approved', 'rejected'])
 
 const identifier = (name: string) => varchar(name, { length: 64 })
 
@@ -70,4 +73,28 @@ export const skillVersions = pgTable(
     lifecycleMetadata: jsonb('lifecycle_metadata').notNull(),
   },
   (table) => [index('skill_versions_skill_index').on(table.skillId)]
+)
+
+/**
+ * Version-binding approval decisions (#188): append-only per
+ * (version_kind, version_id, revision) and deliberately separate from the
+ * version lifecycle — publication is not approval.
+ */
+export const catalogApprovals = pgTable(
+  'catalog_approvals',
+  {
+    versionKind: varchar('version_kind', { length: 16 }).notNull(),
+    versionId: identifier('version_id').notNull(),
+    revision: integer('revision').notNull(),
+    contentDigest: varchar('content_digest', { length: 71 }).notNull(),
+    decision: catalogApprovalDecision('decision').notNull(),
+    actorPrincipalRef: varchar('actor_principal_ref', { length: 256 }).notNull(),
+    authorityRef: varchar('authority_ref', { length: 256 }),
+    rationale: varchar('rationale', { length: 1024 }),
+    decidedAt: timestamp('decided_at', { mode: 'date', withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.versionKind, table.versionId, table.revision] }),
+    index('catalog_approvals_version_index').on(table.versionKind, table.versionId),
+  ]
 )
