@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.42.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.42.0...workspace-v1.42.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **railway:** declare provider-owned variables and gate catalog approval ([#699](https://github.com/adea-ai/control-plane/issues/699)) ([20f817f](https://github.com/adea-ai/control-plane/commit/20f817fcc6620487012b2bb4f1d47e0690a0be4b))
+
+
+### Documentation
+
+* **architecture:** reconcile the PERSIST-RETENTION assessment with fail-closed deletion ([#697](https://github.com/adea-ai/control-plane/issues/697)) ([0c5e8e9](https://github.com/adea-ai/control-plane/commit/0c5e8e9ae5bfbc80906fce4facf64adf7d87e277))
+
 ## [1.42.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.41.2...workspace-v1.42.0) (2026-09-24)
 
 
