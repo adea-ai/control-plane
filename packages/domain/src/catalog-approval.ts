@@ -163,3 +163,65 @@ export class CatalogApprovalService {
         }
   }
 }
+
+export const CatalogApprovalAdministrationRequestSchema = z.discriminatedUnion('operation', [
+  z
+    .object({
+      operation: z.literal('approvals.record'),
+      decision: CatalogApprovalDecisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal('approvals.show'),
+      versionKind: CatalogVersionKindSchema,
+      versionId: z.string().min(1).max(128),
+    })
+    .strict(),
+])
+export type CatalogApprovalAdministrationRequest = z.output<
+  typeof CatalogApprovalAdministrationRequestSchema
+>
+
+export interface CatalogApprovalAdministrationResult {
+  readonly status: 'applied'
+  readonly operation: CatalogApprovalAdministrationRequest['operation']
+  readonly replayed?: boolean
+  readonly decision?: CatalogApprovalDecision
+}
+
+/**
+ * Scoped administration surface for approval records (#188): the operator CLI
+ * is the authority boundary (OS/database access, never an unauthenticated
+ * endpoint), mirroring ContextProviderAdministration. Recording and inspecting
+ * decisions never enables gating — that remains a separate, explicit change.
+ */
+export class CatalogApprovalAdministration {
+  readonly #service: CatalogApprovalService
+
+  constructor(options: CatalogApprovalServiceOptions) {
+    this.#service = new CatalogApprovalService(options)
+  }
+
+  async apply(input: unknown): Promise<CatalogApprovalAdministrationResult> {
+    const request = CatalogApprovalAdministrationRequestSchema.parse(input)
+    if (request.operation === 'approvals.record') {
+      const recorded = await this.#service.decide(request.decision)
+      return {
+        status: 'applied',
+        operation: request.operation,
+        replayed: recorded.replayed,
+        decision: recorded.decision,
+      }
+    }
+    const decision = await this.#service.inspect({
+      versionKind: request.versionKind,
+      versionId: request.versionId,
+    })
+    return {
+      status: 'applied',
+      operation: request.operation,
+      ...(decision === undefined ? {} : { decision }),
+    }
+  }
+}
