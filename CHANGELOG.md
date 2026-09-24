@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.42.1...workspace-v1.43.0) (2026-09-24)
+
+
+### Features
+
+* **retention:** record the decided policy and report retained candidates ([#700](https://github.com/adea-ai/control-plane/issues/700)) ([6f25316](https://github.com/adea-ai/control-plane/commit/6f253167f3a5a5f7e56f5a2b69ed8a5b41861cca))
+
 ## [1.42.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.42.0...workspace-v1.42.1) (2026-09-24)
 
 
