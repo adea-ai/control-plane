@@ -156,6 +156,12 @@ export interface LocalReconciliationConfiguration {
 }
 
 export interface LocalControlPlaneCompositionOptions {
+  /**
+   * Optional catalog approval policy (#188): when required, profile
+   * resolution denies versions without an approved, version-bound decision.
+   * Absent leaves resolution unchanged.
+   */
+  readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
@@ -349,7 +355,8 @@ export class LocalControlPlaneComposition {
       restateIngressUrl,
       contextAuthoring,
       consistencyMetrics,
-      this.workflowDispatcher
+      this.workflowDispatcher,
+      options.catalogApprovalPolicy
     )
     const runtimeTransport =
       options.runtimeTransport ??

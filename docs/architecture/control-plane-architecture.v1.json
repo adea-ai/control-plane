@@ -44,7 +44,7 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "lockVersion": "1.7.2",
       "kind": "package",
       "private": true,
@@ -89,7 +89,7 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.9.3",
+      "version": "1.10.0",
       "lockVersion": "1.9.3",
       "kind": "application",
       "private": true,
@@ -1463,7 +1463,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:2653a503132d8bbd4329c61040f7373d02bd4d82f626db40188a35484bf949d1"
+      "sourceDigest": "sha256:b918d578222c119c0dc41a21605545915f912a404d3c40bdc0b375f5fb0b3396"
     },
     {
       "id": "hosted-simple",
@@ -1502,7 +1502,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:605277b93d6264c8b2b47cfbd5dcfee673706ae1b72de88bae7e20acc31f8715"
+      "sourceDigest": "sha256:3d87ca737943c5ff36704790c417815b653d9c97c1bbbc06e621c442c524bae6"
     },
     {
       "id": "local",
@@ -1545,7 +1545,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:605277b93d6264c8b2b47cfbd5dcfee673706ae1b72de88bae7e20acc31f8715"
+      "sourceDigest": "sha256:3d87ca737943c5ff36704790c417815b653d9c97c1bbbc06e621c442c524bae6"
     }
   ],
   "ownership": [
