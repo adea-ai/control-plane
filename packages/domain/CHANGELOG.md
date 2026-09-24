@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/domain-v1.13.0...domain-v1.14.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** close the approval-gate coverage gaps on execution read paths ([#693](https://github.com/adea-ai/control-plane/issues/693)) ([6eeb9e9](https://github.com/adea-ai/control-plane/commit/6eeb9e9c39ed5670f17f859f661b4b36d3fc4514))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/domain-v1.12.0...domain-v1.13.0) (2026-09-24)
 
 
