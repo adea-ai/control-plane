@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.41.0...workspace-v1.41.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **marketplace:** accept a catalog manifest that declares extra artifacts ([#690](https://github.com/adea-ai/control-plane/issues/690)) ([ae5b172](https://github.com/adea-ai/control-plane/commit/ae5b17296cbc5b33315c22181b7741efbdf4a8b7))
+
 ## [1.41.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.40.0...workspace-v1.41.0) (2026-09-24)
 
 
