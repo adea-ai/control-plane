@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/config-v1.8.0...config-v1.9.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** enforce catalog approval on profile resolution (default off) ([#687](https://github.com/adea-ai/control-plane/issues/687)) ([2f13c52](https://github.com/adea-ai/control-plane/commit/2f13c52bd4a0d9bc02eeab704b0a7dc924e3352e))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/config-v1.7.2...config-v1.8.0) (2026-09-23)
 
 

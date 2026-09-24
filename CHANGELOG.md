@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.39.0...workspace-v1.40.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** enforce catalog approval on profile resolution (default off) ([#687](https://github.com/adea-ai/control-plane/issues/687)) ([2f13c52](https://github.com/adea-ai/control-plane/commit/2f13c52bd4a0d9bc02eeab704b0a7dc924e3352e))
+
 ## [1.39.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.38.0...workspace-v1.39.0) (2026-09-24)
 
 
