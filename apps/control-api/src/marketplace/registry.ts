@@ -374,15 +374,23 @@ export function verifyArtifacts(artifacts: MarketplaceArtifacts): MarketplaceCat
   const integrityFiles = isStringRecord(integrity.files) ? integrity.files : undefined
   if (integrityFiles === undefined)
     throw verificationError('Marketplace integrity file set is invalid')
-  const integrityKeys = Object.keys(integrityFiles).toSorted()
-  if (
-    integrityKeys.length !== integrityArtifactNames.length ||
-    integrityKeys.join('|') !== [...integrityArtifactNames].toSorted().join('|')
-  )
-    throw verificationError('Marketplace integrity file set is invalid')
+  // A release may declare more artifacts than this service proxies: catalog
+  // releases publish consumer shards and mirrored brand marks alongside the
+  // core set. Every artifact this service carries must be declared with a
+  // matching digest, and every required artifact must be declared, so a
+  // truncated or substituted manifest still fails.
   for (const name of integrityArtifactNames) {
+    if (integrityFiles[name] === undefined)
+      throw verificationError(`Marketplace artifact is not declared: ${name}`)
     if (digest(artifacts[name]) !== integrityFiles[name])
       throw verificationError(`Marketplace artifact digest mismatch: ${name}`)
+  }
+  for (const name of Object.keys(artifacts)) {
+    // The manifest describes artifacts; the pointer is a byte-identical copy
+    // of the catalog and the manifest cannot hash itself.
+    if (name === 'integrity.json' || name === 'catalog-latest.v1.json') continue
+    if (integrityFiles[name] === undefined)
+      throw verificationError(`Marketplace artifact is undeclared: ${name}`)
   }
   if (artifacts['catalog-latest.v1.json'] !== artifacts['catalog.v1.json'])
     throw verificationError('Marketplace latest pointer is not byte-identical')

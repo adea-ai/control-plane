@@ -109,6 +109,84 @@ describe('Control Plane marketplace contract', () => {
     expect(verified.artifacts['catalog-latest.v1.json']).toBe(verified.artifacts['catalog.v1.json'])
   })
 
+  test('accepts a release whose manifest declares artifacts this service does not proxy', () => {
+    const fixture = snapshotFixture()
+    // A catalog release also publishes consumer shards and mirrored brand marks.
+    const extended = {
+      ...fixture.artifacts,
+      'categories.v1.json': JSON.stringify({
+        categories: [],
+        catalogId: fixture.catalog.catalogId,
+        schemaVersion: 1,
+        topCount: 6,
+      }),
+      'catalog-index.v1.json': JSON.stringify({
+        catalogId: fixture.catalog.catalogId,
+        products: {},
+        schemaVersion: 1,
+      }),
+      'icon-0123456789abcdef0123456789abcdef.png': 'binary',
+    }
+    // Digests are declared over the bytes actually published, including the
+    // shard-shaped categories artifact this fixture substitutes.
+    const files = Object.fromEntries(
+      Object.entries(extended)
+        .filter(([name]) => name !== 'integrity.json' && name !== 'catalog-latest.v1.json')
+        .map(([name, value]) => [name, digest(value)])
+    )
+    const verified = verifyArtifacts({
+      ...extended,
+      'integrity.json': JSON.stringify({
+        assets: [],
+        catalogId: fixture.catalog.catalogId,
+        files,
+        schemaVersion: 1,
+      }),
+    })
+    expect(verified.catalogId).toBe(fixture.catalog.catalogId)
+  })
+
+  test('rejects a manifest that omits a required artifact', () => {
+    const fixture = snapshotFixture()
+    const files = Object.fromEntries(
+      Object.entries(fixture.artifacts)
+        .filter(([name]) => name !== 'integrity.json' && name !== 'catalog-latest.v1.json')
+        .map(([name, value]) => [name, digest(value)])
+    )
+    delete files['categories.v1.json']
+    expect(() =>
+      verifyArtifacts({
+        ...fixture.artifacts,
+        'integrity.json': JSON.stringify({
+          catalogId: fixture.catalog.catalogId,
+          files,
+          schemaVersion: 1,
+        }),
+      })
+    ).toThrow(/not declared/)
+  })
+
+  test('rejects an artifact the manifest does not declare', () => {
+    const fixture = snapshotFixture()
+    const files = Object.fromEntries(
+      Object.entries(fixture.artifacts)
+        .filter(([name]) => name !== 'integrity.json' && name !== 'catalog-latest.v1.json')
+        .map(([name, value]) => [name, digest(value)])
+    )
+    delete files['compatibility.v1.json']
+    files['compatibility.v1.json'] = digest('substituted')
+    expect(() =>
+      verifyArtifacts({
+        ...fixture.artifacts,
+        'integrity.json': JSON.stringify({
+          catalogId: fixture.catalog.catalogId,
+          files,
+          schemaVersion: 1,
+        }),
+      })
+    ).toThrow(/digest mismatch/)
+  })
+
   test('keeps the last-known-good registry snapshot after a failed refresh', async () => {
     const fixture = snapshotFixture()
     let fail = false
