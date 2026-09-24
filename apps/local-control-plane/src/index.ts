@@ -63,6 +63,10 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
             join(homedir(), '.control-plane'),
           profile: resolveEmbeddedDeploymentProfile(),
           ...resolveLocalRuntimeOptions(options.environment ?? process.env),
+          ...(() => {
+            const policy = resolveLocalCatalogApprovalPolicy(options.environment ?? process.env)
+            return policy === undefined ? {} : { catalogApprovalPolicy: policy }
+          })(),
           ...options.compositionOptions,
         })
       registerResource('local-control-plane-composition', () => composition.close())
@@ -122,6 +126,29 @@ export * from './direct-runtime-activities.js'
 export * from './managed-pi-runtime.js'
 export * from './acp-runtime.js'
 export * from './installed-acp-runtime.js'
+
+/**
+ * Optional catalog approval policy (#188) from CONTROL_PLANE_CATALOG_APPROVAL_*
+ * — absent means resolution behaves exactly as before; malformed values fail
+ * startup rather than silently leaving approval unenforced.
+ */
+export function resolveLocalCatalogApprovalPolicy(
+  environment: Readonly<Record<string, string | undefined>>
+): { readonly required: boolean; readonly requiredSince?: string } | undefined {
+  const requiredValue = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED']
+  if (requiredValue === undefined) return undefined
+  if (requiredValue !== 'true' && requiredValue !== 'false') {
+    throw new Error('LOCAL_CATALOG_APPROVAL_POLICY_INVALID')
+  }
+  const requiredSince = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE']
+  if (requiredSince !== undefined && Number.isNaN(Date.parse(requiredSince))) {
+    throw new Error('LOCAL_CATALOG_APPROVAL_POLICY_INVALID')
+  }
+  return {
+    required: requiredValue === 'true',
+    ...(requiredSince === undefined ? {} : { requiredSince }),
+  }
+}
 
 export function resolveLocalRuntimeOptions(
   environment: Readonly<Record<string, string | undefined>>

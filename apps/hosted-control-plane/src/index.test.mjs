@@ -313,4 +313,22 @@ describe('Hosted server composition', () => {
     )
     expect(fromOptions.pinnedHarnessId).toBe('zcode')
   })
+
+  test('resolves the optional catalog approval policy from the environment', () => {
+    const base = { DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane' }
+    expect(resolveHostedCompositionConfiguration(base).catalogApprovalPolicy).toBeUndefined()
+    expect(
+      resolveHostedCompositionConfiguration({
+        ...base,
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: '2026-09-01T00:00:00.000Z',
+      }).catalogApprovalPolicy
+    ).toEqual({ required: true, requiredSince: '2026-09-01T00:00:00.000Z' })
+    expect(() =>
+      resolveHostedCompositionConfiguration({
+        ...base,
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'yes',
+      })
+    ).toThrow()
+  })
 })

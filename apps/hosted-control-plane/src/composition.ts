@@ -17,6 +17,7 @@ import {
 } from '@control-plane/control-api'
 import {
   createPostgresConnection,
+  PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
@@ -171,6 +172,12 @@ export interface HostedServerCompositionOptions {
   readonly databaseUrl: string
   readonly restateAdminUrl?: string
   /**
+   * Optional catalog approval policy (#188): when required, profile
+   * resolution denies versions without an approved, version-bound decision.
+   * Absent leaves resolution unchanged.
+   */
+  readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
+  /**
    * Optional harness pin for attempt routing (M12/#670): when set, routing
    * attempts must select a runtime exposing this harness or fail closed with
    * HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME.
@@ -324,7 +331,16 @@ export class HostedServerControlPlaneComposition {
       projectStates,
       skills: catalog,
     })
-    this.profileResolutionService = new RepositoryProfileResolutionService(catalog)
+    this.profileResolutionService = new RepositoryProfileResolutionService(
+      catalog,
+      options.catalogApprovalPolicy === undefined
+        ? undefined
+        : {
+            approvals: new PostgresCatalogApprovalRepository(this.connection.database),
+            skills: catalog,
+            policy: options.catalogApprovalPolicy,
+          }
+    )
     this.projectStateResolutionService = new RepositoryProjectStateResolutionService(projectStates)
     this.contextPackageResolutionService = new RepositoryContextPackageResolutionService(
       contextPackages

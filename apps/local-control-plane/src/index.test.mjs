@@ -22,7 +22,32 @@ import {
   resolveLocalRuntimeOptions,
   createLocalAcpRuntime,
   createRepositoryAcpTaskPromptResolver,
+  resolveLocalCatalogApprovalPolicy,
 } from './index.ts'
+
+describe('local catalog approval policy resolution', () => {
+  test('parses required and requiredSince and rejects malformed values', () => {
+    expect(resolveLocalCatalogApprovalPolicy({})).toBeUndefined()
+    expect(
+      resolveLocalCatalogApprovalPolicy({ CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true' })
+    ).toEqual({ required: true })
+    expect(
+      resolveLocalCatalogApprovalPolicy({
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: '2026-09-01T00:00:00.000Z',
+      })
+    ).toEqual({ required: true, requiredSince: '2026-09-01T00:00:00.000Z' })
+    expect(() =>
+      resolveLocalCatalogApprovalPolicy({ CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'yes' })
+    ).toThrow('LOCAL_CATALOG_APPROVAL_POLICY_INVALID')
+    expect(() =>
+      resolveLocalCatalogApprovalPolicy({
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
+        CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE: 'nope',
+      })
+    ).toThrow('LOCAL_CATALOG_APPROVAL_POLICY_INVALID')
+  })
+})
 
 describe('Local Control Plane composition', () => {
   test.each(['none', 'runtime', 'endpoint', 'workflow', 'relay'])(

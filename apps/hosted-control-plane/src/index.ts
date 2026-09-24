@@ -84,6 +84,7 @@ export function resolveHostedCompositionConfiguration(
   const workflowDeploymentUri =
     options.workflowDeploymentUri ?? environment['WORKFLOW_DEPLOYMENT_URI']
   const pinnedHarnessId = options.pinnedHarnessId ?? environment['CONTROL_PLANE_PINNED_HARNESS_ID']
+  const catalogApprovalPolicy = resolveCatalogApprovalPolicy(environment)
   return {
     dataDirectory:
       options.dataDirectory ??
@@ -95,6 +96,7 @@ export function resolveHostedCompositionConfiguration(
     ...(requestIdentityPublicKey === undefined ? {} : { requestIdentityPublicKey }),
     ...(workflowDeploymentUri === undefined ? {} : { workflowDeploymentUri }),
     ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }),
+    ...(catalogApprovalPolicy === undefined ? {} : { catalogApprovalPolicy }),
     ...resolveHostedObjectStore(environment, options),
     ...optional('workflowEndpointPort'),
     ...optional('endpointFactory'),
@@ -115,6 +117,24 @@ export function resolveHostedApiHost(explicitHost?: string): string {
     throw new Error('HOSTED_CONTROL_PLANE_BIND_HOST_INVALID')
   }
   return host
+}
+
+function resolveCatalogApprovalPolicy(
+  environment: RawEnvironment
+): { readonly required: boolean; readonly requiredSince?: string } | undefined {
+  const requiredValue = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED']
+  if (requiredValue === undefined) return undefined
+  if (requiredValue !== 'true' && requiredValue !== 'false') {
+    throw new Error('HOSTED_CATALOG_APPROVAL_POLICY_INVALID')
+  }
+  const requiredSince = environment['CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE']
+  if (requiredSince !== undefined && Number.isNaN(Date.parse(requiredSince))) {
+    throw new Error('HOSTED_CATALOG_APPROVAL_POLICY_INVALID')
+  }
+  return {
+    required: requiredValue === 'true',
+    ...(requiredSince === undefined ? {} : { requiredSince }),
+  }
 }
 
 function requiredEnvironment(environment: RawEnvironment, name: string): string {

@@ -42,6 +42,7 @@ import {
   SqliteStatePromotionProposalRepository,
   SqliteVersionedCatalogRepository,
   type SqlitePersistenceProvider,
+  SqliteCatalogApprovalRepository,
 } from '@control-plane/sqlite-persistence'
 
 /**
@@ -81,7 +82,8 @@ export class LocalControlApiComposition {
     restateIngressUrl: string,
     contextAuthoring?: ContextAuthoringCompositionOptions,
     inboxMetrics?: CommandInboxMetrics,
-    workflowDispatcher?: LocalWorkflowDispatcher
+    workflowDispatcher?: LocalWorkflowDispatcher,
+    catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
   ) {
     const dispatcher: LocalWorkflowDispatcher =
       workflowDispatcher ??
@@ -144,7 +146,16 @@ export class LocalControlApiComposition {
       projectStates: this.projectStates,
       skills: this.catalog,
     })
-    this.profileResolutionService = new RepositoryProfileResolutionService(this.catalog)
+    this.profileResolutionService = new RepositoryProfileResolutionService(
+      this.catalog,
+      catalogApprovalPolicy === undefined
+        ? undefined
+        : {
+            approvals: new SqliteCatalogApprovalRepository(persistence),
+            skills: this.catalog,
+            policy: catalogApprovalPolicy,
+          }
+    )
     this.projectStateResolutionService = new RepositoryProjectStateResolutionService(
       this.projectStates
     )
