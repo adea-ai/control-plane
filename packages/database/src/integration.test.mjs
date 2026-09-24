@@ -34,6 +34,7 @@ import {
 } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-plane/runtime-sdk'
+import { PostgresCatalogApprovalRepository } from './catalog-approval-repository.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
@@ -387,6 +388,46 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       expect(probe.stderr).toBe('')
       expect(probe.stdout).toBe('')
     }
+  })
+
+  test('persists catalog approval decisions idempotently with version scoping', async () => {
+    const repository = new PostgresCatalogApprovalRepository(isolated.application)
+    const decision = {
+      versionKind: 'agent_profile',
+      versionId: 'pfv_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      revision: 3,
+      contentDigest: `sha256:${'c'.repeat(64)}`,
+      decision: 'approved',
+      actorPrincipalRef: 'principal://agent-hq/user/42',
+      decidedAt: '2026-09-24T12:00:00.000Z',
+    }
+    // Concurrent identical writes: the composite key admits exactly one.
+    const concurrent = await Promise.all([
+      repository.insert(decision),
+      repository.insert(decision),
+      repository.insert(decision),
+    ])
+    expect(concurrent.filter(Boolean)).toHaveLength(1)
+    // A later revision is a separate decision; another version is scoped out.
+    expect(
+      await repository.insert({
+        ...decision,
+        revision: 4,
+        contentDigest: `sha256:${'d'.repeat(64)}`,
+      })
+    ).toBe(true)
+    expect(
+      await repository.insert({ ...decision, versionId: 'pfv_01ARZ3NDEKTSV4RRFFQ69G5FAW' })
+    ).toBe(true)
+    expect(await repository.list('agent_profile', decision.versionId)).toMatchObject([
+      { revision: 3, decision: 'approved' },
+      { revision: 4 },
+    ])
+    expect(await repository.list('skill', decision.versionId)).toEqual([])
+    // Survives a repository restart: a fresh instance over the same database.
+    const restarted = new PostgresCatalogApprovalRepository(isolated.application)
+    expect(await restarted.list('agent_profile', decision.versionId)).toHaveLength(2)
+    expect(await restarted.insert(decision)).toBe(false)
   })
 
   test('migrates an empty database and re-applies migrations deterministically', async () => {

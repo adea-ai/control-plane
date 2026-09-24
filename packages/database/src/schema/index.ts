@@ -2,6 +2,8 @@ export { commandInbox, commandInboxStatus } from './commands.js'
 export {
   agentProfileVersions,
   agentProfiles,
+  catalogApprovalDecision,
+  catalogApprovals,
   catalogVersionLifecycle,
   skillVersions,
   skills,
