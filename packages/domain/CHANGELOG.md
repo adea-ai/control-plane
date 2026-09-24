@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/domain-v1.12.0...domain-v1.13.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** encode the approval gating semantics as a pure evaluator ([#686](https://github.com/adea-ai/control-plane/issues/686)) ([08e05ba](https://github.com/adea-ai/control-plane/commit/08e05baf7b139a4b90c784c7811bc0a79cef6d26))
+* **m11:** scoped operator CLI for catalog approval records ([#684](https://github.com/adea-ai/control-plane/issues/684)) ([f543722](https://github.com/adea-ai/control-plane/commit/f543722c048175c6b12da36a8619178d62a26dff))
+
 ## [1.12.0](https://github.com/adea-ai/control-plane/compare/domain-v1.11.7...domain-v1.12.0) (2026-09-24)
 
 
