@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/database-v1.20.0...database-v1.21.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** PostgreSQL persistence for catalog approval decisions ([#682](https://github.com/adea-ai/control-plane/issues/682)) ([63ba8f2](https://github.com/adea-ai/control-plane/commit/63ba8f20098a364aba70660e4bf546cee090b062))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/database-v1.19.4...database-v1.20.0) (2026-09-24)
 
 
