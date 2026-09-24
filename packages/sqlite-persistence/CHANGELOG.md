@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.13.0...sqlite-persistence-v1.14.0) (2026-09-24)
+
+
+### Features
+
+* **m11:** scoped operator CLI for catalog approval records ([#684](https://github.com/adea-ai/control-plane/issues/684)) ([f543722](https://github.com/adea-ai/control-plane/commit/f543722c048175c6b12da36a8619178d62a26dff))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.12.2...sqlite-persistence-v1.13.0) (2026-09-24)
 
 
