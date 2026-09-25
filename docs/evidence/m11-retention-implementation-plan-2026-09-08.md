@@ -56,6 +56,29 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: messaging outbox deletion (2026-09-25)
+
+The messaging class turned out to be **PostgreSQL-only**: the supported SQLite
+profiles carry no inbox or outbox tables, so there is nothing to sweep there.
+That is the "verify actual profile use before claiming parity" step the coverage
+matrix asked for, and the class now records `sqlite: null` in the registry. The
+apply command refuses such a combination explicitly rather than reporting zero
+work.
+
+`deleteEligibleOutboxEvents(now, { policyRetainMs, bound, dryRun })` deletes
+settled outbox rows past the window. The ordering proof is settled delivery: an
+outbox row is a single delivery — ingestion inserts a fresh row per availability
+change, and the consumer deduplicates by a delivery key derived from that row —
+so a delivered row is never re-sent and removing it cannot duplicate an effect.
+Pending and failed rows are retry work and quarantined rows are unresolved, so
+none of them are candidates; the delete is guarded by status and revision so a
+row that moves is reported as `raced`, and the journal records it
+(`postgres.deleteOutboxEvent`).
+
+Not done here: the consumer inbox stores deduplication identity by
+`(consumer, messageId)`, so its payload compaction (payload removed, identity
+kept) is a separate step that needs its own proof.
+
 ## Increment: class registry and coverage report (2026-09-25)
 
 `scripts/retention-classes.mjs` is the single registry of which classes have a

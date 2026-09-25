@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { contextPackages } from './schema/context-packages.js'
+import { outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
@@ -53,6 +54,15 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteOutboxEvent': {
+          const removed = await this.database
+            .delete(outboxEvents)
+            .where(sql`${outboxEvents.id} = ${operation.id}`)
+            .returning({ id: outboxEvents.id })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break

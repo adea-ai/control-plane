@@ -221,6 +221,7 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
+#   --class messaging          (PostgreSQL only)
 ```
 
 Context packages are freed by the same bottom-up order: a package stays

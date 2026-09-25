@@ -15,14 +15,19 @@ describe('retention class registry (#194)', () => {
     }
   })
 
-  test('every entry resolves to a real deletion method on both backends', () => {
+  test('every entry resolves to a real deletion method on the backends it implements', () => {
     for (const [id, entry] of Object.entries(retentionClasses)) {
-      const sqliteClass = sqlite[entry.sqlite]
-      expect(typeof sqliteClass, `${id}: ${entry.sqlite}`).toBe('function')
-      expect(
-        typeof sqliteClass.prototype[entry.apply],
-        `${id}: ${entry.sqlite}#${entry.apply}`
-      ).toBe('function')
+      // A class may be PostgreSQL-only, but never unregistered on both sides.
+      const sqliteClass = entry.sqlite === null ? undefined : sqlite[entry.sqlite]
+      if (entry.sqlite === null) {
+        expect(entry.sqlite, `${id} is PostgreSQL-only`).toBeNull()
+      } else {
+        expect(typeof sqliteClass, `${id}: ${entry.sqlite}`).toBe('function')
+        expect(
+          typeof sqliteClass.prototype[entry.apply],
+          `${id}: ${entry.sqlite}#${entry.apply}`
+        ).toBe('function')
+      }
       const postgresClass = postgres[entry.postgres]
       expect(typeof postgresClass, `${id}: ${entry.postgres}`).toBe('function')
       expect(
