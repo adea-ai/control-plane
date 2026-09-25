@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.15.0...sqlite-persistence-v1.16.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** authoritative eligibility predicate and assessment ([#702](https://github.com/adea-ai/control-plane/issues/702)) ([393b495](https://github.com/adea-ai/control-plane/commit/393b495f8d1a788402b734e9f1a7793e073eab17))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.14.0...sqlite-persistence-v1.15.0) (2026-09-24)
 
 
