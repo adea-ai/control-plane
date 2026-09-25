@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.25.0...sqlite-persistence-v1.26.0) (2026-09-25)
+
+
+### Features
+
+* retention-execution-plans ([#728](https://github.com/adea-ai/control-plane/issues/728)) ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+* **retention:** delete execution plans once nothing pins them ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+
 ## [1.25.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.24.0...sqlite-persistence-v1.25.0) (2026-09-25)
 
 

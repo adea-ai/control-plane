@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/database-v1.32.0...database-v1.33.0) (2026-09-25)
+
+
+### Features
+
+* retention-execution-plans ([#728](https://github.com/adea-ai/control-plane/issues/728)) ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+* **retention:** delete execution plans once nothing pins them ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/database-v1.31.0...database-v1.32.0) (2026-09-25)
 
 
