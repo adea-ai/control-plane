@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.45.0...workspace-v1.46.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** operator-invoked deletion for the command inbox ([#706](https://github.com/adea-ai/control-plane/issues/706)) ([5d4ee30](https://github.com/adea-ai/control-plane/commit/5d4ee30d96db9737482d700e1a6e0b3c212fe4c0))
+
 ## [1.45.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.44.0...workspace-v1.45.0) (2026-09-25)
 
 
