@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.0](https://github.com/adea-ai/control-plane/compare/domain-v1.19.0...domain-v1.20.0) (2026-09-25)
+
+
+### Features
+
+* retention-messaging-outbox ([#720](https://github.com/adea-ai/control-plane/issues/720)) ([ea17430](https://github.com/adea-ai/control-plane/commit/ea17430fa24cfce45694d74afb7922767b3b109c))
+* **retention:** delete settled outbox deliveries (PostgreSQL) ([ea17430](https://github.com/adea-ai/control-plane/commit/ea17430fa24cfce45694d74afb7922767b3b109c))
+
 ## [1.19.0](https://github.com/adea-ai/control-plane/compare/domain-v1.18.0...domain-v1.19.0) (2026-09-25)
 
 

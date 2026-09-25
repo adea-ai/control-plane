@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.52.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.51.0...workspace-v1.52.0) (2026-09-25)
+
+
+### Features
+
+* retention-messaging-outbox ([#720](https://github.com/adea-ai/control-plane/issues/720)) ([ea17430](https://github.com/adea-ai/control-plane/commit/ea17430fa24cfce45694d74afb7922767b3b109c))
+* **retention:** delete settled outbox deliveries (PostgreSQL) ([ea17430](https://github.com/adea-ai/control-plane/commit/ea17430fa24cfce45694d74afb7922767b3b109c))
+
 ## [1.51.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.50.0...workspace-v1.51.0) (2026-09-25)
 
 
