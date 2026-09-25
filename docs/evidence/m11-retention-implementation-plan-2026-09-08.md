@@ -56,6 +56,36 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: operator-invoked deletion for the command inbox (2026-09-25)
+
+The first physical deletion path exists, and only through an explicit operator
+command. `deleteEligibleInbox(now, { policyRetainMs, bound, dryRun })` on both
+the SQLite and PostgreSQL command-inbox repositories:
+
+- re-reads each candidate and re-derives every fact inside the deleting
+  transaction (the earlier scan is not evidence),
+- evaluates the shared predicate against those fresh facts,
+- deletes the record with its expected revision and then its by-execution index
+  entry, keeping the reserved rejection key so a later replay of the same
+  scoped idempotency key still fails closed with `COMMAND_RETENTION_EXPIRED`,
+- reports `deleted`, `raced` (a candidate whose state changed between selection
+  and deletion is never forced) and the per-reason retained counts.
+
+`dryRun` defaults to true. `scripts/retention-apply.mjs` is the operator
+surface: dry-run by default, `--apply` requires `--confirm command-inbox`, the
+target is validated like the other operator CLIs (absolute non-symlink SQLite
+path; PostgreSQL host and database must match the credentialed target), the
+result is payload-free JSON, and failures are one sanitized code
+(`RETENTION_APPLY_FAILED`). The scheduled sweeps in both profiles deliberately
+still only assess and report; enabling scheduled deletion is a separate
+decision once dry-run evidence exists.
+
+Not yet done: deletion for the execution-events class (publication settlement
+and deduplication identity need their own ordering proof), the remaining
+classes, durable external deletion for object storage and workflow references,
+restore-time reapplication of deletion records, and deployed-profile evidence
+for the deletion path itself.
+
 ## Increment: authoritative eligibility predicate and assessment (2026-09-24)
 
 `packages/domain/src/retention-eligibility.ts` is the authoritative predicate the

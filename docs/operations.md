@@ -202,6 +202,35 @@ publication — unapproved versions stay authorable and listable.
   was recorded. Approve deliberately: the decision is append-only and bound to the exact revision and
   digest, so republishing content invalidates the binding.
 
+## Retention deletion (#194)
+
+Physical retention deletion is an operator action, never a background behaviour:
+the scheduled sweeps only assess and report. Run the command against an explicit
+target, dry-run first, and keep the JSON result with the change record.
+
+```sh
+# SQLite profile (absolute, non-symlink file)
+bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
+  --database /var/lib/control-plane/state.sqlite
+
+# PostgreSQL profile (host and database must match the credentialed target)
+bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
+  --database control_plane --host <neon-host>
+```
+
+The default is a dry run: it reports how many expired candidates exist, how many
+are eligible, and why the rest are retained. Deleting requires
+`--apply --confirm command-inbox`. Only records that are expired, terminal,
+reconciled, unreferenced and already carry their reserved rejection key are
+removed; the rejection key itself is kept, so a replay of the same scoped
+idempotency key still fails closed. `raced` counts candidates whose state moved
+between selection and deletion — those are left alone and picked up by a later
+pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
+
+Inspect retained growth without deleting anything with
+`bun scripts/retention-report.mjs` (same target validation, payload-free counts),
+or read the `retention.sweep` records the services log every sweep interval.
+
 ## Neon operations
 
 - Use the dedicated Control Plane Neon project/database, never Adea's database.

@@ -22,6 +22,7 @@ import {
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
   type RetentionAssessment,
+  type RetentionDeletionResult,
   type RetentionEligibilityVerdict,
 } from '@control-plane/domain'
 import {
@@ -241,6 +242,103 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       if (page.length < 128) break
     }
     return counter.result()
+  }
+
+  /**
+   * Deletes expired, eligible command-inbox records and their by-execution
+   * index entry (#194), keeping the reserved rejection key so a replay of the
+   * same scoped idempotency key still fails closed with COMMAND_RETENTION_EXPIRED.
+   *
+   * Safety ordering, per candidate, inside one transaction:
+   *   1. re-read the record and re-derive every fact (the scan is not evidence),
+   *   2. evaluate the shared predicate against the fresh facts,
+   *   3. delete the record with its expected revision, then its index entry.
+   * A candidate whose revision moved is reported as `raced`, never forced.
+   * `dryRun` defaults to true: deletion is opt-in per call site.
+   */
+  async deleteEligibleInbox(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter('command-inbox', assessedAt, options.bound ?? 64)
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.commands, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page.filter((record) => {
+        const parsed = CommandInboxRecordSchema.safeParse(record.value)
+        return parsed.success && expiredAt(parsed.data.retentionExpiresAt, now)
+      })
+      for (const candidate of candidates) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.commands, candidate.id)
+          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          const command = CommandInboxRecordSchema.parse(stored.value)
+          const tombstone = await transaction.get(
+            namespaces.retiredCommands,
+            recordId(scopeKey(command))
+          )
+          const execution = await transaction.get(
+            namespaces.executions,
+            recordId(command.executionId)
+          )
+          const state =
+            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt: command.retentionExpiresAt,
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal:
+              ['completed', 'failed'].includes(command.status) &&
+              state !== undefined &&
+              terminalExecutionStates.has(state),
+            publicationSettled: true,
+            rejectionKeyReserved: tombstone !== undefined,
+            pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) {
+            return { verdict, removed: false, conflicted: false }
+          }
+          const removed = await transaction.delete(
+            namespaces.commands,
+            candidate.id,
+            stored.revision
+          )
+          if (!removed) return { verdict, removed: false, conflicted: true }
+          await transaction.delete(
+            namespaces.commandByExecution,
+            recordId(command.executionId),
+            undefined
+          )
+          return { verdict, removed: true, conflicted: false }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+        if (outcome.conflicted) raced += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
   }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */

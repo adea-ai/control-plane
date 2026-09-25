@@ -12,6 +12,7 @@ import {
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
   type RetentionAssessment,
+  type RetentionDeletionResult,
 } from '@control-plane/domain'
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -91,6 +92,95 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       if (!counter.add(verdict)) break
     }
     return counter.result()
+  }
+
+  /**
+   * Deletes expired, eligible command-inbox rows (#194) while keeping the
+   * reserved rejection key, so a replay of the same scoped idempotency key
+   * still fails closed with COMMAND_RETENTION_EXPIRED.
+   *
+   * Each candidate is revalidated immediately before deletion: the delete is
+   * guarded by the candidate's status and deadline, so a row that changed
+   * between selection and deletion is reported as `raced` (affected rows 0)
+   * rather than removed on stale evidence. `dryRun` defaults to true.
+   */
+  async deleteEligibleInbox(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter('command-inbox', assessedAt, options.bound ?? 64)
+    let deleted = 0
+    let raced = 0
+    const candidates = await this.database
+      .select({
+        commandId: commandInbox.commandId,
+        status: commandInbox.status,
+        retentionExpiresAt: commandInbox.retentionExpiresAt,
+        reconciliationRequiredAt: commandInbox.reconciliationRequiredAt,
+        executionState: executions.state,
+        callerPrincipalId: commandInbox.callerPrincipalId,
+        operation: commandInbox.operation,
+        workspaceId: commandInbox.workspaceId,
+        projectId: commandInbox.projectId,
+        idempotencyKey: commandInbox.idempotencyKey,
+      })
+      .from(commandInbox)
+      .innerJoin(executions, eq(executions.executionId, commandInbox.executionId))
+      .where(lt(commandInbox.retentionExpiresAt, now))
+      .orderBy(asc(commandInbox.retentionExpiresAt))
+      .limit(counter.bound + 1)
+    const retiredKeys =
+      candidates.length === 0
+        ? new Set<string>()
+        : new Set(
+            (
+              await this.database
+                .select({ scopeKey: retiredCommandKeys.scopeKey })
+                .from(retiredCommandKeys)
+                .where(
+                  inArray(
+                    retiredCommandKeys.scopeKey,
+                    candidates.map((candidate) => retirementKey(candidate))
+                  )
+                )
+            ).map((row) => row.scopeKey)
+          )
+    for (const candidate of candidates) {
+      const verdict = evaluateRetentionEligibility({
+        retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
+        now: assessedAt,
+        policyRetainMs: options.policyRetainMs,
+        ownerTerminal:
+          ['completed', 'failed'].includes(candidate.status) &&
+          terminalExecutionStates.has(candidate.executionState),
+        publicationSettled: true,
+        rejectionKeyReserved: retiredKeys.has(retirementKey(candidate)),
+        pendingReferences: candidate.reconciliationRequiredAt === null ? 0 : 1,
+        holds: 0,
+      })
+      if (!counter.add(verdict)) break
+      if (verdict.verdict !== 'eligible' || dryRun) continue
+      const removed = await this.database
+        .delete(commandInbox)
+        .where(
+          and(
+            eq(commandInbox.commandId, candidate.commandId),
+            eq(commandInbox.status, candidate.status),
+            lt(commandInbox.retentionExpiresAt, now)
+          )
+        )
+        .returning({ commandId: commandInbox.commandId })
+      if (removed.length === 1) deleted += 1
+      else raced += 1
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
   }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */

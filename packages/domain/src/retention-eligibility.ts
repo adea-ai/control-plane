@@ -106,6 +106,28 @@ export const RetentionAssessmentSchema = z.object({
 
 export type RetentionAssessment = z.output<typeof RetentionAssessmentSchema>
 
+/**
+ * Outcome of one operator-invoked deletion pass. `deleted` counts records that
+ * were actually removed; `raced` counts candidates whose state changed between
+ * selection and deletion, which the claim must revalidate rather than force.
+ */
+export const RetentionDeletionResultSchema = z.object({
+  classId: z.string().min(1).max(64),
+  assessedAt: z.string(),
+  dryRun: z.boolean(),
+  scanned: z.number().int().nonnegative(),
+  eligible: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative(),
+  raced: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  retainedByReason: z.partialRecord(
+    RetentionEligibilityReasonSchema,
+    z.number().int().nonnegative()
+  ),
+})
+
+export type RetentionDeletionResult = z.output<typeof RetentionDeletionResultSchema>
+
 /** Accumulates per-reason counts for one assessment pass. */
 export class RetentionAssessmentCounter {
   /** Maximum candidates this pass admits; callers may scan bound + 1. */
