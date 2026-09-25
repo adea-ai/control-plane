@@ -2944,7 +2944,6 @@
                             "catalog-latest.v1.json",
                             "catalog-summary.v1.json",
                             "categories.v1.json",
-                            "catalog-index.v1.json",
                             "compatibility.v1.json",
                             "integrity.json",
                             "sources.lock.json"

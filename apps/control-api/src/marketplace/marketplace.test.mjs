@@ -128,6 +128,96 @@ describe('Control Plane marketplace contract', () => {
       data: { ...fixture.snapshot, installations: [] },
     })
     expect(parsed.success ? [] : parsed.error.issues).toEqual([])
+
+    // A release published before the browsing index existed is a supported
+    // response shape, not just a tolerated one: the contract must accept the
+    // artifact set with the key absent as well.
+    const withoutIndex = { ...fixture.snapshot }
+    delete withoutIndex.artifacts['catalog-index.v1.json']
+    const parsedLegacy = MarketplaceCatalogResponseSchema.safeParse({
+      contractVersion: { major: 1, minor: 0 },
+      requestId: ids.requestId,
+      correlation: { traceId: ids.traceId },
+      data: { ...withoutIndex, installations: [] },
+    })
+    expect(parsedLegacy.success ? [] : parsedLegacy.error.issues).toEqual([])
+  })
+
+  test('verifies a release published before the browsing index existed', () => {
+    // #709 added the index. A release that predates it carries no such
+    // artifact, and the registry must serve it rather than fail the read.
+    const fixture = snapshotFixture()
+    const integrity = JSON.parse(fixture.artifacts['integrity.json'])
+    const files = { ...integrity.files }
+    delete files['catalog-index.v1.json']
+    const artifacts = { ...fixture.artifacts }
+    delete artifacts['catalog-index.v1.json']
+    const verified = verifyArtifacts({
+      ...artifacts,
+      'integrity.json': JSON.stringify({ ...integrity, files }),
+    })
+    expect(verified.catalogId).toBe(fixture.catalog.catalogId)
+    expect(verified.artifacts['catalog-index.v1.json']).toBeUndefined()
+  })
+
+  test('still rejects a browsing index that is present but undeclared or mismatched', () => {
+    // Optionality is about the artifact being absent, never about relaxing the
+    // checks on one that is present. A release that ships the index and gets it
+    // wrong is a defect and must fail closed.
+    const fixture = snapshotFixture()
+    const integrity = JSON.parse(fixture.artifacts['integrity.json'])
+    const undeclared = { ...integrity.files }
+    delete undeclared['catalog-index.v1.json']
+    expect(() =>
+      verifyArtifacts({
+        ...fixture.artifacts,
+        'integrity.json': JSON.stringify({ ...integrity, files: undeclared }),
+      })
+    ).toThrow(/not declared: catalog-index/)
+
+    const files = { ...integrity.files }
+    expect(() =>
+      verifyArtifacts({
+        ...fixture.artifacts,
+        'integrity.json': JSON.stringify({
+          ...integrity,
+          files: { ...files, 'catalog-index.v1.json': digest('tampered') },
+        }),
+      })
+    ).toThrow(/digest mismatch/)
+  })
+
+  test('treats only a 404 as an absent index and never an outage', async () => {
+    // The tolerance is scoped to "this release is older". A 5xx, a transport
+    // failure or a timeout must fail the refresh instead of silently dropping
+    // the index, or a registry outage would look like a legacy catalog.
+    const fixture = snapshotFixture()
+    const bodies = new Map(Object.entries(fixture.artifacts).map(([name, body]) => [name, body]))
+    const serve = (statusForIndex) => async (url) => {
+      const name = new URL(url).pathname.split('/').pop()
+      if (name === 'catalog-index.v1.json') {
+        if (statusForIndex === 404) return new Response('missing', { status: 404 })
+        if (statusForIndex === 500) return new Response('boom', { status: 500 })
+        return new Response('unreachable', { status: 503 })
+      }
+      return new Response(bodies.get(name) ?? 'not found', { status: bodies.has(name) ? 200 : 404 })
+    }
+    const service = (fetchImpl) =>
+      new MarketplaceRegistryService({
+        fetchImpl,
+        latestUrl: 'https://registry.example.com/releases/latest/download/catalog-latest.v1.json',
+        token: 't',
+      })
+
+    const legacy = await service(serve(404)).getCatalog()
+    expect(legacy.state).toBe('ready')
+    expect(legacy.artifacts['catalog-index.v1.json']).toBeUndefined()
+
+    for (const status of [500, 503]) {
+      const failing = service(serve(status))
+      // No cache yet, so an outage with nothing to fall back on is a 503.
+      await expect(failing.getCatalog()).rejects.toThrow()
+    }
   })
 
   test('verifies an immutable artifact set and preserves raw artifacts', () => {

@@ -9,12 +9,29 @@ export const marketplaceArtifactNames = [
   'categories.v1.json',
   // The consumer browsing index: one deduplicated record per product, with the
   // compiled brand mark and monogram, so a client renders a category grid
-  // without parsing the full catalog.
+  // without parsing the full catalog. Optional only in the sense that a release
+  // published before #709 predates it — see optionalMarketplaceArtifactNames.
   'catalog-index.v1.json',
   'compatibility.v1.json',
   'integrity.json',
   'sources.lock.json',
 ] as const
+
+/**
+ * Artifacts a release published before this service knew about may not carry.
+ * Only a genuine 404 is read as absence; every other failure still fails the
+ * refresh, so a flaky registry can never masquerade as an older release.
+ */
+const optionalMarketplaceArtifactNames = ['catalog-index.v1.json'] as const
+
+function isOptionalMarketplaceArtifact(name: string): boolean {
+  return (optionalMarketplaceArtifactNames as readonly string[]).includes(name)
+}
+
+type RequiredMarketplaceArtifactName = Exclude<
+  (typeof marketplaceArtifactNames)[number],
+  (typeof optionalMarketplaceArtifactNames)[number]
+>
 
 // Every artifact whose digest integrity.json must declare. The browsing index
 // belongs here: it is served and verified like the rest, and #709 specified
@@ -30,9 +47,11 @@ const integrityArtifactNames = [
 
 type JsonObject = Record<string, unknown>
 
-export type MarketplaceArtifacts = Readonly<{
-  [K in (typeof marketplaceArtifactNames)[number]]: string
-}>
+export type MarketplaceArtifacts = Readonly<
+  { [K in RequiredMarketplaceArtifactName]: string } & {
+    [K in (typeof optionalMarketplaceArtifactNames)[number]]?: string
+  }
+>
 
 export type MarketplaceRelease = Readonly<{
   releaseId: string
@@ -104,6 +123,18 @@ export class MarketplaceRegistryError extends Error {
   ) {
     super(message)
     this.name = 'MarketplaceRegistryError'
+  }
+}
+
+/**
+ * Raised only for a genuine 404 on an artifact this release is allowed to omit.
+ * It never escapes `#fetchArtifact`, which converts everything else into a
+ * fail-closed `MARKETPLACE_REGISTRY_UNAVAILABLE`.
+ */
+class MarketplaceArtifactAbsentError extends Error {
+  constructor(readonly artifactName: string) {
+    super(`Marketplace artifact is absent: ${artifactName}`)
+    this.name = 'MarketplaceArtifactAbsentError'
   }
 }
 
@@ -238,12 +269,28 @@ export class MarketplaceRegistryService {
     if (!match) throw verificationError('Catalog ID is invalid')
     const suffix = match[1]
     if (!suffix) throw verificationError('Catalog ID is invalid')
-    const artifacts = {} as Record<(typeof marketplaceArtifactNames)[number], string>
+    const artifacts: Record<string, string | undefined> = {}
     for (const name of marketplaceArtifactNames) {
       const url = this.#immutableUrl(suffix, name)
-      artifacts[name] = await this.#fetchArtifact(url)
+      artifacts[name] = isOptionalMarketplaceArtifact(name)
+        ? await this.#fetchOptionalArtifact(url)
+        : await this.#fetchArtifact(url)
     }
-    return artifacts
+    return artifacts as MarketplaceArtifacts
+  }
+
+  /**
+   * An optional artifact is absent only when the release answers 404. A 5xx, a
+   * timeout, a truncated body or a transport failure propagates, so an outage
+   * cannot be mistaken for an older catalog and silently drop the index.
+   */
+  async #fetchOptionalArtifact(url: string): Promise<string | undefined> {
+    try {
+      return await this.#fetchArtifact(url)
+    } catch (error) {
+      if (error instanceof MarketplaceArtifactAbsentError) return undefined
+      throw error
+    }
   }
 
   #immutableUrl(suffix: string, name: (typeof marketplaceArtifactNames)[number]): string {
@@ -299,6 +346,10 @@ export class MarketplaceRegistryService {
         },
         signal: AbortSignal.timeout(this.#requestTimeoutMs),
       })
+      if (response.status === 404)
+        throw new MarketplaceArtifactAbsentError(
+          parsed.pathname.slice(parsed.pathname.lastIndexOf('/') + 1)
+        )
       if (!response.ok) throw new Error('artifact request failed')
       // Stream with an in-flight byte cap: buffering the whole body before
       // measuring let an oversized artifact allocate the full payload (up to
@@ -319,7 +370,8 @@ export class MarketplaceRegistryService {
       }
       const body = Buffer.concat(chunks).toString('utf8')
       return body
-    } catch {
+    } catch (error) {
+      if (error instanceof MarketplaceArtifactAbsentError) throw error
       throw new MarketplaceRegistryError(
         'MARKETPLACE_REGISTRY_UNAVAILABLE',
         'Marketplace registry fetch failed'
@@ -355,11 +407,19 @@ export function verifyArtifacts(artifacts: MarketplaceArtifacts): MarketplaceCat
   const lock = requireObject(
     parseJson(artifacts['sources.lock.json'], 'sources.lock.json')
   ) as JsonObject & { schemaVersion?: unknown }
-  const index = requireObject(
-    parseJson(artifacts['catalog-index.v1.json'], 'catalog-index.v1.json')
-  ) as JsonObject & { catalogId?: unknown; products?: unknown; schemaVersion?: unknown }
-  if (index.schemaVersion !== 1 || index.catalogId !== catalog.catalogId || !index.products)
-    throw verificationError('Marketplace browsing index does not match the catalog')
+  // The browsing index is the one artifact an older release may not carry. It is
+  // verified in full whenever it is present: a release that publishes the index
+  // and gets it wrong is a defect, not an older catalog.
+  const indexText = artifacts['catalog-index.v1.json']
+  if (indexText !== undefined) {
+    const index = requireObject(parseJson(indexText, 'catalog-index.v1.json')) as JsonObject & {
+      catalogId?: unknown
+      products?: unknown
+      schemaVersion?: unknown
+    }
+    if (index.schemaVersion !== 1 || index.catalogId !== catalog.catalogId || !index.products)
+      throw verificationError('Marketplace browsing index does not match the catalog')
+  }
   const integrity = requireObject(parseJson(artifacts['integrity.json'], 'integrity.json')) as {
     catalogId?: unknown
     files?: unknown
@@ -393,9 +453,17 @@ export function verifyArtifacts(artifacts: MarketplaceArtifacts): MarketplaceCat
   // matching digest, and every required artifact must be declared, so a
   // truncated or substituted manifest still fails.
   for (const name of integrityArtifactNames) {
+    const text = artifacts[name]
+    if (text === undefined) {
+      // Only an optional artifact may be absent, and only when the release
+      // genuinely did not publish it. A required artifact reaching here means
+      // the fetch was bypassed, which fails closed.
+      if (isOptionalMarketplaceArtifact(name)) continue
+      throw verificationError(`Marketplace artifact is not declared: ${name}`)
+    }
     if (integrityFiles[name] === undefined)
       throw verificationError(`Marketplace artifact is not declared: ${name}`)
-    if (digest(artifacts[name]) !== integrityFiles[name])
+    if (digest(text) !== integrityFiles[name])
       throw verificationError(`Marketplace artifact digest mismatch: ${name}`)
   }
   for (const name of Object.keys(artifacts)) {
