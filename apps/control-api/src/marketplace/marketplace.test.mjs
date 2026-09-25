@@ -8,7 +8,14 @@ import {
   InMemoryMarketplaceInstallationRepository,
   MarketplaceInstallationService,
 } from './installation.ts'
-import { MarketplaceRegistryService, bytesDigest, digest, verifyArtifacts } from './registry.ts'
+import { MarketplaceCatalogResponseSchema } from '@control-plane/contracts'
+import {
+  MarketplaceRegistryService,
+  bytesDigest,
+  digest,
+  verifyArtifacts,
+  marketplaceArtifactNames,
+} from './registry.ts'
 
 const ids = {
   traceId: 'trc_01JABCDEF0123456789ABCDEFG',
@@ -104,6 +111,25 @@ const applicationDefaults = {
 }
 
 describe('Control Plane marketplace contract', () => {
+  test('the SDK response contract accepts exactly the artifact set the registry serves', () => {
+    // Drift guard. `marketplaceArtifactNames` is what the registry fetches,
+    // verifies and returns; MarketplaceArtifactsSchema is `.strict()` and is
+    // what every control-sdk client parses that response with. Adding an
+    // artifact to one and not the other breaks the marketplace read path for
+    // clients only — the server still answers 200 — so nothing else caught it.
+    const fixture = snapshotFixture()
+    expect(Object.keys(fixture.snapshot.artifacts).sort()).toEqual(
+      [...marketplaceArtifactNames].sort()
+    )
+    const parsed = MarketplaceCatalogResponseSchema.safeParse({
+      contractVersion: { major: 1, minor: 0 },
+      requestId: ids.requestId,
+      correlation: { traceId: ids.traceId },
+      data: { ...fixture.snapshot, installations: [] },
+    })
+    expect(parsed.success ? [] : parsed.error.issues).toEqual([])
+  })
+
   test('verifies an immutable artifact set and preserves raw artifacts', () => {
     const fixture = snapshotFixture()
     const verified = verifyArtifacts(fixture.artifacts)

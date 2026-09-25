@@ -16,10 +16,14 @@ export const marketplaceArtifactNames = [
   'sources.lock.json',
 ] as const
 
+// Every artifact whose digest integrity.json must declare. The browsing index
+// belongs here: it is served and verified like the rest, and #709 specified
+// that its digest must be declared alongside them.
 const integrityArtifactNames = [
   'catalog.v1.json',
   'catalog-summary.v1.json',
   'categories.v1.json',
+  'catalog-index.v1.json',
   'compatibility.v1.json',
   'sources.lock.json',
 ] as const
