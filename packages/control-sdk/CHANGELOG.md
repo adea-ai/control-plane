@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.1...sdk-v1.7.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **marketplace:** declare the browsing index in the SDK response contract ([#732](https://github.com/adea-ai/control-plane/issues/732)) ([83e3f8a](https://github.com/adea-ai/control-plane/commit/83e3f8abe53e6e305575434bcf6548a8edd8ecf4))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.0...sdk-v1.7.1) (2026-09-21)
 
 
