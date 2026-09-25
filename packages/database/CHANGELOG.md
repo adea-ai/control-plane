@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/adea-ai/control-plane/compare/database-v1.22.0...database-v1.23.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** assess the execution-events class ([#704](https://github.com/adea-ai/control-plane/issues/704)) ([98d7ac1](https://github.com/adea-ai/control-plane/commit/98d7ac16ee9b6ceeead288cb997161761cdb44f1))
+
 ## [1.22.0](https://github.com/adea-ai/control-plane/compare/database-v1.21.0...database-v1.22.0) (2026-09-25)
 
 
