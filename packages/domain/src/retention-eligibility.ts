@@ -118,6 +118,11 @@ export const RetentionDeletionResultSchema = z.object({
   scanned: z.number().int().nonnegative(),
   eligible: z.number().int().nonnegative(),
   deleted: z.number().int().nonnegative(),
+  /**
+   * Records whose payload was removed while their identity was kept. Used by
+   * classes that must preserve a deduplication key (see the messaging inbox).
+   */
+  compacted: z.number().int().nonnegative().optional(),
   raced: z.number().int().nonnegative(),
   truncated: z.boolean(),
   retainedByReason: z.partialRecord(

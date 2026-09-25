@@ -3187,7 +3187,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBeUndefined()
   })
 
-  test('deleteEligibleOutboxEvents removes only settled deliveries', async () => {
+  test('sweepEligibleMessaging deletes settled deliveries and compacts the inbox', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFJ'
     const publishedAt = '2026-08-01T11:00:00.000Z'
     // Inside the window relative to the assessment instant below.
@@ -3229,6 +3229,42 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       sql`select id from outbox_events where id in (${settled}, ${young}, ${quarantined}, ${pending}, ${failed}) order by id`
     )
     expect(remaining.map((row) => row.id)).toEqual([young, quarantined, pending, failed].toSorted())
+
+    // The consumer inbox is compacted, never removed: the row's
+    // (consumer, messageId) identity is what recognises a redelivery.
+    const consumer = 'm11-health-consumer'
+    const seedInbox = async (messageId, createdAt, extra = {}) => {
+      await isolated.application.execute(
+        sql`insert into inbox_messages (consumer, message_id, payload, revision, created_at, updated_at, deleted_at) values (${consumer}, ${messageId}, ${JSON.stringify({ deliveryKey: messageId })}::jsonb, 1, ${createdAt}::timestamptz, ${createdAt}::timestamptz, ${
+          extra.deletedAt === undefined ? null : extra.deletedAt
+        }::timestamptz)`
+      )
+    }
+    await seedInbox('sha256:settled-old', '2026-08-01T11:00:00.000Z')
+    await seedInbox('sha256:settled-young', recent)
+    await seedInbox('sha256:already-compacted', '2026-08-01T11:00:00.000Z', {
+      deletedAt: '2026-09-01T11:00:00.000Z',
+    })
+
+    const swept = await retention.sweepEligibleMessaging(assessedAt, options)
+    expect(swept.compacted).toBeGreaterThanOrEqual(1)
+    const inboxRows = await isolated.application.execute(
+      sql`select message_id, payload, deleted_at from inbox_messages where consumer = ${consumer} order by message_id`
+    )
+    const byMessage = Object.fromEntries(inboxRows.map((row) => [row.message_id, row]))
+    // Identity kept, payload replaced, marked compacted.
+    expect(byMessage['sha256:settled-old']).toBeDefined()
+    expect(byMessage['sha256:settled-old'].payload).toEqual({ compacted: true, version: 1 })
+    expect(byMessage['sha256:settled-old'].deleted_at).not.toBeNull()
+    // Inside the window: untouched.
+    expect(byMessage['sha256:settled-young'].payload).toEqual({
+      deliveryKey: 'sha256:settled-young',
+    })
+    expect(byMessage['sha256:settled-young'].deleted_at).toBeNull()
+
+    // A second sweep has nothing left to compact.
+    const again = await retention.sweepEligibleMessaging(assessedAt, options)
+    expect(again.compacted).toBe(0)
   }, 60_000)
 
   test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
