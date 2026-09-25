@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ContextPackageReferenceSchema,
+  ContextPackageSchema,
   ContextAuthoringCommandScopeSchema,
   contextAuthoringCommandKey,
   ContextAuthoringCommandRecordSchema,
@@ -38,6 +39,11 @@ import {
   type Skill,
   type SkillRepository,
   type SkillVersion,
+  RetentionAssessmentCounter,
+  RetentionJournalOperationSchema,
+  evaluateRetentionEligibility,
+  type RetentionDeletionResult,
+  type RetentionJournalSink,
 } from '@control-plane/domain'
 
 const namespaces = {
@@ -53,6 +59,26 @@ const namespaces = {
   /** Storage-level parity with the PostgreSQL outbox; no SQLite dispatcher consumes it yet. */
   projectStateUpdates: 'project-state-updates',
 } as const
+
+const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+/** Canonical stored instant strictly before `now`; anything else is not a candidate. */
+function expiredAt(value: string, now: Date): boolean {
+  return canonicalInstant.test(value) && Date.parse(value) < now.getTime()
+}
+
+/** The context package an execution plan pins, read from the plan JSON. */
+function executionPlanPin(value: unknown): string | undefined {
+  const plan = value as { contextPackage?: { contextPackageId?: unknown } } | null
+  const pinned = plan?.contextPackage?.contextPackageId
+  return typeof pinned === 'string' ? pinned : undefined
+}
+
+/** The context package an authoring command produced, when it recorded one. */
+function authoringPackageId(value: unknown): string | undefined {
+  const record = value as { contextPackageId?: unknown } | null
+  return typeof record?.contextPackageId === 'string' ? record.contextPackageId : undefined
+}
 
 export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
   constructor(readonly provider: PersistenceProvider) {}
@@ -328,6 +354,123 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       }
       return reference
     })
+  }
+
+  /**
+   * Deletes context packages past their retention window and free of
+   * references (#194). A package is pinned by an execution plan and by the
+   * authoring command that produced it, so either reference retains it as
+   * `reference_pending`; deletion is therefore bottom-up with plans. Age is
+   * measured from `compiledAt`, because a package is immutable once compiled
+   * and "last reference released" cannot be observed directly. `dryRun`
+   * defaults to true.
+   */
+  async deleteEligibleContextPackages(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('CONTEXT_PACKAGE_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'context-packages',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.contextPackages, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page.filter((record) => {
+        const parsed = ContextPackageSchema.safeParse(record.value)
+        return parsed.success && expiredAt(parsed.data.compiledAt, now)
+      })
+      if (candidates.length === 0) {
+        if (page.length < 128) break
+        continue
+      }
+      // Reference sets are computed once per page rather than per candidate.
+      const planPins = new Set(
+        (await this.provider.transaction((transaction) => transaction.list('execution-plans')))
+          .map((record) => executionPlanPin(record.value))
+          .filter((value) => value !== undefined)
+      )
+      const authoringCommands = new Set(
+        (
+          await this.provider.transaction((transaction) =>
+            transaction.list('context-authoring-commands')
+          )
+        )
+          .map((record) => authoringPackageId(record.value))
+          .filter((value) => value !== undefined)
+      )
+      for (const candidate of candidates) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.contextPackages, candidate.id)
+          if (stored === undefined) return { verdict: undefined, removed: false }
+          const package_ = assertContextPackageIntegrity(stored.value)
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null
+                ? undefined
+                : new Date(Date.parse(package_.compiledAt) + options.policyRetainMs).toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences:
+              planPins.has(package_.contextPackageId) ||
+              authoringCommands.has(package_.contextPackageId)
+                ? 1
+                : 0,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) {
+            return { verdict, removed: false }
+          }
+          if (options.journal !== undefined) {
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                { kind: 'sqlite.delete', namespace: namespaces.contextPackages, id: stored.id },
+              ])
+            )
+          }
+          let removed = false
+          try {
+            removed = await transaction.delete(
+              namespaces.contextPackages,
+              stored.id,
+              stored.revision
+            )
+          } catch {
+            return { verdict, removed: false }
+          }
+          return { verdict, removed }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
   }
 
   async get(input: ContextPackageReference): Promise<ContextPackage | undefined> {

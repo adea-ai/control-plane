@@ -14,6 +14,7 @@ import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
   createFakeContextProvider,
+  deriveContextPackage,
 } from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
@@ -41,7 +42,10 @@ import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/te
 import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-plane/runtime-sdk'
 import { PostgresCatalogApprovalRepository } from './catalog-approval-repository.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
-import { PostgresContextPackageRepository } from './context-package-repository.ts'
+import {
+  PostgresContextPackageRepository,
+  PostgresContextPackageRetention,
+} from './context-package-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
 import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
@@ -3181,6 +3185,56 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
     ).toBeUndefined()
   })
+
+  test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
+    // A derived package: the shared fixtures are referenced by other tests and
+    // one of them is tampered on purpose, so this test mints its own coherent
+    // package (its own digest and id) from a parent fixture.
+    const parent = contextPackageSerializationFixtures.futurePi
+    const compiledAt = '2026-08-20T12:00:00.000Z'
+    const fixture = deriveContextPackage(parent, {
+      objective: 'retention deletion fixture',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: parent.budgets,
+      successCriteria: parent.successCriteria,
+      returnContract: parent.returnContract,
+      compiledAt,
+    })
+    const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(fixture)
+    // A plan pin: the pin lives inside the plan JSON.
+    await isolated.application.execute(
+      sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${compiledAt}::timestamptz)`
+    )
+
+    const retention = new PostgresContextPackageRetention(isolated.application)
+    const now = new Date(Date.parse(compiledAt) + 2 * 24 * 60 * 60 * 1_000)
+    const options = { policyRetainMs: 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+    // Assertions are on this package, not on aggregate counts: the shared
+    // database also holds other tests' packages.
+    await retention.deleteEligibleContextPackages(now, options)
+    expect(await packages.get(fixture)).toBeDefined()
+
+    // An authoring command reference is a foreign key, so removing the pin
+    // still leaves the package unremovable until that row goes too.
+    await isolated.application.execute(
+      sql`delete from execution_plans where execution_plan_id = 'pln_retention_fixture'`
+    )
+    await isolated.application.execute(
+      sql`insert into context_authoring_commands (command_key, workspace_id, project_id, context_package_id, record) values (${'f'.repeat(64)}, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, ${fixture.contextPackageId}, ${JSON.stringify({ state: 'completed' })}::jsonb)`
+    )
+    await retention.deleteEligibleContextPackages(now, options)
+    expect(await packages.get(fixture)).toBeDefined()
+
+    // With both references gone the package is deleted.
+    await isolated.application.execute(
+      sql`delete from context_authoring_commands where command_key = ${'f'.repeat(64)}`
+    )
+    await retention.deleteEligibleContextPackages(now, options)
+    expect(await packages.get(fixture)).toBeUndefined()
+  }, 60_000)
 
   test('deleteEligibleExecutions requires a terminal unreferenced execution', async () => {
     // The fixtures below are deliberately older than every other execution in
