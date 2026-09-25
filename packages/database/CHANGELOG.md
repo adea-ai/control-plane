@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.30.0](https://github.com/adea-ai/control-plane/compare/database-v1.29.0...database-v1.30.0) (2026-09-25)
+
+
+### Features
+
+* retention-inbox-compaction ([#722](https://github.com/adea-ai/control-plane/issues/722)) ([5f4736a](https://github.com/adea-ai/control-plane/commit/5f4736aad3e8e755e7f8cfb1a084159477d9d257))
+* **retention:** compact delivered inbox payloads, keeping identity ([5f4736a](https://github.com/adea-ai/control-plane/commit/5f4736aad3e8e755e7f8cfb1a084159477d9d257))
+
 ## [1.29.0](https://github.com/adea-ai/control-plane/compare/database-v1.28.0...database-v1.29.0) (2026-09-25)
 
 
