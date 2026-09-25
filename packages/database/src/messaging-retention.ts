@@ -1,6 +1,7 @@
 import {
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
+  realizedCounts,
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
@@ -22,22 +23,6 @@ import { inboxMessages, outboxEvents } from './schema/messaging.js'
  * quarantined rows are unresolved and need an operator or consumer, not a
  * sweep.
  */
-/** Adds two per-reason retained counts, keeping the largest scanned bound. */
-function mergeReasons(
-  left: Readonly<Record<string, number | undefined>>,
-  right: Readonly<Record<string, number | undefined>>
-): Record<string, number> {
-  const merged: Record<string, number> = {}
-  for (const [reason, count] of Object.entries(left)) {
-    if (count !== undefined) merged[reason] = count
-  }
-  for (const [reason, count] of Object.entries(right)) {
-    if (count === undefined) continue
-    merged[reason] = (merged[reason] ?? 0) + count
-  }
-  return merged
-}
-
 export class PostgresMessagingRetention {
   constructor(readonly database: ControlPlaneDatabase) {}
 
@@ -65,7 +50,7 @@ export class PostgresMessagingRetention {
       scanned: outbox.scanned + inbox.scanned,
       eligible: outbox.eligible + inbox.eligible,
       truncated: outbox.truncated || inbox.truncated,
-      retainedByReason: mergeReasons(outbox.retainedByReason, inbox.retainedByReason),
+      retainedByReason: realizedCounts(outbox.retainedByReason, inbox.retainedByReason),
     }
   }
 
