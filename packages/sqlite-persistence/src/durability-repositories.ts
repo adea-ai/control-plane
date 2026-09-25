@@ -9,6 +9,7 @@ import {
   RuntimeCommandRecordSchema,
   RetentionAssessmentCounter,
   StatePromotionProposalSchema,
+  type RetentionDeletionResult,
   evaluateRetentionEligibility,
   type RetentionAssessment,
   runtimeCommandRecordsShareIdentity,
@@ -44,6 +45,7 @@ const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancell
 const namespaces = {
   events: 'execution-events',
   executions: 'executions',
+  retiredEventIds: 'retired-execution-event-ids',
   proposals: 'state-promotion-proposals',
   reconciliation: 'reconciliation-checkpoints',
   runtimeCommands: 'runtime-commands',
@@ -163,6 +165,96 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
       if (page.length < 128) break
     }
     return counter.result()
+  }
+
+  /**
+   * Deletes expired, eligible execution events (#194) while preserving their
+   * deduplication identity: the event id and sequence are recorded as retired
+   * in the same transaction that removes the row, so a retry cannot resurrect
+   * the event and its sequence number is never reused. `dryRun` defaults true.
+   */
+  async deleteEligibleEvents(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'execution-events',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.events, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page
+        .map((record) => ({ record, event: ExecutionEventSchema.parse(record.value) }))
+        .filter(({ event }) => expiredAt(event.retentionExpiresAt, now))
+      for (const candidate of candidates) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.events, candidate.record.id)
+          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          const event = ExecutionEventSchema.parse(stored.value)
+          const execution = await transaction.get(
+            namespaces.executions,
+            recordId(event.executionId)
+          )
+          const state =
+            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt: event.retentionExpiresAt,
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: state !== undefined && terminalExecutionStates.has(state),
+            publicationSettled: event.publication.status === 'published',
+            rejectionKeyReserved: true,
+            pendingReferences: 0,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) {
+            return { verdict, removed: false, conflicted: false }
+          }
+          const retired = await transaction.get(namespaces.retiredEventIds, stored.id)
+          if (retired === undefined) {
+            await transaction.put({
+              namespace: namespaces.retiredEventIds,
+              id: stored.id,
+              value: {
+                eventId: event.eventId,
+                executionId: event.executionId,
+                sequence: event.sequence,
+                retiredAt: assessedAt,
+              },
+            })
+          }
+          const removed = await transaction.delete(namespaces.events, stored.id, stored.revision)
+          return { verdict, removed, conflicted: !removed }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+        if (outcome.conflicted) raced += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
   }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
@@ -684,11 +776,24 @@ async function appendEvent(
   const sanitized = sanitizeExecutionEventDraft(draft)
   const id = recordId(sanitized.eventId)
   if ((await transaction.get(namespaces.events, id)) !== undefined) return undefined
+  // Deleted events keep their deduplication identity in the retired namespace:
+  // a retry of a retired event id must not resurrect the event it replaced.
+  if ((await transaction.get(namespaces.retiredEventIds, id)) !== undefined) return undefined
+  const historicalSequence = (await transaction.list(namespaces.retiredEventIds))
+    .map((record) => record.value as { executionId?: unknown; sequence?: unknown })
+    .filter(
+      (value): value is { executionId: string; sequence: number } =>
+        value.executionId === sanitized.executionId && Number.isSafeInteger(value.sequence)
+    )
+    .reduce((maximum, value) => Math.max(maximum, value.sequence), 0)
   const sequence =
-    (await transaction.list(namespaces.events))
-      .map((record) => ExecutionEventSchema.parse(record.value))
-      .filter((event) => event.executionId === sanitized.executionId)
-      .reduce((maximum, event) => Math.max(maximum, event.sequence), 0) + 1
+    Math.max(
+      historicalSequence,
+      (await transaction.list(namespaces.events))
+        .map((record) => ExecutionEventSchema.parse(record.value))
+        .filter((event) => event.executionId === sanitized.executionId)
+        .reduce((maximum, event) => Math.max(maximum, event.sequence), 0)
+    ) + 1
   const event = ExecutionEventSchema.parse({
     ...sanitized,
     sequence,

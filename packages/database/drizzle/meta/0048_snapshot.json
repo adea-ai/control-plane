@@ -107,12 +107,8 @@
           "name": "agent_profile_versions_profile_id_agent_profiles_profile_id_fk",
           "tableFrom": "agent_profile_versions",
           "tableTo": "agent_profiles",
-          "columnsFrom": [
-            "profile_id"
-          ],
-          "columnsTo": [
-            "profile_id"
-          ],
+          "columnsFrom": ["profile_id"],
+          "columnsTo": ["profile_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -247,11 +243,7 @@
       "compositePrimaryKeys": {
         "catalog_approvals_version_kind_version_id_revision_pk": {
           "name": "catalog_approvals_version_kind_version_id_revision_pk",
-          "columns": [
-            "version_kind",
-            "version_id",
-            "revision"
-          ]
+          "columns": ["version_kind", "version_id", "revision"]
         }
       },
       "uniqueConstraints": {},
@@ -590,12 +582,8 @@
           "name": "context_authoring_commands_context_package_id_context_packages_context_package_id_fk",
           "tableFrom": "context_authoring_commands",
           "tableTo": "context_packages",
-          "columnsFrom": [
-            "context_package_id"
-          ],
-          "columnsTo": [
-            "context_package_id"
-          ],
+          "columnsFrom": ["context_package_id"],
+          "columnsTo": ["context_package_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -634,10 +622,7 @@
       "compositePrimaryKeys": {
         "context_command_grants_workspace_id_authorization_ref_pk": {
           "name": "context_command_grants_workspace_id_authorization_ref_pk",
-          "columns": [
-            "workspace_id",
-            "authorization_ref"
-          ]
+          "columns": ["workspace_id", "authorization_ref"]
         }
       },
       "uniqueConstraints": {},
@@ -934,10 +919,7 @@
       "compositePrimaryKeys": {
         "context_provider_registrations_workspace_id_connection_id_pk": {
           "name": "context_provider_registrations_workspace_id_connection_id_pk",
-          "columns": [
-            "workspace_id",
-            "connection_id"
-          ]
+          "columns": ["workspace_id", "connection_id"]
         }
       },
       "uniqueConstraints": {},
@@ -1005,10 +987,7 @@
       "compositePrimaryKeys": {
         "credential_secrets_locator_version_pk": {
           "name": "credential_secrets_locator_version_pk",
-          "columns": [
-            "locator",
-            "version"
-          ]
+          "columns": ["locator", "version"]
         }
       },
       "uniqueConstraints": {},
@@ -1435,12 +1414,8 @@
           "name": "execution_attempts_execution_id_executions_execution_id_fk",
           "tableFrom": "execution_attempts",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1806,12 +1781,8 @@
           "name": "execution_events_execution_id_executions_execution_id_fk",
           "tableFrom": "execution_events",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2000,12 +1971,8 @@
           "name": "execution_validation_commands_execution_plan_id_execution_plans_execution_plan_id_fk",
           "tableFrom": "execution_validation_commands",
           "tableTo": "execution_plans",
-          "columnsFrom": [
-            "execution_plan_id"
-          ],
-          "columnsTo": [
-            "execution_plan_id"
-          ],
+          "columnsFrom": ["execution_plan_id"],
+          "columnsTo": ["execution_plan_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2282,12 +2249,8 @@
           "name": "executions_parent_execution_fk",
           "tableFrom": "executions",
           "tableTo": "executions",
-          "columnsFrom": [
-            "parent_execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["parent_execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2452,12 +2415,8 @@
           "name": "external_sessions_runtime_connection_id_runtime_connections_runtime_connection_id_fk",
           "tableFrom": "external_sessions",
           "tableTo": "runtime_connections",
-          "columnsFrom": [
-            "runtime_connection_id"
-          ],
-          "columnsTo": [
-            "runtime_connection_id"
-          ],
+          "columnsFrom": ["runtime_connection_id"],
+          "columnsTo": ["runtime_connection_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2791,12 +2750,8 @@
           "name": "interaction_requests_execution_id_executions_execution_id_fk",
           "tableFrom": "interaction_requests",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2804,12 +2759,8 @@
           "name": "interaction_requests_attempt_id_execution_attempts_attempt_id_fk",
           "tableFrom": "interaction_requests",
           "tableTo": "execution_attempts",
-          "columnsFrom": [
-            "attempt_id"
-          ],
-          "columnsTo": [
-            "attempt_id"
-          ],
+          "columnsFrom": ["attempt_id"],
+          "columnsTo": ["attempt_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3367,16 +3318,8 @@
           "name": "project_state_mutations_revision_fk",
           "tableFrom": "project_state_mutations",
           "tableTo": "project_state_revisions",
-          "columnsFrom": [
-            "workspace_id",
-            "project_id",
-            "resulting_revision"
-          ],
-          "columnsTo": [
-            "workspace_id",
-            "project_id",
-            "revision"
-          ],
+          "columnsFrom": ["workspace_id", "project_id", "resulting_revision"],
+          "columnsTo": ["workspace_id", "project_id", "revision"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3384,11 +3327,7 @@
       "compositePrimaryKeys": {
         "project_state_mutations_workspace_id_project_id_mutation_id_pk": {
           "name": "project_state_mutations_workspace_id_project_id_mutation_id_pk",
-          "columns": [
-            "workspace_id",
-            "project_id",
-            "mutation_id"
-          ]
+          "columns": ["workspace_id", "project_id", "mutation_id"]
         }
       },
       "uniqueConstraints": {},
@@ -3437,14 +3376,8 @@
           "name": "project_state_revisions_state_fk",
           "tableFrom": "project_state_revisions",
           "tableTo": "project_states",
-          "columnsFrom": [
-            "workspace_id",
-            "project_id"
-          ],
-          "columnsTo": [
-            "workspace_id",
-            "project_id"
-          ],
+          "columnsFrom": ["workspace_id", "project_id"],
+          "columnsTo": ["workspace_id", "project_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3452,11 +3385,7 @@
       "compositePrimaryKeys": {
         "project_state_revisions_workspace_id_project_id_revision_pk": {
           "name": "project_state_revisions_workspace_id_project_id_revision_pk",
-          "columns": [
-            "workspace_id",
-            "project_id",
-            "revision"
-          ]
+          "columns": ["workspace_id", "project_id", "revision"]
         }
       },
       "uniqueConstraints": {},
@@ -3510,10 +3439,7 @@
       "compositePrimaryKeys": {
         "project_states_workspace_id_project_id_pk": {
           "name": "project_states_workspace_id_project_id_pk",
-          "columns": [
-            "workspace_id",
-            "project_id"
-          ]
+          "columns": ["workspace_id", "project_id"]
         }
       },
       "uniqueConstraints": {},
@@ -3704,12 +3630,8 @@
           "name": "reconciliation_checkpoints_execution_id_executions_execution_id_fk",
           "tableFrom": "reconciliation_checkpoints",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3717,12 +3639,8 @@
           "name": "reconciliation_checkpoints_command_id_command_inbox_command_id_fk",
           "tableFrom": "reconciliation_checkpoints",
           "tableTo": "command_inbox",
-          "columnsFrom": [
-            "command_id"
-          ],
-          "columnsTo": [
-            "command_id"
-          ],
+          "columnsFrom": ["command_id"],
+          "columnsTo": ["command_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3730,12 +3648,8 @@
           "name": "reconciliation_checkpoints_attempt_id_execution_attempts_attempt_id_fk",
           "tableFrom": "reconciliation_checkpoints",
           "tableTo": "execution_attempts",
-          "columnsFrom": [
-            "attempt_id"
-          ],
-          "columnsTo": [
-            "attempt_id"
-          ],
+          "columnsFrom": ["attempt_id"],
+          "columnsTo": ["attempt_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3817,9 +3731,7 @@
         "release_audit_records_sequence_unique": {
           "name": "release_audit_records_sequence_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "sequence"
-          ]
+          "columns": ["sequence"]
         }
       },
       "policies": {},
@@ -4245,12 +4157,8 @@
           "name": "runtime_commands_execution_id_executions_execution_id_fk",
           "tableFrom": "runtime_commands",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -4258,12 +4166,8 @@
           "name": "runtime_commands_attempt_id_execution_attempts_attempt_id_fk",
           "tableFrom": "runtime_commands",
           "tableTo": "execution_attempts",
-          "columnsFrom": [
-            "attempt_id"
-          ],
-          "columnsTo": [
-            "attempt_id"
-          ],
+          "columnsFrom": ["attempt_id"],
+          "columnsTo": ["attempt_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -4271,12 +4175,8 @@
           "name": "runtime_commands_runtime_connection_id_runtime_connections_runtime_connection_id_fk",
           "tableFrom": "runtime_commands",
           "tableTo": "runtime_connections",
-          "columnsFrom": [
-            "runtime_connection_id"
-          ],
-          "columnsTo": [
-            "runtime_connection_id"
-          ],
+          "columnsFrom": ["runtime_connection_id"],
+          "columnsTo": ["runtime_connection_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -4698,10 +4598,7 @@
       "compositePrimaryKeys": {
         "runtime_discovery_projections_kind_resource_id_pk": {
           "name": "runtime_discovery_projections_kind_resource_id_pk",
-          "columns": [
-            "kind",
-            "resource_id"
-          ]
+          "columns": ["kind", "resource_id"]
         }
       },
       "uniqueConstraints": {},
@@ -4807,12 +4704,8 @@
           "name": "runtime_event_receipts_command_id_runtime_commands_command_id_fk",
           "tableFrom": "runtime_event_receipts",
           "tableTo": "runtime_commands",
-          "columnsFrom": [
-            "command_id"
-          ],
-          "columnsTo": [
-            "command_id"
-          ],
+          "columnsFrom": ["command_id"],
+          "columnsTo": ["command_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -4820,12 +4713,8 @@
           "name": "runtime_event_receipts_event_id_execution_events_event_id_fk",
           "tableFrom": "runtime_event_receipts",
           "tableTo": "execution_events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
+          "columnsFrom": ["event_id"],
+          "columnsTo": ["event_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -4833,11 +4722,7 @@
       "compositePrimaryKeys": {
         "runtime_event_receipts_command_id_message_kind_message_sequence_pk": {
           "name": "runtime_event_receipts_command_id_message_kind_message_sequence_pk",
-          "columns": [
-            "command_id",
-            "message_kind",
-            "message_sequence"
-          ]
+          "columns": ["command_id", "message_kind", "message_sequence"]
         }
       },
       "uniqueConstraints": {},
@@ -4989,12 +4874,8 @@
           "name": "skill_versions_skill_id_skills_skill_id_fk",
           "tableFrom": "skill_versions",
           "tableTo": "skills",
-          "columnsFrom": [
-            "skill_id"
-          ],
-          "columnsTo": [
-            "skill_id"
-          ],
+          "columnsFrom": ["skill_id"],
+          "columnsTo": ["skill_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -5317,12 +5198,8 @@
           "name": "usage_ledger_entries_execution_id_executions_execution_id_fk",
           "tableFrom": "usage_ledger_entries",
           "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "execution_id"
-          ],
+          "columnsFrom": ["execution_id"],
+          "columnsTo": ["execution_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -5338,32 +5215,17 @@
     "public.catalog_approval_decision": {
       "name": "catalog_approval_decision",
       "schema": "public",
-      "values": [
-        "approved",
-        "rejected"
-      ]
+      "values": ["approved", "rejected"]
     },
     "public.catalog_version_lifecycle": {
       "name": "catalog_version_lifecycle",
       "schema": "public",
-      "values": [
-        "draft",
-        "published",
-        "deprecated",
-        "revoked",
-        "superseded"
-      ]
+      "values": ["draft", "published", "deprecated", "revoked", "superseded"]
     },
     "public.command_inbox_status": {
       "name": "command_inbox_status",
       "schema": "public",
-      "values": [
-        "accepted",
-        "processing",
-        "completed",
-        "failed",
-        "reconciliation_required"
-      ]
+      "values": ["accepted", "processing", "completed", "failed", "reconciliation_required"]
     },
     "public.delegation_state": {
       "name": "delegation_state",
@@ -5382,20 +5244,12 @@
     "public.evaluation_run_status": {
       "name": "evaluation_run_status",
       "schema": "public",
-      "values": [
-        "failed",
-        "passed"
-      ]
+      "values": ["failed", "passed"]
     },
     "public.event_publication_status": {
       "name": "event_publication_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "published",
-        "failed",
-        "quarantined"
-      ]
+      "values": ["pending", "published", "failed", "quarantined"]
     },
     "public.execution_attempt_state": {
       "name": "execution_attempt_state",
@@ -5447,33 +5301,17 @@
     "public.external_session_state": {
       "name": "external_session_state",
       "schema": "public",
-      "values": [
-        "active",
-        "closed",
-        "removed",
-        "revoked"
-      ]
+      "values": ["active", "closed", "removed", "revoked"]
     },
     "public.interaction_kind": {
       "name": "interaction_kind",
       "schema": "public",
-      "values": [
-        "approval",
-        "input",
-        "permission",
-        "resume",
-        "cancel"
-      ]
+      "values": ["approval", "input", "permission", "resume", "cancel"]
     },
     "public.interaction_state": {
       "name": "interaction_state",
       "schema": "public",
-      "values": [
-        "pending",
-        "responded",
-        "expired",
-        "cancelled"
-      ]
+      "values": ["pending", "responded", "expired", "cancelled"]
     },
     "public.marketplace_installation_state": {
       "name": "marketplace_installation_state",
@@ -5505,11 +5343,7 @@
     "public.outbox_status": {
       "name": "outbox_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "published",
-        "failed"
-      ]
+      "values": ["pending", "published", "failed"]
     },
     "public.reconciliation_action": {
       "name": "reconciliation_action",
@@ -5526,13 +5360,7 @@
     "public.reconciliation_checkpoint_state": {
       "name": "reconciliation_checkpoint_state",
       "schema": "public",
-      "values": [
-        "reconciling",
-        "waiting",
-        "remediated",
-        "manual_intervention",
-        "resolved"
-      ]
+      "values": ["reconciling", "waiting", "remediated", "manual_intervention", "resolved"]
     },
     "public.reconciliation_reason": {
       "name": "reconciliation_reason",
@@ -5551,10 +5379,7 @@
     "public.release_audit_action": {
       "name": "release_audit_action",
       "schema": "public",
-      "values": [
-        "promote",
-        "rollback"
-      ]
+      "values": ["promote", "rollback"]
     },
     "public.runtime_availability_state": {
       "name": "runtime_availability_state",
@@ -5573,10 +5398,7 @@
     "public.runtime_capability_verification": {
       "name": "runtime_capability_verification",
       "schema": "public",
-      "values": [
-        "verified",
-        "unverified"
-      ]
+      "values": ["verified", "unverified"]
     },
     "public.runtime_command_status": {
       "name": "runtime_command_status",
@@ -5608,85 +5430,47 @@
     "public.runtime_connection_health": {
       "name": "runtime_connection_health",
       "schema": "public",
-      "values": [
-        "healthy",
-        "degraded",
-        "unavailable"
-      ]
+      "values": ["healthy", "degraded", "unavailable"]
     },
     "public.runtime_connection_location": {
       "name": "runtime_connection_location",
       "schema": "public",
-      "values": [
-        "local_device",
-        "agent_hq_cloud"
-      ]
+      "values": ["local_device", "agent_hq_cloud"]
     },
     "public.runtime_connection_status": {
       "name": "runtime_connection_status",
       "schema": "public",
-      "values": [
-        "connected",
-        "degraded",
-        "unavailable",
-        "disconnected",
-        "expired",
-        "revoked"
-      ]
+      "values": ["connected", "degraded", "unavailable", "disconnected", "expired", "revoked"]
     },
     "public.runtime_connection_type": {
       "name": "runtime_connection_type",
       "schema": "public",
-      "values": [
-        "managed_cloud",
-        "managed_local",
-        "external_local"
-      ]
+      "values": ["managed_cloud", "managed_local", "external_local"]
     },
     "public.runtime_discovery_resource_kind": {
       "name": "runtime_discovery_resource_kind",
       "schema": "public",
-      "values": [
-        "runtime_connection",
-        "external_session"
-      ]
+      "values": ["runtime_connection", "external_session"]
     },
     "public.runtime_event_message_kind": {
       "name": "runtime_event_message_kind",
       "schema": "public",
-      "values": [
-        "progress",
-        "terminal"
-      ]
+      "values": ["progress", "terminal"]
     },
     "public.runtime_event_receipt_outcome": {
       "name": "runtime_event_receipt_outcome",
       "schema": "public",
-      "values": [
-        "applied",
-        "out_of_order",
-        "terminal_conflict"
-      ]
+      "values": ["applied", "out_of_order", "terminal_conflict"]
     },
     "public.state_promotion_proposal_state": {
       "name": "state_promotion_proposal_state",
       "schema": "public",
-      "values": [
-        "candidate",
-        "approved",
-        "rejected",
-        "merged",
-        "superseded",
-        "expired"
-      ]
+      "values": ["candidate", "approved", "rejected", "merged", "superseded", "expired"]
     },
     "public.usage_funding_source": {
       "name": "usage_funding_source",
       "schema": "public",
-      "values": [
-        "hq_managed",
-        "external_subscription"
-      ]
+      "values": ["hq_managed", "external_subscription"]
     },
     "public.usage_ledger_entry_kind": {
       "name": "usage_ledger_entry_kind",

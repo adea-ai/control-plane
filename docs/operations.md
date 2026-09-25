@@ -216,11 +216,15 @@ bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
 # PostgreSQL profile (host and database must match the credentialed target)
 bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
   --database control_plane --host <neon-host>
+
+# The same command covers execution events:
+#   --class execution-events
 ```
 
 The default is a dry run: it reports how many expired candidates exist, how many
 are eligible, and why the rest are retained. Deleting requires
-`--apply --confirm command-inbox`. Only records that are expired, terminal,
+`--apply --confirm <class>`, where the class is `command-inbox` or
+`execution-events`. Only records that are expired, terminal,
 reconciled, unreferenced and already carry their reserved rejection key are
 removed; the rejection key itself is kept, so a replay of the same scoped
 idempotency key still fails closed. `raced` counts candidates whose state moved
@@ -230,6 +234,11 @@ pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
 Inspect retained growth without deleting anything with
 `bun scripts/retention-report.mjs` (same target validation, payload-free counts),
 or read the `retention.sweep` records the services log every sweep interval.
+
+Deleting execution events also records a retired event id and sequence, so a
+retry of that event cannot resurrect it and the sequence number is never reused;
+`bun run db:migrate` must have applied migration `0048_tense_thor.sql` before the
+first event deletion on a PostgreSQL deployment.
 
 ## Neon operations
 

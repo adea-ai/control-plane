@@ -26,7 +26,9 @@ export const retiredExecutionEventIds = pgTable(
     sequence: integer('sequence').notNull(),
     retiredAt: timestamp('retired_at', { mode: 'date', withTimezone: true }).notNull(),
   },
-  (table) => [index('retired_execution_event_ids_execution_index').on(table.executionId, table.sequence)]
+  (table) => [
+    index('retired_execution_event_ids_execution_index').on(table.executionId, table.sequence),
+  ]
 )
 
 export const executionEvents = pgTable(

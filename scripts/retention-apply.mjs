@@ -17,7 +17,7 @@ import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 // idempotency key still fails closed. The command prints a payload-free JSON
 // result and one sanitized failure code — never database URLs, query
 // parameters or underlying errors.
-const SUPPORTED_CLASSES = new Set(['command-inbox'])
+const SUPPORTED_CLASSES = new Set(['command-inbox', 'execution-events'])
 
 let close = async () => {}
 
@@ -46,7 +46,19 @@ try {
   if (bound !== undefined && (!Number.isSafeInteger(bound) || bound < 1))
     throw new Error('INVALID_BOUND')
   const policy = decidedRetentionPolicy
-  const policyRetainMs = retentionClassPolicy(policy, 'command-inbox').retainMs
+  const policyRetainMs = retentionClassPolicy(policy, values.class).retainMs
+  const apply = {
+    'command-inbox': 'deleteEligibleInbox',
+    'execution-events': 'deleteEligibleEvents',
+  }[values.class]
+  const repositoryFor = {
+    'command-inbox': 'SqliteCommandAcceptanceRepository',
+    'execution-events': 'SqliteExecutionEventRepository',
+  }[values.class]
+  const postgresRepositoryFor = {
+    'command-inbox': 'PostgresCommandAcceptanceRepository',
+    'execution-events': 'PostgresExecutionEventRepository',
+  }[values.class]
   const options = {
     policyRetainMs,
     dryRun,
@@ -58,12 +70,11 @@ try {
     if (values.host || !isAbsolute(values.database)) throw new Error('INVALID_TARGET')
     const stat = await lstat(values.database)
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('INVALID_TARGET')
-    const { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } =
-      await import('@control-plane/sqlite-persistence')
-    const provider = new SqlitePersistenceProvider({ path: values.database })
+    const sqlite = await import('@control-plane/sqlite-persistence')
+    const provider = new sqlite.SqlitePersistenceProvider({ path: values.database })
     close = async () => provider.close()
     await provider.migrate()
-    result = await new SqliteCommandAcceptanceRepository(provider).deleteEligibleInbox(now, options)
+    result = await new sqlite[repositoryFor](provider)[apply](now, options)
   } else if (values.backend === 'postgres') {
     const credentials = loadDatabaseCredentials(process.env, 'application')
     const target = new URL(credentials.url)
@@ -73,17 +84,18 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
-    const [{ createPostgresConnection }, { PostgresCommandAcceptanceRepository }] =
-      await Promise.all([
-        import('../packages/database/src/connection.ts'),
-        import('../packages/database/src/command-inbox-repository.ts'),
-      ])
+    const [{ createPostgresConnection }, commandInbox, eventRepository] = await Promise.all([
+      import('../packages/database/src/connection.ts'),
+      import('../packages/database/src/command-inbox-repository.ts'),
+      import('../packages/database/src/execution-event-repository.ts'),
+    ])
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
-    result = await new PostgresCommandAcceptanceRepository(connection.database).deleteEligibleInbox(
-      now,
-      options
-    )
+    const repositories = {
+      PostgresCommandAcceptanceRepository: commandInbox.PostgresCommandAcceptanceRepository,
+      PostgresExecutionEventRepository: eventRepository.PostgresExecutionEventRepository,
+    }
+    result = await new repositories[postgresRepositoryFor](connection.database)[apply](now, options)
   } else throw new Error('INVALID_BACKEND')
 
   process.stdout.write(

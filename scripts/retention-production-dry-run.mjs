@@ -9,24 +9,26 @@ if (url === undefined) throw new Error('DATABASE_URL is not present in the envir
 const parsed = new URL(url)
 const host = parsed.hostname
 const database = decodeURIComponent(parsed.pathname.slice(1))
-const result = spawnSync(
-  process.execPath,
-  [
-    'scripts/retention-apply.mjs',
-    '--backend',
-    'postgres',
-    '--class',
-    'command-inbox',
-    '--database',
-    database,
-    '--host',
-    host,
-  ],
-  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: process.env }
-)
-if (result.status !== 0) {
-  process.stderr.write(result.stderr)
-  process.exitCode = result.status ?? 1
-} else {
+for (const classId of ['command-inbox', 'execution-events']) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      'scripts/retention-apply.mjs',
+      '--backend',
+      'postgres',
+      '--class',
+      classId,
+      '--database',
+      database,
+      '--host',
+      host,
+    ],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: process.env }
+  )
+  if (result.status !== 0) {
+    process.stderr.write(result.stderr)
+    process.exitCode = result.status ?? 1
+    break
+  }
   process.stdout.write(result.stdout)
 }
