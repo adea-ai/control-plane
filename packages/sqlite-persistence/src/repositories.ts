@@ -12,6 +12,7 @@ import {
   CommandInboxError,
   ExecutionAttemptSchema,
   ExecutionSchema,
+  ReconciliationCheckpointSchema,
   type CommandAcceptanceRepository,
   type CommandAcceptanceResult,
   type CommandInboxRecord,
@@ -51,6 +52,7 @@ const namespaces = {
   attempts: 'execution-attempts',
   plans: 'execution-plans',
   events: 'execution-events',
+  reconciliation: 'reconciliation-checkpoints',
 } as const
 
 const executionStates = new Set<string>([
@@ -452,6 +454,144 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
 
 export class SqliteExecutionRepository implements ExecutionRepository {
   constructor(readonly provider: PersistenceProvider) {}
+
+  /**
+   * Deletes terminal executions and their settled attempts (#194) once the
+   * retention duration has passed since the terminal instant, and only when
+   * nothing that must outlive them still references them: the acceptance
+   * record, any execution event, a reconciliation checkpoint or a non-terminal
+   * attempt all retain the execution. This class is therefore the last to
+   * become eligible, which is the ordering proof it needs. `dryRun` defaults
+   * to true and a record whose revision moved is reported as `raced`.
+   */
+  async deleteEligibleExecutions(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter('executions', assessedAt, options.bound ?? 64)
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.executions, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page
+        .map((record) => ({ record, execution: ExecutionSchema.parse(record.value) }))
+        .filter(
+          ({ execution }) =>
+            terminalExecutionStates.has(execution.state) && execution.terminalAt !== undefined
+        )
+      for (const candidate of candidates) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.executions, candidate.record.id)
+          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          const execution = ExecutionSchema.parse(stored.value)
+          if (!terminalExecutionStates.has(execution.state) || execution.terminalAt === undefined) {
+            return { verdict: undefined, removed: false, conflicted: false }
+          }
+          // Reference checks: every namespace that carries execution identity
+          // has to be free of this execution before it can be removed.
+          const acceptance = await transaction.get(
+            namespaces.commandByExecution,
+            recordId(execution.executionId)
+          )
+          const events = (await transaction.list(namespaces.events)).some(
+            (record) =>
+              ExecutionEventSchema.parse(record.value).executionId === execution.executionId
+          )
+          const checkpoints = (await transaction.list(namespaces.reconciliation)).some(
+            (record) =>
+              ReconciliationCheckpointSchema.parse(record.value).executionId ===
+              execution.executionId
+          )
+          const attempts = (await transaction.list(namespaces.attempts))
+            .map((record) => ExecutionAttemptSchema.parse(record.value))
+            .filter((attempt) => attempt.executionId === execution.executionId)
+          const activeAttempts = attempts.filter(
+            (attempt) => !terminalExecutionStates.has(attempt.state)
+          )
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null
+                ? undefined
+                : new Date(Date.parse(execution.terminalAt) + options.policyRetainMs).toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences:
+              acceptance !== undefined || events || checkpoints || activeAttempts.length > 0
+                ? 1
+                : 0,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) {
+            return { verdict, removed: false, conflicted: false }
+          }
+          if (options.journal !== undefined) {
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                ...attempts.map((attempt) => ({
+                  kind: 'sqlite.delete',
+                  namespace: namespaces.attempts,
+                  id: recordId(attempt.attemptId),
+                })),
+                { kind: 'sqlite.delete', namespace: namespaces.executions, id: stored.id },
+              ])
+            )
+          }
+          let conflicted = false
+          for (const attempt of attempts) {
+            const attemptRecord = await transaction.get(
+              namespaces.attempts,
+              recordId(attempt.attemptId)
+            )
+            if (attemptRecord === undefined) continue
+            try {
+              await transaction.delete(
+                namespaces.attempts,
+                recordId(attempt.attemptId),
+                attemptRecord.revision
+              )
+            } catch {
+              conflicted = true
+            }
+          }
+          let removed = false
+          try {
+            removed = await transaction.delete(namespaces.executions, stored.id, stored.revision)
+          } catch {
+            conflicted = true
+          }
+          return { verdict, removed, conflicted: conflicted || !removed }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+        if (outcome.conflicted) raced += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
+  }
 
   insertExecution(executionInput: Execution): Promise<boolean> {
     const execution = ExecutionSchema.parse(executionInput)

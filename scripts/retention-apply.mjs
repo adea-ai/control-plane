@@ -18,7 +18,7 @@ import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 // idempotency key still fails closed. The command prints a payload-free JSON
 // result and one sanitized failure code — never database URLs, query
 // parameters or underlying errors.
-const SUPPORTED_CLASSES = new Set(['command-inbox', 'execution-events'])
+const SUPPORTED_CLASSES = new Set(['command-inbox', 'execution-events', 'executions'])
 
 let close = async () => {}
 
@@ -52,14 +52,17 @@ try {
   const apply = {
     'command-inbox': 'deleteEligibleInbox',
     'execution-events': 'deleteEligibleEvents',
+    executions: 'deleteEligibleExecutions',
   }[values.class]
   const repositoryFor = {
     'command-inbox': 'SqliteCommandAcceptanceRepository',
     'execution-events': 'SqliteExecutionEventRepository',
+    executions: 'SqliteExecutionRepository',
   }[values.class]
   const postgresRepositoryFor = {
     'command-inbox': 'PostgresCommandAcceptanceRepository',
     'execution-events': 'PostgresExecutionEventRepository',
+    executions: 'PostgresExecutionRepository',
   }[values.class]
   // Deletion effects are journalled before they apply, so a restored snapshot
   // can be brought forward with `retention-reapply` before it is exposed.
@@ -112,16 +115,19 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
-    const [{ createPostgresConnection }, commandInbox, eventRepository] = await Promise.all([
-      import('../packages/database/src/connection.ts'),
-      import('../packages/database/src/command-inbox-repository.ts'),
-      import('../packages/database/src/execution-event-repository.ts'),
-    ])
+    const [{ createPostgresConnection }, commandInbox, eventRepository, executionRepository] =
+      await Promise.all([
+        import('../packages/database/src/connection.ts'),
+        import('../packages/database/src/command-inbox-repository.ts'),
+        import('../packages/database/src/execution-event-repository.ts'),
+        import('../packages/database/src/execution-repository.ts'),
+      ])
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
     const repositories = {
       PostgresCommandAcceptanceRepository: commandInbox.PostgresCommandAcceptanceRepository,
       PostgresExecutionEventRepository: eventRepository.PostgresExecutionEventRepository,
+      PostgresExecutionRepository: executionRepository.PostgresExecutionRepository,
     }
     result = await new repositories[postgresRepositoryFor](connection.database)[apply](now, options)
   } else throw new Error('INVALID_BACKEND')

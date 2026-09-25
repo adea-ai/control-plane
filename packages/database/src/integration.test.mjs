@@ -3182,6 +3182,93 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBeUndefined()
   })
 
+  test('deleteEligibleExecutions requires a terminal unreferenced execution', async () => {
+    // The fixtures below are deliberately older than every other execution in
+    // this database, so a longer retention window keeps the pass from touching
+    // another test's fixtures while still covering these two.
+    const now = '2026-07-31T11:00:00.000Z'
+    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+    const accept = (key, executionSuffix) =>
+      new CommandInboxService({
+        repository: commands,
+        executionIdFactory: () => `exe_${executionSuffix}`,
+        executionPlanValidator: { validate: async () => true },
+        now: () => now,
+      }).acceptExecution({
+        callerPrincipalId: 'svc_execution-retention',
+        operation: 'execution.accept',
+        commandId: `cmd_${executionSuffix}`,
+        requestId: `req_${executionSuffix}`,
+        idempotencyKey: key,
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: `wsp_${executionSuffix}`,
+          projectId: `prj_${executionSuffix}`,
+          taskId: `tsk_${executionSuffix}`,
+          agentId: `agt_${executionSuffix}`,
+        },
+        executionPlan: {
+          executionPlanId: `pln_${executionSuffix}`,
+          contentDigest: `sha256:${'b'.repeat(64)}`,
+          schemaVersion: 1,
+        },
+        receivedAt: now,
+        retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+      })
+    const referenced = await accept('execution-retention-1', '01CRZ3NDEKTSV4RRFFQ69G5FFG')
+    const clean = await accept('execution-retention-2', '01CRZ3NDEKTSV4RRFFQ69G5FFH')
+    const terminalAt = '2026-07-15T11:00:00.000Z'
+    for (const executionId of [referenced.execution.executionId, clean.execution.executionId]) {
+      await isolated.application.execute(
+        sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+      )
+    }
+    // An execution is the last class to become eligible: its acceptance record
+    // and its events both outlive it, so a bottom-up pass removes those first.
+    const remainingEvents = await isolated.application.execute(
+      sql`select count(*)::int as count from execution_events where execution_id = ${clean.execution.executionId}`
+    )
+    expect(remainingEvents[0].count).toBeGreaterThanOrEqual(0)
+    await isolated.application.execute(
+      sql`delete from command_inbox where execution_id = ${clean.execution.executionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_events where execution_id = ${clean.execution.executionId}`
+    )
+
+    const repository = new PostgresExecutionRepository(isolated.application)
+    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+    const options = { policyRetainMs: 120 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+    // Nothing references the clean execution any more.
+    const referenceProbe = await isolated.application.execute(
+      sql`select (select count(*)::int from command_inbox where execution_id = ${clean.execution.executionId}) as commands, (select count(*)::int from execution_events where execution_id = ${clean.execution.executionId}) as events, (select count(*)::int from execution_attempts where execution_id = ${clean.execution.executionId}) as attempts, (select count(*)::int from reconciliation_checkpoints where execution_id = ${clean.execution.executionId}) as checkpoints`
+    )
+    expect(referenceProbe[0]).toMatchObject({ commands: 0, events: 0, attempts: 0, checkpoints: 0 })
+
+    const applied = await repository.deleteEligibleExecutions(assessedAt, options)
+    expect(applied.deleted, JSON.stringify(applied)).toBe(1)
+    expect(await repository.getExecution(clean.execution.executionId)).toBeUndefined()
+    // The referenced execution survives because its acceptance record does.
+    expect(await repository.getExecution(referenced.execution.executionId)).toBeDefined()
+
+    const retained = await repository.deleteEligibleExecutions(assessedAt, {
+      ...options,
+      dryRun: true,
+    })
+    expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+
+    // Once its acceptance record goes too, it becomes eligible on a later pass.
+    await isolated.application.execute(
+      sql`delete from command_inbox where execution_id = ${referenced.execution.executionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_events where execution_id = ${referenced.execution.executionId}`
+    )
+    const final = await repository.deleteEligibleExecutions(assessedAt, options)
+    expect(final.deleted).toBe(1)
+    expect(await repository.getExecution(referenced.execution.executionId)).toBeUndefined()
+  }, 60_000)
+
   test('reapplying the journal restores rejection identity on a snapshot without it', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFE'
     const now = '2026-07-31T11:00:00.000Z'

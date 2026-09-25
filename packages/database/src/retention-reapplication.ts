@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
+import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
 
 export interface RetentionReapplicationOutcome {
@@ -51,6 +52,24 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteAttempt': {
+          const removed = await this.database
+            .delete(executionAttempts)
+            .where(sql`${executionAttempts.attemptId} = ${operation.attemptId}`)
+            .returning({ attemptId: executionAttempts.attemptId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteExecution': {
+          const removed = await this.database
+            .delete(executions)
+            .where(sql`${executions.executionId} = ${operation.executionId}`)
+            .returning({ executionId: executions.executionId })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break
