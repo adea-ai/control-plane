@@ -262,6 +262,18 @@ so replaying a journal — or replaying an entry whose storage change never
 happened — is safe. Keep the journal with the backups; without it a restored
 snapshot cannot be brought forward.
 
+Which classes can ever be swept, and which the policy keeps reference-governed,
+is one command away — it prints the decided duration, the governance mode, the
+hold owner and whether a deletion path exists:
+
+```sh
+bun scripts/retention-report.mjs --classes
+```
+
+A `reference-governed` class has no age deadline, so no candidate can become
+eligible for it; a `bounded` class without a deletion path still needs one
+built. Both are reported rather than implied.
+
 Inspect retained growth without deleting anything with
 `bun scripts/retention-report.mjs` (same target validation, payload-free counts),
 or read the `retention.sweep` records the services log every sweep interval.

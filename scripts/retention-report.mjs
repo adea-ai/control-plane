@@ -9,6 +9,7 @@ import {
   loadRetentionPolicy,
 } from '../packages/config/src/retention-policy.ts'
 import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
+import { retentionClasses } from './retention-classes.mjs'
 
 // Read-only retention report (#194). Physical deletion stays fail-closed
 // (COMMAND_RETENTION_ELIGIBILITY_REQUIRED / EVENT_RETENTION_ELIGIBILITY_REQUIRED),
@@ -39,6 +40,7 @@ try {
   const { values } = parseArgs({
     options: {
       backend: { type: 'string' },
+      classes: { type: 'boolean' },
       database: { type: 'string' },
       host: { type: 'string' },
       now: { type: 'string' },
@@ -46,6 +48,27 @@ try {
     strict: true,
     allowPositionals: false,
   })
+  if (values.classes === true) {
+    // Policy and implementation side by side: a class the owner's decision keeps
+    // reference-governed has no age deadline, so no candidate can ever be
+    // eligible for it, while a bounded class without an entry here still needs
+    // its deletion path built.
+    const policy = loadRetentionPolicy()
+    process.stdout.write(
+      `${JSON.stringify({
+        report: 'retention-classes',
+        policy: { schemaVersion: policy.schemaVersion, effectiveAt: policy.effectiveAt },
+        classes: policy.classes.map((entry) => ({
+          id: entry.id,
+          retainMs: entry.retainMs,
+          governance: entry.retainMs === null ? 'reference-governed' : 'bounded',
+          holdOwner: entry.holdOwner,
+          deletionPath: retentionClasses[entry.id] ?? null,
+        })),
+      })}\n`
+    )
+    process.exit(0)
+  }
   if (!values.database) throw new Error('INVALID_ARGUMENTS')
   const now = parseInstant(values.now, 'now')
   const policy = loadRetentionPolicy()
