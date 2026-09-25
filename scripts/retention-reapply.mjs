@@ -1,8 +1,8 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { parseRetentionJournalLine } from '../packages/domain/src/retention-journal.ts'
-import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
+import { parseRetentionJournalLine } from '@control-plane/domain'
+import { loadDatabaseCredentials } from '@control-plane/config'
 
 // Restore-time reapplication (#194). A snapshot restored from before a deletion
 // pass silently resurrects compacted records and loses the rejection identities
@@ -109,10 +109,8 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
-    const [{ createPostgresConnection }, { PostgresRetentionReapplication }] = await Promise.all([
-      import('../packages/database/src/connection.ts'),
-      import('@control-plane/database'),
-    ])
+    const { createPostgresConnection, PostgresRetentionReapplication } =
+      await import('@control-plane/database')
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
     // SQL for each operation kind lives in the package that declares the
