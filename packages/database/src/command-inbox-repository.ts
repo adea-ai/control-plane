@@ -13,6 +13,7 @@ import {
   evaluateRetentionEligibility,
   type RetentionAssessment,
   type RetentionDeletionResult,
+  type RetentionJournalSink,
 } from '@control-plane/domain'
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -110,6 +111,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       readonly policyRetainMs: number | null
       readonly bound?: number
       readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
@@ -121,6 +123,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     const candidates = await this.database
       .select({
         commandId: commandInbox.commandId,
+        executionId: commandInbox.executionId,
         status: commandInbox.status,
         retentionExpiresAt: commandInbox.retentionExpiresAt,
         reconciliationRequiredAt: commandInbox.reconciliationRequiredAt,
@@ -138,11 +141,15 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       .limit(counter.bound + 1)
     const retiredKeys =
       candidates.length === 0
-        ? new Set<string>()
-        : new Set(
+        ? new Map<string, { executionId: string; retiredAt: Date }>()
+        : new Map(
             (
               await this.database
-                .select({ scopeKey: retiredCommandKeys.scopeKey })
+                .select({
+                  scopeKey: retiredCommandKeys.scopeKey,
+                  executionId: retiredCommandKeys.executionId,
+                  retiredAt: retiredCommandKeys.retiredAt,
+                })
                 .from(retiredCommandKeys)
                 .where(
                   inArray(
@@ -150,7 +157,10 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
                     candidates.map((candidate) => retirementKey(candidate))
                   )
                 )
-            ).map((row) => row.scopeKey)
+            ).map((row) => [
+              row.scopeKey,
+              { executionId: row.executionId, retiredAt: row.retiredAt },
+            ])
           )
     for (const candidate of candidates) {
       const verdict = evaluateRetentionEligibility({
@@ -167,6 +177,26 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       })
       if (!counter.add(verdict)) break
       if (verdict.verdict !== 'eligible' || dryRun) continue
+      // The rejection key is a precondition of eligibility, so the journal
+      // restates it as well as the delete: a snapshot that predates the
+      // retirement must regain its rejection identity during reapply.
+      if (options.journal !== undefined) {
+        const retirement = retiredKeys.get(retirementKey(candidate))
+        await options.journal([
+          ...(retirement === undefined
+            ? []
+            : [
+                {
+                  kind: 'postgres.retireCommandKey' as const,
+                  scopeKey: retirementKey(candidate),
+                  commandId: candidate.commandId,
+                  executionId: retirement.executionId,
+                  retiredAt: retirement.retiredAt.toISOString(),
+                },
+              ]),
+          { kind: 'postgres.deleteCommand', commandId: candidate.commandId },
+        ])
+      }
       const removed = await this.database
         .delete(commandInbox)
         .where(

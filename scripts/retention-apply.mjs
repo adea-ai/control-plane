@@ -1,5 +1,6 @@
+import { closeSync, fsyncSync, openSync, writeSync } from 'node:fs'
 import { lstat } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   decidedRetentionPolicy,
@@ -29,6 +30,7 @@ try {
       database: { type: 'string' },
       host: { type: 'string' },
       bound: { type: 'string' },
+      journal: { type: 'string' },
       now: { type: 'string' },
       apply: { type: 'boolean' },
       confirm: { type: 'string' },
@@ -59,9 +61,35 @@ try {
     'command-inbox': 'PostgresCommandAcceptanceRepository',
     'execution-events': 'PostgresExecutionEventRepository',
   }[values.class]
+  // Deletion effects are journalled before they apply, so a restored snapshot
+  // can be brought forward with `retention-reapply` before it is exposed.
+  const journalPath = resolve(
+    values.journal ??
+      (values.backend === 'sqlite'
+        ? `${values.database}.retention-journal.jsonl`
+        : 'retention-journal.jsonl')
+  )
+  const journal = async (operations) => {
+    if (dryRun) return
+    const record = {
+      version: 1,
+      at: new Date().toISOString(),
+      backend: values.backend,
+      classId: values.class,
+      operations,
+    }
+    const descriptor = openSync(journalPath, 'a')
+    try {
+      writeSync(descriptor, `${JSON.stringify(record)}\n`)
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+  }
   const options = {
     policyRetainMs,
     dryRun,
+    journal,
     ...(bound === undefined ? {} : { bound }),
   }
 
@@ -104,6 +132,7 @@ try {
       class: values.class,
       backend: values.backend,
       dryRun,
+      journal: dryRun ? null : journalPath,
       policy: {
         schemaVersion: policy.schemaVersion,
         effectiveAt: policy.effectiveAt,

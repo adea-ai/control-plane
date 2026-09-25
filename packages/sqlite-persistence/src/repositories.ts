@@ -24,6 +24,8 @@ import {
   type RetentionAssessment,
   type RetentionDeletionResult,
   type RetentionEligibilityVerdict,
+  type RetentionJournalSink,
+  RetentionJournalOperationSchema,
 } from '@control-plane/domain'
 import {
   ExecutionPlanReferenceSchema,
@@ -262,6 +264,8 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       readonly policyRetainMs: number | null
       readonly bound?: number
       readonly dryRun?: boolean
+      /** Journal sink; called with each candidate's effects before they apply. */
+      readonly journal?: RetentionJournalSink
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
@@ -286,6 +290,53 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         return parsed.success && expiredAt(parsed.data.retentionExpiresAt, now)
       })
       for (const candidate of candidates) {
+        // Journal the effects before applying them (at-least-once): a crash
+        // between the journal append and the transaction leaves an entry for a
+        // change that did not happen, which reapply treats as a no-op.
+        if (options.journal !== undefined) {
+          const journaled = await this.provider.transaction(async (transaction) => {
+            const record = await transaction.get(namespaces.commands, candidate.id)
+            if (record === undefined) return undefined
+            const command = CommandInboxRecordSchema.parse(record.value)
+            return {
+              command,
+              retirement: await transaction.get(
+                namespaces.retiredCommands,
+                recordId(scopeKey(command))
+              ),
+            }
+          })
+          if (journaled !== undefined) {
+            const journaledCommand = journaled.command
+            // The retirement identity is a precondition of eligibility, so the
+            // journal restates it: a snapshot that predates the retirement must
+            // regain it during reapply, not just lose the payload.
+            const retirementId = recordId(scopeKey(journaledCommand))
+            const retirement = journaled.retirement
+            // Validated through the journal schema so a malformed entry cannot
+            // be written in the first place.
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                ...(retirement === undefined
+                  ? []
+                  : [
+                      {
+                        kind: 'sqlite.put' as const,
+                        namespace: namespaces.retiredCommands,
+                        id: retirementId,
+                        value: retirement.value,
+                      },
+                    ]),
+                { kind: 'sqlite.delete', namespace: namespaces.commands, id: candidate.id },
+                {
+                  kind: 'sqlite.delete',
+                  namespace: namespaces.commandByExecution,
+                  id: recordId(journaledCommand.executionId),
+                },
+              ])
+            )
+          }
+        }
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.commands, candidate.id)
           if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }

@@ -231,6 +231,25 @@ idempotency key still fails closed. `raced` counts candidates whose state moved
 between selection and deletion — those are left alone and picked up by a later
 pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
 
+Restoring a snapshot that predates a deletion pass brings the compacted records
+back and can lose the rejection identities that keep replays failing closed. Every
+`--apply` pass writes a journal (default `<database>.retention-journal.jsonl`, or
+`retention-journal.jsonl`; `--journal <path>` overrides) recording the effects it
+is about to apply. After restoring such a snapshot and **before exposing it**, run:
+
+```sh
+bun scripts/retention-reapply.mjs --backend sqlite --database <restored.sqlite> \
+  --journal <retention-journal.jsonl>
+
+bun scripts/retention-reapply.mjs --backend postgres --database control_plane \
+  --host <neon-host> --journal <retention-journal.jsonl>
+```
+
+Reapply is idempotent: inserts are insert-if-absent and deletes are by identity,
+so replaying a journal — or replaying an entry whose storage change never
+happened — is safe. Keep the journal with the backups; without it a restored
+snapshot cannot be brought forward.
+
 Inspect retained growth without deleting anything with
 `bun scripts/retention-report.mjs` (same target validation, payload-free counts),
 or read the `retention.sweep` records the services log every sweep interval.

@@ -10,6 +10,7 @@ import {
   RetentionAssessmentCounter,
   StatePromotionProposalSchema,
   type RetentionDeletionResult,
+  type RetentionJournalSink,
   evaluateRetentionEligibility,
   type RetentionAssessment,
   runtimeCommandRecordsShareIdentity,
@@ -179,6 +180,8 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
       readonly policyRetainMs: number | null
       readonly bound?: number
       readonly dryRun?: boolean
+      /** Journal sink; called with each candidate's effects before they apply. */
+      readonly journal?: RetentionJournalSink
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
@@ -206,6 +209,30 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
         .map((record) => ({ record, event: ExecutionEventSchema.parse(record.value) }))
         .filter(({ event }) => expiredAt(event.retentionExpiresAt, now))
       for (const candidate of candidates) {
+        // Journal the retirement and the delete before applying them: the
+        // retirement identity is what a restored snapshot must regain.
+        if (options.journal !== undefined) {
+          const stored = await this.provider.transaction((transaction) =>
+            transaction.get(namespaces.events, candidate.record.id)
+          )
+          if (stored !== undefined) {
+            const event = ExecutionEventSchema.parse(stored.value)
+            await options.journal([
+              {
+                kind: 'sqlite.put',
+                namespace: namespaces.retiredEventIds,
+                id: candidate.record.id,
+                value: {
+                  eventId: event.eventId,
+                  executionId: event.executionId,
+                  sequence: event.sequence,
+                  retiredAt: assessedAt,
+                },
+              },
+              { kind: 'sqlite.delete', namespace: namespaces.events, id: candidate.record.id },
+            ])
+          }
+        }
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.events, candidate.record.id)
           if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
