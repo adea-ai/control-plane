@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/domain-v1.23.0...domain-v1.24.0) (2026-09-25)
+
+
+### Features
+
+* retention-execution-plans ([#728](https://github.com/adea-ai/control-plane/issues/728)) ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+* **retention:** delete execution plans once nothing pins them ([eb3cdc2](https://github.com/adea-ai/control-plane/commit/eb3cdc202147e12839688c95adf771f4827d39c7))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/domain-v1.22.0...domain-v1.23.0) (2026-09-25)
 
 
