@@ -57,7 +57,10 @@ prerequisite, not completion of the indexed eligibility/deletion work below.
    in `packages/config/src/retention-policy.ts` and the implementation plan's "Decided
    policy and decisions" section; the milestone disposition keeps retention in M11.
    `scripts/retention-report.mjs` is the read-only candidate reader this step asked for
-   (both backends, payload-free JSON, one sanitized failure code, no deletion).
+   (both backends, payload-free JSON, one sanitized failure code, no deletion), and the
+   authoritative predicate plus per-class assessment (command inbox, PostgreSQL and
+   SQLite) with sweep-level reporting landed in the same pass. Eligibility is still
+   revalidated at claim time, and no deletion path uses the assessment as authority.
 4. Run file-backed SQLite and real PostgreSQL parity, concurrent retry/deletion,
    crash/restart, actual provider deletion, backup restore and frozen-candidate
    deployed profile checks. Record each environment separately.

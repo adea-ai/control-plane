@@ -19,6 +19,10 @@ import {
   type Execution,
   type ExecutionAttempt,
   type ExecutionRepository,
+  RetentionAssessmentCounter,
+  evaluateRetentionEligibility,
+  type RetentionAssessment,
+  type RetentionEligibilityVerdict,
 } from '@control-plane/domain'
 import {
   ExecutionPlanReferenceSchema,
@@ -163,6 +167,80 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       })
       return true
     })
+  }
+
+  /**
+   * Read-only eligibility assessment for the command-inbox class (#194).
+   * Pages the namespace within `bound` expired candidates and evaluates each
+   * with the shared predicate. It never deletes: eligibility is revalidated
+   * per candidate at claim time because owner state, references and holds can
+   * all change between a scan and a claim.
+   */
+  async assessExpiredInbox(
+    now: Date,
+    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+  ): Promise<RetentionAssessment> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const counter = new RetentionAssessmentCounter(
+      'command-inbox',
+      assessedAt,
+      options.bound ?? 256
+    )
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.commands, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page
+        .map((record) => CommandInboxRecordSchema.parse(record.value))
+        .filter((command) => expiredAt(command.retentionExpiresAt, now))
+      const facts = await this.provider.transaction(async (transaction) => {
+        const resolved: RetentionEligibilityVerdict[] = []
+        for (const command of candidates) {
+          const tombstone = await transaction.get(
+            namespaces.retiredCommands,
+            recordId(scopeKey(command))
+          )
+          const execution = await transaction.get(
+            namespaces.executions,
+            recordId(command.executionId)
+          )
+          const state =
+            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          resolved.push(
+            evaluateRetentionEligibility({
+              retentionExpiresAt: command.retentionExpiresAt,
+              now: assessedAt,
+              policyRetainMs: options.policyRetainMs,
+              ownerTerminal:
+                ['completed', 'failed'].includes(command.status) &&
+                state !== undefined &&
+                terminalExecutionStates.has(state),
+              publicationSettled: true,
+              rejectionKeyReserved: tombstone !== undefined,
+              pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
+              holds: 0,
+            })
+          )
+        }
+        return resolved
+      })
+      for (const verdict of facts) {
+        if (!counter.add(verdict)) {
+          done = true
+          break
+        }
+      }
+      if (page.length < 128) break
+    }
+    return counter.result()
   }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
@@ -485,6 +563,13 @@ function scopeKey(scope: CommandInboxScope): string {
     scope.projectId,
     scope.idempotencyKey,
   ].join('\u001f')
+}
+
+const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+/** Canonical stored instant strictly before `now`; anything else is not a candidate. */
+function expiredAt(value: string, now: Date): boolean {
+  return canonicalInstant.test(value) && Date.parse(value) < now.getTime()
 }
 
 function recordId(value: string): string {

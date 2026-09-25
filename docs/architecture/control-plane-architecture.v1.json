@@ -89,7 +89,7 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "lockVersion": "1.9.3",
       "kind": "application",
       "private": true,
@@ -205,7 +205,7 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.13.0",
+      "version": "1.14.0",
       "lockVersion": "1.11.6",
       "kind": "package",
       "private": true,
@@ -259,7 +259,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "lockVersion": "1.9.2",
       "kind": "application",
       "private": true,
@@ -314,7 +314,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.14.0",
+      "version": "1.16.0",
       "lockVersion": "1.13.2",
       "kind": "application",
       "private": true,
@@ -1424,7 +1424,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:32fcdd28780a7ffe37fc024b2abbd7af99a92e6cabdb670fcc17d608b102a3bf"
+      "sourceDigest": "sha256:6945719dc0c37b9a62d7f7fb4f6a563bbd6b615f650fce22f3d082c6dece2d1f"
     },
     {
       "id": "hosted-server",
@@ -1502,7 +1502,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:4d5469a4b25ea26cd185e1f0f09284aeffda204d514afdf314c124dc87db962b"
+      "sourceDigest": "sha256:7916da56e0a87f49f07ce11eb84c8ad9fd2e78dd8809e1f8b0be448aa0562d72"
     },
     {
       "id": "local",
@@ -1545,7 +1545,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:4d5469a4b25ea26cd185e1f0f09284aeffda204d514afdf314c124dc87db962b"
+      "sourceDigest": "sha256:7916da56e0a87f49f07ce11eb84c8ad9fd2e78dd8809e1f8b0be448aa0562d72"
     }
   ],
   "ownership": [
