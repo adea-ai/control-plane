@@ -41,7 +41,10 @@ import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/te
 import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-plane/runtime-sdk'
 import { PostgresCatalogApprovalRepository } from './catalog-approval-repository.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
-import { PostgresContextPackageRepository } from './context-package-repository.ts'
+import {
+  PostgresContextPackageRepository,
+  PostgresContextPackageRetention,
+} from './context-package-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
 import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
@@ -3181,6 +3184,42 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
     ).toBeUndefined()
   })
+
+  test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
+    // The fixture's compiledAt is fixed and older than anything this harness
+    // compiles at runtime, so a short window can only match this package.
+    const fixture = contextPackageSerializationFixtures.futurePi
+    const compiledAt = Date.parse(fixture.compiledAt)
+    const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(fixture)
+    // A plan pin (the pin lives inside the plan JSON) and an authoring command.
+    await isolated.application.execute(
+      sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${fixture.compiledAt}::timestamptz)`
+    )
+
+    const retention = new PostgresContextPackageRetention(isolated.application)
+    const now = new Date(compiledAt + 2 * 24 * 60 * 60 * 1_000)
+    const options = { policyRetainMs: 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+    const withPlan = await retention.deleteEligibleContextPackages(now, options)
+    expect(withPlan.deleted).toBe(0)
+    expect(withPlan.retainedByReason).toEqual({ reference_pending: 1 })
+    expect(await packages.get(fixture)).toBeDefined()
+
+    // Removing the pin still leaves the authoring command's reference behind.
+    await isolated.application.execute(
+      sql`delete from execution_plans where execution_plan_id = 'pln_retention_fixture'`
+    )
+    const withAuthoring = await retention.deleteEligibleContextPackages(now, {
+      ...options,
+      dryRun: true,
+    })
+    expect(withAuthoring).toMatchObject({ deleted: 0 })
+
+    const applied = await retention.deleteEligibleContextPackages(now, options)
+    expect(applied.deleted).toBe(1)
+    expect(await packages.get(fixture)).toBeUndefined()
+  }, 60_000)
 
   test('deleteEligibleExecutions requires a terminal unreferenced execution', async () => {
     // The fixtures below are deliberately older than every other execution in

@@ -5,7 +5,10 @@ export {
   databaseReadinessProbe,
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
-export { PostgresContextPackageRepository } from './context-package-repository.js'
+export {
+  PostgresContextPackageRepository,
+  PostgresContextPackageRetention,
+} from './context-package-repository.js'
 export { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.js'
 export { PostgresContextCommandRepository } from './context-command-repository.js'
 export { PostgresCatalogApprovalRepository } from './catalog-approval-repository.js'

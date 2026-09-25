@@ -56,6 +56,28 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: context-package deletion with reference safety (2026-09-25)
+
+`deleteEligibleContextPackages(now, { policyRetainMs, bound, dryRun })` on both
+stores. A package is immutable once compiled, so its window is measured from
+`compiledAt`; "last reference released" cannot be observed directly, so
+eligibility requires both the window and the absence of references.
+
+Two references retain a package: the execution plan that pins it (in
+PostgreSQL the pin lives inside the plan JSON, queried through
+`plan->'contextPackage'->>'contextPackageId'`; in SQLite the plan record is read
+directly) and the authoring command that produced it — for PostgreSQL that one
+is a foreign key, so a package referenced by an authoring command cannot be
+removed at all, which is why the reference check is also the foreign-key check.
+Deletion is therefore bottom-up with plans, and the delete is guarded by the
+package's content digest so a replaced package is reported as `raced` rather
+than removed on stale evidence.
+
+Structural note: this class's deletion lives on a dedicated
+`PostgresContextPackageRetention` class rather than on the repository, because
+the repository is constructed by its callers with a narrow `select | insert`
+view of the database while deletion needs `delete`.
+
 ## Increment: executions deletion with reference safety (2026-09-25)
 
 `deleteEligibleExecutions(now, { policyRetainMs, bound, dryRun })` on both

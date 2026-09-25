@@ -217,10 +217,15 @@ bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
 bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
   --database control_plane --host <neon-host>
 
-# The same command covers execution events and executions:
+# The same command covers execution events, executions and context packages:
 #   --class execution-events
 #   --class executions
+#   --class context-packages
 ```
+
+Context packages are freed by the same bottom-up order: a package stays
+retained while a plan pins it or the authoring command that produced it still
+exists.
 
 Executions are the last class to become eligible: an execution stays retained
 while its acceptance record, its events, a reconciliation checkpoint or a
