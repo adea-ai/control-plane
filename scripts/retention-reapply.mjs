@@ -115,8 +115,13 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
-    const { createPostgresConnection, PostgresRetentionReapplication } =
-      await import('@control-plane/database')
+    // Source imports resolve relative to this script, so the command does not
+    // depend on a root-level workspace symlink that a fresh install may not
+    // create; the driver dependency resolves from the package itself.
+    const [{ createPostgresConnection }, { PostgresRetentionReapplication }] = await Promise.all([
+      import('../packages/database/src/connection.ts'),
+      import('../packages/database/src/retention-reapplication.ts'),
+    ])
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
     // SQL for each operation kind lives in the package that declares the
