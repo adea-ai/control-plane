@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/adea-ai/control-plane/compare/domain-v1.22.0...domain-v1.23.0) (2026-09-25)
+
+
+### Features
+
+* retention-interaction-receipts ([#726](https://github.com/adea-ai/control-plane/issues/726)) ([39703ce](https://github.com/adea-ai/control-plane/commit/39703ce7ee3ba5b77c87705df7f3246e66709b73))
+
 ## [1.22.0](https://github.com/adea-ai/control-plane/compare/domain-v1.21.0...domain-v1.22.0) (2026-09-25)
 
 

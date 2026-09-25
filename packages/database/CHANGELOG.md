@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/database-v1.31.0...database-v1.32.0) (2026-09-25)
+
+
+### Features
+
+* retention-interaction-receipts ([#726](https://github.com/adea-ai/control-plane/issues/726)) ([39703ce](https://github.com/adea-ai/control-plane/commit/39703ce7ee3ba5b77c87705df7f3246e66709b73))
+
 ## [1.31.0](https://github.com/adea-ai/control-plane/compare/database-v1.30.0...database-v1.31.0) (2026-09-25)
 
 
