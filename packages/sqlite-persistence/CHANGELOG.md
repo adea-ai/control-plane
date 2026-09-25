@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.17.0...sqlite-persistence-v1.18.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** operator-invoked deletion for the command inbox ([#706](https://github.com/adea-ai/control-plane/issues/706)) ([5d4ee30](https://github.com/adea-ai/control-plane/commit/5d4ee30d96db9737482d700e1a6e0b3c212fe4c0))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.16.0...sqlite-persistence-v1.17.0) (2026-09-25)
 
 
