@@ -221,6 +221,9 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
+#   --class evaluation-runs    (deletes evaluation runs past their window)
+#   --class audit-records      (PostgreSQL only; deletes release audit records
+#                               past their own longer window)
 #   --class execution-plans    (deletes plans past the window only when no
 #                               execution, acceptance record or validation
 #                               command still pins them)

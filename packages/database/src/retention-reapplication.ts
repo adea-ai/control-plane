@@ -7,6 +7,7 @@ import { interactionCommands } from './schema/interaction-commands.js'
 import { contextPackages } from './schema/context-packages.js'
 import { inboxMessages, outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
+import { evaluationRuns, releaseAuditRecords } from './schema/evaluations.js'
 import { executionPlans } from './schema/execution-plans.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
@@ -59,6 +60,24 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteEvaluationRun': {
+          const removed = await this.database
+            .delete(evaluationRuns)
+            .where(sql`${evaluationRuns.evalRunId} = ${operation.evalRunId}`)
+            .returning({ evalRunId: evaluationRuns.evalRunId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteReleaseAuditRecord': {
+          const removed = await this.database
+            .delete(releaseAuditRecords)
+            .where(sql`${releaseAuditRecords.releaseAuditId} = ${operation.releaseAuditId}`)
+            .returning({ releaseAuditId: releaseAuditRecords.releaseAuditId })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break
