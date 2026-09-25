@@ -231,7 +231,7 @@ describe('retention restore-time reapplication (#194)', () => {
         join(directory, 'absent.jsonl'),
       ])
       expect(missing.status).toBe(1)
-      expect(missing.stderr.trim()).toBe('RETENTION_REAPPLY_FAILED')
+      expect(missing.stderr.trim()).toMatch(/^RETENTION_REAPPLY_FAILED/)
 
       const relative = run(reapplyScript, [
         '--backend',
@@ -242,7 +242,7 @@ describe('retention restore-time reapplication (#194)', () => {
         'retention.jsonl',
       ])
       expect(relative.status).toBe(1)
-      expect(relative.stderr.trim()).toBe('RETENTION_REAPPLY_FAILED')
+      expect(relative.stderr.trim()).toMatch(/^RETENTION_REAPPLY_FAILED/)
     } finally {
       await provider.close()
       await rm(directory, { recursive: true, force: true })

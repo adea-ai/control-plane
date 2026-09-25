@@ -16,6 +16,15 @@ import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 // explicit branch below, never by building SQL from journal content.
 const MAXIMUM_JOURNAL_BYTES = 64 * 1024 * 1024
 
+function safeReason(error) {
+  const code = error?.code
+  if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,59}$/u.test(code)) return `:${code}`
+  const name = error?.constructor?.name
+  if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,59}$/u.test(name) && name !== 'Error')
+    return `:${name}`
+  return ''
+}
+
 let close = async () => {}
 
 try {
@@ -165,8 +174,11 @@ try {
       skipped,
     })}\n`
   )
-} catch {
-  process.stderr.write('RETENTION_REAPPLY_FAILED\n')
+} catch (error) {
+  // The code stays fixed and never carries a URL, a query parameter or an
+  // underlying message; a whitelisted error code or the class name is the one
+  // safe discriminator an operator needs to tell "bad target" from "database".
+  process.stderr.write(`RETENTION_REAPPLY_FAILED${safeReason(error)}\n`)
   process.exitCode = 1
 } finally {
   try {
