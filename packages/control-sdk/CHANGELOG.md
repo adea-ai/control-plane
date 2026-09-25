@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.2...sdk-v1.8.0) (2026-09-25)
+
+
+### Features
+
+* **marketplace:** tolerate a release published before the browsing index ([#734](https://github.com/adea-ai/control-plane/issues/734)) ([fbdb396](https://github.com/adea-ai/control-plane/commit/fbdb39656cebf66a3c23f4f717ccf877dc85d74a))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.1...sdk-v1.7.2) (2026-09-25)
 
 
