@@ -18,6 +18,12 @@ const MAXIMUM_JOURNAL_BYTES = 64 * 1024 * 1024
 
 function safeReason(error) {
   const code = error?.code
+  if (code === 'ERR_MODULE_NOT_FOUND') {
+    // A module specifier is code, not a credential: it is the only way to tell
+    // which import a fresh install could not resolve.
+    const specifier = /(?:module|package) '([^']{1,80})'/u.exec(String(error?.message))?.[1]
+    return specifier === undefined ? ':ERR_MODULE_NOT_FOUND' : `:ERR_MODULE_NOT_FOUND:${specifier}`
+  }
   if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,59}$/u.test(code)) return `:${code}`
   const name = error?.constructor?.name
   if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,59}$/u.test(name) && name !== 'Error')
