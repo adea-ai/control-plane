@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.48.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.47.0...workspace-v1.48.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** reapply the deletion journal to restored snapshots ([#712](https://github.com/adea-ai/control-plane/issues/712)) ([b491b02](https://github.com/adea-ai/control-plane/commit/b491b02893639343dc85d27a1bb257588bd66963))
+
 ## [1.47.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.46.0...workspace-v1.47.0) (2026-09-25)
 
 
