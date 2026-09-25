@@ -18,6 +18,7 @@ import {
   evidenceAuditFixtureDigest,
 } from '@control-plane/production-readiness'
 import {
+  CommandInboxError,
   CommandInboxService,
   ExecutionLifecycleService,
   ExecutionReconciliationService,
@@ -3175,6 +3176,86 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(
       await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
     ).toBeUndefined()
+  })
+
+  test('deleteEligibleInbox removes only retired terminal commands', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFA'
+    const now = '2026-07-31T11:00:00.000Z'
+    const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+    const input = {
+      callerPrincipalId: 'svc_retention-delete',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-retention-delete-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    }
+    await new CommandInboxService({
+      repository,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    }).acceptExecution(input)
+    const scope = {
+      callerPrincipalId: input.callerPrincipalId,
+      operation: input.operation,
+      workspaceId: input.correlation.workspaceId,
+      projectId: input.correlation.projectId,
+      idempotencyKey: input.idempotencyKey,
+    }
+    const assessedAt = new Date('2026-09-24T12:00:00.000Z')
+    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 10 }
+
+    // Not terminal yet and no rejection key: nothing may be deleted.
+    const early = await repository.deleteEligibleInbox(assessedAt, {
+      ...options,
+      dryRun: false,
+    })
+    expect(early.deleted).toBe(0)
+    expect(await repository.getByExecutionId(`exe_${suffix}`)).toBeDefined()
+
+    // Terminal + reserved rejection key: eligible, dry run still deletes nothing.
+    const terminalAt = '2026-08-24T11:05:00.000Z'
+    await isolated.application.execute(
+      sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${`exe_${suffix}`}`
+    )
+    await isolated.application.execute(
+      sql`update command_inbox set status = 'completed', terminal_at = ${terminalAt}::timestamptz, result_reference = 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' where command_id = ${input.commandId}`
+    )
+    expect(await repository.retireExpiredCommand(scope, assessedAt.toISOString())).toBe(true)
+
+    const dry = await repository.deleteEligibleInbox(assessedAt, { ...options, dryRun: true })
+    expect(dry.dryRun).toBe(true)
+    expect(dry.eligible).toBe(1)
+    expect(dry.deleted).toBe(0)
+    expect(await repository.getByExecutionId(`exe_${suffix}`)).toBeDefined()
+
+    const applied = await repository.deleteEligibleInbox(assessedAt, { ...options, dryRun: false })
+    expect(applied.deleted).toBe(1)
+    expect(applied.raced).toBe(0)
+    expect(await repository.getByExecutionId(`exe_${suffix}`)).toBeUndefined()
+
+    // The rejection key survives, so a replay of the same scoped key still
+    // fails closed.
+    const replay = await repository.get(scope).catch((thrown) => thrown)
+    expect(replay).toBeInstanceOf(CommandInboxError)
+    expect(replay.code).toBe('COMMAND_RETENTION_EXPIRED')
+
+    const again = await repository.deleteEligibleInbox(assessedAt, { ...options, dryRun: false })
+    expect(again.deleted).toBe(0)
   })
 
   test('assessExpiredEvents reports owner and publication state without deleting', async () => {
