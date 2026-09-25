@@ -47,6 +47,7 @@ const repositoryGroups = {
     'tests/neon-workflow.test.mjs',
     'tests/skill-library.test.mjs',
     'tests/m11-recovery-rpo-rto.test.mjs',
+    'tests/m11-retention-class-registry.test.mjs',
     'tests/repository.test.mjs',
     'tests/restate-identity.test.mjs',
   ],

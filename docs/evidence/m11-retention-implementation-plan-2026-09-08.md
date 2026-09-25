@@ -56,6 +56,22 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: class registry and coverage report (2026-09-25)
+
+`scripts/retention-classes.mjs` is the single registry of which classes have a
+deletion path and which backend classes and methods serve them. The apply
+command reads it instead of keeping its own maps, and `retention-report
+--classes` prints the decided policy against it: duration, governance mode
+(`bounded` or `reference-governed`), hold owner, and whether a deletion path
+exists.
+
+That distinction matters for honesty about coverage: four classes are
+`reference-governed` by the owner's decision (project state, state proposals,
+checkpoints, native admission fences), so no candidate can ever be eligible for
+them and a deletion implementation would be unreachable code. A test asserts
+exactly that — every registered class resolves to a real method on both
+backends, and a reference-governed class has no registered path.
+
 ## Increment: context-package deletion with reference safety (2026-09-25)
 
 `deleteEligibleContextPackages(now, { policyRetainMs, bound, dryRun })` on both

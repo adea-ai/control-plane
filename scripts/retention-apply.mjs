@@ -6,6 +6,7 @@ import {
   decidedRetentionPolicy,
   retentionClassPolicy,
 } from '../packages/config/src/retention-policy.ts'
+import { retentionClasses } from './retention-classes.mjs'
 import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 
 // Operator-invoked retention deletion (#194). Physical deletion stays out of
@@ -18,12 +19,7 @@ import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 // idempotency key still fails closed. The command prints a payload-free JSON
 // result and one sanitized failure code — never database URLs, query
 // parameters or underlying errors.
-const SUPPORTED_CLASSES = new Set([
-  'command-inbox',
-  'execution-events',
-  'executions',
-  'context-packages',
-])
+const SUPPORTED_CLASSES = new Set(Object.keys(retentionClasses))
 
 let close = async () => {}
 
@@ -54,24 +50,11 @@ try {
     throw new Error('INVALID_BOUND')
   const policy = decidedRetentionPolicy
   const policyRetainMs = retentionClassPolicy(policy, values.class).retainMs
-  const apply = {
-    'command-inbox': 'deleteEligibleInbox',
-    'execution-events': 'deleteEligibleEvents',
-    executions: 'deleteEligibleExecutions',
-    'context-packages': 'deleteEligibleContextPackages',
-  }[values.class]
-  const repositoryFor = {
-    'command-inbox': 'SqliteCommandAcceptanceRepository',
-    'execution-events': 'SqliteExecutionEventRepository',
-    executions: 'SqliteExecutionRepository',
-    'context-packages': 'SqliteContextPackageRepository',
-  }[values.class]
-  const postgresRepositoryFor = {
-    'command-inbox': 'PostgresCommandAcceptanceRepository',
-    'execution-events': 'PostgresExecutionEventRepository',
-    executions: 'PostgresExecutionRepository',
-    'context-packages': 'PostgresContextPackageRetention',
-  }[values.class]
+  const {
+    apply,
+    sqlite: repositoryFor,
+    postgres: postgresRepositoryFor,
+  } = retentionClasses[values.class]
   // Deletion effects are journalled before they apply, so a restored snapshot
   // can be brought forward with `retention-reapply` before it is exposed.
   const journalPath = resolve(
