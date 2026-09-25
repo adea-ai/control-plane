@@ -7,6 +7,8 @@ import { inboxMessages, outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
+import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
+import { runtimeCommands } from './schema/runtime-commands.js'
 
 export interface RetentionReapplicationOutcome {
   /** Operations that changed something. */
@@ -54,6 +56,19 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteRuntimeCommand': {
+          // Receipts are the command's children and are removed with it.
+          await this.database
+            .delete(runtimeEventReceipts)
+            .where(sql`${runtimeEventReceipts.commandId} = ${operation.commandId}`)
+          const removed = await this.database
+            .delete(runtimeCommands)
+            .where(sql`${runtimeCommands.commandId} = ${operation.commandId}`)
+            .returning({ commandId: runtimeCommands.commandId })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break

@@ -221,6 +221,9 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
+#   --class runtime-ledgers    (deletes commands with a recorded result and their
+#                               event receipts; expired or unresolved commands are
+#                               reconciliation work and stay)
 #   --class messaging          (PostgreSQL only; deletes settled deliveries and
 #                               compacts delivered inbox payloads, keeping the
 #                               (consumer, messageId) deduplication identity)

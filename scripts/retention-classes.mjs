@@ -30,6 +30,11 @@ export const retentionClasses = {
     sqlite: 'SqliteContextPackageRepository',
     postgres: 'PostgresContextPackageRetention',
   },
+  'runtime-ledgers': {
+    apply: 'deleteEligibleRuntimeCommands',
+    sqlite: 'SqliteRuntimeCommandRepository',
+    postgres: 'PostgresRuntimeCommandRepository',
+  },
   messaging: {
     // One entry point for the class: settled outbox rows are deleted and the
     // consumer inbox is compacted (identity kept) in the same pass.

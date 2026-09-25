@@ -1,16 +1,120 @@
 import {
+  RetentionAssessmentCounter,
   RuntimeCommandRecordSchema,
+  evaluateRetentionEligibility,
   runtimeCommandRecordsShareIdentity,
+  type RetentionDeletionResult,
+  type RetentionJournalSink,
   type RuntimeCommandCreateResult,
   type RuntimeCommandRecord,
   type RuntimeCommandRepository,
 } from '@control-plane/domain'
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 
 export class PostgresRuntimeCommandRepository implements RuntimeCommandRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Deletes settled runtime commands and their event receipts (#194).
+   *
+   * The ordering proof is settled terminal delivery: a command is a candidate
+   * only when a result was recorded (`resultStatus` plus `resultRecordedAt`,
+   * which excludes `expired` and acknowledged-but-unresolved commands — those
+   * stay as reconciliation work). Receipts are deleted with the command because
+   * they are that command's own deduplication records; a late replay of one of
+   * its frames cannot re-apply an effect, because inbound frames must reserve
+   * their channel sequence first (an already-consumed sequence is rejected
+   * before the sink) and the event id the frame would append is deterministic
+   * in `(commandId, type, sequence)`. The delete is guarded by the record
+   * version, so a command that moves is reported as `raced`. `dryRun` defaults
+   * to true.
+   */
+  async deleteEligibleRuntimeCommands(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('RUNTIME_LEDGER_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'runtime-ledgers',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    const candidates = await this.database
+      .select({
+        commandId: runtimeCommands.commandId,
+        version: runtimeCommands.version,
+        resultRecordedAt: runtimeCommands.resultRecordedAt,
+      })
+      .from(runtimeCommands)
+      .where(
+        and(
+          isNotNull(runtimeCommands.resultStatus),
+          isNotNull(runtimeCommands.resultRecordedAt),
+          ...(options.policyRetainMs === null
+            ? []
+            : [
+                lt(
+                  runtimeCommands.resultRecordedAt,
+                  new Date(now.getTime() - options.policyRetainMs)
+                ),
+              ])
+        )
+      )
+      .orderBy(asc(runtimeCommands.resultRecordedAt))
+      .limit(counter.bound + 1)
+    for (const candidate of candidates) {
+      if (candidate.resultRecordedAt === null) continue
+      const verdict = evaluateRetentionEligibility({
+        retentionExpiresAt:
+          options.policyRetainMs === null
+            ? undefined
+            : new Date(candidate.resultRecordedAt.getTime() + options.policyRetainMs).toISOString(),
+        now: assessedAt,
+        policyRetainMs: options.policyRetainMs,
+        ownerTerminal: true,
+        publicationSettled: true,
+        rejectionKeyReserved: true,
+        pendingReferences: 0,
+        holds: 0,
+      })
+      if (!counter.add(verdict)) break
+      if (verdict.verdict !== 'eligible' || dryRun) continue
+      if (options.journal !== undefined) {
+        await options.journal([
+          { kind: 'postgres.deleteRuntimeCommand', commandId: candidate.commandId },
+        ])
+      }
+      const removed = await this.database.transaction(async (transaction) => {
+        await transaction
+          .delete(runtimeEventReceipts)
+          .where(eq(runtimeEventReceipts.commandId, candidate.commandId))
+        return transaction
+          .delete(runtimeCommands)
+          .where(
+            and(
+              eq(runtimeCommands.commandId, candidate.commandId),
+              eq(runtimeCommands.version, candidate.version)
+            )
+          )
+          .returning({ commandId: runtimeCommands.commandId })
+      })
+      if (removed.length === 1) deleted += 1
+      else raced += 1
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
+  }
 
   /**
    * Bounded maintenance read for reconciliation: the most recent runtime
