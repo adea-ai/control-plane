@@ -7,6 +7,7 @@ import { interactionCommands } from './schema/interaction-commands.js'
 import { contextPackages } from './schema/context-packages.js'
 import { inboxMessages, outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
+import { executionPlans } from './schema/execution-plans.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
@@ -58,6 +59,15 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteExecutionPlan': {
+          const removed = await this.database
+            .delete(executionPlans)
+            .where(sql`${executionPlans.executionPlanId} = ${operation.executionPlanId}`)
+            .returning({ executionPlanId: executionPlans.executionPlanId })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break

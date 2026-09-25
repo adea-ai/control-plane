@@ -221,6 +221,9 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
+#   --class execution-plans    (deletes plans past the window only when no
+#                               execution, acceptance record or validation
+#                               command still pins them)
 #   --class interaction-receipts (deletes confirmed interaction/cancellation
 #                               receipts past the replay window; unconfirmed
 #                               receipts are lost-ack identities and always stay)

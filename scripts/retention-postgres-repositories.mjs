@@ -12,6 +12,7 @@ export async function resolvePostgresRepository(name) {
     runtimeCommandRepository,
     messagingRetention,
     receiptRetention,
+    executionPlanRepository,
   ] = await Promise.all([
     import('../packages/database/src/command-inbox-repository.ts'),
     import('../packages/database/src/execution-event-repository.ts'),
@@ -20,6 +21,7 @@ export async function resolvePostgresRepository(name) {
     import('../packages/database/src/runtime-command-repository.ts'),
     import('../packages/database/src/messaging-retention.ts'),
     import('../packages/database/src/receipt-retention.ts'),
+    import('../packages/database/src/execution-plan-repository.ts'),
   ])
   const repositories = {
     PostgresCommandAcceptanceRepository: commandInbox.PostgresCommandAcceptanceRepository,
@@ -29,6 +31,7 @@ export async function resolvePostgresRepository(name) {
     PostgresRuntimeCommandRepository: runtimeCommandRepository.PostgresRuntimeCommandRepository,
     PostgresMessagingRetention: messagingRetention.PostgresMessagingRetention,
     PostgresReceiptRetention: receiptRetention.PostgresReceiptRetention,
+    PostgresExecutionPlanRetention: executionPlanRepository.PostgresExecutionPlanRetention,
   }
   const resolved = repositories[name]
   if (resolved === undefined) throw new Error('UNKNOWN_POSTGRES_REPOSITORY')
