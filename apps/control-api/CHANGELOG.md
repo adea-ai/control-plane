@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.14.1...control-api-v1.15.0) (2026-09-25)
+
+
+### Features
+
+* **marketplace:** tolerate a release published before the browsing index ([#734](https://github.com/adea-ai/control-plane/issues/734)) ([fbdb396](https://github.com/adea-ai/control-plane/commit/fbdb39656cebf66a3c23f4f717ccf877dc85d74a))
+
 ## [1.14.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.14.0...control-api-v1.14.1) (2026-09-25)
 
 

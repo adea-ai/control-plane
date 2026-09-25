@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.10.1...contracts-v1.11.0) (2026-09-25)
+
+
+### Features
+
+* **marketplace:** tolerate a release published before the browsing index ([#734](https://github.com/adea-ai/control-plane/issues/734)) ([fbdb396](https://github.com/adea-ai/control-plane/commit/fbdb39656cebf66a3c23f4f717ccf877dc85d74a))
+
 ## [1.10.1](https://github.com/adea-ai/control-plane/compare/contracts-v1.10.0...contracts-v1.10.1) (2026-09-25)
 
 
