@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.17.0...local-control-plane-v1.18.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** assess the execution-events class ([#704](https://github.com/adea-ai/control-plane/issues/704)) ([98d7ac1](https://github.com/adea-ai/control-plane/commit/98d7ac16ee9b6ceeead288cb997161761cdb44f1))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.16.0...local-control-plane-v1.17.0) (2026-09-25)
 
 
