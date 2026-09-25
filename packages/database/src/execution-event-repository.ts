@@ -1,4 +1,10 @@
-import { ExecutionSchema, type Execution } from '@control-plane/domain'
+import {
+  ExecutionSchema,
+  RetentionAssessmentCounter,
+  evaluateRetentionEligibility,
+  type Execution,
+  type RetentionAssessment,
+} from '@control-plane/domain'
 import {
   ExecutionEventSchema,
   hashExecutionEventPayloadV2,
@@ -7,14 +13,60 @@ import {
   type ExecutionEventDraft,
   type ExecutionEventRepository,
 } from '@control-plane/events'
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { toExecutionUpdate } from './execution-repository.js'
 import { executionEvents } from './schema/events.js'
 import { executions } from './schema/executions.js'
 
+const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
+
 export class PostgresExecutionEventRepository implements ExecutionEventRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Read-only eligibility assessment for the execution-events class (#194).
+   * Bounded and oldest-deadline first: the owning execution must be terminal
+   * and the publication settled, because pending, failed and quarantined
+   * deliveries are reconciliation work rather than garbage. Never deletes.
+   */
+  async assessExpiredEvents(
+    now: Date,
+    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+  ): Promise<RetentionAssessment> {
+    if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const counter = new RetentionAssessmentCounter(
+      'execution-events',
+      assessedAt,
+      options.bound ?? 256
+    )
+    const candidates = await this.database
+      .select({
+        retentionExpiresAt: executionEvents.retentionExpiresAt,
+        publicationStatus: executionEvents.publicationStatus,
+        executionState: executions.state,
+      })
+      .from(executionEvents)
+      .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
+      .where(lt(executionEvents.retentionExpiresAt, now))
+      .orderBy(asc(executionEvents.retentionExpiresAt))
+      .limit(counter.bound + 1)
+    for (const candidate of candidates) {
+      const verdict = evaluateRetentionEligibility({
+        retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
+        now: assessedAt,
+        policyRetainMs: options.policyRetainMs,
+        ownerTerminal: terminalExecutionStates.has(candidate.executionState),
+        publicationSettled: candidate.publicationStatus === 'published',
+        rejectionKeyReserved: true,
+        pendingReferences: 0,
+        holds: 0,
+      })
+      if (!counter.add(verdict)) break
+    }
+    return counter.result()
+  }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredEvents(now: Date): Promise<number> {

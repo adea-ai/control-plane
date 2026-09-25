@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CommandInboxService } from '@control-plane/domain'
-import { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } from './index.js'
+import {
+  SqliteCommandAcceptanceRepository,
+  SqliteExecutionEventRepository,
+  SqlitePersistenceProvider,
+} from './index.js'
 
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -84,6 +89,60 @@ async function patchStored(provider, namespace, state) {
 
 async function seedRaw(provider, namespace, id, value) {
   await provider.transaction((transaction) => transaction.put({ namespace, id, value }))
+}
+
+function eventDraft(eventId, overrides = {}) {
+  return {
+    eventId,
+    executionId: ids.executionId,
+    sequence: 1,
+    type: 'execution.progress',
+    schemaVersion: 1,
+    correlation: {
+      workspaceId: ids.workspaceId,
+      projectId: ids.projectId,
+      taskId: ids.taskId,
+      agentId: ids.agentId,
+      requestId: ids.requestId,
+      traceId: 'trc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    },
+    payload: { step: 'assessment' },
+    occurredAt: receivedAt,
+    recordedAt: receivedAt,
+    retentionExpiresAt: expiredAt,
+    ...overrides,
+  }
+}
+
+async function seedExecution(provider) {
+  await provider.transaction((transaction) =>
+    transaction.put({
+      namespace: 'executions',
+      id: `r-${createHash('sha256').update(ids.executionId).digest('hex')}`,
+      value: {
+        executionId: ids.executionId,
+        state: 'completed',
+        version: 1,
+        correlation: {
+          workspaceId: ids.workspaceId,
+          projectId: ids.projectId,
+          taskId: ids.taskId,
+          agentId: ids.agentId,
+          requestId: ids.requestId,
+        },
+        executionPlan: {
+          executionPlanId: ids.executionPlanId,
+          contentDigest: `sha256:${'b'.repeat(64)}`,
+          schemaVersion: 1,
+        },
+        attemptCount: 0,
+        acceptedAt: receivedAt,
+        terminalAt: expiredAt,
+        createdAt: receivedAt,
+        updatedAt: expiredAt,
+      },
+    })
+  )
 }
 
 describe('SQLite retention assessment (#194)', () => {
@@ -194,6 +253,97 @@ describe('SQLite retention assessment (#194)', () => {
       expect(unbounded.scanned).toBe(1)
       expect(unbounded.retainedByReason).toEqual({ unbounded_class: 1 })
       expect(unbounded.eligible).toBe(0)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('events assess publication and owner state before age', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-assess-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await seedExecution(provider)
+      const events = new SqliteExecutionEventRepository(provider)
+      await events.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FAV'))
+      await events.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FBW'))
+      await events.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FCX'))
+      // Second and third events get distinct sequences.
+      const all = await provider.transaction((transaction) => transaction.list('execution-events'))
+      expect(all).toHaveLength(3)
+
+      const pending = await events.assessExpiredEvents(assessedAt, {
+        policyRetainMs: thirtyDaysMs,
+      })
+      expect(pending.classId).toBe('execution-events')
+      expect(pending.scanned).toBe(3)
+      expect(pending.eligible).toBe(0)
+      expect(pending.retainedByReason).toEqual({ unsettled_publication: 3 })
+
+      // Publish every event: publication settles, the owner is terminal, so
+      // they become eligible.
+      for (const record of all) {
+        await provider.transaction(async (transaction) => {
+          const current = await transaction.get('execution-events', record.id)
+          await transaction.put({
+            namespace: 'execution-events',
+            id: record.id,
+            value: {
+              ...current.value,
+              publication: { status: 'published', attempts: 1, version: 1, publishedAt: expiredAt },
+            },
+            expectedRevision: current.revision,
+          })
+        })
+      }
+      const settled = await events.assessExpiredEvents(assessedAt, {
+        policyRetainMs: thirtyDaysMs,
+      })
+      expect(settled.eligible).toBe(3)
+      expect(settled.retainedByReason).toEqual({})
+
+      // Read-only: nothing was deleted.
+      expect(await provider.transaction((t) => t.list('execution-events'))).toHaveLength(3)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('an event whose owner is still active is retained by owner state', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-assess-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const events = new SqliteExecutionEventRepository(provider)
+      await events.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FDY'))
+      const assessment = await events.assessExpiredEvents(assessedAt, {
+        policyRetainMs: thirtyDaysMs,
+      })
+      // No execution record at all is not terminal, so the event stays.
+      expect(assessment.retainedByReason).toEqual({ non_terminal_owner: 1 })
+      expect(assessment.eligible).toBe(0)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('an unbounded events policy retains even settled candidates', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-assess-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await seedExecution(provider)
+      const events = new SqliteExecutionEventRepository(provider)
+      await events.append(eventDraft('evt_01ARZ3NDEKTSV4RRFFQ69G5FEZ'))
+      const assessment = await events.assessExpiredEvents(assessedAt, { policyRetainMs: null })
+      expect(assessment.retainedByReason).toEqual({ unbounded_class: 1 })
+      expect(assessment.eligible).toBe(0)
     } finally {
       await provider.close()
       await rm(directory, { recursive: true, force: true })

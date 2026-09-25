@@ -181,6 +181,14 @@ describe('retention sweep', () => {
         eligible: 1,
         retainedByReason: { rejection_key_absent: 1, hold_recorded: 1 },
       }),
+      assessExecutionEvents: async (now) => ({
+        classId: 'execution-events',
+        assessedAt: now.toISOString(),
+        scanned: 1,
+        truncated: false,
+        eligible: 0,
+        retainedByReason: { unsettled_publication: 1 },
+      }),
       intervalMs: 3_600_000,
       onReport: (report) => reports.push(report),
     })
@@ -196,6 +204,14 @@ describe('retention sweep', () => {
       truncated: false,
       eligible: 1,
       retainedByReason: { rejection_key_absent: 1, hold_recorded: 1 },
+    })
+    expect(reports[0].assessment.executionEvents).toEqual({
+      classId: 'execution-events',
+      assessedAt: reports[0].at,
+      scanned: 1,
+      truncated: false,
+      eligible: 0,
+      retainedByReason: { unsettled_publication: 1 },
     })
   })
 

@@ -3177,6 +3177,86 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBeUndefined()
   })
 
+  test('assessExpiredEvents reports owner and publication state without deleting', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FEZ'
+    const now = '2026-07-31T11:00:00.000Z'
+    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+    const accepted = await new CommandInboxService({
+      repository: commands,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    }).acceptExecution({
+      callerPrincipalId: 'svc_event-retention-assessment',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-event-retention-assessment-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    })
+
+    const repository = new PostgresExecutionEventRepository(isolated.application)
+    const executionRepository = new PostgresExecutionRepository(isolated.application)
+    const current = await executionRepository.getExecution(accepted.execution.executionId)
+    // A terminal owner with an already-expired event deadline makes the event a
+    // candidate; its pending publication is what retains it.
+    const completed = {
+      ...current,
+      state: 'completed',
+      version: current.version + 1,
+      terminalAt: '2026-08-24T11:05:00.000Z',
+      updatedAt: '2026-08-24T11:05:00.000Z',
+    }
+    const appended = await repository.transitionExecution(current.version, completed, {
+      eventId: `evt_${suffix}`,
+      executionId: current.executionId,
+      type: 'execution.completed',
+      schemaVersion: 1,
+      correlation: {
+        workspaceId: current.correlation.workspaceId,
+        projectId: current.correlation.projectId,
+        taskId: current.correlation.taskId,
+        agentId: current.correlation.agentId,
+        requestId: current.correlation.requestId,
+        traceId: 'trc_01CRZ3NDEKTSV4RRFFQ69G5FEZ',
+      },
+      payload: { state: 'completed' },
+      occurredAt: completed.updatedAt,
+      recordedAt: completed.updatedAt,
+      retentionExpiresAt: '2026-08-24T11:06:00.000Z',
+    })
+    expect(appended).toBeDefined()
+
+    const assessedAt = new Date('2026-09-24T12:00:00.000Z')
+    const assessment = await repository.assessExpiredEvents(assessedAt, {
+      policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
+      bound: 10,
+    })
+    expect(assessment.classId).toBe('execution-events')
+    expect(assessment.scanned).toBeGreaterThanOrEqual(1)
+    expect(assessment.retainedByReason.unsettled_publication).toBeGreaterThanOrEqual(1)
+    expect(assessment.eligible).toBe(0)
+
+    // Read-only and still fail-closed.
+    expect(await repository.get(`evt_${suffix}`)).toBeDefined()
+    await expect(repository.deleteExpiredEvents(assessedAt)).rejects.toThrow(
+      'EVENT_RETENTION_ELIGIBILITY_REQUIRED'
+    )
+  })
+
   test('commits execution transitions and ordered outbox events atomically', async () => {
     const repository = new PostgresExecutionEventRepository(isolated.application)
     const service = new ExecutionEventService(repository)

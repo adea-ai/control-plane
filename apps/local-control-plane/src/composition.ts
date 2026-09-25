@@ -493,15 +493,20 @@ export class LocalControlPlaneComposition {
     // retention deadline, scheduled at a slow fixed cadence.
     if (options.retention !== undefined) {
       const commandInboxRepository = new SqliteCommandAcceptanceRepository(this.persistence)
+      const executionEventRepository = new SqliteExecutionEventRepository(this.persistence)
       const retentionPolicy = decidedRetentionPolicy
       this.#retentionSweep = new RetentionSweep({
         commandInbox: commandInboxRepository,
-        executionEvents: new SqliteExecutionEventRepository(this.persistence),
+        executionEvents: executionEventRepository,
         // #194: deletion is fail-closed, so the pass reports retained growth
         // and the reasons on stderr for the local operator.
         assessCommandInbox: (now) =>
           commandInboxRepository.assessExpiredInbox(now, {
             policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
+          }),
+        assessExecutionEvents: (now) =>
+          executionEventRepository.assessExpiredEvents(now, {
+            policyRetainMs: retentionClassPolicy(retentionPolicy, 'execution-events').retainMs,
           }),
         intervalMs: options.retention.sweepIntervalMs,
         onReport: (report) =>
@@ -512,6 +517,7 @@ export class LocalControlPlaneComposition {
               events: report.events,
               blocked: report.blocked,
               commandInbox: report.assessment.commandInbox,
+              executionEvents: report.assessment.executionEvents,
             })
           ),
       })

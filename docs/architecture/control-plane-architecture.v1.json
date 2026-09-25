@@ -44,7 +44,7 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "lockVersion": "1.7.2",
       "kind": "package",
       "private": true,
@@ -651,7 +651,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.14.0",
+      "version": "1.15.0",
       "lockVersion": "1.12.1",
       "kind": "package",
       "private": true,
@@ -1424,7 +1424,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:6945719dc0c37b9a62d7f7fb4f6a563bbd6b615f650fce22f3d082c6dece2d1f"
+      "sourceDigest": "sha256:d53a0bdec08ca012bc891e2352051b47f7e65280642a87f177a42f0022e3f506"
     },
     {
       "id": "hosted-server",
@@ -1502,7 +1502,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:7916da56e0a87f49f07ce11eb84c8ad9fd2e78dd8809e1f8b0be448aa0562d72"
+      "sourceDigest": "sha256:9a66e09d3b6e6b15b44c03e3037df8652a7ed9784128dd21928916b6817598e2"
     },
     {
       "id": "local",
@@ -1545,7 +1545,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:7916da56e0a87f49f07ce11eb84c8ad9fd2e78dd8809e1f8b0be448aa0562d72"
+      "sourceDigest": "sha256:9a66e09d3b6e6b15b44c03e3037df8652a7ed9784128dd21928916b6817598e2"
     }
   ],
   "ownership": [
