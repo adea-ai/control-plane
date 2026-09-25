@@ -21,9 +21,18 @@ only when the registry requires authenticated access. The optional
 `MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL` variables are for controlled registry
 endpoints and test environments; production endpoints must use HTTPS. The
 immutable base URL is a template ending in `{catalogId}` and must serve the
-seven release assets: `catalog.v1.json`, `catalog-latest.v1.json`,
+seven required release assets: `catalog.v1.json`, `catalog-latest.v1.json`,
 `catalog-summary.v1.json`, `categories.v1.json`, `compatibility.v1.json`,
 `integrity.json`, and `sources.lock.json`.
+
+It may additionally serve `catalog-index.v1.json`, the consumer browsing index
+(added in #709). That one asset is optional, because a release published before
+#709 predates it: Control Plane omits it from the response and clients fall back
+to rendering from the full catalog. Only a genuine 404 is read as absence — a
+5xx, a timeout, or a transport failure fails the refresh, so a registry outage
+can never masquerade as a legacy release. When the index _is_ published it is
+verified in full and its digest must be declared in `integrity.json` alongside
+the other assets.
 
 ## API boundary
 
