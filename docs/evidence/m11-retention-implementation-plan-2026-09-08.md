@@ -56,6 +56,35 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: execution-events deletion with preserved identity (2026-09-25)
+
+`deleteEligibleEvents(now, { policyRetainMs, bound, dryRun })` on both event
+repositories deletes expired events whose owner is terminal and whose
+publication is **published** (pending, failed and quarantined deliveries stay as
+reconciliation work), after revalidating each candidate inside the deleting
+transaction. `dryRun` defaults to true; a candidate that moved is reported as
+`raced`.
+
+The ordering proof for this class is deduplication identity, and it is enforced
+in both directions:
+
+- Before a row is removed, the event id and its sequence are recorded as
+  retired (`retired_execution_event_ids` in PostgreSQL, the
+  `retired-execution-event-ids` namespace in SQLite) in the same transaction as
+  the delete.
+- The append path consults that record: an append of a retired event id is
+  treated as a duplicate (`undefined`) instead of resurrecting the event, and
+  the next sequence is computed above the historical maximum of live **and**
+  retired events, so a sequence number is never reused. Without this, deleting
+  the newest event of an execution would let a later append reissue its
+  sequence and a consumer holding a cursor would drop the new event as a
+  duplicate.
+
+What remains: the other durable classes, durable external deletion for object
+storage and workflow references, restore-time reapplication of deletion
+records, per-profile scheduled wiring, and deployed-profile evidence for the
+deletion paths.
+
 ## Increment: operator-invoked deletion for the command inbox (2026-09-25)
 
 The first physical deletion path exists, and only through an explicit operator

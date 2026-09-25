@@ -20,7 +20,7 @@ export {
   softDeleteColumns,
   timestampColumns,
 } from './conventions.js'
-export { eventPublicationStatus, executionEvents } from './events.js'
+export { eventPublicationStatus, executionEvents, retiredExecutionEventIds } from './events.js'
 export {
   evaluationRuns,
   evaluationRunStatus,

@@ -3178,6 +3178,104 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBeUndefined()
   })
 
+  test('deleteEligibleEvents preserves deduplication identity and sequence order', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFB'
+    const now = '2026-07-31T11:00:00.000Z'
+    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+    const accepted = await new CommandInboxService({
+      repository: commands,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    }).acceptExecution({
+      callerPrincipalId: 'svc_event-retention-delete',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-event-retention-delete-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    })
+    const executionId = accepted.execution.executionId
+    const repository = new PostgresExecutionEventRepository(isolated.application)
+    const draft = (eventId) => ({
+      eventId,
+      executionId,
+      type: 'execution.progress',
+      schemaVersion: 1,
+      correlation: {
+        workspaceId: accepted.execution.correlation.workspaceId,
+        projectId: accepted.execution.correlation.projectId,
+        taskId: accepted.execution.correlation.taskId,
+        agentId: accepted.execution.correlation.agentId,
+        requestId: accepted.execution.correlation.requestId,
+        traceId: 'trc_01CRZ3NDEKTSV4RRFFQ69G5FFB',
+      },
+      payload: { step: 'retention' },
+      occurredAt: now,
+      recordedAt: now,
+      retentionExpiresAt: '2026-08-24T11:06:00.000Z',
+    })
+    const first = `evt_${suffix}`
+    const second = 'evt_01CRZ3NDEKTSV4RRFFQ69G5FFC'
+    expect((await repository.append(draft(first)))?.sequence).toBe(1)
+    expect((await repository.append(draft(second)))?.sequence).toBe(2)
+    for (const eventId of [first, second]) {
+      const event = await repository.get(eventId)
+      expect(
+        await repository.compareAndSetPublication(event.publication.version, {
+          ...event,
+          publication: {
+            status: 'published',
+            attempts: 1,
+            version: event.publication.version + 1,
+            publishedAt: now,
+          },
+        })
+      ).toBe(true)
+    }
+    const terminalAt = '2026-08-24T11:05:00.000Z'
+    await isolated.application.execute(
+      sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+    )
+
+    const assessedAt = new Date('2026-09-24T12:00:00.000Z')
+    const options = {
+      policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
+      bound: 10,
+      dryRun: false,
+    }
+    const dry = await repository.deleteEligibleEvents(assessedAt, { ...options, dryRun: true })
+    expect(dry.eligible).toBe(2)
+    expect(dry.deleted).toBe(0)
+
+    const applied = await repository.deleteEligibleEvents(assessedAt, options)
+    expect(applied.deleted).toBe(2)
+    expect(await repository.get(first)).toBeUndefined()
+    expect(await repository.get(second)).toBeUndefined()
+
+    // A retry of a retired event id cannot resurrect it, and the sequence
+    // continues above the historical maximum.
+    expect(await repository.append(draft(first))).toBeUndefined()
+    const third = 'evt_01CRZ3NDEKTSV4RRFFQ69G5FFD'
+    expect((await repository.append(draft(third)))?.sequence).toBe(3)
+
+    const again = await repository.deleteEligibleEvents(assessedAt, options)
+    expect(again.deleted).toBe(0)
+  })
+
   test('deleteEligibleInbox removes only retired terminal commands', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFA'
     const now = '2026-07-31T11:00:00.000Z'

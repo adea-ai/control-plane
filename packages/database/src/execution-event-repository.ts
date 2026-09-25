@@ -4,6 +4,7 @@ import {
   evaluateRetentionEligibility,
   type Execution,
   type RetentionAssessment,
+  type RetentionDeletionResult,
 } from '@control-plane/domain'
 import {
   ExecutionEventSchema,
@@ -16,7 +17,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { toExecutionUpdate } from './execution-repository.js'
-import { executionEvents } from './schema/events.js'
+import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
 import { executions } from './schema/executions.js'
 
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
@@ -66,6 +67,89 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       if (!counter.add(verdict)) break
     }
     return counter.result()
+  }
+
+  /**
+   * Deletes expired, eligible execution events (#194) while preserving their
+   * deduplication identity: the event id and its sequence are recorded as
+   * retired before the row is removed, so a retry of that event id cannot
+   * resurrect it and the sequence number is never reused.
+   *
+   * Eligibility is revalidated per candidate at deletion time: the delete is
+   * guarded by the publication status and deadline, and a candidate that moved
+   * is reported as `raced`. `dryRun` defaults to true.
+   */
+  async deleteEligibleEvents(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'execution-events',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    const candidates = await this.database
+      .select({
+        eventId: executionEvents.eventId,
+        executionId: executionEvents.executionId,
+        sequence: executionEvents.sequence,
+        retentionExpiresAt: executionEvents.retentionExpiresAt,
+        publicationStatus: executionEvents.publicationStatus,
+        executionState: executions.state,
+      })
+      .from(executionEvents)
+      .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
+      .where(lt(executionEvents.retentionExpiresAt, now))
+      .orderBy(asc(executionEvents.retentionExpiresAt))
+      .limit(counter.bound + 1)
+    for (const candidate of candidates) {
+      const verdict = evaluateRetentionEligibility({
+        retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
+        now: assessedAt,
+        policyRetainMs: options.policyRetainMs,
+        ownerTerminal: terminalExecutionStates.has(candidate.executionState),
+        publicationSettled: candidate.publicationStatus === 'published',
+        rejectionKeyReserved: true,
+        pendingReferences: 0,
+        holds: 0,
+      })
+      if (!counter.add(verdict)) break
+      if (verdict.verdict !== 'eligible' || dryRun) continue
+      const outcome = await this.database.transaction(async (transaction) => {
+        await transaction
+          .insert(retiredExecutionEventIds)
+          .values({
+            eventId: candidate.eventId,
+            executionId: candidate.executionId,
+            sequence: candidate.sequence,
+            retiredAt: now,
+          })
+          .onConflictDoNothing()
+        const removed = await transaction
+          .delete(executionEvents)
+          .where(
+            and(
+              eq(executionEvents.eventId, candidate.eventId),
+              eq(executionEvents.publicationStatus, 'published'),
+              lt(executionEvents.retentionExpiresAt, now)
+            )
+          )
+          .returning({ eventId: executionEvents.eventId })
+        return removed.length === 1
+      })
+      if (outcome) deleted += 1
+      else raced += 1
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
   }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
@@ -308,15 +392,32 @@ export async function appendExecutionEventInTransaction(
 ) {
   const sanitized = sanitizeExecutionEventDraft(draft)
   await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${sanitized.executionId}))`)
+  // Deleted events keep their deduplication identity here: a retry of a retired
+  // event id must not resurrect the event it replaced.
+  const [retired] = await transaction
+    .select({ eventId: retiredExecutionEventIds.eventId })
+    .from(retiredExecutionEventIds)
+    .where(eq(retiredExecutionEventIds.eventId, sanitized.eventId))
+    .limit(1)
+  if (retired !== undefined) return undefined
   const [latest] = await transaction
     .select({ sequence: executionEvents.sequence })
     .from(executionEvents)
     .where(eq(executionEvents.executionId, sanitized.executionId))
     .orderBy(sql`${executionEvents.sequence} desc`)
     .limit(1)
+  // Sequences are never reused: retention deletion records the retired
+  // sequence, so the next append continues above the historical maximum.
+  const [retiredLatest] = await transaction
+    .select({ sequence: retiredExecutionEventIds.sequence })
+    .from(retiredExecutionEventIds)
+    .where(eq(retiredExecutionEventIds.executionId, sanitized.executionId))
+    .orderBy(desc(retiredExecutionEventIds.sequence))
+    .limit(1)
+  const nextSequence = Math.max(latest?.sequence ?? 0, retiredLatest?.sequence ?? 0) + 1
   const event = ExecutionEventSchema.parse({
     ...sanitized,
-    sequence: (latest?.sequence ?? 0) + 1,
+    sequence: nextSequence,
     payloadBytes: Buffer.byteLength(JSON.stringify(sanitized.payload)),
     payloadHash: hashExecutionEventPayloadV2(sanitized.payload),
     publication: { status: 'pending', attempts: 0, version: 1 },

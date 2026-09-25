@@ -18,6 +18,19 @@ export const eventPublicationStatus = pgEnum('event_publication_status', [
 ])
 const identifier = (name: string) => varchar(name, { length: 30 })
 
+export const retiredExecutionEventIds = pgTable(
+  'retired_execution_event_ids',
+  {
+    eventId: identifier('event_id').primaryKey(),
+    executionId: identifier('execution_id').notNull(),
+    sequence: integer('sequence').notNull(),
+    retiredAt: timestamp('retired_at', { mode: 'date', withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('retired_execution_event_ids_execution_index').on(table.executionId, table.sequence),
+  ]
+)
+
 export const executionEvents = pgTable(
   'execution_events',
   {

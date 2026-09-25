@@ -861,6 +861,9 @@ function marketplaceSnapshot() {
   const catalogText = JSON.stringify(catalog)
   const files = {
     'catalog.v1.json': catalogText,
+    // The browsing index is part of the published artifact set; a fixture that
+    // omits it makes the registry fetch fail and the route report 503.
+    'catalog-index.v1.json': JSON.stringify({ catalogId, products: {}, schemaVersion: 1 }),
     'catalog-summary.v1.json': JSON.stringify({ catalogId, pluginCount: 1, schemaVersion: 1 }),
     'categories.v1.json': JSON.stringify({ categories: [], catalogId, schemaVersion: 1 }),
     'compatibility.v1.json': JSON.stringify({ catalogId, plugins: [], schemaVersion: 1 }),
@@ -869,6 +872,7 @@ function marketplaceSnapshot() {
   const integrity = Object.fromEntries(
     [
       'catalog.v1.json',
+      'catalog-index.v1.json',
       'catalog-summary.v1.json',
       'categories.v1.json',
       'compatibility.v1.json',

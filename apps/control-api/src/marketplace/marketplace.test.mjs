@@ -56,8 +56,10 @@ function snapshotFixture() {
   const categoriesText = JSON.stringify({ categories: [], catalogId, schemaVersion: 1 })
   const compatibilityText = JSON.stringify({ catalogId, plugins: [], schemaVersion: 1 })
   const lockText = JSON.stringify({ catalogId, schemaVersion: 1, sources: [] })
+  const indexText = JSON.stringify({ catalogId, products: {}, schemaVersion: 1 })
   const files = {
     'catalog.v1.json': catalogText,
+    'catalog-index.v1.json': indexText,
     'catalog-summary.v1.json': summaryText,
     'categories.v1.json': categoriesText,
     'compatibility.v1.json': compatibilityText,
@@ -144,6 +146,26 @@ describe('Control Plane marketplace contract', () => {
       }),
     })
     expect(verified.catalogId).toBe(fixture.catalog.catalogId)
+  })
+
+  test('rejects a browsing index that does not belong to the catalog', () => {
+    const fixture = snapshotFixture()
+    const integrity = JSON.parse(fixture.artifacts['integrity.json'])
+    const index = JSON.parse(fixture.artifacts['catalog-index.v1.json'])
+    const mismatched = JSON.stringify({
+      ...index,
+      catalogId: `catalog:${'0'.repeat(64)}`,
+    })
+    expect(() =>
+      verifyArtifacts({
+        ...fixture.artifacts,
+        'catalog-index.v1.json': mismatched,
+        'integrity.json': JSON.stringify({
+          ...integrity,
+          files: { ...integrity.files, 'catalog-index.v1.json': digest(mismatched) },
+        }),
+      })
+    ).toThrow(/browsing index/)
   })
 
   test('rejects a manifest that omits a required artifact', () => {

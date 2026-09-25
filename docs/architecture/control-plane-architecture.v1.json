@@ -2040,7 +2040,7 @@
     },
     {
       "id": "PERSIST-MIGRATIONS",
-      "postgresql": "27 forward Drizzle migrations with schema drift check",
+      "postgresql": "49 forward Drizzle migrations with schema drift check",
       "sqlite": "Ordered atomic forward registry with applied SQL checksums and legacy v1 adoption",
       "classification": "partially_verified",
       "assessment": "Both dialects have forward migration mechanisms. SQLite verifies history, rolls back failed sequences, and validates restored migration history before replacement. Synthetic v2 tests are not actual future-schema or timed cross-profile recovery certification.",
