@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.51.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.50.0...workspace-v1.51.0) (2026-09-25)
+
+
+### Features
+
+* retention-class-registry ([#718](https://github.com/adea-ai/control-plane/issues/718)) ([78e7dba](https://github.com/adea-ai/control-plane/commit/78e7dba51272af8859e93aee3ffae9213332c412))
+* **retention:** register the deletion classes and report coverage ([78e7dba](https://github.com/adea-ai/control-plane/commit/78e7dba51272af8859e93aee3ffae9213332c412))
+
 ## [1.50.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.49.0...workspace-v1.50.0) (2026-09-25)
 
 
