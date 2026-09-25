@@ -7,6 +7,10 @@ export const marketplaceArtifactNames = [
   'catalog-latest.v1.json',
   'catalog-summary.v1.json',
   'categories.v1.json',
+  // The consumer browsing index: one deduplicated record per product, with the
+  // compiled brand mark and monogram, so a client renders a category grid
+  // without parsing the full catalog.
+  'catalog-index.v1.json',
   'compatibility.v1.json',
   'integrity.json',
   'sources.lock.json',
@@ -347,6 +351,11 @@ export function verifyArtifacts(artifacts: MarketplaceArtifacts): MarketplaceCat
   const lock = requireObject(
     parseJson(artifacts['sources.lock.json'], 'sources.lock.json')
   ) as JsonObject & { schemaVersion?: unknown }
+  const index = requireObject(
+    parseJson(artifacts['catalog-index.v1.json'], 'catalog-index.v1.json')
+  ) as JsonObject & { catalogId?: unknown; products?: unknown; schemaVersion?: unknown }
+  if (index.schemaVersion !== 1 || index.catalogId !== catalog.catalogId || !index.products)
+    throw verificationError('Marketplace browsing index does not match the catalog')
   const integrity = requireObject(parseJson(artifacts['integrity.json'], 'integrity.json')) as {
     catalogId?: unknown
     files?: unknown
