@@ -14,6 +14,7 @@ import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
   createFakeContextProvider,
+  deriveContextPackage,
 } from '@control-plane/context'
 import { NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import {
@@ -3186,38 +3187,52 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   })
 
   test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
-    // The fixture's compiledAt is fixed and older than anything this harness
-    // compiles at runtime, so a short window can only match this package.
-    const fixture = contextPackageSerializationFixtures.futurePi
-    const compiledAt = Date.parse(fixture.compiledAt)
+    // A derived package: the shared fixtures are referenced by other tests and
+    // one of them is tampered on purpose, so this test mints its own coherent
+    // package (its own digest and id) from a parent fixture.
+    const parent = contextPackageSerializationFixtures.futurePi
+    const compiledAt = '2026-08-20T12:00:00.000Z'
+    const fixture = deriveContextPackage(parent, {
+      objective: 'retention deletion fixture',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: parent.budgets,
+      successCriteria: parent.successCriteria,
+      returnContract: parent.returnContract,
+      compiledAt,
+    })
     const packages = new PostgresContextPackageRepository(isolated.application)
     await packages.put(fixture)
-    // A plan pin (the pin lives inside the plan JSON) and an authoring command.
+    // A plan pin: the pin lives inside the plan JSON.
     await isolated.application.execute(
-      sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${fixture.compiledAt}::timestamptz)`
+      sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${compiledAt}::timestamptz)`
     )
 
     const retention = new PostgresContextPackageRetention(isolated.application)
-    const now = new Date(compiledAt + 2 * 24 * 60 * 60 * 1_000)
+    const now = new Date(Date.parse(compiledAt) + 2 * 24 * 60 * 60 * 1_000)
     const options = { policyRetainMs: 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
 
-    const withPlan = await retention.deleteEligibleContextPackages(now, options)
-    expect(withPlan.deleted).toBe(0)
-    expect(withPlan.retainedByReason).toEqual({ reference_pending: 1 })
+    // Assertions are on this package, not on aggregate counts: the shared
+    // database also holds other tests' packages.
+    await retention.deleteEligibleContextPackages(now, options)
     expect(await packages.get(fixture)).toBeDefined()
 
-    // Removing the pin still leaves the authoring command's reference behind.
+    // An authoring command reference is a foreign key, so removing the pin
+    // still leaves the package unremovable until that row goes too.
     await isolated.application.execute(
       sql`delete from execution_plans where execution_plan_id = 'pln_retention_fixture'`
     )
-    const withAuthoring = await retention.deleteEligibleContextPackages(now, {
-      ...options,
-      dryRun: true,
-    })
-    expect(withAuthoring).toMatchObject({ deleted: 0 })
+    await isolated.application.execute(
+      sql`insert into context_authoring_commands (command_key, workspace_id, project_id, context_package_id, record) values (${'f'.repeat(64)}, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, ${fixture.contextPackageId}, ${JSON.stringify({ state: 'completed' })}::jsonb)`
+    )
+    await retention.deleteEligibleContextPackages(now, options)
+    expect(await packages.get(fixture)).toBeDefined()
 
-    const applied = await retention.deleteEligibleContextPackages(now, options)
-    expect(applied.deleted).toBe(1)
+    // With both references gone the package is deleted.
+    await isolated.application.execute(
+      sql`delete from context_authoring_commands where command_key = ${'f'.repeat(64)}`
+    )
+    await retention.deleteEligibleContextPackages(now, options)
     expect(await packages.get(fixture)).toBeUndefined()
   }, 60_000)
 
