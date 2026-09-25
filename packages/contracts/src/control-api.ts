@@ -183,6 +183,10 @@ const MarketplaceArtifactsSchema = z
     'catalog-latest.v1.json': z.string(),
     'catalog-summary.v1.json': z.string(),
     'categories.v1.json': z.string(),
+    // The consumer browsing index. Required, because the registry always
+    // fetches, verifies and serves it: it is the artifact that lets a client
+    // render a category grid without parsing the full catalog.
+    'catalog-index.v1.json': z.string(),
     'compatibility.v1.json': z.string(),
     'integrity.json': z.string(),
     'sources.lock.json': z.string(),
