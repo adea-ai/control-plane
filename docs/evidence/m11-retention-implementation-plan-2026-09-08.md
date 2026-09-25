@@ -68,13 +68,18 @@ identity can even be reserved, and holds/references outrank age last. The module
 also provides the bounded `RetentionAssessmentCounter` (scanned/eligible counts,
 per-reason retained counts, truncation flag).
 
-Storage-side read-only assessment for the **command-inbox** class is implemented in
-both stores: `SqliteCommandAcceptanceRepository.assessExpiredInbox` pages expired
+Storage-side read-only assessment is implemented for the **command-inbox** and
+**execution-events** classes in both stores. Command inbox: `SqliteCommandAcceptanceRepository.assessExpiredInbox` pages expired
 candidates within a bound and resolves owner state plus rejection-key presence;
 `PostgresCommandAcceptanceRepository.assessExpiredInbox` orders by deadline,
 joins the owning execution, and batch-resolves retired keys. Neither deletes, and
 neither becomes deletion authority: eligibility is revalidated per candidate at
 claim time.
+
+Execution events: `assessExpiredEvents` on the SQLite and PostgreSQL event
+repositories evaluates the owning execution's terminal state and the stored
+publication status — pending, failed and quarantined deliveries stay retained as
+reconciliation work — with the same bounded, oldest-first discipline.
 
 `RetentionSweep` now accepts optional assessment ports, records one
 payload-free `RetentionSweepReport` per pass (counts, per-reason retained debt,
@@ -84,11 +89,11 @@ blocked class rather than a failed pass — a storage failure still propagates t
 metadata through the structured logger, local-control-plane writes one JSON line to
 stderr.
 
-Not yet done, and required before any physical deletion: the execution-events
-assessment, indexed eligibility queries (the SQLite scan is bounded paging over
-the namespace, not the expiry index), transactional claims with revision/CAS
-revalidation, tombstone reservation tied to payload compaction, durable external
-deletion, and the restore-reapplication test.
+Not yet done, and required before any physical deletion: indexed eligibility
+queries (the SQLite scan is bounded paging over the namespace, not the expiry
+index), transactional claims with revision/CAS revalidation, tombstone
+reservation tied to payload compaction, durable external deletion, and the
+restore-reapplication test.
 
 ## Increment: SQLite command rejection keys
 

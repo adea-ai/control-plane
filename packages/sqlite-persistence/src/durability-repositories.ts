@@ -7,7 +7,10 @@ import {
   ExecutionSchema,
   ReconciliationCheckpointSchema,
   RuntimeCommandRecordSchema,
+  RetentionAssessmentCounter,
   StatePromotionProposalSchema,
+  evaluateRetentionEligibility,
+  type RetentionAssessment,
   runtimeCommandRecordsShareIdentity,
   type ReconciliationCheckpoint,
   type ReconciliationCheckpointRepository,
@@ -36,8 +39,11 @@ import {
   type RuntimeInventoryCheckpointRepository,
 } from '@control-plane/runtime-sdk'
 
+const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
+
 const namespaces = {
   events: 'execution-events',
+  executions: 'executions',
   proposals: 'state-promotion-proposals',
   reconciliation: 'reconciliation-checkpoints',
   runtimeCommands: 'runtime-commands',
@@ -91,6 +97,73 @@ export class SqliteStatePromotionProposalRepository implements StatePromotionPro
 
 export class SqliteExecutionEventRepository implements ExecutionEventRepository {
   constructor(readonly provider: PersistenceProvider) {}
+
+  /**
+   * Read-only eligibility assessment for the execution-events class (#194).
+   * Bounded paging over the namespace, evaluating each expired candidate from
+   * the shared predicate: the owning execution must be terminal and the
+   * publication settled (pending, failed and quarantined deliveries remain
+   * reconciliation work). Never deletes.
+   */
+  async assessExpiredEvents(
+    now: Date,
+    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+  ): Promise<RetentionAssessment> {
+    if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const counter = new RetentionAssessmentCounter(
+      'execution-events',
+      assessedAt,
+      options.bound ?? 256
+    )
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.events, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page
+        .map((record) => ExecutionEventSchema.parse(record.value))
+        .filter((event) => expiredAt(event.retentionExpiresAt, now))
+      const verdicts = await this.provider.transaction(async (transaction) => {
+        const resolved: ReturnType<typeof evaluateRetentionEligibility>[] = []
+        for (const event of candidates) {
+          const execution = await transaction.get(
+            namespaces.executions,
+            recordId(event.executionId)
+          )
+          const state =
+            execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          resolved.push(
+            evaluateRetentionEligibility({
+              retentionExpiresAt: event.retentionExpiresAt,
+              now: assessedAt,
+              policyRetainMs: options.policyRetainMs,
+              ownerTerminal: state !== undefined && terminalExecutionStates.has(state),
+              publicationSettled: event.publication.status === 'published',
+              rejectionKeyReserved: true,
+              pendingReferences: 0,
+              holds: 0,
+            })
+          )
+        }
+        return resolved
+      })
+      for (const verdict of verdicts) {
+        if (!counter.add(verdict)) {
+          done = true
+          break
+        }
+      }
+      if (page.length < 128) break
+    }
+    return counter.result()
+  }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredEvents(now: Date): Promise<number> {
@@ -700,6 +773,13 @@ function validLimit(limit: number): void {
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1_000) {
     throw new Error('INVALID_LIMIT')
   }
+}
+
+const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+/** Canonical stored instant strictly before `now`; anything else is not a candidate. */
+function expiredAt(value: string, now: Date): boolean {
+  return canonicalInstant.test(value) && Date.parse(value) < now.getTime()
 }
 
 function recordId(value: string): string {
