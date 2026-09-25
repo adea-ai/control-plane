@@ -1,9 +1,9 @@
 import type { RetentionJournalOperation } from '@control-plane/domain'
-import { sql } from 'drizzle-orm'
+import { and, isNull, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { contextPackages } from './schema/context-packages.js'
-import { outboxEvents } from './schema/messaging.js'
+import { inboxMessages, outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
@@ -55,6 +55,22 @@ export class PostgresRetentionReapplication {
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
           if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.compactInboxMessage': {
+          // The payload is replaced rather than nulled: the column is NOT NULL,
+          // and the row itself is the deduplication identity that must survive.
+          const compacted = await this.database
+            .update(inboxMessages)
+            .set({
+              payload: { compacted: true, version: 1 },
+              deletedAt: new Date(operation.compactedAt),
+              revision: sql`${inboxMessages.revision} + 1`,
+            })
+            .where(and(sql`${inboxMessages.id} = ${operation.id}`, isNull(inboxMessages.deletedAt)))
+            .returning({ id: inboxMessages.id })
+          if (compacted.length > 0) applied += 1
           else skipped += 1
           break
         }

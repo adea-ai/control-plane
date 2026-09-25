@@ -31,7 +31,9 @@ export const retentionClasses = {
     postgres: 'PostgresContextPackageRetention',
   },
   messaging: {
-    apply: 'deleteEligibleOutboxEvents',
+    // One entry point for the class: settled outbox rows are deleted and the
+    // consumer inbox is compacted (identity kept) in the same pass.
+    apply: 'sweepEligibleMessaging',
     // PostgreSQL-only: the supported SQLite profiles carry no inbox/outbox
     // tables, so there is nothing to sweep there.
     sqlite: null,

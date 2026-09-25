@@ -56,6 +56,23 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: consumer-inbox compaction (2026-09-25)
+
+Completes the messaging class. The consumer inbox row **is** the delivery's
+deduplication identity — a redelivery is recognised by `(consumer, messageId)` —
+so it is never removed. Compaction past the window replaces the payload with a
+tombstone (`{ compacted: true, version: 1 }`; the column is NOT NULL) and marks
+`deletedAt`, which is also what makes a second pass idempotent. The row,
+its key and its existence check all survive, so a redelivery is still
+recognised as already delivered.
+
+`sweepEligibleMessaging` is the class's single entry point: settled outbox rows
+are deleted and delivered inbox payloads are compacted in one pass, with merged
+counts (`deleted`, `compacted`) and per-reason retained counts. The individual
+passes stay callable. The journal records compaction as its own operation kind,
+so a restored snapshot is compacted again rather than exposing payloads the
+policy has already released.
+
 ## Increment: messaging outbox deletion (2026-09-25)
 
 The messaging class turned out to be **PostgreSQL-only**: the supported SQLite

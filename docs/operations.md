@@ -221,7 +221,9 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
-#   --class messaging          (PostgreSQL only)
+#   --class messaging          (PostgreSQL only; deletes settled deliveries and
+#                               compacts delivered inbox payloads, keeping the
+#                               (consumer, messageId) deduplication identity)
 ```
 
 Context packages are freed by the same bottom-up order: a package stays
