@@ -763,6 +763,105 @@ function isReconciliationCandidate(
 export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
   constructor(readonly provider: PersistenceProvider) {}
 
+  /**
+   * Deletes execution plans past their window and free of references (#194). A
+   * plan is retained while an execution, an acceptance record or a validation
+   * command pins it, so plans are freed bottom-up after the executions class
+   * has removed the executions that carried them. Age runs from `compiledAt`
+   * and the delete is revision-guarded. Dry run by default.
+   */
+  async deleteEligibleExecutionPlans(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_PLAN_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'execution-plans',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.plans, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      // Reference sets are computed once per page rather than per candidate.
+      const references = await this.provider.transaction(async (transaction) => {
+        const pinned = new Set<string>()
+        for (const record of await transaction.list(namespaces.executions)) {
+          pinned.add(ExecutionSchema.parse(record.value).executionPlan.executionPlanId)
+        }
+        for (const record of await transaction.list(namespaces.commands)) {
+          pinned.add(CommandInboxRecordSchema.parse(record.value).executionPlan.executionPlanId)
+        }
+        for (const record of await transaction.list('execution-validation-commands')) {
+          pinned.add(
+            ExecutionValidationCommandRecordSchema.parse(record.value).executionPlan.executionPlanId
+          )
+        }
+        return pinned
+      })
+      for (const record of page) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.plans, record.id)
+          if (stored === undefined) return { verdict: undefined, removed: false }
+          const plan = assertExecutionPlanIntegrity(stored.value)
+          if (!expiredAt(plan.compiledAt, now)) return { verdict: undefined, removed: false }
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null
+                ? undefined
+                : new Date(Date.parse(plan.compiledAt) + options.policyRetainMs).toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences: references.has(plan.executionPlanId) ? 1 : 0,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) return { verdict, removed: false }
+          if (options.journal !== undefined) {
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                { kind: 'sqlite.delete', namespace: namespaces.plans, id: stored.id },
+              ])
+            )
+          }
+          let removed = false
+          try {
+            removed = await transaction.delete(namespaces.plans, stored.id, stored.revision)
+          } catch {
+            return { verdict, removed: false }
+          }
+          return { verdict, removed }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
+  }
+
   put(input: ExecutionPlan): Promise<ExecutionPlanReference> {
     const plan = assertExecutionPlanIntegrity(input)
     const reference = {

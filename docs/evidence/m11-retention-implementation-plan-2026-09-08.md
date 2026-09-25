@@ -56,6 +56,22 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: execution-plan deletion (2026-09-25)
+
+`deleteEligibleExecutionPlans(now, { policyRetainMs, bound, dryRun })` on both
+stores. A plan is retained while anything pins it: the execution compiled from
+it, the acceptance record that carried it, or a validation command that checked
+it — the last is a **foreign key**, so the reference check is also the
+foreign-key check, and the PostgreSQL test proves the plan is kept rather than
+the pass failing at the database. Plans are therefore freed bottom-up, after the
+executions class has removed the executions that carried them.
+
+Age runs from `compiledAt` (a plan is immutable once compiled), the delete is
+guarded by the content digest so a replaced plan is reported as `raced`, and the
+journal records the deletion. On PostgreSQL the deletion lives on a dedicated
+`PostgresExecutionPlanRetention` class, because the repository is constructed
+with a narrow `select | insert` view while deletion needs `delete`.
+
 ## Increment: interaction and cancellation receipt deletion (2026-09-25)
 
 One class covering both receipt tables (`interaction_commands` and

@@ -48,6 +48,7 @@ import {
 } from './context-package-repository.ts'
 import { PostgresMessagingRetention } from './messaging-retention.ts'
 import { PostgresReceiptRetention } from './receipt-retention.ts'
+import { PostgresExecutionPlanRetention } from './execution-plan-repository.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
 import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
@@ -1514,6 +1515,78 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await restarted.compareAndSet(1, { ...running, revision: 3 })).toBe(false)
     expect(await isolated.application.select().from(delegations)).toHaveLength(1)
   })
+
+  test('deleteEligibleExecutionPlans frees a plan only once nothing pins it', async () => {
+    // A derived plan: the compiler stamps compiledAt, so the window is derived
+    // from the fixture rather than the fixture from the window.
+    const plan = createExecutionPlanTestFixture()
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
+    const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
+    const options = { policyRetainMs: ninetyDaysMs, bound: 64, dryRun: false }
+    const reference = {
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+    }
+    await new PostgresExecutionPlanRepository(isolated.application).put(plan)
+    const retention = new PostgresExecutionPlanRetention(isolated.application)
+
+    // An execution compiled from the plan pins it.
+    const executionService = new ExecutionLifecycleService(
+      new PostgresExecutionRepository(isolated.application)
+    )
+    const execution = await executionService.createExecution({
+      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+      correlation: {
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+      },
+      executionPlan: { ...reference, schemaVersion: 1 },
+      acceptedAt: plan.compiledAt,
+    })
+    expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
+
+    // A validation command that checked the plan is a foreign key, so the
+    // reference check has to keep the plan before the database refuses.
+    const validation = new PostgresExecutionValidationCommandRepository(isolated.application)
+    await validation.commit(
+      {
+        // The record has to agree with the plan's own identity.
+        scope: {
+          callerPrincipalId: 'svc_agent-hq',
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          operation: 'execution.validate',
+          idempotencyKey: 'plan-retention-integration-0001',
+        },
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        requestId: plan.correlation.requestId,
+        payloadHash: `sha256:${'a'.repeat(64)}`,
+        executionPlan: reference,
+        recordedAt: plan.compiledAt,
+      },
+      plan
+    )
+
+    // Remove the execution pin: the validation reference still holds it.
+    await isolated.application.execute(
+      sql`delete from executions where execution_id = ${execution.executionId}`
+    )
+    const withValidation = await retention.deleteEligibleExecutionPlans(assessedAt, options)
+    expect(withValidation.deleted).toBe(0)
+
+    // With both references gone the plan is freed on the same pass.
+    await isolated.application.execute(
+      sql`delete from execution_validation_commands where execution_plan_id = ${plan.executionPlanId}`
+    )
+    const freed = await retention.deleteEligibleExecutionPlans(assessedAt, options)
+    expect(freed.deleted).toBe(1)
+    expect(
+      await new PostgresExecutionPlanRepository(isolated.application).get(reference)
+    ).toBeUndefined()
+  }, 60_000)
 
   test('sweepEligibleInteractionReceipts removes only confirmed receipts', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
