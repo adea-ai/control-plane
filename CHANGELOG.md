@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.46.0...workspace-v1.47.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** delete execution events with preserved identity ([#709](https://github.com/adea-ai/control-plane/issues/709)) ([a41dc81](https://github.com/adea-ai/control-plane/commit/a41dc8116387809e4898a39196c9a5bfa62fca6b))
+
 ## [1.46.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.45.0...workspace-v1.46.0) (2026-09-25)
 
 
