@@ -13,6 +13,10 @@ export { PostgresCatalogRepository } from './catalog-repository.js'
 export { PostgresEncryptedSecretStore } from './credential-secret-store.js'
 export { PostgresDelegationRepository } from './delegation-repository.js'
 export { PostgresExecutionEventRepository } from './execution-event-repository.js'
+export {
+  PostgresRetentionReapplication,
+  type RetentionReapplicationOutcome,
+} from './retention-reapplication.js'
 export { PostgresExecutionPlanRepository } from './execution-plan-repository.js'
 export { PostgresExecutionValidationCommandRepository } from './validation-command-repository.js'
 export { PostgresExternalSessionRepository } from './external-session-repository.js'

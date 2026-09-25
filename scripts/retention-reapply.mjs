@@ -109,58 +109,19 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
-    const [{ createPostgresConnection }, { sql }, schema] = await Promise.all([
+    const [{ createPostgresConnection }, { PostgresRetentionReapplication }] = await Promise.all([
       import('../packages/database/src/connection.ts'),
-      import('drizzle-orm'),
-      import('../packages/database/src/schema/index.ts'),
+      import('@control-plane/database'),
     ])
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
-    const database = connection.database
+    // SQL for each operation kind lives in the package that declares the
+    // driver dependency; this command stays a thin operator wrapper.
+    const reapplication = new PostgresRetentionReapplication(connection.database)
     for (const record of operations) {
-      for (const operation of record.operations) {
-        if (operation.kind === 'postgres.retireCommandKey') {
-          const inserted = await database
-            .insert(schema.retiredCommandKeys)
-            .values({
-              scopeKey: operation.scopeKey,
-              commandId: operation.commandId,
-              executionId: operation.executionId,
-              retiredAt: new Date(operation.retiredAt),
-            })
-            .onConflictDoNothing()
-            .returning({ scopeKey: schema.retiredCommandKeys.scopeKey })
-          if (inserted.length === 1) applied += 1
-          else skipped += 1
-        } else if (operation.kind === 'postgres.deleteCommand') {
-          const removed = await database
-            .delete(schema.commandInbox)
-            .where(sql`${schema.commandInbox.commandId} = ${operation.commandId}`)
-            .returning({ commandId: schema.commandInbox.commandId })
-          if (removed.length > 0) applied += 1
-          else skipped += 1
-        } else if (operation.kind === 'postgres.retireEventId') {
-          const inserted = await database
-            .insert(schema.retiredExecutionEventIds)
-            .values({
-              eventId: operation.eventId,
-              executionId: operation.executionId,
-              sequence: operation.sequence,
-              retiredAt: new Date(operation.retiredAt),
-            })
-            .onConflictDoNothing()
-            .returning({ eventId: schema.retiredExecutionEventIds.eventId })
-          if (inserted.length === 1) applied += 1
-          else skipped += 1
-        } else if (operation.kind === 'postgres.deleteEvent') {
-          const removed = await database
-            .delete(schema.executionEvents)
-            .where(sql`${schema.executionEvents.eventId} = ${operation.eventId}`)
-            .returning({ eventId: schema.executionEvents.eventId })
-          if (removed.length > 0) applied += 1
-          else skipped += 1
-        } else skipped += 1
-      }
+      const outcome = await reapplication.apply(record.operations)
+      applied += outcome.applied
+      skipped += outcome.skipped
     }
   } else throw new Error('INVALID_BACKEND')
 
