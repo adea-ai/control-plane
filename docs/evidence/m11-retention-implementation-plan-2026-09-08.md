@@ -56,6 +56,30 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: runtime-ledger deletion (2026-09-25)
+
+`deleteEligibleRuntimeCommands(now, { policyRetainMs, bound, dryRun })` on both
+runtime command repositories. A command is a candidate only when a **result was
+recorded** (`resultStatus` plus `resultRecordedAt`), which is the settlement
+proof: `expired` and acknowledged-but-unresolved commands stay as reconciliation
+work, which is what the coverage matrix asked for. Age runs from the recorded
+result instant, the delete is guarded by the record version, and the command's
+event receipts are deleted with it.
+
+A late replay of one of those frames cannot re-apply an effect: inbound frames
+must reserve their channel sequence first (an already-consumed sequence is
+rejected before the effect sink), and the event id such a frame would append is
+deterministic in `(commandId, type, sequence)`, so it collides rather than
+applies twice.
+
+**This increment also closed a latent foreign-key gap in the executions class:**
+PostgreSQL's `runtime_commands.execution_id` references `executions`, but the
+executions reference set did not include runtime commands, so deleting an
+execution that still had a runtime ledger would have failed the pass at the
+database. Both stores now retain such an execution as `reference_pending`, which
+the SQLite test asserts directly (retained with the command present, deleted
+once the command's own class has removed it).
+
 ## Increment: consumer-inbox compaction (2026-09-25)
 
 Completes the messaging class. The consumer inbox row **is** the delivery's

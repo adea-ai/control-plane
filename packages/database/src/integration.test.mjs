@@ -1514,6 +1514,139 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(delegations)).toHaveLength(1)
   })
 
+  test('deleteEligibleRuntimeCommands removes settled commands with their receipts', async () => {
+    await isolated.migrate()
+    const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+    const nodeId = 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+    const workspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+    await new RuntimeConnectionRegistry(
+      new PostgresRuntimeConnectionRepository(isolated.application)
+    ).register({
+      runtimeConnectionId,
+      identityDigest: `sha256:${'9'.repeat(64)}`,
+      connectionType: 'managed_local',
+      runtimeNodeRefId: nodeId,
+      runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+      location: 'local_device',
+      adapterVersion: '1.0.0',
+      driverVersion: '1.0.0',
+      harnessVersion: '1.0.0',
+      status: 'connected',
+      health: 'healthy',
+      capabilities: [],
+      compatibilityState: 'compatible',
+      limitations: [],
+      lastDiscoveredAt: '2026-08-24T23:00:00.000Z',
+      lastHeartbeatAt: '2026-08-24T23:00:00.000Z',
+      lastHealthCheckAt: '2026-08-24T23:00:00.000Z',
+    })
+    const executionService = new ExecutionLifecycleService(
+      new PostgresExecutionRepository(isolated.application)
+    )
+    const execution = await executionService.createExecution({
+      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+      correlation: {
+        workspaceId,
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+      },
+      executionPlan: {
+        executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        contentDigest: `sha256:${'5'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      acceptedAt: '2026-08-24T23:00:00.000Z',
+    })
+    const attempt = await executionService.createAttempt({
+      executionId: execution.executionId,
+      attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+      expectedExecutionVersion: execution.version,
+      queuedAt: '2026-08-24T23:00:01.000Z',
+      runtime: { runtimeConnectionId },
+    })
+    const repository = new PostgresRuntimeCommandRepository(isolated.application)
+    const settledAt = '2026-08-24T23:05:00.000Z'
+    const base = {
+      executionId: execution.executionId,
+      attemptId: attempt.attemptId,
+      nodeId,
+      runtimeConnectionId,
+      workspaceId,
+      idempotencyKey: 'runtime-command:integration:settled',
+      payloadHash: `sha256:${'4'.repeat(64)}`,
+      commandEnvelope: { operation: 'runtime.cancel' },
+      issuedAt: '2026-08-24T23:00:02.000Z',
+      expiresAt: '2026-08-24T23:10:02.000Z',
+      version: 1,
+      deliveryAttempts: 0,
+      createdAt: '2026-08-24T23:00:02.000Z',
+      updatedAt: '2026-08-24T23:00:02.000Z',
+    }
+    const settledId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+    const queuedId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP'
+    expect(
+      (await repository.create({ ...base, commandId: settledId, status: 'queued' })).outcome
+    ).toBe('created')
+    expect(
+      (await repository.create({ ...base, commandId: queuedId, status: 'queued' })).outcome
+    ).toBe('created')
+    // The settled shape needs complete dispatch, acknowledgement and result
+    // metadata; the record schema rejects partial sets.
+    expect(
+      await repository.compareAndSet(1, {
+        ...base,
+        commandId: settledId,
+        status: 'succeeded',
+        version: 2,
+        deliveryAttempts: 1,
+        lastChannelGeneration: 1,
+        lastSequence: 1,
+        firstDispatchedAt: settledAt,
+        lastDispatchedAt: settledAt,
+        acknowledgementReference: 'ack-runtime-integration-0001',
+        acknowledgementDisposition: 'accepted',
+        acknowledgedAt: settledAt,
+        resultStatus: 'succeeded',
+        resultRecordedAt: settledAt,
+        updatedAt: settledAt,
+      })
+    ).toBe(true)
+    await isolated.application.execute(
+      sql`insert into runtime_event_receipts (command_id, message_kind, message_sequence, frame_hash, outcome, recorded_at) values (${settledId}, 'progress', 1, ${`s2:${'a'.repeat(64)}`}, 'applied', ${settledAt}::timestamptz)`
+    )
+
+    const assessedAt = new Date('2026-09-25T12:00:00.000Z')
+    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+    const applied = await repository.deleteEligibleRuntimeCommands(assessedAt, options)
+    expect(applied.deleted).toBeGreaterThanOrEqual(1)
+    expect(await repository.get(settledId)).toBeUndefined()
+    expect(await repository.get(queuedId)).toBeDefined()
+    const receipts = await isolated.application.execute(
+      sql`select command_id from runtime_event_receipts where command_id = ${settledId}`
+    )
+    expect(receipts).toHaveLength(0)
+
+    // This file's other tests count rows globally, so everything this test
+    // created is removed again (reverse foreign-key order).
+    await isolated.application.execute(
+      sql`delete from runtime_event_receipts where command_id in (${settledId}, ${queuedId})`
+    )
+    await isolated.application.execute(
+      sql`delete from runtime_commands where command_id in (${settledId}, ${queuedId})`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_attempts where attempt_id = ${attempt.attemptId}`
+    )
+    await isolated.application.execute(
+      sql`delete from executions where execution_id = ${execution.executionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from runtime_connections where runtime_connection_id = ${runtimeConnectionId}`
+    )
+  }, 60_000)
+
   test('persists runtime command delivery state across gateway repository restarts', async () => {
     await isolated.migrate()
     const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAM'

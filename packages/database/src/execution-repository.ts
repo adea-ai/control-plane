@@ -14,6 +14,7 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { executionEvents } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
 
 const MAXIMUM_SCAN_LIMIT = 1_000
@@ -105,7 +106,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           references.commands.has(candidate.executionId) ||
           references.events.has(candidate.executionId) ||
           references.checkpoints.has(candidate.executionId) ||
-          references.activeAttempts.has(candidate.executionId)
+          references.activeAttempts.has(candidate.executionId) ||
+          references.runtimeCommands.has(candidate.executionId)
             ? 1
             : 0,
         holds: 0,
@@ -157,6 +159,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     events: Set<string>
     checkpoints: Set<string>
     activeAttempts: Set<string>
+    runtimeCommands: Set<string>
   }> {
     if (executionIds.length === 0) {
       return {
@@ -164,10 +167,11 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         events: new Set(),
         checkpoints: new Set(),
         activeAttempts: new Set(),
+        runtimeCommands: new Set(),
       }
     }
     const ids = [...executionIds]
-    const [commands, events, checkpoints, activeAttempts] = await Promise.all([
+    const [commands, events, checkpoints, activeAttempts, runtimeCommandRefs] = await Promise.all([
       this.database
         .select({ executionId: commandInbox.executionId })
         .from(commandInbox)
@@ -189,12 +193,21 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             sql`${executionAttempts.state} not in ('completed', 'failed', 'cancelled', 'timed_out')`
           )
         ),
+      // Runtime commands and their receipts are deleted by their own class, so
+      // an execution that still has them is not eligible — the foreign key
+      // would refuse the delete anyway, and one class must never depend on
+      // another's ordering to avoid a failed pass.
+      this.database
+        .select({ executionId: runtimeCommands.executionId })
+        .from(runtimeCommands)
+        .where(inArray(runtimeCommands.executionId, ids)),
     ])
     return {
       commands: new Set(commands.map((row) => row.executionId)),
       events: new Set(events.map((row) => row.executionId)),
       checkpoints: new Set(checkpoints.map((row) => row.executionId)),
       activeAttempts: new Set(activeAttempts.map((row) => row.executionId)),
+      runtimeCommands: new Set(runtimeCommandRefs.map((row) => row.executionId)),
     }
   }
 

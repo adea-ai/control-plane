@@ -11,6 +11,7 @@ import {
   StatePromotionProposalSchema,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  RetentionJournalOperationSchema,
   evaluateRetentionEligibility,
   type RetentionAssessment,
   runtimeCommandRecordsShareIdentity,
@@ -40,6 +41,12 @@ import {
   type RuntimeInventoryCheckpoint,
   type RuntimeInventoryCheckpointRepository,
 } from '@control-plane/runtime-sdk'
+
+/** The command a stored event receipt belongs to, when the value carries one. */
+function receiptCommandId(value: unknown): string | undefined {
+  const candidate = value as { commandId?: unknown } | null
+  return typeof candidate?.commandId === 'string' ? candidate.commandId : undefined
+}
 
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
 
@@ -634,6 +641,121 @@ export class SqliteReconciliationCheckpointRepository implements ReconciliationC
 
 export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository {
   constructor(readonly provider: PersistenceProvider) {}
+
+  /**
+   * Deletes settled runtime commands and their event receipts (#194). A command
+   * is a candidate only when a result was recorded (`resultStatus` plus
+   * `resultRecordedAt`), which excludes expired and acknowledged-but-unresolved
+   * commands — those are reconciliation work. Receipts are that command's own
+   * deduplication records and go with it; a late replay of one of its frames
+   * cannot re-apply an effect because inbound frames must reserve their channel
+   * sequence first and the event id such a frame would append is deterministic
+   * in `(commandId, type, sequence)`. Dry run by default, revision-guarded.
+   */
+  async deleteEligibleRuntimeCommands(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('RUNTIME_LEDGER_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'runtime-ledgers',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId: string | undefined
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.runtimeCommands, {
+          limit: 128,
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      afterId = page[page.length - 1]?.id
+      const candidates = page.filter((record) => {
+        const parsed = RuntimeCommandRecordSchema.safeParse(record.value)
+        if (!parsed.success) return false
+        const settledAt = parsed.data.resultRecordedAt
+        return (
+          parsed.data.resultStatus !== undefined &&
+          settledAt !== undefined &&
+          expiredAt(settledAt, now)
+        )
+      })
+      for (const candidate of candidates) {
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const stored = await transaction.get(namespaces.runtimeCommands, candidate.id)
+          if (stored === undefined) return { verdict: undefined, removed: false }
+          const command = RuntimeCommandRecordSchema.parse(stored.value)
+          const settledAt = command.resultRecordedAt
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              settledAt === undefined || options.policyRetainMs === null
+                ? undefined
+                : new Date(Date.parse(settledAt) + options.policyRetainMs).toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: command.resultStatus !== undefined && settledAt !== undefined,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences: 0,
+            holds: 0,
+          })
+          if (verdict.verdict !== 'eligible' || dryRun) return { verdict, removed: false }
+          const receipts = (await transaction.list(namespaces.runtimeEventReceipts)).filter(
+            (record) => receiptCommandId(record.value) === command.commandId
+          )
+          if (options.journal !== undefined) {
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                ...receipts.map((record) => ({
+                  kind: 'sqlite.delete',
+                  namespace: namespaces.runtimeEventReceipts,
+                  id: record.id,
+                })),
+                { kind: 'sqlite.delete', namespace: namespaces.runtimeCommands, id: stored.id },
+              ])
+            )
+          }
+          for (const receiptRecord of receipts) {
+            await transaction.delete(
+              namespaces.runtimeEventReceipts,
+              receiptRecord.id,
+              receiptRecord.revision
+            )
+          }
+          let removed = false
+          try {
+            removed = await transaction.delete(
+              namespaces.runtimeCommands,
+              stored.id,
+              stored.revision
+            )
+          } catch {
+            return { verdict, removed: false }
+          }
+          return { verdict, removed }
+        })
+        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+          done = true
+          break
+        }
+        if (outcome.removed) deleted += 1
+      }
+      if (page.length < 128) break
+    }
+    return { dryRun, deleted, raced, ...counter.result() }
+  }
 
   create(input: RuntimeCommandRecord): Promise<RuntimeCommandCreateResult> {
     const command = RuntimeCommandRecordSchema.parse(input)

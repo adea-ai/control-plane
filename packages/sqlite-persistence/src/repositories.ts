@@ -522,6 +522,13 @@ export class SqliteExecutionRepository implements ExecutionRepository {
           const attempts = (await transaction.list(namespaces.attempts))
             .map((record) => ExecutionAttemptSchema.parse(record.value))
             .filter((attempt) => attempt.executionId === execution.executionId)
+          // Runtime commands are deleted by their own class, so an execution
+          // that still has them is retained rather than removed first.
+          const runtimeCommands = (await transaction.list('runtime-commands')).some(
+            (record) =>
+              (record.value as { executionId?: unknown } | null)?.executionId ===
+              execution.executionId
+          )
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
@@ -536,7 +543,11 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             publicationSettled: true,
             rejectionKeyReserved: true,
             pendingReferences:
-              acceptance !== undefined || events || checkpoints || activeAttempts.length > 0
+              acceptance !== undefined ||
+              events ||
+              checkpoints ||
+              runtimeCommands ||
+              activeAttempts.length > 0
                 ? 1
                 : 0,
             holds: 0,
