@@ -30,6 +30,13 @@ export const retentionClasses = {
     sqlite: 'SqliteContextPackageRepository',
     postgres: 'PostgresContextPackageRetention',
   },
+  messaging: {
+    apply: 'deleteEligibleOutboxEvents',
+    // PostgreSQL-only: the supported SQLite profiles carry no inbox/outbox
+    // tables, so there is nothing to sweep there.
+    sqlite: null,
+    postgres: 'PostgresMessagingRetention',
+  },
 }
 
 export const retentionClassIds = Object.keys(retentionClasses)

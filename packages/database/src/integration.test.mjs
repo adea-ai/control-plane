@@ -46,6 +46,7 @@ import {
   PostgresContextPackageRepository,
   PostgresContextPackageRetention,
 } from './context-package-repository.ts'
+import { PostgresMessagingRetention } from './messaging-retention.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
 import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
@@ -3185,6 +3186,50 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
     ).toBeUndefined()
   })
+
+  test('deleteEligibleOutboxEvents removes only settled deliveries', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFJ'
+    const publishedAt = '2026-08-01T11:00:00.000Z'
+    // Inside the window relative to the assessment instant below.
+    const recent = '2026-11-15T11:00:00.000Z'
+    const seed = async (idSuffix, status, settledAt, extra = {}) => {
+      // outbox_events.id is a uuid column.
+      const id = `00000000-0000-4000-8000-0000000000${idSuffix}`
+      await isolated.application.execute(
+        sql`insert into outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status, attempts, revision, created_at, updated_at, published_at, quarantined_at) values (${id}, 'runtime_connection', ${`rnc_${suffix}`}, 'runtime.availability_changed', ${JSON.stringify({ marker: id })}::jsonb, ${status}, 1, 1, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${settledAt}::timestamptz, ${
+          extra.quarantinedAt === undefined ? null : extra.quarantinedAt
+        }::timestamptz)`
+      )
+      return id
+    }
+    // Settled and old: the only deletable shape.
+    const settled = await seed('01', 'published', publishedAt)
+    // Settled but inside the window.
+    const young = await seed('02', 'published', recent)
+    // Settled shape, but quarantined: unresolved work, never swept.
+    const quarantined = await seed('03', 'published', publishedAt, { quarantinedAt: publishedAt })
+    // Still to be delivered.
+    const pending = await seed('04', 'pending', null)
+    const failed = await seed('05', 'failed', null)
+
+    const retention = new PostgresMessagingRetention(isolated.application)
+    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+    const dry = await retention.deleteEligibleOutboxEvents(assessedAt, {
+      ...options,
+      dryRun: true,
+    })
+    expect(dry.deleted).toBe(0)
+    expect(dry.eligible).toBeGreaterThanOrEqual(1)
+
+    const applied = await retention.deleteEligibleOutboxEvents(assessedAt, options)
+    expect(applied.deleted).toBeGreaterThanOrEqual(1)
+    const remaining = await isolated.application.execute(
+      sql`select id from outbox_events where id in (${settled}, ${young}, ${quarantined}, ${pending}, ${failed}) order by id`
+    )
+    expect(remaining.map((row) => row.id)).toEqual([young, quarantined, pending, failed].toSorted())
+  }, 60_000)
 
   test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
     // A derived package: the shared fixtures are referenced by other tests and

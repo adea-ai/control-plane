@@ -206,6 +206,38 @@ describe('retention apply CLI (#194)', () => {
     }
   }, 60000)
 
+  test('a class with no path on the requested backend is refused', async () => {
+    // messaging is PostgreSQL-only: the SQLite profiles carry no inbox or
+    // outbox tables, so the command refuses instead of reporting zero work.
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-apply-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const refused = spawnSync(
+        process.execPath,
+        [
+          script,
+          '--backend',
+          'sqlite',
+          '--class',
+          'messaging',
+          '--database',
+          path,
+          '--now',
+          assessedAt,
+        ],
+        { encoding: 'utf8', timeout: 30000 }
+      )
+      expect(refused.status).toBe(1)
+      expect(refused.stderr.trim()).toMatch(/^RETENTION_APPLY_FAILED/)
+      expect(refused.stdout).toBe('')
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
   test('unsupported classes, relative paths and bad instants fail with one sanitized code', async () => {
     const unsupported = spawnSync(
       process.execPath,
