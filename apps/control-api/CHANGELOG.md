@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.13.0...control-api-v1.14.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** delete execution events with preserved identity ([#709](https://github.com/adea-ai/control-plane/issues/709)) ([a41dc81](https://github.com/adea-ai/control-plane/commit/a41dc8116387809e4898a39196c9a5bfa62fca6b))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.12.0...control-api-v1.13.0) (2026-09-25)
 
 
