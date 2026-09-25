@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/domain-v1.24.0...domain-v1.25.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** evaluation runs and audit records, replacing an unsafe primitive ([#730](https://github.com/adea-ai/control-plane/issues/730)) ([524f8a6](https://github.com/adea-ai/control-plane/commit/524f8a665ca6e8326d2e0e66b2a8b15127da9962))
+
 ## [1.24.0](https://github.com/adea-ai/control-plane/compare/domain-v1.23.0...domain-v1.24.0) (2026-09-25)
 
 

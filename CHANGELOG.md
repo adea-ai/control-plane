@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.57.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.56.0...workspace-v1.57.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** evaluation runs and audit records, replacing an unsafe primitive ([#730](https://github.com/adea-ai/control-plane/issues/730)) ([524f8a6](https://github.com/adea-ai/control-plane/commit/524f8a665ca6e8326d2e0e66b2a8b15127da9962))
+
+
+### Bug Fixes
+
+* **marketplace:** declare the browsing index in the SDK response contract ([#732](https://github.com/adea-ai/control-plane/issues/732)) ([83e3f8a](https://github.com/adea-ai/control-plane/commit/83e3f8abe53e6e305575434bcf6548a8edd8ecf4))
+
 ## [1.56.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.55.0...workspace-v1.56.0) (2026-09-25)
 
 

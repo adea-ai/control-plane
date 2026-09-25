@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sdk",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Typed client for the Control Plane API with transport, response mapping, OpenAPI baseline, and testing helpers.",
   "keywords": [
     "agents",
