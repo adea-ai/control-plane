@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.24.0...sqlite-persistence-v1.25.0) (2026-09-25)
+
+
+### Features
+
+* retention-interaction-receipts ([#726](https://github.com/adea-ai/control-plane/issues/726)) ([39703ce](https://github.com/adea-ai/control-plane/commit/39703ce7ee3ba5b77c87705df7f3246e66709b73))
+
 ## [1.24.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.23.0...sqlite-persistence-v1.24.0) (2026-09-25)
 
 

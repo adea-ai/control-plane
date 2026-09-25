@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.55.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.54.0...workspace-v1.55.0) (2026-09-25)
+
+
+### Features
+
+* retention-interaction-receipts ([#726](https://github.com/adea-ai/control-plane/issues/726)) ([39703ce](https://github.com/adea-ai/control-plane/commit/39703ce7ee3ba5b77c87705df7f3246e66709b73))
+
 ## [1.54.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.53.0...workspace-v1.54.0) (2026-09-25)
 
 
