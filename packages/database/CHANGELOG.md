@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/adea-ai/control-plane/compare/database-v1.27.0...database-v1.28.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** delete context packages with reference safety ([#716](https://github.com/adea-ai/control-plane/issues/716)) ([1b85ad9](https://github.com/adea-ai/control-plane/commit/1b85ad9ef720cc8c19d4f23e7245d829c33049b8))
+
 ## [1.27.0](https://github.com/adea-ai/control-plane/compare/database-v1.26.0...database-v1.27.0) (2026-09-25)
 
 
