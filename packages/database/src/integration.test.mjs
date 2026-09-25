@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { appendFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
@@ -3176,6 +3180,194 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(
       await repository.get({ ...request, projectId: 'prj_01JABCDEF0123456789ABCDEFH' })
     ).toBeUndefined()
+  })
+
+  test('reapplying the journal restores rejection identity on a snapshot without it', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFE'
+    const now = '2026-07-31T11:00:00.000Z'
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-reapply-'))
+    const journalPath = join(directory, 'retention.jsonl')
+    try {
+      const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+      const accepted = await new CommandInboxService({
+        repository,
+        executionIdFactory: () => `exe_${suffix}`,
+        executionPlanValidator: { validate: async () => true },
+        now: () => now,
+      }).acceptExecution({
+        callerPrincipalId: 'svc_retention-reapply',
+        operation: 'execution.accept',
+        commandId: `cmd_${suffix}`,
+        requestId: `req_${suffix}`,
+        idempotencyKey: 'integration-retention-reapply-1',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: `wsp_${suffix}`,
+          projectId: `prj_${suffix}`,
+          taskId: `tsk_${suffix}`,
+          agentId: `agt_${suffix}`,
+        },
+        executionPlan: {
+          executionPlanId: `pln_${suffix}`,
+          contentDigest: `sha256:${'b'.repeat(64)}`,
+          schemaVersion: 1,
+        },
+        receivedAt: now,
+        retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+      })
+      const executionId = accepted.execution.executionId
+      const events = new PostgresExecutionEventRepository(isolated.application)
+      const eventId = `evt_${suffix}`
+      await events.append({
+        eventId,
+        executionId,
+        type: 'execution.progress',
+        schemaVersion: 1,
+        correlation: {
+          workspaceId: accepted.execution.correlation.workspaceId,
+          projectId: accepted.execution.correlation.projectId,
+          taskId: accepted.execution.correlation.taskId,
+          agentId: accepted.execution.correlation.agentId,
+          requestId: accepted.execution.correlation.requestId,
+          traceId: 'trc_01CRZ3NDEKTSV4RRFFQ69G5FFE',
+        },
+        payload: { step: 'retention' },
+        occurredAt: now,
+        recordedAt: now,
+        retentionExpiresAt: '2026-08-24T11:06:00.000Z',
+      })
+      const event = await events.get(eventId)
+      await events.compareAndSetPublication(event.publication.version, {
+        ...event,
+        publication: {
+          status: 'published',
+          attempts: 1,
+          version: event.publication.version + 1,
+          publishedAt: now,
+        },
+      })
+      const terminalAt = '2026-08-24T11:05:00.000Z'
+      await isolated.application.execute(
+        sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+      )
+      await isolated.application.execute(
+        sql`update command_inbox set status = 'completed', terminal_at = ${terminalAt}::timestamptz, result_reference = 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' where command_id = ${accepted.command.commandId}`
+      )
+      const scope = {
+        callerPrincipalId: 'svc_retention-reapply',
+        operation: 'execution.accept',
+        workspaceId: accepted.execution.correlation.workspaceId,
+        projectId: accepted.execution.correlation.projectId,
+        idempotencyKey: 'integration-retention-reapply-1',
+      }
+      const assessedAt = new Date('2026-09-24T12:00:00.000Z')
+      expect(await repository.retireExpiredCommand(scope, assessedAt.toISOString())).toBe(true)
+
+      // The operator CLI's journal sink shape, written by the test so the
+      // reapply CLI reads a real journal file.
+      const journal = async (backend, classId, operations) => {
+        await appendFile(
+          journalPath,
+          `${JSON.stringify({
+            version: 1,
+            at: new Date().toISOString(),
+            backend,
+            classId,
+            operations,
+          })}\n`
+        )
+      }
+      const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 10, dryRun: false }
+      const inbox = await repository.deleteEligibleInbox(assessedAt, {
+        ...options,
+        journal: (operations) => journal('postgres', 'command-inbox', operations),
+      })
+      expect(inbox.deleted).toBe(1)
+      const deletedEvents = await events.deleteEligibleEvents(assessedAt, {
+        ...options,
+        journal: (operations) => journal('postgres', 'execution-events', operations),
+      })
+      expect(deletedEvents.deleted).toBe(1)
+
+      // Simulate a snapshot that predates the retirement: the identity rows are
+      // gone while the payload rows would be present again after a restore.
+      const scopeKey = createHash('sha256')
+        .update(
+          [
+            scope.callerPrincipalId,
+            scope.operation,
+            scope.workspaceId,
+            scope.projectId,
+            scope.idempotencyKey,
+          ].join('\u001f')
+        )
+        .digest('hex')
+      await isolated.application.execute(
+        sql`delete from retired_command_keys where scope_key = ${scopeKey}`
+      )
+      await isolated.application.execute(
+        sql`delete from retired_execution_event_ids where event_id = ${eventId}`
+      )
+
+      // Reapply through the operator CLI against the isolated database.
+      const base = new URL(process.env.DATABASE_URL)
+      const target = new URL(base)
+      target.pathname = `/${isolated.name}`
+      const reapplied = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('../../../scripts/retention-reapply.mjs', import.meta.url)),
+          '--backend',
+          'postgres',
+          '--database',
+          isolated.name,
+          '--host',
+          base.hostname,
+          '--journal',
+          journalPath,
+        ],
+        {
+          cwd: fileURLToPath(new URL('../../..', import.meta.url)),
+          encoding: 'utf8',
+          timeout: 30000,
+          env: { ...process.env, DATABASE_URL: target.href },
+        }
+      )
+      expect(reapplied.stderr).toBe('')
+      expect(reapplied.status).toBe(0)
+      const report = JSON.parse(reapplied.stdout)
+      expect(report.report).toBe('retention-reapply')
+      // The journal restates the rejection identity for both classes, so both
+      // missing identity rows come back: retirement key and retired event id.
+      expect(report).toMatchObject({ applied: 2, skipped: 2 })
+
+      // The rejection identity is back: replays fail closed again.
+      const replay = await repository.get(scope).catch((thrown) => thrown)
+      expect(replay).toBeInstanceOf(CommandInboxError)
+      expect(replay.code).toBe('COMMAND_RETENTION_EXPIRED')
+      expect(
+        await events.append({
+          eventId,
+          executionId,
+          type: 'execution.progress',
+          schemaVersion: 1,
+          correlation: {
+            workspaceId: accepted.execution.correlation.workspaceId,
+            projectId: accepted.execution.correlation.projectId,
+            taskId: accepted.execution.correlation.taskId,
+            agentId: accepted.execution.correlation.agentId,
+            requestId: accepted.execution.correlation.requestId,
+            traceId: 'trc_01CRZ3NDEKTSV4RRFFQ69G5FFE',
+          },
+          payload: { step: 'retention' },
+          occurredAt: now,
+          recordedAt: now,
+          retentionExpiresAt: '2026-08-24T11:06:00.000Z',
+        })
+      ).toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('deleteEligibleEvents preserves deduplication identity and sequence order', async () => {

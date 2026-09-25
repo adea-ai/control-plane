@@ -5,6 +5,7 @@ import {
   type Execution,
   type RetentionAssessment,
   type RetentionDeletionResult,
+  type RetentionJournalSink,
 } from '@control-plane/domain'
 import {
   ExecutionEventSchema,
@@ -85,6 +86,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       readonly policyRetainMs: number | null
       readonly bound?: number
       readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
@@ -124,6 +126,19 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       })
       if (!counter.add(verdict)) break
       if (verdict.verdict !== 'eligible' || dryRun) continue
+      // Journal the retirement identity and the delete before applying them.
+      if (options.journal !== undefined) {
+        await options.journal([
+          {
+            kind: 'postgres.retireEventId',
+            eventId: candidate.eventId,
+            executionId: candidate.executionId,
+            sequence: candidate.sequence,
+            retiredAt: now.toISOString(),
+          },
+          { kind: 'postgres.deleteEvent', eventId: candidate.eventId },
+        ])
+      }
       const outcome = await this.database.transaction(async (transaction) => {
         await transaction
           .insert(retiredExecutionEventIds)

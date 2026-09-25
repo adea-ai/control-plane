@@ -56,6 +56,49 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: restore-time reapplication (2026-09-25)
+
+The release gate this plan named — "reapplying deletion records from an
+independent durable source before exposing an older restored snapshot" — is now
+implemented for both deleted classes.
+
+Every deletion pass writes a **journal** before it changes storage: each entry
+carries the effects for one candidate, and reapply applies them by explicit
+per-backend branches (never by building SQL from journal content, so a tampered
+journal cannot widen its own authority). Ordering is at-least-once: an entry for
+an effect that never happened — the process died between the append and the
+storage change — replays as a no-op, because inserts are insert-if-absent and
+deletes are by identity.
+
+The journal therefore also **restates the rejection identity**, not just the
+delete. That distinction matters for commands: retirement is a precondition of
+eligibility and normally happened long before the deletion, so a snapshot old
+enough to predate the retirement would otherwise come back with neither the
+payload's rejection key nor a way to recover it.
+
+- `retention-apply` writes the journal (default
+  `<database>.retention-journal.jsonl` for SQLite, `retention-journal.jsonl`
+  otherwise; `--journal` overrides) and reports its path. Dry runs write
+  nothing.
+- `retention-reapply` applies a journal to a restored copy, idempotently, with
+  validated targets and one sanitized failure code. Run it after restoring a
+  snapshot and before exposing the copy.
+
+Evidence: a SQLite test takes a snapshot, deletes, restores the older snapshot,
+reapplies (the payload disappears again and replays fail closed), then removes
+the rejection key from the restored copy to simulate an even older snapshot —
+where a replay would previously be accepted silently — and shows reapply
+restating it so replays fail closed again, with a third reapply a no-op. A
+PostgreSQL integration test drives the same CLI against a real restored copy
+with both identity rows removed and asserts the rejection identity returns for
+commands and events.
+
+Remaining here: retiring is still not an operator surface of its own, so the
+journal cannot yet record a retirement performed outside a deletion pass (add
+that when a retirement command exists), and the journal lives next to the
+database rather than in object storage — moving it there, with the same
+at-least-once ordering, is the next durability step.
+
 ## Increment: execution-events deletion with preserved identity (2026-09-25)
 
 `deleteEligibleEvents(now, { policyRetainMs, bound, dryRun })` on both event
