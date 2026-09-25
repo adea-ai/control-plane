@@ -1516,6 +1516,131 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(delegations)).toHaveLength(1)
   })
 
+  test('evaluation runs and release audit records age out on their own windows', async () => {
+    const oldAt = '2026-01-01T11:00:00.000Z'
+    const recentAt = '2026-12-01T11:00:00.000Z'
+    const repository = new PostgresEvaluationRepository(isolated.application)
+    const fixture = {
+      taskId: 'retention-case',
+      version: '1',
+      candidate: 'candidate',
+      prompt: 'Inspect the gate.',
+      untrustedSummary: 'Everything passed.',
+      requirements: [
+        { id: 'gate', evidence: { id: 'run', candidate: 'candidate', outcome: 'unavailable' } },
+      ],
+    }
+    const artifact = { id: 'offline-fixture', version: '1', digest: `sha256:${'1'.repeat(64)}` }
+    const createRun = async (evalRunId, clock) => {
+      const service = new EvaluationService({ repository, now: () => clock })
+      const observed = await service.run({
+        evalRunId,
+        suite: {
+          evalSuiteId: 'offline-suite',
+          version: '1',
+          digest: artifact.digest,
+          dataset: artifact,
+          mode: 'offline',
+          cases: [
+            {
+              evalCaseId: fixture.taskId,
+              inputDigest: evidenceAuditFixtureDigest(fixture),
+              scorers: [
+                {
+                  metric: 'functional_correctness',
+                  direction: 'min',
+                  threshold: 1,
+                  required: true,
+                },
+              ],
+            },
+          ],
+        },
+        configuration: {
+          executionPlanDigest: artifact.digest,
+          profile: artifact,
+          skills: [],
+          graph: artifact,
+          runtime: artifact,
+          model: artifact,
+          tools: [],
+          policy: artifact,
+        },
+        execute: createEvidenceAuditMetricsExecutor({
+          fixtures: [fixture],
+          executorReference: 'scripted-control',
+          seed: 1104,
+          executor: async ({ tools }) => {
+            const evidence = tools.inspect('gate')
+            return {
+              status: 'partial',
+              requirements: [{ id: 'gate', evidenceId: evidence.id, state: 'unavailable' }],
+            }
+          },
+        }),
+      })
+      await repository.saveRun({ ...observed, completedAt: clock })
+    }
+    const oldRun = 'eval_retention_old_01CRZ3NDEKTSV4RRFFQ69G5FAR'
+    const recentRun = 'eval_retention_recent_01CRZ3NDEKTSV4RRFFQ69G5FAR'
+    await createRun(oldRun, oldAt)
+    await createRun(recentRun, recentAt)
+
+    const assessedAt = new Date('2027-01-01T12:00:00.000Z')
+    const halfYear = 180 * 24 * 60 * 60 * 1_000
+    const applied = await repository.deleteEligibleEvaluationRuns(assessedAt, {
+      policyRetainMs: halfYear,
+      bound: 64,
+      dryRun: false,
+    })
+    expect(applied.deleted).toBeGreaterThanOrEqual(1)
+    expect(await repository.getRun(oldRun)).toBeUndefined()
+    expect(await repository.getRun(recentRun)).toBeDefined()
+
+    // A release audit record gets its own longer window, so it survives a pass
+    // that removed a half-year-old evaluation.
+    const oldAudit = '00000000-0000-4000-8000-000000000011'
+    const recentAudit = '00000000-0000-4000-8000-000000000012'
+    const seedAudit = async (releaseAuditId, createdAt) => {
+      await isolated.application.execute(
+        sql`insert into release_audit_records (release_audit_id, release_gate_id, action, evidence, created_at) values (${releaseAuditId}, 'gate_retention_fixture', 'promote', ${JSON.stringify({ releaseGateId: 'gate_retention_fixture' })}::jsonb, ${createdAt}::timestamptz)`
+      )
+    }
+    await seedAudit(oldAudit, oldAt)
+    await seedAudit(recentAudit, recentAt)
+    const audit = await repository.deleteEligibleReleaseAuditRecords(assessedAt, {
+      policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
+      bound: 64,
+      dryRun: false,
+    })
+    expect(audit.deleted).toBe(0)
+    const survivors = await isolated.application.execute(
+      sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
+    )
+    expect(survivors).toHaveLength(2)
+
+    // Past the long window, only the older record goes.
+    const later = new Date('2028-01-01T12:00:00.000Z')
+    const longAfter = await repository.deleteEligibleReleaseAuditRecords(later, {
+      policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
+      bound: 64,
+      dryRun: false,
+    })
+    expect(longAfter.deleted).toBeGreaterThanOrEqual(1)
+    const remaining = await isolated.application.execute(
+      sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
+    )
+    expect(remaining.map((row) => row.release_audit_id)).toEqual([recentAudit])
+
+    // Everything this test created is removed again: other tests count rows.
+    await isolated.application.execute(
+      sql`delete from evaluation_runs where eval_run_id in (${oldRun}, ${recentRun})`
+    )
+    await isolated.application.execute(
+      sql`delete from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
+    )
+  }, 90_000)
+
   test('deleteEligibleExecutionPlans frees a plan only once nothing pins it', async () => {
     // A derived plan: the compiler stamps compiledAt, so the window is derived
     // from the fixture rather than the fixture from the window.

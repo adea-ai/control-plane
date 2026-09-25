@@ -56,6 +56,28 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: evaluation-run and audit-record deletion (2026-09-25)
+
+Two classes that needed no reference logic, and one of them replaced an unsafe
+primitive.
+
+`deleteEligibleEvaluationRuns(now, { policyRetainMs, bound, dryRun })` deletes
+evaluation runs past their window (180 days by decision) on both stores. Both
+stores previously exposed `deleteCompletedBefore(cutoff)`, a **cutoff-only
+sweep with no dry run, no bound and no journal** — the same class of unsafe
+age-only entry point the plan called out for the inbox and events before #636.
+It is gone: the class now uses the shared eligibility predicate, is dry-run by
+default, bounded, revision-guarded and journalled, and the existing test was
+updated to the new shape.
+
+`deleteEligibleReleaseAuditRecords(now, { policyRetainMs, bound, dryRun })` is
+PostgreSQL-only (the supported SQLite profiles carry no release audit records
+table) and keeps its own longer window (400 days by decision). It is the same
+shape: dry-run by default, bounded, journalled, and it never removes a record
+inside the window. The integration test proves the two windows are independent —
+a pass that removes a half-year-old evaluation leaves the same-age audit record
+alone, and a later pass with the long window removes only the older record.
+
 ## Increment: execution-plan deletion (2026-09-25)
 
 `deleteEligibleExecutionPlans(now, { policyRetainMs, bound, dryRun })` on both

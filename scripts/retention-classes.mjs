@@ -30,6 +30,18 @@ export const retentionClasses = {
     sqlite: 'SqliteContextPackageRepository',
     postgres: 'PostgresContextPackageRetention',
   },
+  'evaluation-runs': {
+    apply: 'deleteEligibleEvaluationRuns',
+    sqlite: 'SqliteEvaluationRepository',
+    postgres: 'PostgresEvaluationRepository',
+  },
+  'audit-records': {
+    // PostgreSQL-only: the supported SQLite profiles carry no release audit
+    // records table.
+    apply: 'deleteEligibleReleaseAuditRecords',
+    sqlite: null,
+    postgres: 'PostgresEvaluationRepository',
+  },
   'execution-plans': {
     apply: 'deleteEligibleExecutionPlans',
     sqlite: 'SqliteExecutionPlanRepository',

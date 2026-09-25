@@ -149,7 +149,7 @@ test('atomically retains an observed evaluation run through concurrency, rollbac
   }
 })
 
-test('deleteCompletedBefore removes only evaluation runs past the retention cutoff', async () => {
+test('deleteEligibleEvaluationRuns removes only runs past the retention window', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-eval-retention-'))
   const path = join(directory, 'state.sqlite')
   const provider = new SqlitePersistenceProvider({ path })
@@ -224,13 +224,32 @@ test('deleteCompletedBefore removes only evaluation runs past the retention cuto
     await buildSaved('sqlite-retention-lost', '2026-08-01T12:00:00.000Z')
     await buildSaved('sqlite-retention-kept', '2026-09-16T12:00:00.000Z')
 
-    const deleted = await repository.deleteCompletedBefore(new Date('2026-09-15T12:00:00.000Z'))
-    expect(deleted).toBe(1)
+    // Window chosen so exactly the older run is past its deadline.
+    const applied = await repository.deleteEligibleEvaluationRuns(
+      new Date('2026-09-15T12:00:00.000Z'),
+      { policyRetainMs: 44 * 24 * 60 * 60 * 1_000, dryRun: false }
+    )
+    expect(applied.deleted).toBe(1)
     expect(await repository.getRun('sqlite-retention-lost')).toBeUndefined()
     expect(await repository.getRun('sqlite-retention-kept')).toBeDefined()
 
-    // Idempotent: a repeated sweep deletes nothing further.
-    expect(await repository.deleteCompletedBefore(new Date('2026-09-15T12:00:00.000Z'))).toBe(0)
+    // The default is a dry run: a second pass deletes nothing.
+    const dry = await repository.deleteEligibleEvaluationRuns(
+      new Date('2026-09-15T12:00:00.000Z'),
+      { policyRetainMs: 44 * 24 * 60 * 60 * 1_000 }
+    )
+    expect(dry.deleted).toBe(0)
+    expect(await repository.getRun('sqlite-retention-kept')).toBeDefined()
+
+    // Idempotent: a repeated pass deletes nothing further.
+    expect(
+      (
+        await repository.deleteEligibleEvaluationRuns(new Date('2026-09-15T12:00:00.000Z'), {
+          policyRetainMs: 44 * 24 * 60 * 60 * 1_000,
+          dryRun: false,
+        })
+      ).deleted
+    ).toBe(0)
   } finally {
     await provider.close({ checkpoint: true })
     await rm(directory, { recursive: true, force: true })
