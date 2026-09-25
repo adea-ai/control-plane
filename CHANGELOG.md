@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.58.0...workspace-v1.58.1) (2026-09-25)
+
+
+### Documentation
+
+* **railway:** how to run config plan when the CLI guard misfires ([#736](https://github.com/adea-ai/control-plane/issues/736)) ([32fbfae](https://github.com/adea-ai/control-plane/commit/32fbfae0b16101fdd09967aa29b29ef23acdbf35))
+
 ## [1.58.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.57.0...workspace-v1.58.0) (2026-09-25)
 
 
