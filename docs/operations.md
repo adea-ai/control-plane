@@ -217,9 +217,16 @@ bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
 bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
   --database control_plane --host <neon-host>
 
-# The same command covers execution events:
+# The same command covers execution events and executions:
 #   --class execution-events
+#   --class executions
 ```
+
+Executions are the last class to become eligible: an execution stays retained
+while its acceptance record, its events, a reconciliation checkpoint or a
+non-terminal attempt still exists, so a pass over the earlier classes is what
+frees it. Running `--class executions` first is harmless — the pass reports
+`reference_pending` until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
 are eligible, and why the rest are retained. Deleting requires

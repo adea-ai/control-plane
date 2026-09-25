@@ -56,6 +56,32 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: executions deletion with reference safety (2026-09-25)
+
+`deleteEligibleExecutions(now, { policyRetainMs, bound, dryRun })` on both
+execution repositories removes terminal executions and their settled attempts.
+The ordering proof for this class is the opposite of the inbox's: an execution
+is the **last** class to become eligible, because everything that carries its
+identity has to go first.
+
+- The class has no stored retention deadline, so eligibility derives one from
+  the terminal instant and the configured duration (90 days by decision); a null
+  duration yields no deadline, which the shared predicate reads as an unbounded
+  class.
+- A surviving acceptance record, execution event, reconciliation checkpoint or
+  non-terminal attempt retains the execution as `reference_pending`. A
+  bottom-up pass therefore deletes the acceptance record and events first, then
+  the execution — observed in the integration test, where the same fixture is
+  retained until its acceptance record goes and eligible immediately after.
+- Attempts are removed with the execution, terminal ones only, and the row's
+  state and version guard the delete so a concurrent transition is reported as
+  `raced` rather than forced. The journal records both deletes.
+
+Storage note for the next class that needs reference checks: PostgreSQL
+reference checks are plain set queries over the referencing tables, not
+correlated `exists` subqueries — the driver's boolean representation is not JS
+truthiness, and the boolean form silently reported every candidate as retained.
+
 ## Increment: restore-time reapplication (2026-09-25)
 
 The release gate this plan named — "reapplying deletion records from an

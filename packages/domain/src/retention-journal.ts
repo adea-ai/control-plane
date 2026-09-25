@@ -44,6 +44,14 @@ export const RetentionJournalOperationSchema = z.discriminatedUnion('kind', [
     commandId: z.string().min(1).max(30),
   }),
   z.object({
+    kind: z.literal('postgres.deleteAttempt'),
+    attemptId: z.string().min(1).max(30),
+  }),
+  z.object({
+    kind: z.literal('postgres.deleteExecution'),
+    executionId: z.string().min(1).max(30),
+  }),
+  z.object({
     kind: z.literal('postgres.retireEventId'),
     eventId: z.string().min(1).max(30),
     executionId: z.string().min(1).max(30),
