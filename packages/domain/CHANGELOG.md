@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/adea-ai/control-plane/compare/domain-v1.18.0...domain-v1.19.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** delete context packages with reference safety ([#716](https://github.com/adea-ai/control-plane/issues/716)) ([1b85ad9](https://github.com/adea-ai/control-plane/commit/1b85ad9ef720cc8c19d4f23e7245d829c33049b8))
+
 ## [1.18.0](https://github.com/adea-ai/control-plane/compare/domain-v1.17.0...domain-v1.18.0) (2026-09-25)
 
 
