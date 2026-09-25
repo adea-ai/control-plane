@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.11.0...control-api-v1.12.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** authoritative eligibility predicate and assessment ([#702](https://github.com/adea-ai/control-plane/issues/702)) ([393b495](https://github.com/adea-ai/control-plane/commit/393b495f8d1a788402b734e9f1a7793e073eab17))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.10.1...control-api-v1.11.0) (2026-09-24)
 
 
