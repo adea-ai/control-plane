@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.0](https://github.com/adea-ai/control-plane/compare/domain-v1.21.0...domain-v1.22.0) (2026-09-25)
+
+
+### Features
+
+* retention-runtime-ledgers ([#724](https://github.com/adea-ai/control-plane/issues/724)) ([b50342b](https://github.com/adea-ai/control-plane/commit/b50342b1bfd5e63aac2b430577f935d41afdd475))
+* **retention:** delete settled runtime ledgers with their receipts ([b50342b](https://github.com/adea-ai/control-plane/commit/b50342b1bfd5e63aac2b430577f935d41afdd475))
+
 ## [1.21.0](https://github.com/adea-ai/control-plane/compare/domain-v1.20.0...domain-v1.21.0) (2026-09-25)
 
 
