@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.23.0...sqlite-persistence-v1.24.0) (2026-09-25)
+
+
+### Features
+
+* retention-runtime-ledgers ([#724](https://github.com/adea-ai/control-plane/issues/724)) ([b50342b](https://github.com/adea-ai/control-plane/commit/b50342b1bfd5e63aac2b430577f935d41afdd475))
+* **retention:** delete settled runtime ledgers with their receipts ([b50342b](https://github.com/adea-ai/control-plane/commit/b50342b1bfd5e63aac2b430577f935d41afdd475))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.22.0...sqlite-persistence-v1.23.0) (2026-09-25)
 
 
