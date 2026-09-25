@@ -221,6 +221,9 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #   --class execution-events
 #   --class executions
 #   --class context-packages
+#   --class interaction-receipts (deletes confirmed interaction/cancellation
+#                               receipts past the replay window; unconfirmed
+#                               receipts are lost-ack identities and always stay)
 #   --class runtime-ledgers    (deletes commands with a recorded result and their
 #                               event receipts; expired or unresolved commands are
 #                               reconciliation work and stay)

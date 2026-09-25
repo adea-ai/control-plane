@@ -47,6 +47,7 @@ import {
   PostgresContextPackageRetention,
 } from './context-package-repository.ts'
 import { PostgresMessagingRetention } from './messaging-retention.ts'
+import { PostgresReceiptRetention } from './receipt-retention.ts'
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.ts'
 import { PostgresContextCommandRepository } from './context-command-repository.ts'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.ts'
@@ -1513,6 +1514,77 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await restarted.compareAndSet(1, { ...running, revision: 3 })).toBe(false)
     expect(await isolated.application.select().from(delegations)).toHaveLength(1)
   })
+
+  test('sweepEligibleInteractionReceipts removes only confirmed receipts', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
+    const acceptedAt = '2026-08-01T11:00:00.000Z'
+    const recent = '2026-11-20T11:00:00.000Z'
+    const seed = async (table, commandKey, receipt) => {
+      await isolated.application.execute(
+        sql`insert into ${sql.identifier(table)} (command_key, workspace_id, project_id, receipt) values (${commandKey}, ${`wsp_${suffix}`}, ${`prj_${suffix}`}, ${JSON.stringify(receipt)}::jsonb)`
+      )
+    }
+    const request = (operation) => ({
+      caller: { servicePrincipalId: 'svc_agent-hq' },
+      workspaceId: `wsp_${suffix}`,
+      projectId: `prj_${suffix}`,
+      operation,
+      idempotencyKey: `receipt-fixture-${operation}`,
+      payloadHash: `sha256:${'a'.repeat(64)}`,
+    })
+    const interactionKeys = {
+      settled: `${'1'.repeat(64)}`,
+      confirmedYoung: `${'2'.repeat(64)}`,
+      unconfirmed: `${'3'.repeat(64)}`,
+    }
+    await seed('interaction_commands', interactionKeys.settled, {
+      request: request('interaction.respond'),
+      acceptedAt,
+    })
+    await seed('interaction_commands', interactionKeys.confirmedYoung, {
+      request: request('interaction.respond'),
+      acceptedAt: recent,
+    })
+    await seed('interaction_commands', interactionKeys.unconfirmed, {
+      request: request('interaction.respond'),
+    })
+    const cancellationKey = `${'4'.repeat(64)}`
+    await seed('execution_cancellations', cancellationKey, {
+      request: request('execution.cancel'),
+      acceptedAt,
+    })
+
+    const retention = new PostgresReceiptRetention(isolated.application)
+    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+    const dry = await retention.sweepEligibleInteractionReceipts(assessedAt, {
+      ...options,
+      dryRun: true,
+    })
+    expect(dry.deleted).toBe(0)
+
+    const applied = await retention.sweepEligibleInteractionReceipts(assessedAt, options)
+    expect(applied.deleted).toBe(2)
+    expect(applied.retainedByReason.unconfirmed_signal).toBeGreaterThanOrEqual(1)
+
+    const remaining = await isolated.application.execute(
+      sql`select command_key from interaction_commands where command_key in (${interactionKeys.settled}, ${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+    )
+    expect(remaining.map((row) => row.command_key).toSorted()).toEqual(
+      [interactionKeys.confirmedYoung, interactionKeys.unconfirmed].toSorted()
+    )
+    const cancellations = await isolated.application.execute(
+      sql`select command_key from execution_cancellations where command_key = ${cancellationKey}`
+    )
+    expect(cancellations).toHaveLength(0)
+
+    // Everything this test created is removed again: other tests in this file
+    // count rows globally.
+    await isolated.application.execute(
+      sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+    )
+  }, 60_000)
 
   test('deleteEligibleRuntimeCommands removes settled commands with their receipts', async () => {
     await isolated.migrate()

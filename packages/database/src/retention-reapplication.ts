@@ -2,6 +2,8 @@ import type { RetentionJournalOperation } from '@control-plane/domain'
 import { and, isNull, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
+import { executionCancellations } from './schema/execution-cancellations.js'
+import { interactionCommands } from './schema/interaction-commands.js'
 import { contextPackages } from './schema/context-packages.js'
 import { inboxMessages, outboxEvents } from './schema/messaging.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
@@ -56,6 +58,24 @@ export class PostgresRetentionReapplication {
             .delete(commandInbox)
             .where(sql`${commandInbox.commandId} = ${operation.commandId}`)
             .returning({ commandId: commandInbox.commandId })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteInteractionReceipt': {
+          const removed = await this.database
+            .delete(interactionCommands)
+            .where(sql`${interactionCommands.commandKey} = ${operation.commandKey}`)
+            .returning({ commandKey: interactionCommands.commandKey })
+          if (removed.length > 0) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteCancellationReceipt': {
+          const removed = await this.database
+            .delete(executionCancellations)
+            .where(sql`${executionCancellations.commandKey} = ${operation.commandKey}`)
+            .returning({ commandKey: executionCancellations.commandKey })
           if (removed.length > 0) applied += 1
           else skipped += 1
           break

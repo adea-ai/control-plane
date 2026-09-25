@@ -30,6 +30,11 @@ export const retentionClasses = {
     sqlite: 'SqliteContextPackageRepository',
     postgres: 'PostgresContextPackageRetention',
   },
+  'interaction-receipts': {
+    apply: 'sweepEligibleInteractionReceipts',
+    sqlite: 'SqliteReceiptRetention',
+    postgres: 'PostgresReceiptRetention',
+  },
   'runtime-ledgers': {
     apply: 'deleteEligibleRuntimeCommands',
     sqlite: 'SqliteRuntimeCommandRepository',

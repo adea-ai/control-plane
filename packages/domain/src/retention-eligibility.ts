@@ -18,6 +18,11 @@ import { z } from 'zod'
 export const RetentionEligibilityReasonSchema = z.enum([
   /** The class is reference- or lifecycle-governed; age cannot authorize it. */
   'unbounded_class',
+  /**
+   * The class's confirmation prerequisite is unmet: the record is the identity
+   * a lost-acknowledgement retry relies on, so nothing may remove it yet.
+   */
+  'unconfirmed_signal',
   'missing_expiry',
   'malformed_expiry',
   'not_expired',
@@ -47,6 +52,12 @@ export interface RetentionEligibilityFacts {
   readonly now: string
   /** Policy duration for the class; null means reference-governed retention. */
   readonly policyRetainMs: number | null
+  /**
+   * Classes whose eligibility starts at a confirmation (an accepted receipt, a
+   * settled command) set this false while waiting; omitted means the class has
+   * no such prerequisite.
+   */
+  readonly confirmed?: boolean
   /** Owning command/execution reached a terminal, reconciled state. */
   readonly ownerTerminal: boolean
   /** Publication/delivery settled (no pending or failed delivery). */
@@ -71,6 +82,7 @@ export function evaluateRetentionEligibility(
   facts: RetentionEligibilityFacts
 ): RetentionEligibilityVerdict {
   if (facts.policyRetainMs === null) return retained('unbounded_class')
+  if (facts.confirmed === false) return retained('unconfirmed_signal')
   if (facts.retentionExpiresAt === undefined) return retained('missing_expiry')
   if (!canonicalInstant.test(facts.retentionExpiresAt)) return retained('malformed_expiry')
   const now = Date.parse(facts.now)
@@ -132,6 +144,31 @@ export const RetentionDeletionResultSchema = z.object({
 })
 
 export type RetentionDeletionResult = z.output<typeof RetentionDeletionResultSchema>
+
+/**
+ * Adds two per-reason retained counts. A class that spans more than one storage
+ * table reports one merged reason map so an operator sees a single class.
+ */
+export function realizedCounts(
+  left: Readonly<Record<string, number | undefined>>,
+  right: Readonly<Record<string, number | undefined>>
+): Record<string, number> {
+  const merged: Record<string, number> = {}
+  for (const [reason, count] of Object.entries(left)) {
+    if (count !== undefined) merged[reason] = count
+  }
+  for (const [reason, count] of Object.entries(right)) {
+    if (count === undefined) continue
+    merged[reason] = (merged[reason] ?? 0) + count
+  }
+  return merged
+}
+
+/** The acceptance instant recorded inside a stored receipt, when it has one. */
+export function acceptedInstant(receipt: unknown): string | undefined {
+  const value = (receipt as { acceptedAt?: unknown } | null)?.acceptedAt
+  return typeof value === 'string' ? value : undefined
+}
 
 /** Accumulates per-reason counts for one assessment pass. */
 export class RetentionAssessmentCounter {

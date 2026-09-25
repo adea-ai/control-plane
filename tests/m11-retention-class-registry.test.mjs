@@ -3,6 +3,7 @@ import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/con
 import { retentionClasses } from '../scripts/retention-classes.mjs'
 import * as sqlite from '../packages/sqlite-persistence/src/index.ts'
 import * as postgres from '@control-plane/database'
+import { resolvePostgresRepository } from '../scripts/retention-postgres-repositories.mjs'
 
 // The registry is the single source of truth for which classes have a deletion
 // path. These assertions keep it honest: an entry must name a class the decided
@@ -34,6 +35,16 @@ describe('retention class registry (#194)', () => {
         typeof postgresClass.prototype[entry.apply],
         `${id}: ${entry.postgres}#${entry.apply}`
       ).toBe('function')
+    }
+  })
+
+  test('every entry resolves through the command-side Postgres map', async () => {
+    // The registry test above checks the classes; this checks the map the
+    // operator command actually uses, which drifted once and left three classes
+    // unreachable on PostgreSQL without any test noticing.
+    for (const [id, entry] of Object.entries(retentionClasses)) {
+      const resolved = await resolvePostgresRepository(entry.postgres)
+      expect(typeof resolved, `${id}: ${entry.postgres}`).toBe('function')
     }
   })
 

@@ -21,6 +21,7 @@ export {
   type RetentionReapplicationOutcome,
 } from './retention-reapplication.js'
 export { PostgresMessagingRetention } from './messaging-retention.js'
+export { PostgresReceiptRetention } from './receipt-retention.js'
 export { PostgresExecutionPlanRepository } from './execution-plan-repository.js'
 export { PostgresExecutionValidationCommandRepository } from './validation-command-repository.js'
 export { PostgresExternalSessionRepository } from './external-session-repository.js'

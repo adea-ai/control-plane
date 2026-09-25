@@ -24,6 +24,17 @@ describe('retention eligibility (#194)', () => {
     expect(evaluateRetentionEligibility(eligibleFacts)).toEqual({ verdict: 'eligible' })
   })
 
+  test('an unconfirmed record is retained for the reason that names it', () => {
+    expect(evaluateRetentionEligibility({ ...eligibleFacts, confirmed: false })).toEqual({
+      verdict: 'retained',
+      reason: 'unconfirmed_signal',
+    })
+    // The class-level statement outranks it.
+    expect(
+      evaluateRetentionEligibility({ ...eligibleFacts, confirmed: false, policyRetainMs: null })
+    ).toEqual({ verdict: 'retained', reason: 'unbounded_class' })
+  })
+
   test('an unbounded class is never authorized by age', () => {
     expect(evaluateRetentionEligibility({ ...eligibleFacts, policyRetainMs: null })).toEqual({
       verdict: 'retained',
@@ -134,6 +145,7 @@ describe('retention eligibility (#194)', () => {
   test('every declared reason is reachable and distinctly named', () => {
     const reasons = [
       'unbounded_class',
+      'unconfirmed_signal',
       'missing_expiry',
       'malformed_expiry',
       'not_expired',

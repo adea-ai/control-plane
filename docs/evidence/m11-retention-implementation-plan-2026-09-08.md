@@ -56,6 +56,29 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: interaction and cancellation receipt deletion (2026-09-25)
+
+One class covering both receipt tables (`interaction_commands` and
+`execution_cancellations`; the SQLite equivalents are two record namespaces),
+because they share one policy decision and one lifecycle.
+`sweepEligibleInteractionReceipts` is their single entry point.
+
+The ordering proof is **confirmation**. A receipt is reserved before its signal
+is dispatched and records acceptance afterwards: an unconfirmed receipt is the
+identity that lets a lost-acknowledgement retry be recognised, so it is never a
+candidate — it reports the new `unconfirmed_signal` reason, which names the
+prerequisite instead of the misleading `missing_expiry` an absent deadline would
+otherwise produce. A confirmed receipt becomes a candidate after the replay
+window measured from its acceptance instant. The delete is guarded by the
+acceptance instant that was read, so a receipt confirmed underneath the pass is
+reported as `raced` rather than removed on stale evidence, and both operation
+kinds travel in the journal.
+
+Structural note: the two helpers this class and the messaging class share
+(`realizedCounts`, `acceptedInstant`) live in `packages/domain`, not in one
+store package, because both stores need them and package boundaries forbid a
+store importing its sibling.
+
 ## Increment: runtime-ledger deletion (2026-09-25)
 
 `deleteEligibleRuntimeCommands(now, { policyRetainMs, bound, dryRun })` on both

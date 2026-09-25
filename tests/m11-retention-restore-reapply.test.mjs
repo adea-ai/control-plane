@@ -5,12 +5,37 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { CommandInboxError, CommandInboxService } from '@control-plane/domain'
-import { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } from './index.js'
+import {
+  SqliteCommandAcceptanceRepository,
+  SqlitePersistenceProvider,
+} from '../packages/sqlite-persistence/src/index.ts'
+import { retentionApply } from '../scripts/retention-apply.mjs'
+import { retentionReapply } from '../scripts/retention-reapply.mjs'
 
-const applyScript = fileURLToPath(new URL('../../../scripts/retention-apply.mjs', import.meta.url))
-const reapplyScript = fileURLToPath(
-  new URL('../../../scripts/retention-reapply.mjs', import.meta.url)
-)
+const reapplyScript = fileURLToPath(new URL('../scripts/retention-reapply.mjs', import.meta.url))
+
+/** Both commands run in this process: spawning per case cost the lane its budget. */
+async function apply(argv) {
+  let stdout = ''
+  let stderr = ''
+  const status = await retentionApply({
+    argv,
+    writeOut: (text) => (stdout += text),
+    writeErr: (text) => (stderr += text),
+  })
+  return { status, stdout, stderr }
+}
+
+async function reapply(argv) {
+  let stdout = ''
+  let stderr = ''
+  const status = await retentionReapply({
+    argv,
+    writeOut: (text) => (stdout += text),
+    writeErr: (text) => (stderr += text),
+  })
+  return { status, stdout, stderr }
+}
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -30,13 +55,6 @@ const scope = {
   workspaceId: ids.workspaceId,
   projectId: ids.projectId,
   idempotencyKey: 'retention-restore-reapply-0001',
-}
-
-function run(script, args) {
-  return spawnSync(process.execPath, [script, ...args], {
-    encoding: 'utf8',
-    timeout: 30000,
-  })
 }
 
 async function patchSingleton(provider, namespace, patch) {
@@ -103,7 +121,7 @@ describe('retention restore-time reapplication (#194)', () => {
       // The snapshot predates the deletion — this is the hazard case.
       const snapshot = await provider.backup()
 
-      const applied = run(applyScript, [
+      const applied = await apply([
         '--backend',
         'sqlite',
         '--class',
@@ -142,7 +160,7 @@ describe('retention restore-time reapplication (#194)', () => {
       expect(await restoredRepository.getByExecutionId(ids.executionId)).toBeDefined()
 
       // Reapply the journal before exposing the copy.
-      const reapplied = run(reapplyScript, [
+      const reapplied = await reapply([
         '--backend',
         'sqlite',
         '--database',
@@ -178,7 +196,7 @@ describe('retention restore-time reapplication (#194)', () => {
       )
       expect(await restoredRepository.get(scope)).toBeUndefined()
 
-      const restated = run(reapplyScript, [
+      const restated = await reapply([
         '--backend',
         'sqlite',
         '--database',
@@ -194,7 +212,7 @@ describe('retention restore-time reapplication (#194)', () => {
 
       // Reapplying again is a no-op: inserts are guarded and deletes are by
       // identity, so a journal can be replayed without widening its effect.
-      const again = run(reapplyScript, [
+      const again = await reapply([
         '--backend',
         'sqlite',
         '--database',
@@ -216,13 +234,24 @@ describe('retention restore-time reapplication (#194)', () => {
     }
   }, 90000)
 
+  test('the script entrypoint maps the command result to its exit code', () => {
+    // One spawned case on purpose: everything else runs in this process.
+    const child = spawnSync(process.execPath, [reapplyScript, '--backend', 'sqlite'], {
+      encoding: 'utf8',
+      timeout: 30000,
+    })
+    expect(child.status).toBe(1)
+    expect(child.stderr.trim()).toMatch(/^RETENTION_REAPPLY_FAILED/)
+    expect(child.stdout).toBe('')
+  }, 60000)
+
   test('a missing or relative journal is refused with one sanitized code', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-restore-'))
     const path = join(directory, 'state.sqlite')
     const provider = new SqlitePersistenceProvider({ path })
     try {
       await provider.migrate()
-      const missing = run(reapplyScript, [
+      const missing = await reapply([
         '--backend',
         'sqlite',
         '--database',
@@ -233,7 +262,7 @@ describe('retention restore-time reapplication (#194)', () => {
       expect(missing.status).toBe(1)
       expect(missing.stderr.trim()).toMatch(/^RETENTION_REAPPLY_FAILED/)
 
-      const relative = run(reapplyScript, [
+      const relative = await reapply([
         '--backend',
         'sqlite',
         '--database',
