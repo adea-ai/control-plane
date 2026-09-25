@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.20.0...sqlite-persistence-v1.21.0) (2026-09-25)
+
+
+### Features
+
+* **retention:** delete terminal executions with reference safety ([#714](https://github.com/adea-ai/control-plane/issues/714)) ([29270a5](https://github.com/adea-ai/control-plane/commit/29270a52d93b711e090cffbe1307931ffad45742))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.19.0...sqlite-persistence-v1.20.0) (2026-09-25)
 
 
