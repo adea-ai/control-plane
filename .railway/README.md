@@ -21,6 +21,25 @@ never apply a staging plan to production. Production application sources are dis
 definition so a push to `main` cannot silently enable compute. Destructive changes require explicit
 confirmation.
 
+### Running the plan locally
+
+The IaC engine ships in the CLI and guards against an out-of-date CLI by shelling out to
+`process.env._`, falling back to `railway` on `PATH`. `_` is the shell's last-argument variable, so in
+an ordinary shell it points at whatever token came last — a directory, not the binary. The guard then
+fails with a misleading `This version of railway/iac requires Railway CLI 5.42.1 or newer` even
+though the installed CLI is current.
+
+Point `_` at the binary for the invocation:
+
+```sh
+env _="$(command -v railway)" railway config plan
+```
+
+A stale CLI is the only reason to see that message, so check `railway --version` before concluding
+anything else is wrong. `railway config plan` is read-only: it reconciles the authoring file against
+the linked project and environment without changing either, and `--detailed-exit-code` exits 2 when
+changes are pending for CI gating.
+
 **The engine treats an omitted field as a deletion** (the CLI documents this as "omit=delete"), which
 has two consequences this file must respect:
 
