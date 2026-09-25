@@ -54,6 +54,7 @@ import {
   type RestateEndpointFactory,
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
+import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/config'
 import { ExecutionLifecycleService, ExecutionReconciliationService } from '@control-plane/domain'
 import type {
   ReconciliationEffects,
@@ -491,10 +492,28 @@ export class LocalControlPlaneComposition {
     // M11.9 retention worker: physical deletion of records past their
     // retention deadline, scheduled at a slow fixed cadence.
     if (options.retention !== undefined) {
+      const commandInboxRepository = new SqliteCommandAcceptanceRepository(this.persistence)
+      const retentionPolicy = decidedRetentionPolicy
       this.#retentionSweep = new RetentionSweep({
-        commandInbox: new SqliteCommandAcceptanceRepository(this.persistence),
+        commandInbox: commandInboxRepository,
         executionEvents: new SqliteExecutionEventRepository(this.persistence),
+        // #194: deletion is fail-closed, so the pass reports retained growth
+        // and the reasons on stderr for the local operator.
+        assessCommandInbox: (now) =>
+          commandInboxRepository.assessExpiredInbox(now, {
+            policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
+          }),
         intervalMs: options.retention.sweepIntervalMs,
+        onReport: (report) =>
+          console.error(
+            JSON.stringify({
+              event: 'retention.sweep',
+              inbox: report.inbox,
+              events: report.events,
+              blocked: report.blocked,
+              commandInbox: report.assessment.commandInbox,
+            })
+          ),
       })
     }
     // The Restate workflow endpoint exists only in restate mode; embedded mode

@@ -158,6 +158,78 @@ describe('retention sweep', () => {
     expect(await sweep.run()).toEqual({ inbox: 3, events: 0 })
   })
 
+  test('a fail-closed refusal blocks one class without stopping the pass', async () => {
+    const reports = []
+    let eventSweeps = 0
+    const sweep = new RetentionSweep({
+      commandInbox: {
+        deleteExpiredInbox: async () => {
+          throw new Error('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
+        },
+      },
+      executionEvents: {
+        deleteExpiredEvents: async () => {
+          eventSweeps += 1
+          return 0
+        },
+      },
+      assessCommandInbox: async (now) => ({
+        classId: 'command-inbox',
+        assessedAt: now.toISOString(),
+        scanned: 3,
+        truncated: false,
+        eligible: 1,
+        retainedByReason: { rejection_key_absent: 1, hold_recorded: 1 },
+      }),
+      intervalMs: 3_600_000,
+      onReport: (report) => reports.push(report),
+    })
+
+    expect(await sweep.run()).toEqual({ inbox: 0, events: 0 })
+    expect(eventSweeps).toBe(1)
+    expect(reports).toHaveLength(1)
+    expect(reports[0].blocked).toEqual(['COMMAND_RETENTION_ELIGIBILITY_REQUIRED'])
+    expect(reports[0].assessment.commandInbox).toEqual({
+      classId: 'command-inbox',
+      assessedAt: reports[0].at,
+      scanned: 3,
+      truncated: false,
+      eligible: 1,
+      retainedByReason: { rejection_key_absent: 1, hold_recorded: 1 },
+    })
+  })
+
+  test('a storage failure still surfaces through the error reporter', async () => {
+    let errors = 0
+    const sweep = new RetentionSweep({
+      commandInbox: {
+        deleteExpiredInbox: async () => {
+          throw new Error('storage failure')
+        },
+      },
+      executionEvents: { deleteExpiredEvents: async () => 0 },
+      intervalMs: 3_600_000,
+      onError: () => {
+        errors += 1
+      },
+    })
+    await expect(sweep.run()).rejects.toThrow('storage failure')
+    expect(errors).toBe(0)
+  })
+
+  test('a pass without assessment ports still reports counts', async () => {
+    const reports = []
+    const sweep = new RetentionSweep({
+      commandInbox: { deleteExpiredInbox: async () => 2 },
+      executionEvents: { deleteExpiredEvents: async () => 1 },
+      intervalMs: 3_600_000,
+      onReport: (report) => reports.push(report),
+    })
+    expect(await sweep.run()).toEqual({ inbox: 2, events: 1 })
+    expect(reports[0].assessment).toEqual({})
+    expect(reports[0].blocked).toEqual([])
+  })
+
   test('rejects an invalid sweep interval at construction', () => {
     expect(
       () =>

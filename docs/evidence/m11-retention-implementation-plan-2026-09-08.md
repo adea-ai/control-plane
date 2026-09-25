@@ -56,6 +56,40 @@ transactional claims, tombstone reservation before payload removal, durable
 external deletion jobs, and per-profile wiring with observable counts. The
 fail-closed guards stay in place until those exist.
 
+## Increment: authoritative eligibility predicate and assessment (2026-09-24)
+
+`packages/domain/src/retention-eligibility.ts` is the authoritative predicate the
+fail-closed guards name: given one candidate's facts it returns `eligible` or the
+single reason that retains it — `unbounded_class`, `missing_expiry`,
+`malformed_expiry`, `not_expired`, `non_terminal_owner`, `unsettled_publication`,
+`rejection_key_absent`, `reference_pending`, `hold_recorded`. The order is
+deliberate: the owner has to reach a terminal, settled state before a rejection
+identity can even be reserved, and holds/references outrank age last. The module
+also provides the bounded `RetentionAssessmentCounter` (scanned/eligible counts,
+per-reason retained counts, truncation flag).
+
+Storage-side read-only assessment for the **command-inbox** class is implemented in
+both stores: `SqliteCommandAcceptanceRepository.assessExpiredInbox` pages expired
+candidates within a bound and resolves owner state plus rejection-key presence;
+`PostgresCommandAcceptanceRepository.assessExpiredInbox` orders by deadline,
+joins the owning execution, and batch-resolves retired keys. Neither deletes, and
+neither becomes deletion authority: eligibility is revalidated per candidate at
+claim time.
+
+`RetentionSweep` now accepts optional assessment ports, records one
+payload-free `RetentionSweepReport` per pass (counts, per-reason retained debt,
+and which class guards refused deletion), and treats a fail-closed refusal as a
+blocked class rather than a failed pass — a storage failure still propagates to
+`onError`. Both compositions wire it: control-api logs `retention.sweep` with the
+metadata through the structured logger, local-control-plane writes one JSON line to
+stderr.
+
+Not yet done, and required before any physical deletion: the execution-events
+assessment, indexed eligibility queries (the SQLite scan is bounded paging over
+the namespace, not the expiry index), transactional claims with revision/CAS
+revalidation, tombstone reservation tied to payload compaction, durable external
+deletion, and the restore-reapplication test.
+
 ## Increment: SQLite command rejection keys
 
 `SqliteCommandAcceptanceRepository.retireExpiredCommand` now reserves a minimal

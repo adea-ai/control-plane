@@ -1,5 +1,10 @@
 import type { StructuredLogger } from '@control-plane/bootstrap'
-import type { ManagedCloudConfiguration, RawEnvironment } from '@control-plane/config'
+import {
+  decidedRetentionPolicy,
+  retentionClassPolicy,
+  type ManagedCloudConfiguration,
+  type RawEnvironment,
+} from '@control-plane/config'
 import {
   ContextPackageAuthoringService,
   type ContextAuthoringCompositionOptions,
@@ -125,11 +130,32 @@ export function createManagedCloudControlApiComposition(
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const projectStates = new PostgresProjectStateRepository(connection.database)
   const contextPackages = new PostgresContextPackageRepository(connection.database)
+  const retentionPolicy = decidedRetentionPolicy
+  const commandInboxRepository = new PostgresCommandAcceptanceRepository(connection.database)
   const retentionSweep = new RetentionSweep({
-    commandInbox: new PostgresCommandAcceptanceRepository(connection.database),
+    commandInbox: commandInboxRepository,
     executionEvents: new PostgresExecutionEventRepository(connection.database),
+    // #194: deletion stays fail-closed, so each pass reports how many expired
+    // candidates exist and why the retained ones are blocked.
+    assessCommandInbox: (now) =>
+      commandInboxRepository.assessExpiredInbox(now, {
+        policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
+      }),
     intervalMs: retentionIntervalMs,
     onError: () => logger.write({ level: 'error', event: 'retention.sweep_failed' }),
+    onReport: (report) =>
+      logger.write({
+        level: report.blocked.length === 0 ? 'info' : 'warn',
+        event: 'retention.sweep',
+        metadata: {
+          inbox: report.inbox,
+          events: report.events,
+          blocked: [...report.blocked],
+          ...(report.assessment.commandInbox === undefined
+            ? {}
+            : { commandInbox: report.assessment.commandInbox }),
+        },
+      }),
   })
   const registryToken = process.env['MARKETPLACE_REGISTRY_TOKEN']
   const marketplaceRegistryService = new MarketplaceRegistryService({

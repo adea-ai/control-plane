@@ -9,16 +9,89 @@ import {
   type CommandInboxRecord,
   type CommandInboxScope,
   type Execution,
+  RetentionAssessmentCounter,
+  evaluateRetentionEligibility,
+  type RetentionAssessment,
 } from '@control-plane/domain'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
 import { executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
 
+const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
+
 export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /**
+   * Read-only eligibility assessment for the command-inbox class (#194).
+   * Bounded by `bound` expired candidates, ordered oldest-deadline first, and
+   * evaluated with the shared predicate. Never deletes: eligibility is
+   * revalidated per candidate at claim time.
+   */
+  async assessExpiredInbox(
+    now: Date,
+    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+  ): Promise<RetentionAssessment> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const counter = new RetentionAssessmentCounter(
+      'command-inbox',
+      assessedAt,
+      options.bound ?? 256
+    )
+    const candidates = await this.database
+      .select({
+        status: commandInbox.status,
+        retentionExpiresAt: commandInbox.retentionExpiresAt,
+        reconciliationRequiredAt: commandInbox.reconciliationRequiredAt,
+        executionState: executions.state,
+        callerPrincipalId: commandInbox.callerPrincipalId,
+        operation: commandInbox.operation,
+        workspaceId: commandInbox.workspaceId,
+        projectId: commandInbox.projectId,
+        idempotencyKey: commandInbox.idempotencyKey,
+      })
+      .from(commandInbox)
+      .innerJoin(executions, eq(executions.executionId, commandInbox.executionId))
+      .where(lt(commandInbox.retentionExpiresAt, now))
+      .orderBy(asc(commandInbox.retentionExpiresAt))
+      .limit(counter.bound + 1)
+    const retiredKeys =
+      candidates.length === 0
+        ? new Set<string>()
+        : new Set(
+            (
+              await this.database
+                .select({ scopeKey: retiredCommandKeys.scopeKey })
+                .from(retiredCommandKeys)
+                .where(
+                  inArray(
+                    retiredCommandKeys.scopeKey,
+                    candidates.map((candidate) => retirementKey(candidate))
+                  )
+                )
+            ).map((row) => row.scopeKey)
+          )
+    for (const candidate of candidates) {
+      const verdict = evaluateRetentionEligibility({
+        retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
+        now: assessedAt,
+        policyRetainMs: options.policyRetainMs,
+        ownerTerminal:
+          ['completed', 'failed'].includes(candidate.status) &&
+          terminalExecutionStates.has(candidate.executionState),
+        publicationSettled: true,
+        rejectionKeyReserved: retiredKeys.has(retirementKey(candidate)),
+        pendingReferences: candidate.reconciliationRequiredAt === null ? 0 : 1,
+        holds: 0,
+      })
+      if (!counter.add(verdict)) break
+    }
+    return counter.result()
+  }
 
   /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredInbox(now: Date): Promise<number> {
@@ -191,7 +264,15 @@ async function assertNotRetired(
   if (row) throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
 }
 
-function retirementKey(scope: CommandInboxScope): string {
+// Structural input: retirement only joins the scoped identity strings, so the
+// assessment can reuse it for selected projection rows.
+function retirementKey(scope: {
+  readonly callerPrincipalId: string
+  readonly operation: string
+  readonly workspaceId: string
+  readonly projectId: string
+  readonly idempotencyKey: string
+}): string {
   return createHash('sha256')
     .update(
       [

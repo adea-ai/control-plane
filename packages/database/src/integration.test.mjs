@@ -2784,6 +2784,59 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     }
   })
 
+  test('assessExpiredInbox reports retained debt without deleting anything', async () => {
+    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FDY'
+    const now = '2026-07-31T11:00:00.000Z'
+    const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+    const service = new CommandInboxService({
+      repository,
+      executionIdFactory: () => `exe_${suffix}`,
+      executionPlanValidator: { validate: async () => true },
+      now: () => now,
+    })
+    const input = {
+      callerPrincipalId: 'svc_retention-assessment',
+      operation: 'execution.accept',
+      commandId: `cmd_${suffix}`,
+      requestId: `req_${suffix}`,
+      idempotencyKey: 'integration-retention-assessment-1',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: `wsp_${suffix}`,
+        projectId: `prj_${suffix}`,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      receivedAt: now,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    }
+    await service.acceptExecution(input)
+
+    const assessedAt = new Date('2026-09-02T11:00:00.000Z')
+    const assessment = await repository.assessExpiredInbox(assessedAt, {
+      policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
+      bound: 10,
+    })
+    expect(assessment.classId).toBe('command-inbox')
+    // The accepted command is not terminal yet, so the owner state is the
+    // reason it stays. Other fixtures in this database may add candidates.
+    expect(assessment.scanned).toBeGreaterThanOrEqual(1)
+    expect(assessment.retainedByReason.non_terminal_owner).toBeGreaterThanOrEqual(1)
+    expect(assessment.eligible).toBe(0)
+
+    // Read-only: the command is still resolvable and the deletion guard still
+    // refuses, so the assessment never becomes deletion authority.
+    expect(await repository.getByExecutionId(`exe_${suffix}`)).toBeDefined()
+    await expect(repository.deleteExpiredInbox(assessedAt)).rejects.toThrow(
+      'COMMAND_RETENTION_ELIGIBILITY_REQUIRED'
+    )
+  })
+
   test('recovers a committed command after the accepting process exits before replying', async () => {
     const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
     const input = {
