@@ -83,6 +83,7 @@ export {
 export { interactionCommands } from './interaction-commands.js'
 export { executionCancellations } from './execution-cancellations.js'
 export { retiredCommandKeys } from './retired-command-keys.js'
+export { retentionHolds } from './retention-holds.js'
 export { runtimeChannelOwnership } from './runtime-channel-ownership.js'
 export { contextCommands } from './context-commands.js'
 export { runtimeChannelSequences } from './runtime-channel-sequences.js'
