@@ -197,6 +197,13 @@ publication — unapproved versions stay authorable and listable.
   (`scripts/catalog-approval-admin.mjs`, `approvals.record` / `approvals.show`) against the target
   database. The request file is validated (absolute path, regular file, size-capped) and the CLI
   reports a single sanitized failure code; it never echoes database or credential content.
+  The tool replaces request-supplied actor/authority attribution with the executing OS account
+  (`operator:os-user:<encoded-account>`) and its real storage authority: Local OS access for SQLite,
+  or the PostgreSQL session's `current_user`. These identify a privileged operator session, not an
+  authenticated product user or a validated product grant. Shared OS/database accounts are shared
+  attribution; use individual operator accounts when individual accountability is required.
+  Programmatic administration must supply adapter-verified operator context and matching attribution;
+  a JSON principal or grant reference alone is not proof of authority.
 - With the gate enabled, a version published at or after the cutover denies execution with
   `*_APPROVAL_MISSING` until a decision exists, and denies with `*_APPROVAL_REJECTED` when a rejection
   was recorded. Approve deliberately: the decision is append-only and bound to the exact revision and
@@ -228,8 +235,11 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #                               execution, acceptance record or validation
 #                               command still pins them)
 #   --class interaction-receipts (deletes confirmed interaction/cancellation
-#                               receipts past the replay window; unconfirmed
-#                               receipts are lost-ack identities and always stay)
+#                               receipts only after their scoped execution is
+#                               terminal and settled through attempts,
+#                               reconciliation and event delivery; the window
+#                               starts at the later of acceptance/settlement;
+#                               unconfirmed receipts always stay)
 #   --class runtime-ledgers    (deletes commands with a recorded result and their
 #                               event receipts; expired or unresolved commands are
 #                               reconciliation work and stay)
@@ -243,10 +253,13 @@ retained while a plan pins it or the authoring command that produced it still
 exists.
 
 Executions are the last class to become eligible: an execution stays retained
-while its acceptance record, its events, a reconciliation checkpoint or a
-non-terminal attempt still exists, so a pass over the earlier classes is what
-frees it. Running `--class executions` first is harmless — the pass reports
-`reference_pending` until those records are gone.
+while its acceptance record, either interaction/cancellation receipt, its
+interaction requests, events, a reconciliation checkpoint or a non-terminal
+attempt still exists, so a pass over the earlier classes is what frees it.
+Interaction requests currently have no configured retention deletion class;
+they remain a durable reference until that lifecycle is defined. Running
+`--class executions` first is harmless — the pass reports `reference_pending`
+until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
 are eligible, and why the rest are retained. Deleting requires
@@ -272,10 +285,14 @@ bun scripts/retention-reapply.mjs --backend postgres --database control_plane \
   --host <neon-host> --journal <retention-journal.jsonl>
 ```
 
-Reapply is idempotent: inserts are insert-if-absent and deletes are by identity,
-so replaying a journal — or replaying an entry whose storage change never
-happened — is safe. Keep the journal with the backups; without it a restored
-snapshot cannot be brought forward.
+Reapply is idempotent: inserts are insert-if-absent and deletes are by identity.
+An entry whose transaction never committed still applies its approved deletion
+intent; idempotence alone does not reconcile that outcome or later holds and
+references. The current command is not proof of full restore acceptance. Keep
+the journal independently of the database and reconcile ambiguous outcomes
+before exposing a restored copy; without the journal a snapshot cannot be
+brought forward. External durability and outcome reconciliation remain open
+M11 gates.
 
 Which classes can ever be swept, and which the policy keeps reference-governed,
 is one command away — it prints the decided duration, the governance mode, the

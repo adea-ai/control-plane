@@ -1,13 +1,24 @@
 import {
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
-  realizedCounts,
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
 import { and, asc, eq, isNotNull, isNull, lt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { inboxMessages, outboxEvents } from './schema/messaging.js'
+
+interface MessagingRetentionOptions {
+  readonly policyRetainMs: number | null
+  readonly bound?: number
+  readonly dryRun?: boolean
+  readonly journal?: RetentionJournalSink
+}
+
+function createCounter(now: Date, options: MessagingRetentionOptions): RetentionAssessmentCounter {
+  if (Number.isNaN(now.getTime())) throw new Error('MESSAGING_RETENTION_INVALID_TIMESTAMP')
+  return new RetentionAssessmentCounter('messaging', now.toISOString(), options.bound ?? 64)
+}
 
 /**
  * Retention deletion for the messaging class (#194). This class is
@@ -33,24 +44,17 @@ export class PostgresMessagingRetention {
    */
   async sweepEligibleMessaging(
     now: Date,
-    options: {
-      readonly policyRetainMs: number | null
-      readonly bound?: number
-      readonly dryRun?: boolean
-      readonly journal?: RetentionJournalSink
-    }
+    options: MessagingRetentionOptions
   ): Promise<RetentionDeletionResult> {
-    const outbox = await this.deleteEligibleOutboxEvents(now, options)
-    const inbox = await this.compactEligibleInboxMessages(now, options)
+    const counter = createCounter(now, options)
+    const outbox = await this.#deleteEligibleOutboxEvents(now, options, counter)
+    const inbox = await this.#compactEligibleInboxMessages(now, options, counter)
     return {
-      ...outbox,
+      dryRun: options.dryRun ?? true,
       deleted: outbox.deleted + inbox.deleted,
       raced: outbox.raced + inbox.raced,
       compacted: inbox.compacted,
-      scanned: outbox.scanned + inbox.scanned,
-      eligible: outbox.eligible + inbox.eligible,
-      truncated: outbox.truncated || inbox.truncated,
-      retainedByReason: realizedCounts(outbox.retainedByReason, inbox.retainedByReason),
+      ...counter.result(),
     }
   }
 
@@ -64,17 +68,19 @@ export class PostgresMessagingRetention {
    */
   async compactEligibleInboxMessages(
     now: Date,
-    options: {
-      readonly policyRetainMs: number | null
-      readonly bound?: number
-      readonly dryRun?: boolean
-      readonly journal?: RetentionJournalSink
-    }
+    options: MessagingRetentionOptions
+  ): Promise<RetentionDeletionResult> {
+    return this.#compactEligibleInboxMessages(now, options, createCounter(now, options))
+  }
+
+  async #compactEligibleInboxMessages(
+    now: Date,
+    options: MessagingRetentionOptions,
+    counter: RetentionAssessmentCounter
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('MESSAGING_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
-    const counter = new RetentionAssessmentCounter('messaging', assessedAt, options.bound ?? 64)
     let compacted = 0
     let raced = 0
     const candidates = await this.database
@@ -139,17 +145,19 @@ export class PostgresMessagingRetention {
 
   async deleteEligibleOutboxEvents(
     now: Date,
-    options: {
-      readonly policyRetainMs: number | null
-      readonly bound?: number
-      readonly dryRun?: boolean
-      readonly journal?: RetentionJournalSink
-    }
+    options: MessagingRetentionOptions
+  ): Promise<RetentionDeletionResult> {
+    return this.#deleteEligibleOutboxEvents(now, options, createCounter(now, options))
+  }
+
+  async #deleteEligibleOutboxEvents(
+    now: Date,
+    options: MessagingRetentionOptions,
+    counter: RetentionAssessmentCounter
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('MESSAGING_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
-    const counter = new RetentionAssessmentCounter('messaging', assessedAt, options.bound ?? 64)
     let deleted = 0
     let raced = 0
     const candidates = await this.database

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import {
+  ContextCompilationError,
   ContextPackageReferenceSchema,
   assertContextPackageIntegrity,
   type ContextPackage,
@@ -12,14 +13,15 @@ import {
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
-import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { contextAuthoringCommands } from './schema/context-authoring-commands.js'
 import { contextPackages } from './schema/context-packages.js'
+import { delegations } from './schema/delegations.js'
 import { executionPlans } from './schema/execution-plans.js'
 
 export class PostgresContextPackageRepository implements ContextPackageRepository {
-  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert'>) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>) {}
 
   async put(input: ContextPackage): Promise<ContextPackageReference> {
     const package_ = assertContextPackageIntegrity(input)
@@ -27,18 +29,41 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
       contextPackageId: package_.contextPackageId,
       contentDigest: package_.contentDigest,
     }
-    const inserted = await this.database
-      .insert(contextPackages)
-      .values(toRow(package_))
-      .onConflictDoNothing()
-      .returning({ contextPackageId: contextPackages.contextPackageId })
-    if (inserted.length === 1) return reference
+    return this.database.transaction(async (transaction) => {
+      const existing = await this.#getById(transaction, package_.contextPackageId, true)
+      if (existing) {
+        if (!isDeepStrictEqual(existing, package_)) throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+        return reference
+      }
 
-    const existing = await this.getById(package_.contextPackageId)
-    if (!existing || !isDeepStrictEqual(existing, package_)) {
-      throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
-    }
-    return reference
+      if (package_.parentContextPackage) {
+        if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
+          throw new ContextCompilationError(
+            'CONTRADICTORY_CONTEXT_REFERENCE',
+            package_.contextPackageId
+          )
+        }
+        if (!(await lockContextPackageReference(transaction, package_.parentContextPackage))) {
+          throw new ContextCompilationError(
+            'CONTRADICTORY_CONTEXT_REFERENCE',
+            package_.parentContextPackage.contextPackageId
+          )
+        }
+      }
+
+      const inserted = await transaction
+        .insert(contextPackages)
+        .values(toRow(package_))
+        .onConflictDoNothing()
+        .returning({ contextPackageId: contextPackages.contextPackageId })
+      if (inserted.length === 1) return reference
+
+      const raced = await this.#getById(transaction, package_.contextPackageId, true)
+      if (!raced || !isDeepStrictEqual(raced, package_)) {
+        throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+      }
+      return reference
+    })
   }
 
   async get(input: ContextPackageReference): Promise<ContextPackage | undefined> {
@@ -57,13 +82,42 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
   }
 
   async getById(contextPackageId: string): Promise<ContextPackage | undefined> {
-    const [row] = await this.database
+    return this.#getById(this.database, contextPackageId)
+  }
+
+  async #getById(
+    database: Pick<ControlPlaneDatabase, 'select'>,
+    contextPackageId: string,
+    lock = false
+  ): Promise<ContextPackage | undefined> {
+    const query = database
       .select()
       .from(contextPackages)
       .where(eq(contextPackages.contextPackageId, contextPackageId))
       .limit(1)
+    const [row] = lock ? await query.for('key share') : await query
     return row ? fromRow(row) : undefined
   }
+}
+
+/** Lock and verify the exact package row before a writer creates a package reference. */
+export async function lockContextPackageReference(
+  database: Pick<ControlPlaneDatabase, 'select'>,
+  input: ContextPackageReference
+): Promise<boolean> {
+  const reference = ContextPackageReferenceSchema.parse(input)
+  const [row] = await database
+    .select()
+    .from(contextPackages)
+    .where(eq(contextPackages.contextPackageId, reference.contextPackageId))
+    .limit(1)
+    .for('key share')
+  if (!row) return false
+  const package_ = fromRow(row)
+  return (
+    row.contentDigest === reference.contentDigest &&
+    package_.contentDigest === reference.contentDigest
+  )
 }
 
 function toRow(package_: ContextPackage): typeof contextPackages.$inferInsert {
@@ -144,65 +198,100 @@ export class PostgresContextPackageRetention {
       )
       .orderBy(asc(contextPackages.compiledAt))
       .limit(counter.bound + 1)
-    const ids = candidates.map((candidate) => candidate.contextPackageId)
-    const referenced = await this.#referencedPackages(ids)
+    let admittedCandidates = 0
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.compiledAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: referenced.has(candidate.contextPackageId) ? 1 : 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          {
-            kind: 'postgres.deleteContextPackage',
-            contextPackageId: candidate.contextPackageId,
-          },
-        ])
+      if (admittedCandidates >= counter.bound) {
+        counter.add({ verdict: 'eligible' })
+        break
       }
-      const removed = await this.database
-        .delete(contextPackages)
-        .where(
-          and(
-            eq(contextPackages.contextPackageId, candidate.contextPackageId),
-            eq(contextPackages.contentDigest, candidate.contentDigest)
+      const outcome = await this.database.transaction(async (transaction) => {
+        // Lock the target before reading references. New-reference writers take
+        // KEY SHARE on this same row before inserting their reference.
+        const [stored] = await transaction
+          .select({
+            contentDigest: contextPackages.contentDigest,
+            compiledAt: contextPackages.compiledAt,
+          })
+          .from(contextPackages)
+          .where(
+            and(
+              eq(contextPackages.contextPackageId, candidate.contextPackageId),
+              eq(contextPackages.contentDigest, candidate.contentDigest)
+            )
           )
-        )
-        .returning({ contextPackageId: contextPackages.contextPackageId })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+          .limit(1)
+          .for('update')
+        if (!stored) return { verdict: undefined, removed: false, raced: true }
+
+        const [planPin] = await transaction
+          .select({ contextPackageId: sql<string>`plan->'contextPackage'->>'contextPackageId'` })
+          .from(executionPlans)
+          .where(sql`plan->'contextPackage'->>'contextPackageId' = ${candidate.contextPackageId}`)
+          .limit(1)
+        const [childPackagePin] = await transaction
+          .select({ contextPackageId: contextPackages.contextPackageId })
+          .from(contextPackages)
+          .where(
+            sql`context_package->'parentContextPackage'->>'contextPackageId' = ${candidate.contextPackageId}`
+          )
+          .limit(1)
+        const [authoringCommand] = await transaction
+          .select({ contextPackageId: contextAuthoringCommands.contextPackageId })
+          .from(contextAuthoringCommands)
+          .where(eq(contextAuthoringCommands.contextPackageId, candidate.contextPackageId))
+          .limit(1)
+        const [delegation] = await transaction
+          .select({ delegationId: delegations.delegationId })
+          .from(delegations)
+          .where(sql`record->>'contextPackageId' = ${candidate.contextPackageId}`)
+          .limit(1)
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.compiledAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences:
+            planPin !== undefined ||
+            childPackagePin !== undefined ||
+            authoringCommand !== undefined ||
+            delegation !== undefined
+              ? 1
+              : 0,
+          holds: 0,
+        })
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { verdict, removed: false, raced: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            {
+              kind: 'postgres.deleteContextPackage',
+              contextPackageId: candidate.contextPackageId,
+            },
+          ])
+        }
+        const removed = await transaction
+          .delete(contextPackages)
+          .where(
+            and(
+              eq(contextPackages.contextPackageId, candidate.contextPackageId),
+              eq(contextPackages.contentDigest, candidate.contentDigest)
+            )
+          )
+          .returning({ contextPackageId: contextPackages.contextPackageId })
+        return { verdict, removed: removed.length === 1, raced: removed.length !== 1 }
+      })
+      if (outcome.raced) raced += 1
+      if (outcome.verdict !== undefined) {
+        admittedCandidates += 1
+        if (!counter.add(outcome.verdict)) break
+      }
+      if (outcome.removed) deleted += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
-  }
-
-  /** Package ids among `ids` that a plan pins or an authoring command produced. */
-  async #referencedPackages(ids: readonly string[]): Promise<Set<string>> {
-    if (ids.length === 0) return new Set()
-    const list = [...ids]
-    const [plans, commands] = await Promise.all([
-      this.database
-        .select({ contextPackageId: sql<string>`plan->'contextPackage'->>'contextPackageId'` })
-        .from(executionPlans)
-        .where(inArray(sql`plan->'contextPackage'->>'contextPackageId'`, list)),
-      this.database
-        .select({ contextPackageId: contextAuthoringCommands.contextPackageId })
-        .from(contextAuthoringCommands)
-        .where(inArray(contextAuthoringCommands.contextPackageId, list)),
-    ])
-    return new Set(
-      [...plans, ...commands]
-        .map((row) => row.contextPackageId)
-        .filter((value): value is string => typeof value === 'string')
-    )
   }
 }

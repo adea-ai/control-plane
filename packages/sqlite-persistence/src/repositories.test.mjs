@@ -9,10 +9,13 @@ import {
   ContextPackageAuthoringService,
   contextPackageSerializationFixtures,
 } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
   SqliteContextAuthoringCommandRepository,
+  SqliteExecutionPlanRepository,
+  SqliteExecutionRepository,
   SqlitePersistenceProvider,
   SqliteProjectStateRepository,
   SqliteRuntimeDiscoveryRepository,
@@ -32,6 +35,7 @@ const ids = {
 }
 
 const receivedAt = '2026-08-24T10:00:00.000Z'
+const defaultPlan = createExecutionPlanTestFixture()
 
 function commandInput(overrides = {}) {
   return {
@@ -48,14 +52,21 @@ function commandInput(overrides = {}) {
       agentId: ids.agentId,
     },
     executionPlan: {
-      executionPlanId: ids.executionPlanId,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      executionPlanId: defaultPlan.executionPlanId,
+      contentDigest: defaultPlan.contentDigest,
+      schemaVersion: defaultPlan.schemaVersion,
     },
     receivedAt,
     retentionExpiresAt: '2026-09-23T10:00:00.000Z',
     ...overrides,
   }
+}
+
+async function seedDefaultPlan(provider) {
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new SqliteExecutionPlanRepository(provider).put(defaultPlan)
 }
 
 function service(provider, now = receivedAt) {
@@ -68,6 +79,100 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('new acceptance requires its persisted plan while accepted replay survives plan cleanup', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-plan-acceptance-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    const plan = defaultPlan
+    const input = commandInput({
+      executionPlan: {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      },
+    })
+    try {
+      await provider.migrate()
+      await expect(service(provider).acceptExecution(input)).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('command-inbox')).toEqual([])
+        expect(await transaction.list('executions')).toEqual([])
+      })
+
+      await new SqliteContextPackageRepository(provider).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      await new SqliteExecutionPlanRepository(provider).put(plan)
+      await provider.transaction(async (transaction) => {
+        const storedContext = (await transaction.list('context-packages')).find(
+          (record) => record.value.contextPackageId === plan.contextPackage.contextPackageId
+        )
+        expect(storedContext).toBeDefined()
+        await transaction.delete('context-packages', storedContext.id, storedContext.revision)
+      })
+      await expect(service(provider).acceptExecution(input)).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      await new SqliteContextPackageRepository(provider).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      await expect(
+        service(provider).acceptExecution({
+          ...input,
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+          idempotencyKey: 'task-submit-stale-plan',
+          executionPlan: { ...input.executionPlan, contentDigest: `sha256:${'c'.repeat(64)}` },
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_EXECUTION_PLAN_REFERENCE' })
+      const accepted = await service(provider).acceptExecution(input)
+      expect(accepted.replayed).toBe(false)
+
+      await provider.transaction(async (transaction) => {
+        const storedPlan = (await transaction.list('execution-plans')).find(
+          (record) => record.value.executionPlanId === plan.executionPlanId
+        )
+        expect(storedPlan).toBeDefined()
+        await transaction.delete('execution-plans', storedPlan.id, storedPlan.revision)
+      })
+      const replay = await service(provider).acceptExecution(input)
+      expect(replay.replayed).toBe(true)
+      expect(replay.execution).toEqual(accepted.execution)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('new execution insertion requires its persisted plan but duplicate insert remains idempotent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-execution-plan-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    try {
+      await provider.migrate()
+      const template = await new CommandInboxService({
+        repository: new InMemoryCommandAcceptanceRepository(),
+        executionIdFactory: () => ids.executionId,
+        executionPlanValidator: { validate: async () => true },
+        now: () => receivedAt,
+      }).acceptExecution(commandInput())
+      const executions = new SqliteExecutionRepository(provider)
+      await expect(executions.insertExecution(template.execution)).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+
+      await seedDefaultPlan(provider)
+      expect(await executions.insertExecution(template.execution)).toBe(true)
+      await provider.transaction(async (transaction) => {
+        const storedPlan = (await transaction.list('execution-plans'))[0]
+        await transaction.delete('execution-plans', storedPlan.id, storedPlan.revision)
+      })
+      expect(await executions.insertExecution(template.execution)).toBe(false)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('recovers acceptance after process exit immediately following the commit', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-accept-crash-'))
     const path = join(directory, 'state.sqlite')
@@ -79,9 +184,14 @@ describe('SQLite domain repositories', () => {
           '-e',
           `
         import { CommandInboxService } from '@control-plane/domain';
-        import { SqliteCommandAcceptanceRepository, SqlitePersistenceProvider } from ${JSON.stringify(new URL('./index.ts', import.meta.url).href)};
+        import { contextPackageSerializationFixtures } from '@control-plane/context';
+        import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing';
+        import { SqliteCommandAcceptanceRepository, SqliteContextPackageRepository, SqliteExecutionPlanRepository, SqlitePersistenceProvider } from ${JSON.stringify(new URL('./index.ts', import.meta.url).href)};
         const provider = new SqlitePersistenceProvider({ path: ${JSON.stringify(path)} });
         await provider.migrate();
+        const plan = createExecutionPlanTestFixture();
+        await new SqliteContextPackageRepository(provider).put(contextPackageSerializationFixtures.futurePi);
+        await new SqliteExecutionPlanRepository(provider).put(plan);
         const service = new CommandInboxService({
           repository: new SqliteCommandAcceptanceRepository(provider),
           executionIdFactory: () => ${JSON.stringify(ids.executionId)},
@@ -147,6 +257,7 @@ describe('SQLite domain repositories', () => {
     let provider = new SqlitePersistenceProvider({ path })
     try {
       await provider.migrate()
+      await seedDefaultPlan(provider)
       const accepted = await service(provider).acceptExecution(commandInput())
       let repository = new SqliteCommandAcceptanceRepository(provider)
       const retiredAt = '2026-09-24T10:00:00.000Z'
@@ -243,6 +354,7 @@ describe('SQLite domain repositories', () => {
     const input = commandInput({ retentionExpiresAt: deadline })
     try {
       await provider.migrate()
+      await seedDefaultPlan(provider)
       let accepted
       if (days < 30) {
         const template = await new CommandInboxService({
@@ -564,6 +676,7 @@ describe('SQLite domain repositories', () => {
     let provider = new SqlitePersistenceProvider({ path })
     try {
       await provider.migrate()
+      await seedDefaultPlan(provider)
       const accepted = await Promise.all(
         Array.from({ length: 8 }, () => service(provider).acceptExecution(commandInput()))
       )
@@ -705,6 +818,7 @@ describe('SQLite retention sweep', () => {
     const provider = new SqlitePersistenceProvider({ path })
     try {
       await provider.migrate()
+      await seedDefaultPlan(provider)
       const repository = new SqliteCommandAcceptanceRepository(provider)
       const retentionService = new CommandInboxService({
         repository,
@@ -733,6 +847,17 @@ describe('SQLite retention sweep', () => {
     const provider = new SqlitePersistenceProvider({ path })
     try {
       await provider.migrate()
+      const alternatePlan = createExecutionPlanTestFixture({
+        contextPackage: contextPackageSerializationFixtures.futureAcp,
+      })
+      await new SqliteContextPackageRepository(provider).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      await new SqliteContextPackageRepository(provider).put(
+        contextPackageSerializationFixtures.futureAcp
+      )
+      await new SqliteExecutionPlanRepository(provider).put(defaultPlan)
+      await new SqliteExecutionPlanRepository(provider).put(alternatePlan)
       const repository = new SqliteCommandAcceptanceRepository(provider)
       const makeService = (executionId) =>
         new CommandInboxService({
@@ -755,9 +880,9 @@ describe('SQLite retention sweep', () => {
         requestId: ids.requestId.slice(0, -1) + 'W',
         idempotencyKey: 'retention-sweep-0002',
         executionPlan: {
-          executionPlanId: ids.executionPlanId.slice(0, -1) + 'W',
-          contentDigest: `sha256:${'c'.repeat(64)}`,
-          schemaVersion: 1,
+          executionPlanId: alternatePlan.executionPlanId,
+          contentDigest: alternatePlan.contentDigest,
+          schemaVersion: alternatePlan.schemaVersion,
         },
         retentionExpiresAt: '2027-09-23T10:01:00.000Z',
       })

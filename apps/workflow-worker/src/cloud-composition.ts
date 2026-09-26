@@ -1,6 +1,8 @@
 import type { ManagedCloudConfiguration } from '@control-plane/config'
 import {
   createPostgresConnection,
+  PostgresCatalogApprovalRepository,
+  PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionRepository,
@@ -75,6 +77,8 @@ export function createManagedCloudWorkflowWorkerComposition(
   if (runtime === undefined && configuration.runtime?.mode !== 'remote')
     throw new Error('MANAGED_CLOUD_RUNTIME_NOT_CONFIGURED')
   const connection = connectionFactory(configuration.database)
+  const catalog = new PostgresCatalogRepository(connection.database)
+  const catalogApprovals = new PostgresCatalogApprovalRepository(connection.database)
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const executions = new PostgresExecutionRepository(connection.database)
   const discovery = new PostgresRuntimeDiscoveryRepository(connection.database)
@@ -97,7 +101,17 @@ export function createManagedCloudWorkflowWorkerComposition(
   const inbox = new CommandInboxService({
     repository: new PostgresCommandAcceptanceRepository(connection.database),
     executionIdFactory: unavailableExecutionIdFactory,
-    executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+    executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: { profiles: catalog, skills: catalog },
+      ...(configuration.catalogApproval === undefined
+        ? {}
+        : {
+            approvalGate: {
+              approvals: catalogApprovals,
+              policy: configuration.catalogApproval,
+            },
+          }),
+    }),
     ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
   })
   const selectedRuntime =

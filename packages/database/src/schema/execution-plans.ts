@@ -15,6 +15,9 @@ export const executionPlans = pgTable(
     agentId: identifier('agent_id').notNull(),
     plan: jsonb('plan').$type<ExecutionPlan>().notNull(),
     compiledAt: timestamp('compiled_at', { mode: 'date', withTimezone: true }).notNull(),
+    // Retention metadata, not part of the immutable plan/digest. Null means
+    // there is no durable observation of the final reference being released.
+    unreferencedSince: timestamp('unreferenced_since', { mode: 'date', withTimezone: true }),
     createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

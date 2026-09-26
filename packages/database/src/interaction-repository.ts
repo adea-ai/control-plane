@@ -6,17 +6,46 @@ import {
 import { and, eq } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { interactionRequests } from './schema/interactions.js'
+import { executionAttempts, executions } from './schema/executions.js'
 
 export class PostgresInteractionRepository implements InteractionRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
 
   async insert(request: InteractionRequest): Promise<boolean> {
-    const inserted = await this.database
-      .insert(interactionRequests)
-      .values(toInteractionRow(InteractionRequestSchema.parse(request)))
-      .onConflictDoNothing()
-      .returning({ interactionId: interactionRequests.interactionId })
-    return inserted.length === 1
+    const parsed = InteractionRequestSchema.parse(request)
+    return this.database.transaction(async (transaction) => {
+      const [existing] = await transaction
+        .select({ interactionId: interactionRequests.interactionId })
+        .from(interactionRequests)
+        .where(eq(interactionRequests.interactionId, parsed.interactionId))
+        .limit(1)
+      if (existing !== undefined) return false
+
+      const [owner] = await transaction
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(eq(executions.executionId, parsed.executionId))
+        .for('key share')
+        .limit(1)
+      if (owner === undefined) throw new Error('INTERACTION_EXECUTION_MISSING')
+
+      const [attempt] = await transaction
+        .select({ executionId: executionAttempts.executionId })
+        .from(executionAttempts)
+        .where(eq(executionAttempts.attemptId, parsed.attemptId))
+        .for('key share')
+        .limit(1)
+      if (attempt === undefined) throw new Error('INTERACTION_ATTEMPT_MISSING')
+      if (attempt.executionId !== parsed.executionId)
+        throw new Error('INTERACTION_ATTEMPT_EXECUTION_MISMATCH')
+
+      const inserted = await transaction
+        .insert(interactionRequests)
+        .values(toInteractionRow(parsed))
+        .onConflictDoNothing()
+        .returning({ interactionId: interactionRequests.interactionId })
+      return inserted.length === 1
+    })
   }
 
   async get(interactionId: string): Promise<InteractionRequest | undefined> {

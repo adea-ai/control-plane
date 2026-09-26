@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  ContextCompilationError,
   ContextPackageReferenceSchema,
   ContextPackageSchema,
   ContextAuthoringCommandScopeSchema,
@@ -78,6 +79,35 @@ function executionPlanPin(value: unknown): string | undefined {
 function authoringPackageId(value: unknown): string | undefined {
   const record = value as { contextPackageId?: unknown } | null
   return typeof record?.contextPackageId === 'string' ? record.contextPackageId : undefined
+}
+
+/** The parent package a derived package pins, read from its immutable payload. */
+function contextPackageParentId(value: unknown): string | undefined {
+  const package_ = value as { parentContextPackage?: { contextPackageId?: unknown } } | null
+  const parentId = package_?.parentContextPackage?.contextPackageId
+  return typeof parentId === 'string' ? parentId : undefined
+}
+
+async function assertSqliteStoredContextPackageReference(
+  transaction: PersistenceTransaction,
+  referenceInput: ContextPackageReference
+): Promise<ContextPackage> {
+  const reference = ContextPackageReferenceSchema.parse(referenceInput)
+  const stored = await transaction.get(
+    namespaces.contextPackages,
+    recordId(reference.contextPackageId)
+  )
+  if (stored === undefined) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  const parent = assertContextPackageIntegrity(stored.value)
+  if (
+    parent.contextPackageId !== reference.contextPackageId ||
+    parent.contentDigest !== reference.contentDigest
+  ) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  return parent
 }
 
 export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
@@ -348,6 +378,18 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       const id = recordId(package_.contextPackageId)
       const record = await transaction.get(namespaces.contextPackages, id)
       if (record === undefined) {
+        if (package_.parentContextPackage) {
+          if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
+            throw new ContextCompilationError(
+              'CONTRADICTORY_CONTEXT_REFERENCE',
+              package_.contextPackageId
+            )
+          }
+          await assertSqliteStoredContextPackageReference(
+            transaction,
+            package_.parentContextPackage
+          )
+        }
         await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
       } else if (!isDeepStrictEqual(assertContextPackageIntegrity(record.value), package_)) {
         throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
@@ -403,26 +445,22 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
         if (page.length < 128) break
         continue
       }
-      // Reference sets are computed once per page rather than per candidate.
-      const planPins = new Set(
-        (await this.provider.transaction((transaction) => transaction.list('execution-plans')))
-          .map((record) => executionPlanPin(record.value))
-          .filter((value) => value !== undefined)
-      )
-      const authoringCommands = new Set(
-        (
-          await this.provider.transaction((transaction) =>
-            transaction.list('context-authoring-commands')
-          )
-        )
-          .map((record) => authoringPackageId(record.value))
-          .filter((value) => value !== undefined)
-      )
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.contextPackages, candidate.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
+          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           const package_ = assertContextPackageIntegrity(stored.value)
+          // BEGIN IMMEDIATE serializes this fresh reference scan with every
+          // writer that pins a context package.
+          const planPins = (await transaction.list('execution-plans'))
+            .map((record) => executionPlanPin(record.value))
+            .filter((value) => value !== undefined)
+          const authoringCommands = (await transaction.list('context-authoring-commands'))
+            .map((record) => authoringPackageId(record.value))
+            .filter((value) => value !== undefined)
+          const childPackagePins = (await transaction.list(namespaces.contextPackages))
+            .map((record) => contextPackageParentId(record.value))
+            .filter((value) => value !== undefined)
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -434,14 +472,16 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
             publicationSettled: true,
             rejectionKeyReserved: true,
             pendingReferences:
-              planPins.has(package_.contextPackageId) ||
-              authoringCommands.has(package_.contextPackageId)
+              planPins.includes(package_.contextPackageId) ||
+              authoringCommands.includes(package_.contextPackageId) ||
+              childPackagePins.includes(package_.contextPackageId)
                 ? 1
                 : 0,
             holds: 0,
           })
+          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
           if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
           if (options.journal !== undefined) {
             await options.journal(
@@ -458,11 +498,11 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
               stored.revision
             )
           } catch {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
-          return { verdict, removed }
+          return { verdict, admitted: true, removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }

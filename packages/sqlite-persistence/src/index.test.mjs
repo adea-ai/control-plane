@@ -3,7 +3,11 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SqlitePersistenceError, SqlitePersistenceProvider } from './index.ts'
+import {
+  REFERENCE_RETENTION_NAMESPACES,
+  SqlitePersistenceError,
+  SqlitePersistenceProvider,
+} from './index.ts'
 
 const providers = []
 const directories = []
@@ -27,6 +31,36 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('restore invalidates reference clocks but ordinary reopen preserves them', async () => {
+    const { instance } = await provider()
+    const namespaces = Object.values(REFERENCE_RETENTION_NAMESPACES)
+    await instance.transaction(async (transaction) => {
+      for (const namespace of [...namespaces, 'unrelated-metadata'])
+        await transaction.put({
+          namespace,
+          id: 'target',
+          value: { unreferencedSince: '2025-01-01T00:00:00.000Z' },
+        })
+    })
+    const snapshot = await instance.backup()
+    instance.close()
+    await instance.migrate()
+    for (const namespace of namespaces)
+      expect(
+        await instance.transaction((transaction) => transaction.get(namespace, 'target'))
+      ).toBeDefined()
+    await instance.restore(snapshot)
+    for (const namespace of namespaces)
+      expect(
+        await instance.transaction((transaction) => transaction.get(namespace, 'target'))
+      ).toBeUndefined()
+    expect(
+      (await instance.transaction((transaction) => transaction.get('unrelated-metadata', 'target')))
+        .value
+    ).toEqual({ unreferencedSince: '2025-01-01T00:00:00.000Z' })
+    await instance.resetReferenceRetentionWindows()
+    expect((await instance.health()).ready).toBe(true)
+  })
   test('closes SQLite sidecars before a cold filesystem checkpoint', async () => {
     const { instance, directory } = await provider()
     await instance.transaction((tx) => tx.put({ namespace: 'close', id: 'record', value: 1 }))

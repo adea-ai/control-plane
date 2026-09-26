@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   RetentionAssessmentCounter,
+  RetentionDeletionResultSchema,
   RetentionEligibilityReasonSchema,
   evaluateRetentionEligibility,
 } from './retention-eligibility.js'
@@ -20,6 +21,27 @@ const eligibleFacts = {
 }
 
 describe('retention eligibility (#194)', () => {
+  test('preserves an optional bounded scan continuation without turning it into authority', () => {
+    const result = {
+      classId: 'execution-plans',
+      assessedAt: now,
+      dryRun: true,
+      scanned: 1,
+      eligible: 0,
+      deleted: 0,
+      raced: 0,
+      truncated: true,
+      nextAfterId: 'target',
+      retainedByReason: { reference_pending: 1 },
+    }
+    expect(RetentionDeletionResultSchema.parse(result)).toEqual(result)
+    expect(RetentionDeletionResultSchema.safeParse({ ...result, nextAfterId: '' }).success).toBe(
+      false
+    )
+    expect(
+      RetentionDeletionResultSchema.safeParse({ ...result, nextAfterId: 'x'.repeat(129) }).success
+    ).toBe(false)
+  })
   test('a fully covered expired record is eligible', () => {
     expect(evaluateRetentionEligibility(eligibleFacts)).toEqual({ verdict: 'eligible' })
   })
@@ -62,6 +84,19 @@ describe('retention eligibility (#194)', () => {
         retentionExpiresAt: '2026-09-24T11:59:59.999Z',
       })
     ).toEqual({ verdict: 'eligible' })
+  })
+
+  test('calendar-invalid canonical-shaped deadlines fail closed rather than authorize deletion', () => {
+    for (const retentionExpiresAt of [
+      '2026-99-01T00:00:00.000Z',
+      '2026-02-30T00:00:00.000Z',
+      '2026-09-01T24:00:00.000Z',
+    ]) {
+      expect(evaluateRetentionEligibility({ ...eligibleFacts, retentionExpiresAt })).toEqual({
+        verdict: 'retained',
+        reason: 'malformed_expiry',
+      })
+    }
   })
 
   test('a payload is retained until its rejection key is reserved', () => {
@@ -136,8 +171,24 @@ describe('retention eligibility (#194)', () => {
     })
   })
 
-  test('the counter rejects an invalid bound', () => {
-    expect(() => new RetentionAssessmentCounter('command-inbox', now, 0)).toThrow(
+  test('a zero bound admits no candidates and reports truncation when one is offered', () => {
+    const counter = new RetentionAssessmentCounter('command-inbox', now, 0)
+    expect(counter.add({ verdict: 'eligible' })).toBe(false)
+    expect(counter.result()).toEqual({
+      classId: 'command-inbox',
+      assessedAt: now,
+      scanned: 0,
+      truncated: true,
+      eligible: 0,
+      retainedByReason: {},
+    })
+  })
+
+  test('the counter rejects negative and non-integer bounds', () => {
+    expect(() => new RetentionAssessmentCounter('command-inbox', now, -1)).toThrow(
+      'RETENTION_ASSESSMENT_INVALID_BOUND'
+    )
+    expect(() => new RetentionAssessmentCounter('command-inbox', now, 1.5)).toThrow(
       'RETENTION_ASSESSMENT_INVALID_BOUND'
     )
   })

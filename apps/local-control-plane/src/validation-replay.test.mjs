@@ -16,26 +16,33 @@ test('local composition replays validation after a SQLite reopen without compila
   try {
     await persistence.migrate()
     let authorityCalls = 0
-    const composition = new LocalControlApiComposition(persistence, 'http://127.0.0.1:9', {
-      now: () => new Date(now),
-      authority: {
-        authorize: async (principalRef, input) => {
-          authorityCalls += 1
-          return {
-            principalRef,
-            workspaceId: input.workspaceId,
-            projectId: input.projectId,
-            expiresAt: '2026-09-07T13:00:00.000Z',
-            constraints: package_.constraints,
-            permissions: package_.permissions,
-            budgets: package_.budgets,
-          }
-        },
-        resolveArtifact: async () => {
-          throw new Error('UNEXPECTED_ARTIFACT_READ')
+    const composition = new LocalControlApiComposition(
+      persistence,
+      'http://127.0.0.1:9',
+      {
+        now: () => new Date(now),
+        authority: {
+          authorize: async (principalRef, input) => {
+            authorityCalls += 1
+            return {
+              principalRef,
+              workspaceId: input.workspaceId,
+              projectId: input.projectId,
+              expiresAt: '2026-09-07T13:00:00.000Z',
+              constraints: package_.constraints,
+              permissions: package_.permissions,
+              budgets: package_.budgets,
+            }
+          },
+          resolveArtifact: async () => {
+            throw new Error('UNEXPECTED_ARTIFACT_READ')
+          },
         },
       },
-    })
+      undefined,
+      undefined,
+      { required: true }
+    )
     const catalog = new VersionedCatalog(composition.catalog, composition.catalog)
     const profileId = 'prf_01JABCDEF0123456789ABCDEFG'
     const profileVersionId = 'pfv_01JABCDEF0123456789ABCDEFG'
@@ -60,7 +67,7 @@ test('local composition replays validation after a SQLite reopen without compila
         outputContractRefs: ['contract://execution-result/v1'],
       },
     })
-    await catalog.publishAgentProfileVersion({
+    const publishedProfile = await catalog.publishAgentProfileVersion({
       profileVersionId,
       expectedRevision: draft.revision,
       publishedAt: now,
@@ -99,6 +106,24 @@ test('local composition replays validation after a SQLite reopen without compila
         outputContractRef: 'contract://execution-result/v1',
       },
     }
+    await expect(
+      composition.executionValidationService.validate(request, request.caller.servicePrincipalId)
+    ).rejects.toMatchObject({ response: { code: 'PROFILE_APPROVAL_MISSING' } })
+    await persistence.transaction(async (transaction) => {
+      expect(await transaction.list('execution-validation-commands')).toHaveLength(0)
+      expect(await transaction.list('execution-plans')).toHaveLength(0)
+    })
+    expect(
+      await composition.executionValidationService.options.approvalGate.approvals.insert({
+        versionKind: 'agent_profile',
+        versionId: publishedProfile.profileVersionId,
+        revision: publishedProfile.revision,
+        contentDigest: publishedProfile.contentDigest,
+        decision: 'approved',
+        actorPrincipalRef: 'principal://operator/replay-test',
+        decidedAt: now,
+      })
+    ).toBe(true)
     let ticks = 0
     composition.executionValidationService.options.now = () =>
       new Date(Date.parse(now) + ticks++ * 1000).toISOString()
@@ -112,6 +137,74 @@ test('local composition replays validation after a SQLite reopen without compila
     await persistence.transaction(async (transaction) => {
       expect(await transaction.list('execution-validation-commands')).toHaveLength(1)
       expect(await transaction.list('execution-plans')).toHaveLength(1)
+    })
+    // Simulate approval authority disappearing after plan validation. New
+    // admission must consult the composed gate before persisting anything.
+    const removeApproval = () =>
+      persistence.transaction(async (transaction) => {
+        const records = await transaction.list('catalog-approvals')
+        expect(records).toHaveLength(1)
+        await transaction.delete('catalog-approvals', records[0].id)
+      })
+    await removeApproval()
+    const plan = await composition.executionPlans.get(results[0].data.executionPlan)
+    expect(plan).toBeDefined()
+    const receivedAt = new Date().toISOString()
+    const acceptance = {
+      callerPrincipalId: request.caller.servicePrincipalId,
+      operation: 'execution.accept',
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: plan.correlation.requestId,
+      idempotencyKey: 'local-approval-acceptance-0001',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        taskId: plan.correlation.taskId,
+        agentId: plan.correlation.agentId,
+      },
+      executionPlan: {
+        ...results[0].data.executionPlan,
+        schemaVersion: plan.schemaVersion,
+      },
+      receivedAt,
+      retentionExpiresAt: new Date(Date.parse(receivedAt) + 31 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    await expect(composition.commands.acceptExecution(acceptance)).rejects.toMatchObject({
+      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+    })
+    await persistence.transaction(async (transaction) => {
+      expect(await transaction.list('command-inbox')).toHaveLength(0)
+      expect(await transaction.list('executions')).toHaveLength(0)
+    })
+    await composition.executionValidationService.options.approvalGate.approvals.insert({
+      versionKind: 'agent_profile',
+      versionId: profileVersionId,
+      revision: publishedProfile.revision,
+      contentDigest: publishedProfile.contentDigest,
+      decision: 'approved',
+      actorPrincipalRef: 'principal://operator/replay-test',
+      decidedAt: now,
+    })
+    const accepted = await composition.commands.acceptExecution(acceptance)
+    expect(accepted.replayed).toBe(false)
+    await removeApproval()
+    const acceptedReplay = await composition.commands.acceptExecution(acceptance)
+    expect(acceptedReplay.replayed).toBe(true)
+    expect(acceptedReplay.execution).toEqual(accepted.execution)
+    await persistence.transaction(async (transaction) => {
+      expect(await transaction.list('command-inbox')).toHaveLength(1)
+      expect(await transaction.list('executions')).toHaveLength(1)
+    })
+    // Restore the fixture's approval for the independent inline validation.
+    await composition.executionValidationService.options.approvalGate.approvals.insert({
+      versionKind: 'agent_profile',
+      versionId: profileVersionId,
+      revision: publishedProfile.revision,
+      contentDigest: publishedProfile.contentDigest,
+      decision: 'approved',
+      actorPrincipalRef: 'principal://operator/replay-test',
+      decidedAt: now,
     })
     const inline = {
       ...request,
@@ -140,7 +233,14 @@ test('local composition replays validation after a SQLite reopen without compila
     await persistence.close()
     persistence = new SqlitePersistenceProvider({ path })
     await persistence.migrate()
-    const reopened = new LocalControlApiComposition(persistence, 'http://127.0.0.1:9')
+    const reopened = new LocalControlApiComposition(
+      persistence,
+      'http://127.0.0.1:9',
+      undefined,
+      undefined,
+      undefined,
+      { required: true }
+    )
     const unexpected = async () => {
       throw new Error('REPLAY_RECOMPILED')
     }
@@ -152,6 +252,7 @@ test('local composition replays validation after a SQLite reopen without compila
       projectStates: { getAtRevision: unexpected },
       skills: { getSkillVersion: unexpected },
       contextPackages: { get: unexpected },
+      approvalGate: { approvals: { list: unexpected }, policy: { required: true } },
     })
     const replay = await reopened.executionValidationService.validate(
       { ...request, issuedAt: '2026-09-08T12:00:00.000Z' },

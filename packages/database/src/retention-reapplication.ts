@@ -17,7 +17,7 @@ import { runtimeCommands } from './schema/runtime-commands.js'
 export interface RetentionReapplicationOutcome {
   /** Operations that changed something. */
   readonly applied: number
-  /** Operations that were already satisfied, including effects that never happened. */
+  /** Operations already satisfied in this restored copy. */
   readonly skipped: number
 }
 
@@ -32,6 +32,14 @@ export interface RetentionReapplicationOutcome {
  */
 export class PostgresRetentionReapplication {
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  /** Offline restore maintenance; never run on ordinary startup/migration. */
+  async resetReferenceRetentionWindows(): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.update(executionPlans).set({ unreferencedSince: null })
+      await transaction.update(contextPackages).set({ unreferencedSince: null })
+    })
+  }
 
   async apply(
     operations: readonly RetentionJournalOperation[]

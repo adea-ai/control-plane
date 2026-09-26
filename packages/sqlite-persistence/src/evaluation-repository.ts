@@ -87,13 +87,14 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
       for (const record of page) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get('evaluation-runs', record.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false }
           let run: EvalRun
           try {
             run = EvalRunSchema.parse(stored.value)
           } catch {
             // Unreadable evidence is never a deletion candidate.
-            return { verdict: undefined, removed: false }
+            return { verdict: undefined, admitted: false, removed: false }
           }
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
@@ -108,7 +109,9 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
             pendingReferences: 0,
             holds: 0,
           })
-          if (verdict.verdict !== 'eligible' || dryRun) return { verdict, removed: false }
+          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, admitted: true, removed: false }
           if (options.journal !== undefined) {
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
@@ -120,11 +123,11 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
           try {
             removed = await transaction.delete('evaluation-runs', stored.id, stored.revision)
           } catch {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
-          return { verdict, removed }
+          return { verdict, admitted: true, removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }

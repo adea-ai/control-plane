@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
+import type {
+  JsonValue,
+  PersistenceProvider,
+  PersistenceTransaction,
+} from '@control-plane/deployment'
 import {
+  ExecutionSchema,
   InteractionCommandReceiptSchema,
   interactionCommandScopeKey,
   type InteractionCommandRepository,
@@ -13,6 +18,24 @@ const recordId = (scope: InteractionCommandScope) =>
   `r-${createHash('sha256').update(interactionCommandScopeKey(scope)).digest('hex')}`
 const json = (receipt: InteractionCommandReceipt) =>
   JSON.parse(JSON.stringify(receipt)) as JsonValue
+const storedId = (id: string) => `r-${createHash('sha256').update(id).digest('hex')}`
+
+async function requireExecutionOwner(
+  transaction: PersistenceTransaction,
+  receipt: InteractionCommandReceipt
+): Promise<void> {
+  const executionId = receipt.request.payload.executionId
+  const row = await transaction.get('executions', storedId(executionId))
+  if (row === undefined) throw new Error('SQLITE_INTERACTION_COMMAND_EXECUTION_MISSING')
+  const parsed = ExecutionSchema.safeParse(row.value)
+  if (!parsed.success || parsed.data.executionId !== executionId)
+    throw new Error('SQLITE_INTERACTION_COMMAND_EXECUTION_MALFORMED')
+  if (
+    parsed.data.correlation.workspaceId !== receipt.request.workspaceId ||
+    parsed.data.correlation.projectId !== receipt.request.projectId
+  )
+    throw new Error('SQLITE_INTERACTION_COMMAND_SCOPE_MISMATCH')
+}
 
 export class SqliteInteractionCommandRepository implements InteractionCommandRepository {
   constructor(readonly provider: PersistenceProvider) {}
@@ -34,6 +57,7 @@ export class SqliteInteractionCommandRepository implements InteractionCommandRep
       const existing = await transaction.get(namespace, id)
       if (existing)
         return { receipt: InteractionCommandReceiptSchema.parse(existing.value), inserted: false }
+      await requireExecutionOwner(transaction, receipt)
       await transaction.put({ namespace, id, value: json(receipt) })
       return { receipt, inserted: true }
     })

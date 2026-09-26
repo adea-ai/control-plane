@@ -220,4 +220,81 @@ describe('SQLite execution-event retention deletion (#194)', () => {
       await rm(directory, { recursive: true, force: true })
     }
   }, 60000)
+
+  test('bound one admits one eligible event before journalling or deletion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-event-retention-bound-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    try {
+      await provider.migrate()
+      await seedTerminalExecution(provider)
+      const events = new SqliteExecutionEventRepository(provider)
+      const first = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FFJ'
+      const second = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FGK'
+      await events.append(eventDraft(first))
+      await events.append(eventDraft(second))
+      await publish(provider, first)
+      await publish(provider, second)
+
+      const journal = []
+      const result = await events.deleteEligibleEvents(assessedAt, {
+        policyRetainMs: thirtyDaysMs,
+        bound: 1,
+        dryRun: false,
+        journal: async (operations) => journal.push(operations),
+      })
+
+      expect(result).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
+      expect(journal).toHaveLength(1)
+      expect(journal[0]).toHaveLength(2)
+      expect(await events.get(first) === undefined || (await events.get(second)) === undefined).toBe(
+        true
+      )
+      expect(await provider.transaction((t) => t.list('execution-events'))).toHaveLength(1)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  test('a retained first event consumes the bound without journalling the later eligible event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-event-retention-mixed-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    try {
+      await provider.migrate()
+      await seedTerminalExecution(provider)
+      const events = new SqliteExecutionEventRepository(provider)
+      const first = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FH1'
+      const second = 'evt_01ARZ3NDEKTSV4RRFFQ69G5FJ2'
+      await events.append(eventDraft(first))
+      await events.append(eventDraft(second))
+      const stored = await provider.transaction((t) => t.list('execution-events'))
+      const [retained, eligible] = stored.toSorted((left, right) =>
+        left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+      )
+      await publish(provider, eligible.value.eventId)
+
+      const journal = []
+      const result = await events.deleteEligibleEvents(assessedAt, {
+        policyRetainMs: thirtyDaysMs,
+        bound: 1,
+        dryRun: false,
+        journal: async (operations) => journal.push(operations),
+      })
+
+      expect(result).toMatchObject({
+        scanned: 1,
+        eligible: 0,
+        deleted: 0,
+        truncated: true,
+        retainedByReason: { unsettled_publication: 1 },
+      })
+      expect(journal).toHaveLength(0)
+      expect(await provider.transaction((t) => t.list('execution-events'))).toHaveLength(2)
+      expect(await events.get(retained.value.eventId)).toBeDefined()
+      expect(await events.get(eligible.value.eventId)).toBeDefined()
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
 })

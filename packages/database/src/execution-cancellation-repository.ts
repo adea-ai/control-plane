@@ -9,6 +9,7 @@ import {
 import { and, eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
+import { executions } from './schema/executions.js'
 
 const key = (scope: ExecutionCancellationScope) =>
   createHash('sha256').update(executionCancellationScopeKey(scope)).digest('hex')
@@ -31,6 +32,18 @@ export class PostgresExecutionCancellationRepository implements ExecutionCancell
       )
       const existing = await read(transaction, receipt.request)
       if (existing) return { receipt: existing, inserted: false }
+      const [owner] = await transaction
+        .select({ workspaceId: executions.workspaceId, projectId: executions.projectId })
+        .from(executions)
+        .where(eq(executions.executionId, receipt.request.payload.executionId))
+        .for('key share')
+        .limit(1)
+      if (owner === undefined) throw new Error('EXECUTION_CANCELLATION_EXECUTION_MISSING')
+      if (
+        owner.workspaceId !== receipt.request.workspaceId ||
+        owner.projectId !== receipt.request.projectId
+      )
+        throw new Error('EXECUTION_CANCELLATION_SCOPE_MISMATCH')
       await transaction.insert(executionCancellations).values({
         commandKey: key(receipt.request),
         workspaceId: receipt.request.workspaceId,

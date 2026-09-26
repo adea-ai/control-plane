@@ -11,7 +11,10 @@ export {
 } from './context-package-repository.js'
 export { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.js'
 export { PostgresContextCommandRepository } from './context-command-repository.js'
-export { PostgresCatalogApprovalRepository } from './catalog-approval-repository.js'
+export {
+  catalogApprovalDatabaseAuthority,
+  PostgresCatalogApprovalRepository,
+} from './catalog-approval-repository.js'
 export { PostgresCatalogRepository } from './catalog-repository.js'
 export { PostgresEncryptedSecretStore } from './credential-secret-store.js'
 export { PostgresDelegationRepository } from './delegation-repository.js'

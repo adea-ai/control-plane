@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -139,6 +139,10 @@ describe('catalog approval operator CLI', () => {
       status: 'applied',
       operation: 'approvals.record',
       replayed: false,
+      decision: {
+        actorPrincipalRef: `operator:os-user:${encodeURIComponent(userInfo().username)}`,
+        authorityRef: 'authority:sqlite:local-os',
+      },
     })
 
     const replay = run()
