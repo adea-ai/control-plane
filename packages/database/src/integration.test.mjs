@@ -134,6 +134,48 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated?.dispose()
   })
 
+  test('reference-window metadata migrates without changing immutable plan/package contents', async () => {
+    // This is storage-foundation evidence, not proof that retention writers
+    // and sweepers already maintain the clock. Roll back every probe row.
+    const rollback = new Error('REFERENCE_METADATA_PROBE_ROLLBACK')
+    await expect(
+      isolated.application.transaction(async (transaction) => {
+        const packages = new PostgresContextPackageRepository(transaction)
+        const plans = new PostgresExecutionPlanRepository(transaction)
+        const package_ = contextPackageSerializationFixtures.futurePi
+        const plan = createExecutionPlanTestFixture({ contextPackage: package_ })
+        const packageReference = await packages.put(package_)
+        const planReference = await plans.put(plan)
+        const packageClock = () =>
+          transaction
+            .select({ clock: contextPackages.unreferencedSince })
+            .from(contextPackages)
+            .where(eq(contextPackages.contextPackageId, packageReference.contextPackageId))
+        const planClock = () =>
+          transaction
+            .select({ clock: executionPlans.unreferencedSince })
+            .from(executionPlans)
+            .where(eq(executionPlans.executionPlanId, planReference.executionPlanId))
+        expect(await packageClock()).toEqual([{ clock: null }])
+        expect(await planClock()).toEqual([{ clock: null }])
+        const observedAt = new Date('2026-09-26T00:00:00.000Z')
+        await transaction
+          .update(contextPackages)
+          .set({ unreferencedSince: observedAt })
+          .where(eq(contextPackages.contextPackageId, packageReference.contextPackageId))
+        await transaction
+          .update(executionPlans)
+          .set({ unreferencedSince: observedAt })
+          .where(eq(executionPlans.executionPlanId, planReference.executionPlanId))
+        expect(await packageClock()).toEqual([{ clock: observedAt }])
+        expect(await planClock()).toEqual([{ clock: observedAt }])
+        expect(await packages.get(packageReference)).toEqual(package_)
+        expect(await plans.get(planReference)).toEqual(plan)
+        throw rollback
+      })
+    ).rejects.toBe(rollback)
+  })
+
   test('persists scoped provider registrations with concurrent capacity and permanent revocation', async () => {
     const readModel = createFakeContextProvider({
       suffix: 'A',
@@ -3717,7 +3759,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       bound: 1,
       journal: async (operations) => journal.push(...operations),
     })
-    expect(bounded).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, compacted: 0, truncated: true })
+    expect(bounded).toMatchObject({
+      scanned: 1,
+      eligible: 1,
+      deleted: 1,
+      compacted: 0,
+      truncated: true,
+    })
     expect(journal).toHaveLength(1)
     const boundedOutboxRows = await isolated.application.execute(
       sql`select id from outbox_events where id = ${boundedOutbox}`

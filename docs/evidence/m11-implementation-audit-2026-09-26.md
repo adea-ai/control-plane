@@ -19,12 +19,17 @@ preserved; this audit uses isolated worktrees.
 
 ## Confirmed defects
 
+All findings are owned by the M11 implementation agent and are due before M11
+release approval; no calendar release date is ratified. Regressions and repair
+status are recorded below and in draft PR #740. Outstanding high-severity
+findings are release blockers, not accepted deferrals.
+
 | Severity | Finding                                                                                                                                      | Owner and acceptance condition                                                                                                                       |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | High     | Hosted validation does not receive its configured catalog approval gate.                                                                     | M11 implementation agent, #188/#190: prove validation denies an unapproved pin when enabled.                                                         |
 | High     | A historical stored plan can authorize a new execution without current version eligibility checks.                                           | M11 implementation agent, #188/#190: revalidate current pinned lifecycle/digest/approval at new acceptance while preserving already-accepted replay. |
 | High     | Receipt deletion treats the owner as terminal without reading it; removing an unresolved cancellation permits reconciliation to resume work. | M11 implementation agent, #194: retain unresolved intent, use terminal reconciliation plus the replay window, prove both backends.                   |
-| High     | Plan/package retention uses stale reference snapshots; new admission or a new plan can create a dangling reference during deletion.          | M11 implementation agent, #194: coordinate writers and deletion atomically in both backends, with deterministic interleaving regressions.            |
+| High     | Plan/package retention and PostgreSQL execution deletion use stale reference snapshots; concurrent writers can create dangling references.   | M11 implementation agent, #194: coordinate all reference writers and deletion claims atomically, with deterministic interleaving regressions.        |
 | High     | Plan/package expiry uses compilation time instead of the ratified 90-day interval after the last reference is released.                      | M11 implementation agent, #194: persist a conservative release-time anchor and prove renewed references reset the interval.                          |
 | High     | No durable owner hold state is consulted; deletion supplies `holds: 0`.                                                                      | M11 implementation agent, #194: durable scoped holds and atomic hold checks at physical deletion, including concurrent hold creation.                |
 | High     | Restore journal operations are not bound to their declared class/backend.                                                                    | M11 implementation agent, #194: reject mismatched operations before any restored data is mutated.                                                    |
@@ -66,6 +71,14 @@ one shared counter. After rebuilding dependencies, the parent integration
 passed 38 focused retention tests (141 assertions). Receipt lifecycle and atomic
 reference-claim repairs remain in progress. A full integrated candidate suite,
 current-head CI and deployment verification have not yet been completed.
+
+Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
+conservative clock helper are prepared. Six helper tests (14 assertions), the
+domain build and migration/schema check passed. One real isolated PostgreSQL
+probe (seven assertions) verified migration/defaults and that metadata updates
+leave immutable plan/package JSON and digests unchanged. This is not yet a
+completed retention path: deletion claims and every reference writer still need
+to maintain and consult those clocks under their lifetime transaction/lock.
 
 Validation receipts are an additional retention coverage gap: they indefinitely
 pin plans, have no registered age/deletion path, and current plan-deletion tests
