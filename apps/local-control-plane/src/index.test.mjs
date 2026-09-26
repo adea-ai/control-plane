@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -10,8 +11,10 @@ import {
   SqlitePersistenceProvider,
   SqliteInteractionRepository,
 } from '@control-plane/sqlite-persistence'
-import { InteractionService } from '@control-plane/domain'
+import { ExecutionAttemptSchema, ExecutionSchema, InteractionService } from '@control-plane/domain'
 import { LocalRuntimeInteractions } from './runtime-interactions.ts'
+
+const storedId = (id) => `r-${createHash('sha256').update(id).digest('hex')}`
 import {
   DirectRuntimeActivityPort,
   LocalApiServer,
@@ -546,6 +549,62 @@ describe('Local Control Plane composition', () => {
       }
       try {
         await persistence.migrate()
+        const acceptedAt = '2026-08-28T23:59:57.000Z'
+        const queuedAt = '2026-08-28T23:59:58.000Z'
+        const startingAt = '2026-08-28T23:59:59.000Z'
+        const runningAt = '2026-08-29T00:00:00.000Z'
+        const awaitingInputAt = '2026-08-29T00:00:01.000Z'
+        const execution = ExecutionSchema.parse({
+          executionId: input.executionId,
+          state: 'awaiting_input',
+          version: 5,
+          correlation: {
+            ...input.executionPlan.correlation,
+            taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          },
+          executionPlan: {
+            executionPlanId: input.executionPlan.executionPlanId,
+            contentDigest: input.executionPlan.contentDigest,
+            schemaVersion: input.executionPlan.schemaVersion,
+          },
+          attemptCount: 1,
+          latestAttemptId: input.attemptId,
+          acceptedAt,
+          queuedAt,
+          startingAt,
+          runningAt,
+          awaitingInputAt,
+          createdAt: acceptedAt,
+          updatedAt: awaitingInputAt,
+        })
+        const attempt = ExecutionAttemptSchema.parse({
+          attemptId: input.attemptId,
+          executionId: input.executionId,
+          sequence: 1,
+          state: 'awaiting_input',
+          version: 4,
+          acceptedAt,
+          queuedAt,
+          startingAt,
+          runningAt,
+          awaitingInputAt,
+          createdAt: acceptedAt,
+          updatedAt: awaitingInputAt,
+        })
+        await persistence.transaction(async (transaction) => {
+          await transaction.put({
+            namespace: 'executions',
+            id: storedId(input.executionId),
+            value: execution,
+          })
+          await transaction.put({
+            namespace: 'execution-attempts',
+            id: storedId(input.attemptId),
+            value: attempt,
+          })
+        })
         expect(await activities.dispatch(input)).toEqual({
           outcome: 'awaiting_input',
           interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',

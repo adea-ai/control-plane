@@ -540,3 +540,50 @@ are available, retain the data and report the reason.
 - Actual filesystem/object-store deletion, workflow/sink retention, backup expiry,
   and a restored snapshot that does not resurrect erased data.
 - Per-class evidence and all-profile operational wiring before closing #194.
+
+## Reference-lifetime repair guidance (2026-09-26)
+
+This is the implementation direction for the remaining reference-window lane,
+not passing acceptance evidence. Earlier compilation-age increments above are
+superseded by the ratified last-reference-release policy; they must not be used
+to justify deleting a recently unpinned object.
+
+- A surviving child plan's `parentExecutionPlan` and child package's
+  `parentContextPackage` are durable references. Retain ancestors bottom-up.
+  New child writes verify and claim the exact ancestor in their insertion
+  transaction. Identical historical puts and already-accepted replay create no
+  new reference and keep their existing duplicate-first behavior.
+- Observe the first proven unreferenced instant conservatively under the
+  target's lifetime claim. Never substitute `compiledAt`. Persist the nullable
+  PostgreSQL `unreferencedSince` column or the two SQLite auxiliary reference
+  window namespaces; leave immutable package/plan JSON and digests unchanged.
+- Every new reference writer clears the referenced targets' clocks atomically.
+  This includes admission, execution and validation, plan/package ancestry,
+  context authoring, Local embedded job enqueue and the exported PostgreSQL
+  delegation repository. A reference that is created and removed between two
+  sweeps must still restart the 90-day interval.
+- PostgreSQL deletion claims use `FOR UPDATE` before fresh reference reads;
+  new writers claim parents in the same transaction. When clearing multiple
+  clocks, update context packages in sorted-ID order, then plans in sorted-ID
+  order. Avoid inconsistent metadata update order across writer paths.
+- Dry runs never persist clocks. Actual physical deletion removes auxiliary
+  clocks; recreating an ID must not inherit an earlier target's clock. Restore
+  and journal reapplication invalidate these clocks before exposure, while
+  ordinary restart preserves them.
+- Bounded passes must make progress past retained candidates. Add explicit
+  backend-local lexicographic continuation (`afterId` input and `nextAfterId`
+  output) for plan/package sweeps, with an operator CLI option restricted to
+  those classes. Count every inspected target toward the bound, not only old
+  objects; do not mutate lookahead candidates. After the final page, a later
+  observation pass starts from the beginning. A continuation is scan position,
+  never deletion authority, and must be used only for the same target/backend
+  and class. Prove a pinned first page cannot starve later free objects.
+- Regression gates: fresh release gets a full window; a short renewed-reference
+  cycle resets it; dry run and bound-zero produce no metadata mutation; exact
+  boundary survives; both stores agree; malformed state fails closed; ordinary
+  restart preserves clocks; restore resets them; referenced ancestry survives;
+  bounded continuation reaches later candidates without exceeding its bound.
+
+Durable holds, validation-receipt disposition, the six remaining storage/provider
+classes and external journal/ambiguous-outcome restore acceptance remain separate
+open gates. Completing this lane does not close #194 or #197 by itself.

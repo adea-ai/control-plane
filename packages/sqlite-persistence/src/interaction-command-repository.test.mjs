@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { ExecutionSchema } from '@control-plane/domain'
 import { SqliteInteractionCommandRepository, SqlitePersistenceProvider } from './index.ts'
 
 const request = {
@@ -16,6 +18,35 @@ const request = {
     action: 'deny',
   },
 }
+const acceptance = ControlApiFixtures.executionAcceptance.request
+const storedId = (id) => `r-${createHash('sha256').update(id).digest('hex')}`
+
+async function seedExecution(provider, executionId, workspaceId, projectId) {
+  const acceptedAt = '2026-09-07T00:00:00.000Z'
+  await provider.transaction((transaction) =>
+    transaction.put({
+      namespace: 'executions',
+      id: storedId(executionId),
+      value: ExecutionSchema.parse({
+        executionId,
+        state: 'accepted',
+        version: 1,
+        correlation: {
+          workspaceId,
+          projectId,
+          taskId: acceptance.payload.taskId,
+          agentId: acceptance.payload.agentId,
+          requestId: acceptance.requestId,
+        },
+        executionPlan: acceptance.payload.executionPlan,
+        attemptCount: 0,
+        acceptedAt,
+        createdAt: acceptedAt,
+        updatedAt: acceptedAt,
+      }),
+    })
+  )
+}
 
 test('SQLite command receipts retain first response identity under concurrency and restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-interaction-receipts-'))
@@ -24,6 +55,24 @@ test('SQLite command receipts retain first response identity under concurrency a
   try {
     await provider.migrate()
     let repository = new SqliteInteractionCommandRepository(provider)
+    await expect(repository.reserve({ request })).rejects.toThrow(
+      'SQLITE_INTERACTION_COMMAND_EXECUTION_MISSING'
+    )
+    await seedExecution(
+      provider,
+      request.payload.executionId,
+      request.workspaceId,
+      request.projectId
+    )
+    await expect(
+      repository.reserve({
+        request: {
+          ...request,
+          workspaceId: `${request.workspaceId.slice(0, -1)}H`,
+          idempotencyKey: 'interaction-owner-scope-mismatch',
+        },
+      })
+    ).rejects.toThrow('SQLITE_INTERACTION_COMMAND_SCOPE_MISMATCH')
     const reserved = await repository.reserve({ request })
     expect(reserved.inserted).toBe(true)
     const initial = reserved.receipt
@@ -44,6 +93,9 @@ test('SQLite command receipts retain first response identity under concurrency a
     const accepted = await repository.markAccepted(request, '2026-09-08T01:00:00.000Z')
     expect(accepted).toEqual({ request, acceptedAt: '2026-09-08T01:00:00.000Z' })
     expect(await repository.markAccepted(request, '2026-09-08T02:00:00.000Z')).toEqual(accepted)
+    await provider.transaction((transaction) =>
+      transaction.delete('executions', storedId(request.payload.executionId))
+    )
     expect(await repository.reserve({ request: changed })).toEqual({
       receipt: accepted,
       inserted: false,

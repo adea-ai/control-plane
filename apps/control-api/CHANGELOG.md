@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.15.1...control-api-v1.15.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **marketplace:** read the latest pointer from the publication root ([#741](https://github.com/adea-ai/control-plane/issues/741)) ([ae26cc9](https://github.com/adea-ai/control-plane/commit/ae26cc982450fbbda654c94262fdc50b85c342c0))
+
 ## [1.15.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.15.0...control-api-v1.15.1) (2026-09-26)
 
 

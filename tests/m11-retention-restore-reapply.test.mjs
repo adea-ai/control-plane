@@ -9,9 +9,13 @@ import {
   CommandInboxService,
   parseRetentionJournalLine,
 } from '@control-plane/domain'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
+  SqliteContextPackageRepository,
+  SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
 } from '../packages/sqlite-persistence/src/index.ts'
 import { retentionApply } from '../scripts/retention-apply.mjs'
@@ -41,15 +45,16 @@ async function reapply(argv) {
   })
   return { status, stdout, stderr }
 }
+const plan = createExecutionPlanTestFixture()
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  workspaceId: plan.correlation.workspaceId,
+  projectId: plan.correlation.projectId,
+  taskId: plan.correlation.taskId,
+  agentId: plan.correlation.agentId,
   executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  executionPlanId: plan.executionPlanId,
 }
 const receivedAt = '2026-08-24T10:00:00.000Z'
 const expiredAt = '2026-09-23T10:00:00.000Z'
@@ -75,6 +80,10 @@ async function patchSingleton(provider, namespace, patch) {
 }
 
 async function seedTerminalRetiredCommand(provider) {
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new SqliteExecutionPlanRepository(provider).put(plan)
   const repository = new SqliteCommandAcceptanceRepository(provider)
   await new CommandInboxService({
     repository,
@@ -96,8 +105,8 @@ async function seedTerminalRetiredCommand(provider) {
     },
     executionPlan: {
       executionPlanId: ids.executionPlanId,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
     },
     receivedAt,
     retentionExpiresAt: expiredAt,

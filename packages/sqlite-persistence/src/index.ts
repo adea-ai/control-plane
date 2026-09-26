@@ -41,6 +41,7 @@ export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 export * from './receipt-retention.js'
 export { REFERENCE_RETENTION_NAMESPACES } from './retention-reference-metadata.js'
+export { assertSqliteWorkflowExecutionReference } from './workflow-reference-guard.js'
 
 const MAX_RECORD_BYTES = 16 * 1024 * 1024
 const NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/

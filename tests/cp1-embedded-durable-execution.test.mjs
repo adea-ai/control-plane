@@ -5,7 +5,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
 import { ControlApiFixtures } from '@control-plane/contracts'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
@@ -14,6 +18,7 @@ import { LocalControlPlaneComposition } from '@control-plane/local-control-plane
 import { createExecutionId } from '../apps/control-api/dist/index.js'
 import {
   SqliteCommandAcceptanceRepository,
+  SqliteContextPackageRepository,
   SqliteExecutionPlanRepository,
   SqliteExecutionRepository,
   SqlitePersistenceProvider,
@@ -31,6 +36,7 @@ import { runProfileConformance } from '@control-plane/profile-portability'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import {
   PostgresCommandAcceptanceRepository,
+  PostgresContextPackageRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionRepository,
 } from '@control-plane/database'
@@ -42,6 +48,14 @@ const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
 const postgresConfigured = process.env.RUN_M10_POSTGRES_CONFORMANCE === 'true'
 
 const plan = createExecutionPlanTestFixture()
+
+async function seedLocalPlan(composition) {
+  const inputs = createExecutionPlanTestFixtureInputs()
+  await composition.catalog.insertAgentProfileVersion(inputs.profile)
+  for (const skill of inputs.skills) await composition.catalog.insertSkillVersion(skill)
+  await new SqliteContextPackageRepository(composition.persistence).put(inputs.contextPackage)
+  await composition.executionPlans.put(plan)
+}
 
 const waitFor = async (predicate, timeoutMs = 15_000) => {
   const started = Date.now()
@@ -214,7 +228,7 @@ describe('CP1 local embedded durable execution', () => {
     })
     try {
       await composition.start()
-      await composition.executionPlans.put(plan)
+      await seedLocalPlan(composition)
       const response = await composition.executionAcceptanceService.accept(
         acceptanceEnvelope(new Date().toISOString()),
         'svc_cp1-standalone'
@@ -249,18 +263,25 @@ describe('CP1 local embedded durable execution', () => {
       dataDirectory,
       runtimeTransport: managedPiAdapter(client),
     })
-    await first.start()
-    await first.executionPlans.put(plan)
-    const response = await first.executionAcceptanceService.accept(
-      acceptanceEnvelope(new Date().toISOString()),
-      'svc_cp1-standalone'
-    )
-    const executionId = response.data.executionId
-    await waitFor(
-      async () => (await first.executions.getExecution(executionId)).state === 'awaiting_input'
-    )
-    await first.close()
-    first.persistence.close()
+    let executionId
+    let firstPrepared = false
+    try {
+      await first.start()
+      await seedLocalPlan(first)
+      const response = await first.executionAcceptanceService.accept(
+        acceptanceEnvelope(new Date().toISOString()),
+        'svc_cp1-standalone'
+      )
+      executionId = response.data.executionId
+      await waitFor(
+        async () => (await first.executions.getExecution(executionId)).state === 'awaiting_input'
+      )
+      firstPrepared = true
+    } finally {
+      await first.close()
+      first.persistence.close()
+      if (!firstPrepared) await rm(directory, { recursive: true, force: true })
+    }
 
     // Restart (same data directory, new composition): the parked job survives,
     // the workflow replays its journal back to the interaction wait, and the
@@ -418,6 +439,9 @@ describe('CP1 persistence-profile conformance', () => {
     })
     await provider.migrate()
     const plans = new SqliteExecutionPlanRepository(provider)
+    await new SqliteContextPackageRepository(provider).put(
+      contextPackageSerializationFixtures.futurePi
+    )
     await plans.put(plan)
     const commands = new CommandInboxService({
       repository: new SqliteCommandAcceptanceRepository(provider),
@@ -460,6 +484,9 @@ describe('CP1 persistence-profile conformance', () => {
     const database = await createIsolatedTestDatabase(credentials)
     await database.migrate()
     const plans = new PostgresExecutionPlanRepository(database.application)
+    await new PostgresContextPackageRepository(database.application).put(
+      contextPackageSerializationFixtures.futurePi
+    )
     await plans.put(plan)
     const commands = new CommandInboxService({
       repository: new PostgresCommandAcceptanceRepository(database.application),

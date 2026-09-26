@@ -5,6 +5,7 @@ import {
   executionValidationCommandKey,
   assertExecutionPlanIntegrity,
   assertExecutionValidationCommandPlan,
+  ExecutionPlanError,
   type ExecutionValidationCommandRecord,
   type ExecutionValidationCommandRepository,
   type ExecutionValidationCommandScope,
@@ -13,6 +14,7 @@ import {
 import { eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.js'
+import { lockContextPackageReference } from './context-package-repository.js'
 import { executionValidationCommands } from './schema/execution-validation-commands.js'
 
 export class PostgresExecutionValidationCommandRepository implements ExecutionValidationCommandRepository {
@@ -40,6 +42,12 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
           throw new Error('EXECUTION_VALIDATION_COMMAND_CONFLICT')
         return existing
       }
+      if (!(await lockContextPackageReference(transaction, plan.contextPackage))) {
+        throw new ExecutionPlanError(
+          'MISSING_CONTEXT_PACKAGE',
+          plan.contextPackage.contextPackageId
+        )
+      }
       await new PostgresExecutionPlanRepository(transaction).put(plan)
       await transaction.insert(executionValidationCommands).values({
         commandKey: key,
@@ -54,7 +62,7 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
 }
 
 async function read(
-  database: Pick<ControlPlaneDatabase, 'select' | 'insert'>,
+  database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>,
   scope: ExecutionValidationCommandScope
 ): Promise<ExecutionValidationCommandRecord | undefined> {
   const [row] = await database

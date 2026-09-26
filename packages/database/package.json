@@ -30,7 +30,7 @@
     "db:migrate": "bun src/cli/migrate.ts",
     "lint": "oxlint src drizzle.config.mjs",
     "test": "bun test src/*.test.mjs",
-    "test:integration": "bun test --timeout 30000 src/integration.test.mjs"
+    "test:integration": "bun test --timeout 30000 src/integration.test.mjs src/*.integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/config": "workspace:*",

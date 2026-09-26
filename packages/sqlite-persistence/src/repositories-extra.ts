@@ -403,27 +403,19 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
         if (page.length < 128) break
         continue
       }
-      // Reference sets are computed once per page rather than per candidate.
-      const planPins = new Set(
-        (await this.provider.transaction((transaction) => transaction.list('execution-plans')))
-          .map((record) => executionPlanPin(record.value))
-          .filter((value) => value !== undefined)
-      )
-      const authoringCommands = new Set(
-        (
-          await this.provider.transaction((transaction) =>
-            transaction.list('context-authoring-commands')
-          )
-        )
-          .map((record) => authoringPackageId(record.value))
-          .filter((value) => value !== undefined)
-      )
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.contextPackages, candidate.id)
-          if (stored === undefined)
-            return { verdict: undefined, admitted: false, removed: false }
+          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           const package_ = assertContextPackageIntegrity(stored.value)
+          // BEGIN IMMEDIATE serializes this fresh reference scan with every
+          // writer that pins a context package.
+          const planPins = (await transaction.list('execution-plans'))
+            .map((record) => executionPlanPin(record.value))
+            .filter((value) => value !== undefined)
+          const authoringCommands = (await transaction.list('context-authoring-commands'))
+            .map((record) => authoringPackageId(record.value))
+            .filter((value) => value !== undefined)
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -435,8 +427,8 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
             publicationSettled: true,
             rejectionKeyReserved: true,
             pendingReferences:
-              planPins.has(package_.contextPackageId) ||
-              authoringCommands.has(package_.contextPackageId)
+              planPins.includes(package_.contextPackageId) ||
+              authoringCommands.includes(package_.contextPackageId)
                 ? 1
                 : 0,
             holds: 0,

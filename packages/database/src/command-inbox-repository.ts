@@ -21,6 +21,7 @@ import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
 import { executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
+import { lockExecutionPlanReference } from './execution-plan-repository.js'
 
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
 
@@ -230,6 +231,22 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         sql`select pg_advisory_xact_lock(hashtextextended(${retirementKey(parsedCommand)}, 0))`
       )
       await assertNotRetired(transaction, parsedCommand)
+      const [existingScope] = await transaction
+        .select({ commandId: commandInbox.commandId })
+        .from(commandInbox)
+        .where(scopeWhere(parsedCommand))
+        .limit(1)
+      if (!existingScope) {
+        if (
+          parsedCommand.executionPlan.executionPlanId !==
+            parsedExecution.executionPlan.executionPlanId ||
+          parsedCommand.executionPlan.contentDigest !==
+            parsedExecution.executionPlan.contentDigest ||
+          !(await lockExecutionPlanReference(transaction, parsedExecution.executionPlan))
+        ) {
+          throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+        }
+      }
       const insertedCommand = await transaction
         .insert(commandInbox)
         .values(toCommandRow(parsedCommand))

@@ -105,7 +105,7 @@ export function evaluateRetentionEligibility(
 export const RetentionAssessmentSchema = z.object({
   classId: z.string().min(1).max(64),
   assessedAt: z.string(),
-  /** Expired candidates inspected in this pass. */
+  /** Candidates inspected in this pass; reference-window scans include young targets. */
   scanned: z.number().int().nonnegative(),
   /** True when the scan hit its bound and more candidates remain. */
   truncated: z.boolean(),
@@ -137,6 +137,12 @@ export const RetentionDeletionResultSchema = z.object({
   compacted: z.number().int().nonnegative().optional(),
   raced: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  /**
+   * Backend-local scan position for plan/package reference-window passes. Reuse
+   * only with the same target, backend and class; this is not deletion authority.
+   * A later full observation pass starts again after the final page.
+   */
+  nextAfterId: z.string().min(1).max(128).optional(),
   retainedByReason: z.partialRecord(
     RetentionEligibilityReasonSchema,
     z.number().int().nonnegative()

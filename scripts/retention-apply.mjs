@@ -31,6 +31,7 @@ const optionSchema = {
   database: { type: 'string' },
   host: { type: 'string' },
   bound: { type: 'string' },
+  'after-id': { type: 'string' },
   journal: { type: 'string' },
   now: { type: 'string' },
   apply: { type: 'boolean' },
@@ -57,9 +58,16 @@ export async function retentionApply({
     if (!dryRun && values.confirm !== values.class) throw new Error('CONFIRMATION_REQUIRED')
     const now = values.now === undefined ? new Date() : new Date(values.now)
     if (Number.isNaN(now.getTime())) throw new Error('INVALID_INSTANT')
-    const bound = values.bound === undefined ? undefined : Number.parseInt(values.bound, 10)
-    if (bound !== undefined && (!Number.isSafeInteger(bound) || bound < 1))
+    const bound = values.bound === undefined ? undefined : Number(values.bound)
+    if (bound !== undefined && (!/^[1-9]\d*$/.test(values.bound) || !Number.isSafeInteger(bound)))
       throw new Error('INVALID_BOUND')
+    const afterId = values['after-id']
+    if (
+      afterId !== undefined &&
+      (!['execution-plans', 'context-packages'].includes(values.class) ||
+        !/^[A-Za-z0-9_]{1,128}$/.test(afterId))
+    )
+      throw new Error('INVALID_CONTINUATION')
     const policy = decidedRetentionPolicy
     const policyRetainMs = retentionClassPolicy(policy, values.class).retainMs
     const {
@@ -99,6 +107,7 @@ export async function retentionApply({
       dryRun,
       journal,
       ...(bound === undefined ? {} : { bound }),
+      ...(afterId === undefined ? {} : { afterId }),
     }
 
     let result

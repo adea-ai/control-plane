@@ -53,6 +53,7 @@ export interface ReconciliationWorkflowSubmitInput {
     readonly schemaVersion: number
   }
   readonly deadlineAt: string
+  readonly marketplacePluginReferences?: Execution['marketplacePluginReferences']
 }
 
 export interface ReconciliationSourcePorts {
@@ -300,6 +301,9 @@ export function createReconciliationEffects(
         executionId: execution.executionId,
         workflowId: workflowIdFromExecutionId(execution.executionId),
         executionPlan: execution.executionPlan,
+        ...(execution.marketplacePluginReferences === undefined
+          ? {}
+          : { marketplacePluginReferences: execution.marketplacePluginReferences }),
         deadlineAt: execution.deadlineAt ?? command.retentionExpiresAt,
       })
       await advanceCommandToProcessingWithRetry(commandPort(), { command, at: now() })
