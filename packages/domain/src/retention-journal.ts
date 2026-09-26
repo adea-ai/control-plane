@@ -16,9 +16,9 @@ import { z } from 'zod'
  * which makes the journal at-least-once rather than at-most-once — the safe
  * direction.
  *
- * Operations are explicit per backend instead of a generic row DSL: reapply
- * never builds SQL from journal content, so a tampered journal cannot widen its
- * own authority.
+ * Operations are explicit per backend and restricted to their declared class.
+ * The operator must preserve journal integrity: schema validation constrains
+ * storage targets but does not authenticate the journal's provenance.
  */
 export const RetentionJournalOperationSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -101,13 +101,73 @@ export const RetentionJournalOperationSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
-export const RetentionJournalRecordSchema = z.object({
-  version: z.literal(1),
-  at: z.string(),
-  backend: z.enum(['sqlite', 'postgres']),
-  classId: z.string().min(1).max(64),
-  operations: z.array(RetentionJournalOperationSchema).min(1),
-})
+// A restore journal may operate only on the storage identities of its declared
+// retention class. In particular, SQLite's generic record operations must not
+// become a way to delete or overwrite arbitrary namespaces during restoration.
+const classOperations: Readonly<Record<string, readonly string[]>> = {
+  'command-inbox': [
+    'sqlite.put:retired-command-keys',
+    'sqlite.delete:command-inbox',
+    'sqlite.delete:command-by-execution',
+    'postgres.retireCommandKey',
+    'postgres.deleteCommand',
+  ],
+  'execution-events': [
+    'sqlite.put:retired-execution-event-ids',
+    'sqlite.delete:execution-events',
+    'postgres.retireEventId',
+    'postgres.deleteEvent',
+  ],
+  executions: [
+    'sqlite.delete:executions',
+    'sqlite.delete:execution-attempts',
+    'postgres.deleteAttempt',
+    'postgres.deleteExecution',
+  ],
+  'context-packages': ['sqlite.delete:context-packages', 'postgres.deleteContextPackage'],
+  'execution-plans': ['sqlite.delete:execution-plans', 'postgres.deleteExecutionPlan'],
+  'evaluation-runs': ['sqlite.delete:evaluation-runs', 'postgres.deleteEvaluationRun'],
+  'audit-records': ['postgres.deleteReleaseAuditRecord'],
+  'interaction-receipts': [
+    'sqlite.delete:interaction-command-receipts',
+    'sqlite.delete:execution-cancellation-receipts',
+    'postgres.deleteInteractionReceipt',
+    'postgres.deleteCancellationReceipt',
+  ],
+  'runtime-ledgers': [
+    'sqlite.delete:runtime-commands',
+    'sqlite.delete:runtime-event-receipts',
+    'postgres.deleteRuntimeCommand',
+  ],
+  messaging: ['postgres.compactInboxMessage', 'postgres.deleteOutboxEvent'],
+}
+
+export const RetentionJournalRecordSchema = z
+  .object({
+    version: z.literal(1),
+    at: z.string(),
+    backend: z.enum(['sqlite', 'postgres']),
+    classId: z.string().min(1).max(64),
+    operations: z.array(RetentionJournalOperationSchema).min(1),
+  })
+  .superRefine((record, context) => {
+    const allowed = classOperations[record.classId]
+    for (const [index, operation] of record.operations.entries()) {
+      const identity =
+        'namespace' in operation ? `${operation.kind}:${operation.namespace}` : operation.kind
+      if (
+        !operation.kind.startsWith(`${record.backend}.`) ||
+        allowed === undefined ||
+        !allowed.includes(identity)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['operations', index],
+          message: 'Retention journal operation does not belong to its backend and class',
+        })
+      }
+    }
+  })
 
 export type RetentionJournalOperation = z.output<typeof RetentionJournalOperationSchema>
 export type RetentionJournalRecord = z.output<typeof RetentionJournalRecordSchema>

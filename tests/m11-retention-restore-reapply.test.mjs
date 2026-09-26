@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { CommandInboxError, CommandInboxService } from '@control-plane/domain'
+import {
+  CommandInboxError,
+  CommandInboxService,
+  parseRetentionJournalLine,
+} from '@control-plane/domain'
 import {
   SqliteCommandAcceptanceRepository,
   SqlitePersistenceProvider,
@@ -108,6 +112,85 @@ async function seedTerminalRetiredCommand(provider) {
 }
 
 describe('retention restore-time reapplication (#194)', () => {
+  test('rejects journal operations outside their declared class or backend', () => {
+    const record = { version: 1, at: assessedAt, backend: 'sqlite', classId: 'evaluation-runs' }
+    for (const operation of [
+      { kind: 'sqlite.delete', namespace: 'executions', id: ids.executionId },
+      { kind: 'sqlite.put', namespace: 'evaluation-runs', id: 'eval-1', value: {} },
+      { kind: 'postgres.deleteEvaluationRun', evalRunId: 'eval-1' },
+    ]) {
+      expect(() =>
+        parseRetentionJournalLine(JSON.stringify({ ...record, operations: [operation] }))
+      ).toThrow()
+    }
+    expect(() =>
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          backend: 'postgres',
+          operations: [{ kind: 'postgres.deleteExecution', executionId: ids.executionId }],
+        })
+      )
+    ).toThrow()
+    expect(
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          backend: 'postgres',
+          classId: 'executions',
+          operations: [
+            { kind: 'postgres.deleteAttempt', attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+            { kind: 'postgres.deleteExecution', executionId: ids.executionId },
+          ],
+        })
+      ).operations
+    ).toHaveLength(2)
+    expect(
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          operations: [{ kind: 'sqlite.delete', namespace: 'evaluation-runs', id: 'eval-1' }],
+        })
+      ).operations
+    ).toHaveLength(1)
+  })
+
+  test('rejects a misclassified journal before changing the restored database', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-journal-scope-'))
+    const path = join(directory, 'restored.sqlite')
+    const journalPath = join(directory, 'retention.jsonl')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'executions',
+          id: ids.executionId,
+          value: { state: 'running' },
+        })
+      )
+      await writeFile(
+        journalPath,
+        `${JSON.stringify({ version: 1, at: assessedAt, backend: 'sqlite', classId: 'evaluation-runs', operations: [{ kind: 'sqlite.delete', namespace: 'executions', id: ids.executionId }] })}\n`
+      )
+      const result = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        path,
+        '--journal',
+        journalPath,
+      ])
+      expect(result.status).toBe(1)
+      expect(
+        await provider.transaction((transaction) => transaction.get('executions', ids.executionId))
+      ).toBeDefined()
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('an older snapshot plus the journal restores deletion and rejection identity', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-restore-'))
     const path = join(directory, 'state.sqlite')
