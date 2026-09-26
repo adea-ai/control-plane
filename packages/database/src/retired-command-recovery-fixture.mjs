@@ -1,10 +1,14 @@
 import { deepStrictEqual, rejects } from 'node:assert'
 import { eq } from 'drizzle-orm'
 import { CommandInboxService } from '@control-plane/domain'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   commandInbox,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionRepository,
+  PostgresContextPackageRepository,
+  PostgresExecutionPlanRepository,
 } from './index.ts'
 import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 
@@ -12,6 +16,13 @@ export async function seedRetiredCommandRecoveryFixture(database) {
   const suffix = '01DRZ3NDEKTSV4RRFFQ69G5FAW'
   const receivedAt = '2026-08-01T10:00:00.000Z'
   const retiredAt = '2026-09-08T10:00:00.000Z'
+  // This drill exercises normal guarded admission before payload retirement.
+  // A validator stub does not authorize a nonexistent immutable parent.
+  const plan = createExecutionPlanTestFixture()
+  await new PostgresContextPackageRepository(database).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new PostgresExecutionPlanRepository(database).put(plan)
   const repository = new PostgresCommandAcceptanceRepository(database)
   const service = new CommandInboxService({
     repository,
@@ -27,15 +38,15 @@ export async function seedRetiredCommandRecoveryFixture(database) {
     idempotencyKey: 'retired-command-recovery',
     payloadHash: 'a'.repeat(64),
     correlation: {
-      workspaceId: `wsp_${suffix}`,
-      projectId: `prj_${suffix}`,
-      taskId: `tsk_${suffix}`,
-      agentId: `agt_${suffix}`,
+      workspaceId: plan.correlation.workspaceId,
+      projectId: plan.correlation.projectId,
+      taskId: plan.correlation.taskId,
+      agentId: plan.correlation.agentId,
     },
     executionPlan: {
-      executionPlanId: `pln_${suffix}`,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
     },
     receivedAt,
     retentionExpiresAt: '2026-09-01T10:00:00.000Z',

@@ -68,6 +68,7 @@ try {
   await repository.saveRun(observed.run)
   observed.assertRecovered(await repository.getRun(observed.run.evalRunId))
   const validation = validationRecoveryFixture('disruption')
+  await new PostgresContextPackageRepository(database.application).put(validation.contextPackage)
   const validationCommands = new PostgresExecutionValidationCommandRepository(database.application)
   const plans = new PostgresExecutionPlanRepository(database.application)
   await validationCommands.commit(validation.record, validation.plan)

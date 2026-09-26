@@ -47,6 +47,7 @@ const target = await createIsolatedPostgres({ migrate: false })
 try {
   const retirement = await seedRetiredCommandRecoveryFixture(source.application)
   const validation = validationRecoveryFixture('restore')
+  await new PostgresContextPackageRepository(source.application).put(validation.contextPackage)
   await new PostgresExecutionValidationCommandRepository(source.application).commit(
     validation.record,
     validation.plan
