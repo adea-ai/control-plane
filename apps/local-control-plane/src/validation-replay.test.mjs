@@ -138,6 +138,74 @@ test('local composition replays validation after a SQLite reopen without compila
       expect(await transaction.list('execution-validation-commands')).toHaveLength(1)
       expect(await transaction.list('execution-plans')).toHaveLength(1)
     })
+    // Simulate approval authority disappearing after plan validation. New
+    // admission must consult the composed gate before persisting anything.
+    const removeApproval = () =>
+      persistence.transaction(async (transaction) => {
+        const records = await transaction.list('catalog-approvals')
+        expect(records).toHaveLength(1)
+        await transaction.delete('catalog-approvals', records[0].id)
+      })
+    await removeApproval()
+    const plan = await composition.executionPlans.get(results[0].data.executionPlan)
+    expect(plan).toBeDefined()
+    const receivedAt = new Date().toISOString()
+    const acceptance = {
+      callerPrincipalId: request.caller.servicePrincipalId,
+      operation: 'execution.accept',
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: plan.correlation.requestId,
+      idempotencyKey: 'local-approval-acceptance-0001',
+      payloadHash: 'a'.repeat(64),
+      correlation: {
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        taskId: plan.correlation.taskId,
+        agentId: plan.correlation.agentId,
+      },
+      executionPlan: {
+        ...results[0].data.executionPlan,
+        schemaVersion: plan.schemaVersion,
+      },
+      receivedAt,
+      retentionExpiresAt: new Date(Date.parse(receivedAt) + 31 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    await expect(composition.commands.acceptExecution(acceptance)).rejects.toMatchObject({
+      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+    })
+    await persistence.transaction(async (transaction) => {
+      expect(await transaction.list('command-inbox')).toHaveLength(0)
+      expect(await transaction.list('executions')).toHaveLength(0)
+    })
+    await composition.executionValidationService.options.approvalGate.approvals.insert({
+      versionKind: 'agent_profile',
+      versionId: profileVersionId,
+      revision: publishedProfile.revision,
+      contentDigest: publishedProfile.contentDigest,
+      decision: 'approved',
+      actorPrincipalRef: 'principal://operator/replay-test',
+      decidedAt: now,
+    })
+    const accepted = await composition.commands.acceptExecution(acceptance)
+    expect(accepted.replayed).toBe(false)
+    await removeApproval()
+    const acceptedReplay = await composition.commands.acceptExecution(acceptance)
+    expect(acceptedReplay.replayed).toBe(true)
+    expect(acceptedReplay.execution).toEqual(accepted.execution)
+    await persistence.transaction(async (transaction) => {
+      expect(await transaction.list('command-inbox')).toHaveLength(1)
+      expect(await transaction.list('executions')).toHaveLength(1)
+    })
+    // Restore the fixture's approval for the independent inline validation.
+    await composition.executionValidationService.options.approvalGate.approvals.insert({
+      versionKind: 'agent_profile',
+      versionId: profileVersionId,
+      revision: publishedProfile.revision,
+      contentDigest: publishedProfile.contentDigest,
+      decision: 'approved',
+      actorPrincipalRef: 'principal://operator/replay-test',
+      decidedAt: now,
+    })
     const inline = {
       ...request,
       idempotencyKey: 'local-inline-validation-0001',

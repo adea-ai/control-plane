@@ -24,6 +24,8 @@ preserved; this audit uses isolated worktrees.
 | High     | Hosted validation does not receive its configured catalog approval gate.                                                                     | M11 implementation agent, #188/#190: prove validation denies an unapproved pin when enabled.                                                         |
 | High     | A historical stored plan can authorize a new execution without current version eligibility checks.                                           | M11 implementation agent, #188/#190: revalidate current pinned lifecycle/digest/approval at new acceptance while preserving already-accepted replay. |
 | High     | Receipt deletion treats the owner as terminal without reading it; removing an unresolved cancellation permits reconciliation to resume work. | M11 implementation agent, #194: retain unresolved intent, use terminal reconciliation plus the replay window, prove both backends.                   |
+| High     | Plan/package retention uses stale reference snapshots; new admission or a new plan can create a dangling reference during deletion.          | M11 implementation agent, #194: coordinate writers and deletion atomically in both backends, with deterministic interleaving regressions.            |
+| High     | Plan/package expiry uses compilation time instead of the ratified 90-day interval after the last reference is released.                      | M11 implementation agent, #194: persist a conservative release-time anchor and prove renewed references reset the interval.                          |
 | High     | No durable owner hold state is consulted; deletion supplies `holds: 0`.                                                                      | M11 implementation agent, #194: durable scoped holds and atomic hold checks at physical deletion, including concurrent hold creation.                |
 | High     | Restore journal operations are not bound to their declared class/backend.                                                                    | M11 implementation agent, #194: reject mismatched operations before any restored data is mutated.                                                    |
 | Medium   | SQLite checks sweep bounds after journalling/deletion; compound receipt and messaging sweeps reset the bound per half.                       | M11 implementation agent, #194: admit before mutation and enforce one total class bound; assert remaining rows and journal count.                    |
@@ -33,6 +35,38 @@ The journal and attribution findings concern trusted privileged operator input;
 they are not evidence of an unauthenticated remote exploit. The approval
 bypasses concern real new-execution authorization paths. Fixes need current-head
 regression evidence before these findings can be closed.
+
+## Repair checkpoint
+
+Draft implementation PR [#740](https://github.com/adea-ai/control-plane/pull/740)
+is based on current main `755d6c2f0e22b929ac7c882c80738a4d7fb1dc34`
+(including marketplace PR #738). Its approval increment rechecks current catalog
+pins and configured approval at new acceptance in the API, Hosted and Local
+compositions. Historical accepted-command and validation replay remain exempt
+from recompilation. The Local and Hosted validation services now receive the
+configured gate. The increment passed 94 focused tests across seven files and
+31 scoped build tasks; independent agent review found no current production
+acceptance bypass, but requested a composed acceptance-before-persistence test.
+These are implementation checks, not independent human release acceptance.
+
+The journal increment rejects class/backend/namespace mismatches before replay
+mutation. Its scoped checks passed 16 root tests and 141 domain tests. Operator
+administration now records the actual OS/database session identity; nine focused
+tests and a real PostgreSQL session-authority check passed. Shared OS/database
+accounts still share operator attribution; no product-user authentication is
+claimed.
+
+Bound admission now precedes journal/mutation and receipt/messaging sweeps use
+one shared counter. After rebuilding dependencies, the parent integration
+passed 38 focused retention tests (141 assertions). Receipt lifecycle and atomic
+reference-claim repairs remain in progress. A full integrated candidate suite,
+current-head CI and deployment verification have not yet been completed.
+
+Validation receipts are an additional retention coverage gap: they indefinitely
+pin plans, have no registered age/deletion path, and current plan-deletion tests
+remove them through raw fixture writes. Such fixture cleanup is not evidence of
+a supported operational retention path. Their disposition must be reconciled
+with the ratified retention policy before plan retention is accepted in full.
 
 ## Baseline evidence
 
