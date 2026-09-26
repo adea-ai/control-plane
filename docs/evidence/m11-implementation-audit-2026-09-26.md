@@ -33,7 +33,7 @@ findings are release blockers, not accepted deferrals.
 | High     | Plan/package expiry uses compilation time instead of the ratified 90-day interval after the last reference is released.                      | M11 implementation agent, #194: persist a conservative release-time anchor and prove renewed references reset the interval.                          |
 | High     | No durable owner hold state is consulted; deletion supplies `holds: 0`.                                                                      | M11 implementation agent, #194: durable scoped holds and atomic hold checks at physical deletion, including concurrent hold creation.                |
 | High     | Restore journal operations are not bound to their declared class/backend.                                                                    | M11 implementation agent, #194: reject mismatched operations before any restored data is mutated.                                                    |
-| High     | Calendar-invalid expiry strings pass the timestamp shape check and can authorize deletion.                                                   | M11 implementation agent, #194: reject invalid/normalized calendar dates before any eligible verdict; focused red/green checks now pass.             |
+| Medium   | The pure eligibility predicate returns eligible for calendar-invalid, canonical-shaped expiry strings.                                       | M11 implementation agent, #194: reject invalid/normalized calendar dates before any eligible verdict; focused red/green checks now pass.             |
 | Medium   | SQLite checks sweep bounds after journalling/deletion; compound receipt and messaging sweeps reset the bound per half.                       | M11 implementation agent, #194: admit before mutation and enforce one total class bound; assert remaining rows and journal count.                    |
 | Medium   | Approval CLI accepts an input principal/authority as if authenticated.                                                                       | M11 implementation agent, #188/#190: record actual operator-session provenance, not a caller's claimed product principal.                            |
 
@@ -102,11 +102,15 @@ journalling deletion; its isolated checks passed 26 SQLite tests (148 assertions
 and eight PostgreSQL tests (65 assertions).
 
 After these integrations, all 35 Local/database dependency build tasks passed.
-The focused integrated run passed all 20 delegation cases, but eight shared
+The first focused integrated run passed all 20 delegation cases, but eight shared
 PostgreSQL cases and one SQLite receipt case failed because their old fixtures
-admit nonexistent plan parents through the newly guarded writers. Those fixtures
-are being corrected, without disabling production guards. This is not a green
-integrated candidate. Complete reference-clock wiring and final integrated
+admitted nonexistent plan parents through the newly guarded writers. Those
+fixtures are now corrected without disabling production guards. After fresh
+backend builds, the parent passed all eight former PostgreSQL failures plus the
+authoring isolation case (nine tests, 71 assertions) and all 13 SQLite receipt
+cases (37 assertions). Other PostgreSQL cases were filtered, not skipped or
+claimed passing. This is still not a full green integrated candidate.
+Complete reference-clock wiring and final integrated
 validation remain open. The continuation result/CLI
 contract is prepared and focused-tested, but backend continuation and clock
 wiring are not yet implemented.
@@ -118,8 +122,16 @@ and identical historical replay stays duplicate-first. The isolated lane passed
 including both real lock-contention probes), and two existing PostgreSQL
 authoring tests (20 assertions). Both backend builds/lints passed; independent
 bounded source review found no actionable defect. The authoring pair exposed a
-pre-existing test-order dependency, which is being repaired in the shared
-fixture lane. These are not full integrated candidate results.
+pre-existing test-order dependency, now repaired and independently passing in
+the parent focused selection. These are not full integrated candidate results.
+
+The subsequent all-writer inventory found two additional SQLite paths:
+`SqliteExecutionValidationCommandRepository.commit` and
+`SqliteContextAuthoringCommandRepository.commit` insert previously absent targets
+directly without claiming their plan/package ancestor. PostgreSQL command
+writers delegate their guarded target repositories. These SQLite integration
+gaps are assigned to the reference-window lane with missing-parent regressions;
+the bounded seven-file ancestry review did not cover those separate writers.
 
 The standalone fixture increment seeds exact catalog/context parents and passed
 all 11 standalone tests without skips (84 assertions) after a fresh 37-package
