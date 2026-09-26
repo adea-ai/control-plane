@@ -4,15 +4,24 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import {
+  CommandInboxService,
   DurableInteractionCommandService,
   DurableInteractionDeliveryService,
+  ExecutionLifecycleService,
   InteractionService,
 } from '@control-plane/domain'
 import {
+  SqliteCommandAcceptanceRepository,
+  SqliteExecutionRepository,
   SqliteInteractionCommandRepository,
   SqliteInteractionRepository,
   SqlitePersistenceProvider,
 } from './index.ts'
+import {
+  acceptancePlan,
+  acceptancePlanReference,
+  seedAcceptancePlan,
+} from './execution-plan-fixtures.mjs'
 
 const request = {
   ...ControlApiFixtures.executionAcceptance.request,
@@ -65,6 +74,37 @@ async function fixture(run) {
   }
   try {
     await provider.migrate()
+    await seedAcceptancePlan(provider)
+    const inbox = new CommandInboxService({
+      repository: new SqliteCommandAcceptanceRepository(provider),
+      executionIdFactory: () => request.payload.executionId,
+      executionPlanValidator: { validate: async () => true },
+      now,
+    })
+    const accepted = await inbox.acceptExecution({
+      callerPrincipalId: owner,
+      operation: 'execution.accept',
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      requestId: acceptancePlan.correlation.requestId,
+      idempotencyKey: 'interaction-owner-fixture',
+      payloadHash: 'c'.repeat(64),
+      correlation: {
+        workspaceId: acceptancePlan.correlation.workspaceId,
+        projectId: acceptancePlan.correlation.projectId,
+        taskId: acceptancePlan.correlation.taskId,
+        agentId: acceptancePlan.correlation.agentId,
+      },
+      executionPlan: acceptancePlanReference,
+      receivedAt: '2026-09-08T00:00:00.000Z',
+      retentionExpiresAt: '2099-01-01T00:00:00.000Z',
+    })
+    const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(provider))
+    await lifecycle.createAttempt({
+      executionId: accepted.execution.executionId,
+      attemptId: request.payload.attemptId,
+      expectedExecutionVersion: accepted.execution.version,
+      queuedAt: '2026-09-08T00:00:00.000Z',
+    })
     await new InteractionService(make().interactions).request({
       executionId: request.payload.executionId,
       attemptId: request.payload.attemptId,
