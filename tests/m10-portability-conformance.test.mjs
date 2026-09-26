@@ -416,6 +416,7 @@ function operationalLimits() {
 }
 
 async function commandIdempotency(profile) {
+  const plan = createExecutionPlanTestFixture()
   let provider
   const repository =
     profile === 'local' || profile === 'hosted-simple'
@@ -424,6 +425,18 @@ async function commandIdempotency(profile) {
         ? new InMemoryCommandAcceptanceRepository()
         : new PostgresCommandAcceptanceRepository(databaseFor(profile).application)
   if ('provider' in repository) provider = repository.provider
+  if (provider !== undefined) {
+    await new SqliteContextPackageRepository(provider).put(
+      contextPackageSerializationFixtures.futurePi
+    )
+    await new SqliteExecutionPlanRepository(provider).put(plan)
+  } else if (databaseFor(profile) !== undefined) {
+    const database = databaseFor(profile).application
+    await new PostgresContextPackageRepository(database).put(
+      contextPackageSerializationFixtures.futurePi
+    )
+    await new PostgresExecutionPlanRepository(database).put(plan)
+  }
   const actualRepository = repository.repository ?? repository
   const service = new CommandInboxService({
     repository: actualRepository,
@@ -445,9 +458,9 @@ async function commandIdempotency(profile) {
       agentId: 'agt_01JABCDEF0123456789ABCDEFG',
     },
     executionPlan: {
-      executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
     },
     receivedAt: observedAt,
     retentionExpiresAt: '2099-01-01T00:00:00.000Z',
@@ -524,6 +537,9 @@ async function contextPackageRepository(profile) {
 async function executionPlanRepository(profile) {
   if (profile === 'local' || profile === 'hosted-simple') {
     const provider = await sqliteProvider(profile, 'plan')
+    await new SqliteContextPackageRepository(provider).put(
+      contextPackageSerializationFixtures.futurePi
+    )
     return {
       repository: new SqliteExecutionPlanRepository(provider),
       close: () => provider.close(),
@@ -546,6 +562,9 @@ async function executionPlanRepository(profile) {
       close: () => undefined,
     }
   }
+  await new PostgresContextPackageRepository(database.application).put(
+    contextPackageSerializationFixtures.futurePi
+  )
   return {
     repository: new PostgresExecutionPlanRepository(database.application),
     close: () => undefined,
