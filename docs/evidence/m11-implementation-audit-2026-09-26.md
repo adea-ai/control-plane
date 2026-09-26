@@ -77,7 +77,7 @@ Independent review found cross-execution attempt linkage and SQLite JSON/key
 identity gaps; targeted red regressions reproduced them and the corrected cases
 now retain those receipts. Atomic plan/package claims for the core writers are
 now integrated; the separate PostgreSQL execution-deletion/new-receipt writer
-race repair is prepared. A full
+race repair is integrated too. A full
 integrated candidate suite, current-head CI and deployment verification have not
 yet been completed.
 
@@ -105,10 +105,28 @@ The focused integrated run passed all 20 delegation cases, but eight shared
 PostgreSQL cases and one SQLite receipt case failed because their old fixtures
 admit nonexistent plan parents through the newly guarded writers. Those fixtures
 are being corrected, without disabling production guards. This is not a green
-integrated candidate. Ancestry-reference coverage, complete reference-clock
-wiring and final integrated validation remain open. The continuation result/CLI
+integrated candidate. Complete reference-clock wiring and final integrated
+validation remain open. The continuation result/CLI
 contract is prepared and focused-tested, but backend continuation and clock
 wiring are not yet implemented.
+
+Ancestry-reference coordination is now integrated: new derived plan/package puts
+verify and claim exact ancestors, deletion claims recheck surviving descendants,
+and identical historical replay stays duplicate-first. The isolated lane passed
+14 SQLite tests (61 assertions), five PostgreSQL ancestry tests (24 assertions,
+including both real lock-contention probes), and two existing PostgreSQL
+authoring tests (20 assertions). Both backend builds/lints passed; independent
+bounded source review found no actionable defect. The authoring pair exposed a
+pre-existing test-order dependency, which is being repaired in the shared
+fixture lane. These are not full integrated candidate results.
+
+The standalone fixture increment seeds exact catalog/context parents and passed
+all 11 standalone tests without skips (84 assertions) after a fresh 37-package
+closure. A separate calendar-invalid expiry regression reproduced an unsafe
+eligible verdict. The corrected pure predicate rejects invalid or normalized
+calendar dates and passed 18 tests (31 assertions). A root CLI regression is
+still deliberately red because bounded reference scans do not yet return a
+continuation token; the parser now allows SQLite's actual `r-<hash>` target IDs.
 
 Root fixture repairs already passed 14 profile/restore/recovery tests (108
 assertions), with the real PostgreSQL M10/CP1 flags enabled. Six earlier CLI
