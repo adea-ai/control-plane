@@ -587,3 +587,44 @@ to justify deleting a recently unpinned object.
 Durable holds, validation-receipt disposition, the six remaining storage/provider
 classes and external journal/ambiguous-outcome restore acceptance remain separate
 open gates. Completing this lane does not close #194 or #197 by itself.
+
+## Usage and recovery-receipt implementation direction (2026-09-26)
+
+This direction preserves the ratified durations; it is not implementation or
+acceptance evidence. The usage audit found three different stores, which must
+not be conflated: 400-day billing entries, 30-day acknowledged runtime command
+ledgers, and Local terminal-usage recovery receipts.
+
+- Billing payload expiry must never permit reuse of an old scoped idempotency
+  key or sequence. Use a durable payload-free identity fence and an explicit
+  expired-replay rejection after compaction, rather than returning a fabricated
+  original entry or accepting a second charge. A changed semantic identity stays
+  a conflict. Document and test the new replay outcome before changing the
+  current full-original-entry duplicate response contract.
+- Before removing billing payload, transactionally preserve required monetary,
+  funding-source and token aggregates, budget/reservation/settlement state and
+  sequence high-water marks. Prove these survive reopen and concurrent append.
+  Compacted history must be explicit to list consumers. Do not retain an
+  execution foreign key solely for a payload-free replay fence after its genuine
+  references have been discharged.
+- The 400-day duration alone cannot prove settlement, cleared billing/release
+  references or absence of a hold. Actual composed profile persistence and
+  operational wiring are required: an exported PostgreSQL repository tested in
+  isolation is not production billing-ledger acceptance.
+- Local terminal-usage receipts preserve a lost workflow-effect/restart outcome.
+  They remain protected until a persisted authoritative acknowledgement and
+  reconciliation prove recovery references resolved. Only then may the ratified
+  runtime-ledger window begin. The existing receipt omits that acknowledgement
+  timestamp, so neither its creation time nor a billing entry's age authorizes
+  deletion. Native terminal snapshots have their own settlement window and
+  durable admission fences remain unbounded.
+- Regressions must separate the 30/400-day boundaries; retain active, ambiguous,
+  held and referenced records; prevent rebilling after compacted replay; prove
+  concurrent compaction/append has one outcome; preserve budget/token/sequence
+  projections across reopen; and preserve Local lost-effect recovery until
+  acknowledgement and reconciliation are durable.
+
+Validation and context-authoring receipts require their own policy-compatible
+payload disposition and durable rejection/replay identity. Do not assign them a
+new duration, silently drop their reference pins, or reuse the billing outcome
+contract merely to make plan/package deletion tests pass.
