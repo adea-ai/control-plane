@@ -577,6 +577,13 @@ to justify deleting a recently unpinned object.
   order. Avoid inconsistent metadata update order across writer paths.
   Combining duplicate plan claims must preserve any supplied schema-version
   constraint; an unconstrained duplicate must not erase a stricter claim.
+  A new validation reference must also reset the target plan when an identical
+  concurrent insert wins. Do not claim that target after already holding parent
+  plans in a conflicting order. Roll back the repository transaction/savepoint
+  and retry once from the globally ordered existing-target claim; on a repeated
+  conflict, fail closed. Keep the outer command mutex and duplicate-first
+  historical replay unchanged. Prove the stale-clock interleaving with a real
+  PostgreSQL barrier regression and verify rollback releases the nested claims.
 - Dry runs never persist clocks. Actual physical deletion removes auxiliary
   clocks; recreating an ID must not inherit an earlier target's clock. Restore
   and journal reapplication invalidate these clocks before exposure, while
