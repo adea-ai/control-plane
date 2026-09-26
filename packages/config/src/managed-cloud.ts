@@ -40,8 +40,9 @@ export interface ManagedCloudRuntimeConfiguration {
 
 export interface ManagedCloudCatalogApprovalConfiguration {
   /**
-   * Whether catalog resolution requires an approved, version-bound decision
-   * (#188). Absent or false leaves resolution unchanged.
+   * Whether catalog resolution, validation, and new execution acceptance
+   * require an approved, version-bound decision (#188). Absent or false leaves
+   * approval enforcement unchanged.
    */
   readonly required: boolean
   /** Versions published strictly before this instant are grandfathered. */
@@ -128,7 +129,9 @@ export function loadManagedCloudConfiguration(
   const serviceAuthentication =
     service === 'control-api' ? loadServiceAuthenticationConfiguration(environment) : undefined
   const catalogApproval =
-    service === 'control-api' ? loadCatalogApprovalConfiguration(environment) : undefined
+    service === 'control-api' || service === 'workflow-worker'
+      ? loadCatalogApprovalConfiguration(environment)
+      : undefined
 
   return {
     service,

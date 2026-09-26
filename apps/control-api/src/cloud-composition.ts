@@ -203,7 +203,17 @@ export function createManagedCloudControlApiComposition(
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(connection.database),
         executionIdFactory: createExecutionId,
-        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
+          catalog: { profiles: catalog, skills: catalog },
+          ...(configuration.catalogApproval === undefined
+            ? {}
+            : {
+                approvalGate: {
+                  approvals: catalogApprovals,
+                  policy: configuration.catalogApproval,
+                },
+              }),
+        }),
       }),
       dispatcher: new RestateExecutionWorkflowDispatcher({
         ingressUrl: configuration.restate.ingressUrl,

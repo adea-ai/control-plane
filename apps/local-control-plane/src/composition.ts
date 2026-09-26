@@ -160,9 +160,9 @@ export interface LocalReconciliationConfiguration {
 
 export interface LocalControlPlaneCompositionOptions {
   /**
-   * Optional catalog approval policy (#188): when required, profile
-   * resolution denies versions without an approved, version-bound decision.
-   * Absent leaves resolution unchanged.
+   * Optional catalog approval policy (#188): when required, resolution,
+   * validation, and new execution acceptance require approved, version-bound
+   * catalog pins. Absent leaves approval enforcement unchanged.
    */
   readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
   readonly contextAuthoring?: ContextAuthoringCompositionOptions

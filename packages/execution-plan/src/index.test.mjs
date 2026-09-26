@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
-import { executionConstraintFixtures } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  InMemoryCommandAcceptanceRepository,
+  executionConstraintFixtures,
+} from '@control-plane/domain'
 import {
   ExecutionPlanCompiler,
   ExecutionPlanAcceptanceValidator,
@@ -338,8 +342,234 @@ describe('immutable ExecutionPlan compilation', () => {
   })
 })
 
+describe('ExecutionPlan acceptance eligibility', () => {
+  test('rechecks current catalog pins and lifecycle for new acceptance', async () => {
+    const input = baseInput()
+    const plan = compile(input)
+    const repository = new InMemoryExecutionPlanRepository()
+    await repository.put(plan)
+    let currentProfile = input.profile
+    let currentSkill = input.skills[0]
+    const catalog = {
+      profiles: { getAgentProfileVersion: async () => currentProfile },
+      skills: { getSkillVersion: async () => currentSkill },
+    }
+    const validator = new ExecutionPlanAcceptanceValidator(repository, { catalog })
+
+    expect(await validator.validate(acceptanceInput(plan))).toBe(true)
+
+    currentProfile = { ...currentProfile, revision: currentProfile.revision + 1 }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+
+    currentProfile = input.profile
+    currentSkill = { ...currentSkill, lifecycle: 'revoked' }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+
+    currentSkill = input.skills[0]
+    currentProfile = { ...currentProfile, lifecycle: 'revoked' }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+  })
+
+  test('requires a one-to-one match between the current profile skill pins and plan pins', async () => {
+    const input = baseInput()
+    const secondSkillId = 'skl_01JABCDEF0123456789ABCDEFA'
+    const secondSkillVersionId = 'skv_01JABCDEF0123456789ABCDEFA'
+    const secondSkill = {
+      ...globalThis.structuredClone(input.skills[0]),
+      skillId: secondSkillId,
+      skillVersionId: secondSkillVersionId,
+      revision: 1,
+      manifest: {
+        ...input.skills[0].manifest,
+        semanticVersion: '3.0.0',
+        contentDigest: digest('c'),
+      },
+    }
+    input.profile.definition.skills.push({
+      skillId: secondSkillId,
+      skillVersionId: secondSkillVersionId,
+      contentDigest: digest('c'),
+    })
+    input.skills.push(secondSkill)
+    const plan = compile(input)
+    const plans = new InMemoryExecutionPlanRepository()
+    await plans.put(plan)
+    let currentProfile = input.profile
+    const skillsById = new Map(input.skills.map((skill) => [skill.skillVersionId, skill]))
+    const validator = new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: {
+        profiles: { getAgentProfileVersion: async () => currentProfile },
+        skills: { getSkillVersion: async (versionId) => skillsById.get(versionId) },
+      },
+    })
+
+    expect(await validator.validate(acceptanceInput(plan))).toBe(true)
+    currentProfile = {
+      ...input.profile,
+      definition: {
+        ...input.profile.definition,
+        skills: [input.profile.definition.skills[0], input.profile.definition.skills[0]],
+      },
+    }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+
+    currentProfile = { ...input.profile, profileId: 'prf_01JABCDEF0123456789ABCDEFA' }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+  })
+
+  test('enforces a gate enabled after validation and accepts matching approvals or grandfathered pins', async () => {
+    const input = baseInput()
+    const plan = compile(input)
+    const repository = new InMemoryExecutionPlanRepository()
+    await repository.put(plan)
+    const catalog = {
+      profiles: { getAgentProfileVersion: async () => input.profile },
+      skills: { getSkillVersion: async () => input.skills[0] },
+    }
+    const decisions = []
+    const approvalGate = {
+      approvals: {
+        list: async (versionKind, versionId) =>
+          decisions.filter(
+            (decision) => decision.versionKind === versionKind && decision.versionId === versionId
+          ),
+      },
+      policy: { required: true },
+    }
+    const previouslyUngated = new ExecutionPlanAcceptanceValidator(repository, { catalog })
+    expect(await previouslyUngated.validate(acceptanceInput(plan))).toBe(true)
+    const validator = new ExecutionPlanAcceptanceValidator(repository, {
+      catalog,
+      approvalGate,
+    })
+
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+
+    decisions.push(
+      {
+        versionKind: 'agent_profile',
+        versionId: input.profile.profileVersionId,
+        revision: input.profile.revision,
+        contentDigest: input.profile.contentDigest,
+        decision: 'approved',
+        actorPrincipalRef: 'principal://operator/1',
+        decidedAt: '2026-09-25T12:00:00.000Z',
+      },
+      {
+        versionKind: 'skill',
+        versionId: input.skills[0].skillVersionId,
+        revision: input.skills[0].revision,
+        contentDigest: input.skills[0].manifest.contentDigest,
+        decision: 'approved',
+        actorPrincipalRef: 'principal://operator/1',
+        decidedAt: '2026-09-25T12:00:00.000Z',
+      }
+    )
+    expect(await validator.validate(acceptanceInput(plan))).toBe(true)
+
+    decisions.length = 0
+    approvalGate.policy.requiredSince = '2026-09-25T00:00:00.000Z'
+    expect(await validator.validate(acceptanceInput(plan))).toBe(true)
+  })
+
+  test('checks catalog only after persisted-plan correlation and preserves accepted replay', async () => {
+    const input = baseInput()
+    const plan = compile(input)
+    const plans = new InMemoryExecutionPlanRepository()
+    await plans.put(plan)
+    let catalogReads = 0
+    let validations = 0
+    let currentProfile = input.profile
+    const validator = new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: {
+        profiles: {
+          getAgentProfileVersion: async () => {
+            catalogReads += 1
+            return currentProfile
+          },
+        },
+        skills: {
+          getSkillVersion: async () => {
+            catalogReads += 1
+            return input.skills[0]
+          },
+        },
+      },
+    })
+
+    expect(
+      await validator.validate({ ...acceptanceInput(plan), projectId: ids.projectId + 'X' })
+    ).toBe(false)
+    expect(catalogReads).toBe(0)
+
+    const inbox = new CommandInboxService({
+      repository: new InMemoryCommandAcceptanceRepository(),
+      executionIdFactory: () => 'exe_01JABCDEF0123456789ABCDEFG',
+      executionPlanValidator: {
+        validate: async (acceptance) => {
+          validations += 1
+          return validator.validate(acceptance)
+        },
+      },
+      now: () => '2026-09-26T12:00:00.000Z',
+    })
+    const accepted = await inbox.acceptExecution(commandInput(plan))
+    currentProfile = { ...currentProfile, lifecycle: 'revoked' }
+    const replay = await inbox.acceptExecution(
+      commandInput(plan, {
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFA',
+        requestId: 'req_01JABCDEF0123456789ABCDEFA',
+      })
+    )
+
+    expect(accepted.replayed).toBe(false)
+    expect(replay.replayed).toBe(true)
+    expect(replay.execution).toEqual(accepted.execution)
+    expect(validations).toBe(1)
+  })
+})
+
 function compile(input) {
   return new ExecutionPlanCompiler('1.0.0').compile(input)
+}
+
+function acceptanceInput(plan) {
+  return {
+    executionPlan: {
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
+    },
+    workspaceId: plan.correlation.workspaceId,
+    projectId: plan.correlation.projectId,
+    taskId: plan.correlation.taskId,
+    agentId: plan.correlation.agentId,
+  }
+}
+
+function commandInput(plan, overrides = {}) {
+  return {
+    callerPrincipalId: 'svc_agent-hq',
+    operation: 'execution.accept',
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+    requestId: plan.correlation.requestId,
+    idempotencyKey: 'execution-acceptance-replay-0001',
+    payloadHash: 'a'.repeat(64),
+    correlation: {
+      workspaceId: plan.correlation.workspaceId,
+      projectId: plan.correlation.projectId,
+      taskId: plan.correlation.taskId,
+      agentId: plan.correlation.agentId,
+    },
+    executionPlan: {
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
+    },
+    receivedAt: '2026-09-26T12:00:00.000Z',
+    retentionExpiresAt: '2026-10-26T12:00:00.000Z',
+    ...overrides,
+  }
 }
 
 function expectPlanError(input, code) {
