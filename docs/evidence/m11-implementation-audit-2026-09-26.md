@@ -44,8 +44,8 @@ regression evidence before these findings can be closed.
 ## Repair checkpoint
 
 Draft implementation PR [#740](https://github.com/adea-ai/control-plane/pull/740)
-includes current main `e70f279dc2b63e2507cd14db781d42cfe849123e`
-(release 1.58.2 and marketplace PR #738). Its approval increment rechecks current catalog
+includes current main `03e7bfc646a1d4377e65b8ec7b4d840d3f409405`
+(release 1.58.3 and marketplace PRs #738/#741). Its approval increment rechecks current catalog
 pins and configured approval at new acceptance in the API, Hosted and Local
 compositions. Historical accepted-command and validation replay remain exempt
 from recompilation. The Local and Hosted validation services now receive the
