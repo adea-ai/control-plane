@@ -338,4 +338,57 @@ describe('retention apply CLI (#194)', () => {
       expect(result).toEqual({ status: 1, stdout: '', stderr: 'RETENTION_APPLY_FAILED\n' })
     }
   })
+
+  test('reference-class continuation visits each young target once without skipping a bounded page', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-cursor-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const packages = new SqliteContextPackageRepository(provider)
+      for (const package_ of Object.values(contextPackageSerializationFixtures))
+        await packages.put(package_)
+      const targetIds = await provider.transaction(async (transaction) =>
+        (await transaction.list('context-packages')).map((record) => record.id).toSorted()
+      )
+      expect(targetIds).toHaveLength(3)
+      let afterId
+      for (let page = 0; page < targetIds.length; page++) {
+        const result = await apply([
+          '--backend',
+          'sqlite',
+          '--class',
+          'context-packages',
+          '--database',
+          path,
+          '--now',
+          assessedAt,
+          '--bound',
+          '1',
+          ...(afterId === undefined ? [] : ['--after-id', afterId]),
+        ])
+        expect(result.status).toBe(0)
+        const report = JSON.parse(result.stdout)
+        expect(report.dryRun).toBe(true)
+        expect(report.result.scanned).toBe(1)
+        expect(report.result.deleted).toBe(0)
+        afterId = report.result.nextAfterId
+        expect(afterId).toBe(page < targetIds.length - 1 ? targetIds[page] : undefined)
+      }
+      // Dry-run pagination cannot establish release clocks or remove content.
+      expect(
+        await provider.transaction((transaction) => transaction.list('context-packages'))
+      ).toHaveLength(3)
+      for (const namespace of [
+        'retention-plan-reference-windows',
+        'retention-context-reference-windows',
+      ])
+        expect(
+          await provider.transaction((transaction) => transaction.list(namespace))
+        ).toHaveLength(0)
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
 })

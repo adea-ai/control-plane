@@ -86,6 +86,19 @@ describe('retention eligibility (#194)', () => {
     ).toEqual({ verdict: 'eligible' })
   })
 
+  test('calendar-invalid canonical-shaped deadlines fail closed rather than authorize deletion', () => {
+    for (const retentionExpiresAt of [
+      '2026-99-01T00:00:00.000Z',
+      '2026-02-30T00:00:00.000Z',
+      '2026-09-01T24:00:00.000Z',
+    ]) {
+      expect(evaluateRetentionEligibility({ ...eligibleFacts, retentionExpiresAt })).toEqual({
+        verdict: 'retained',
+        reason: 'malformed_expiry',
+      })
+    }
+  })
+
   test('a payload is retained until its rejection key is reserved', () => {
     expect(evaluateRetentionEligibility({ ...eligibleFacts, rejectionKeyReserved: false })).toEqual(
       { verdict: 'retained', reason: 'rejection_key_absent' }

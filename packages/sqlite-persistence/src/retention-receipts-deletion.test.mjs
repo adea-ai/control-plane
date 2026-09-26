@@ -4,11 +4,15 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { CommandInboxService, ExecutionAttemptSchema, ExecutionSchema } from '@control-plane/domain'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   SqliteCommandAcceptanceRepository,
+  SqliteContextPackageRepository,
   SqliteExecutionCancellationRepository,
   SqliteExecutionRepository,
+  SqliteExecutionPlanRepository,
   SqliteInteractionRepository,
   SqlitePersistenceProvider,
   SqliteReceiptRetention,
@@ -22,8 +26,21 @@ const receiptOwnerId = 'exe_01JABCDEF0123456789ABCDEFG'
 const receiptInteractionId = 'int_01JABCDEF0123456789ABCDEFG'
 const receiptAttemptId = 'att_01JABCDEF0123456789ABCDEFG'
 const receiptScope = ControlApiFixtures.executionAcceptance.request
+const acceptancePlan = createExecutionPlanTestFixture()
+const acceptancePlanReference = {
+  executionPlanId: acceptancePlan.executionPlanId,
+  contentDigest: acceptancePlan.contentDigest,
+  schemaVersion: acceptancePlan.schemaVersion,
+}
 
 const storedId = (id) => `r-${createHash('sha256').update(id).digest('hex')}`
+
+async function seedAcceptancePlan(provider) {
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new SqliteExecutionPlanRepository(provider).put(acceptancePlan)
+}
 
 function interactionReceipt(overrides = {}) {
   return {
@@ -54,7 +71,9 @@ function cancellationReceipt(overrides = {}) {
   }
 }
 
+/** Seed a terminal owner snapshot after its immutable context and plan exist. */
 async function seedTerminalReceiptOwner(provider, terminalAt = '2026-04-30T10:00:00.000Z') {
+  await seedAcceptancePlan(provider)
   const accepted = '2026-01-01T10:00:00.000Z'
   const execution = ExecutionSchema.parse({
     executionId: receiptOwnerId,
@@ -67,7 +86,7 @@ async function seedTerminalReceiptOwner(provider, terminalAt = '2026-04-30T10:00
       agentId: receiptScope.payload.agentId,
       requestId: receiptScope.requestId,
     },
-    executionPlan: receiptScope.payload.executionPlan,
+    executionPlan: acceptancePlanReference,
     attemptCount: 1,
     latestAttemptId: receiptAttemptId,
     acceptedAt: accepted,
@@ -137,6 +156,7 @@ describe('SQLite interaction-receipt retention deletion (#194)', () => {
     await withProvider(async (provider) => {
       const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
       const acceptRequest = ControlApiFixtures.executionAcceptance.request
+      await seedAcceptancePlan(provider)
       const commands = new SqliteCommandAcceptanceRepository(provider)
       const executions = new SqliteExecutionRepository(provider)
       const accepted = await new CommandInboxService({
@@ -157,7 +177,7 @@ describe('SQLite interaction-receipt retention deletion (#194)', () => {
           taskId: acceptRequest.payload.taskId,
           agentId: acceptRequest.payload.agentId,
         },
-        executionPlan: acceptRequest.payload.executionPlan,
+        executionPlan: acceptancePlanReference,
         receivedAt: '2026-05-02T10:00:00.000Z',
         retentionExpiresAt: '2026-06-01T10:00:00.000Z',
       })
@@ -400,7 +420,7 @@ describe('SQLite interaction-receipt retention deletion (#194)', () => {
           agentId: receiptScope.payload.agentId,
           requestId: receiptScope.requestId,
         },
-        executionPlan: receiptScope.payload.executionPlan,
+        executionPlan: acceptancePlanReference,
         attemptCount: 1,
         latestAttemptId: otherAttemptId,
         acceptedAt: '2026-01-01T10:00:00.000Z',

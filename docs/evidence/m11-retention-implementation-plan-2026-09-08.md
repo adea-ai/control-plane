@@ -587,3 +587,90 @@ to justify deleting a recently unpinned object.
 Durable holds, validation-receipt disposition, the six remaining storage/provider
 classes and external journal/ambiguous-outcome restore acceptance remain separate
 open gates. Completing this lane does not close #194 or #197 by itself.
+
+## Usage and recovery-receipt implementation direction (2026-09-26)
+
+This direction preserves the ratified durations; it is not implementation or
+acceptance evidence. The usage audit found three different stores, which must
+not be conflated: 400-day billing entries, 30-day acknowledged runtime command
+ledgers, and Local terminal-usage recovery receipts.
+
+- Billing payload expiry must never permit reuse of an old scoped idempotency
+  key or sequence. Use a durable payload-free identity fence and an explicit
+  expired-replay rejection after compaction, rather than returning a fabricated
+  original entry or accepting a second charge. A changed semantic identity stays
+  a conflict. Document and test the new replay outcome before changing the
+  current full-original-entry duplicate response contract.
+- Before removing billing payload, transactionally preserve required monetary,
+  funding-source and token aggregates, budget/reservation/settlement state and
+  sequence high-water marks. Prove these survive reopen and concurrent append.
+  Compacted history must be explicit to list consumers. Do not retain an
+  execution foreign key solely for a payload-free replay fence after its genuine
+  references have been discharged.
+- The 400-day duration alone cannot prove settlement, cleared billing/release
+  references or absence of a hold. Actual composed profile persistence and
+  operational wiring are required: an exported PostgreSQL repository tested in
+  isolation is not production billing-ledger acceptance.
+- Local terminal-usage receipts preserve a lost workflow-effect/restart outcome.
+  They remain protected until a persisted authoritative acknowledgement and
+  reconciliation prove recovery references resolved. Only then may the ratified
+  runtime-ledger window begin. The existing receipt omits that acknowledgement
+  timestamp, so neither its creation time nor a billing entry's age authorizes
+  deletion. Native terminal snapshots have their own settlement window and
+  durable admission fences remain unbounded.
+- Regressions must separate the 30/400-day boundaries; retain active, ambiguous,
+  held and referenced records; prevent rebilling after compacted replay; prove
+  concurrent compaction/append has one outcome; preserve budget/token/sequence
+  projections across reopen; and preserve Local lost-effect recovery until
+  acknowledgement and reconciliation are durable.
+
+Validation and context-authoring receipts require their own policy-compatible
+payload disposition and durable rejection/replay identity. Do not assign them a
+new duration, silently drop their reference pins, or reuse the billing outcome
+contract merely to make plan/package deletion tests pass.
+
+## Durable-hold implementation direction (2026-09-26)
+
+The hold inventory found 23 hard-coded zero facts across ten implemented
+classes. Implement storage and authority before wiring those facts; neither an
+owner label nor a read-only assessment is deletion authority.
+
+- Persist class-, workspace- and project-scoped holds with immutable identity,
+  verified owner/session provenance, reason code, creation time and explicit
+  release provenance/time. No automatic expiry of active holds. An identical
+  create replay after release must not reactivate the hold.
+- PostgreSQL hold create/release and physical deletion take the same
+  class-global advisory transaction mutex before target row claims. Within that
+  transaction, re-read scope and matching active holds. Low-frequency operator
+  deletion may serialize per class; avoiding an absence-of-hold race is more
+  important than speculative throughput. SQLite uses its existing serialized
+  writer transaction. Holds do not update reference clocks.
+- Require an explicit host-supplied verified owner authority check. Compare any
+  claimed actor with verified session provenance, as approval administration
+  does. Do not default-allow missing checks, invent workspace ownership from
+  ProjectState attribution, or reinterpret `holdOwner` labels as credentials.
+  The current CLI pattern can establish operator identity, but no general
+  workspace-owner authorization port is composed yet.
+- Only use canonical stored tenant scope. Runtime project scope requires a
+  verified execution join. Evaluation, audit and messaging storage currently
+  lacks reliable tenant columns, so only operator-authorized class-wide holds
+  are supported until that scope exists. Never infer ownership from arbitrary
+  JSON evidence or aggregate IDs. Unknown/malformed stored hold state fails
+  closed, and a target with unavailable scope must not silently disregard a
+  potentially matching scoped hold.
+- Convert nontransactional PostgreSQL command/event/runtime/evaluation/audit/
+  messaging deletion facts into fresh transactional claims when wiring holds.
+  Preserve total bounds, replay fences and journal ordering. Existing target
+  locks for executions, plans, packages and receipts must join the hold mutex
+  protocol too; the mutex precedes target claims and clock lock order remains
+  sorted contexts before sorted plans.
+- Prove owner denial, supported scopes, tenant isolation, duplicate create and
+  release, reopen, actual hold-versus-delete contention and SQLite parity.
+  Storage-only tests do not prove composed owner authorization. Released hold
+  history needs the audit-policy disposition; active holds remain protected.
+- A snapshot can predate a hold. Independently durable ordered hold events and
+  deletion-outcome reconciliation must run before restored state is exposed.
+  Database holds alone cannot stop provider TTLs: object/filesystem, workflows,
+  telemetry and backups require provider hold/delete-job coordination too.
+
+This direction does not close the hold, restore or provider acceptance gates.

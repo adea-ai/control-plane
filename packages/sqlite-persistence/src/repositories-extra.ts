@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  ContextCompilationError,
   ContextPackageReferenceSchema,
   ContextPackageSchema,
   ContextAuthoringCommandScopeSchema,
@@ -78,6 +79,35 @@ function executionPlanPin(value: unknown): string | undefined {
 function authoringPackageId(value: unknown): string | undefined {
   const record = value as { contextPackageId?: unknown } | null
   return typeof record?.contextPackageId === 'string' ? record.contextPackageId : undefined
+}
+
+/** The parent package a derived package pins, read from its immutable payload. */
+function contextPackageParentId(value: unknown): string | undefined {
+  const package_ = value as { parentContextPackage?: { contextPackageId?: unknown } } | null
+  const parentId = package_?.parentContextPackage?.contextPackageId
+  return typeof parentId === 'string' ? parentId : undefined
+}
+
+async function assertSqliteStoredContextPackageReference(
+  transaction: PersistenceTransaction,
+  referenceInput: ContextPackageReference
+): Promise<ContextPackage> {
+  const reference = ContextPackageReferenceSchema.parse(referenceInput)
+  const stored = await transaction.get(
+    namespaces.contextPackages,
+    recordId(reference.contextPackageId)
+  )
+  if (stored === undefined) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  const parent = assertContextPackageIntegrity(stored.value)
+  if (
+    parent.contextPackageId !== reference.contextPackageId ||
+    parent.contentDigest !== reference.contentDigest
+  ) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  return parent
 }
 
 export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
@@ -348,6 +378,18 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       const id = recordId(package_.contextPackageId)
       const record = await transaction.get(namespaces.contextPackages, id)
       if (record === undefined) {
+        if (package_.parentContextPackage) {
+          if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
+            throw new ContextCompilationError(
+              'CONTRADICTORY_CONTEXT_REFERENCE',
+              package_.contextPackageId
+            )
+          }
+          await assertSqliteStoredContextPackageReference(
+            transaction,
+            package_.parentContextPackage
+          )
+        }
         await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
       } else if (!isDeepStrictEqual(assertContextPackageIntegrity(record.value), package_)) {
         throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
@@ -416,6 +458,9 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
           const authoringCommands = (await transaction.list('context-authoring-commands'))
             .map((record) => authoringPackageId(record.value))
             .filter((value) => value !== undefined)
+          const childPackagePins = (await transaction.list(namespaces.contextPackages))
+            .map((record) => contextPackageParentId(record.value))
+            .filter((value) => value !== undefined)
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -428,7 +473,8 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
             rejectionKeyReserved: true,
             pendingReferences:
               planPins.includes(package_.contextPackageId) ||
-              authoringCommands.includes(package_.contextPackageId)
+              authoringCommands.includes(package_.contextPackageId) ||
+              childPackagePins.includes(package_.contextPackageId)
                 ? 1
                 : 0,
             holds: 0,

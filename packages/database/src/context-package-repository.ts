@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import {
+  ContextCompilationError,
   ContextPackageReferenceSchema,
   assertContextPackageIntegrity,
   type ContextPackage,
@@ -20,7 +21,7 @@ import { delegations } from './schema/delegations.js'
 import { executionPlans } from './schema/execution-plans.js'
 
 export class PostgresContextPackageRepository implements ContextPackageRepository {
-  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert'>) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>) {}
 
   async put(input: ContextPackage): Promise<ContextPackageReference> {
     const package_ = assertContextPackageIntegrity(input)
@@ -28,18 +29,41 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
       contextPackageId: package_.contextPackageId,
       contentDigest: package_.contentDigest,
     }
-    const inserted = await this.database
-      .insert(contextPackages)
-      .values(toRow(package_))
-      .onConflictDoNothing()
-      .returning({ contextPackageId: contextPackages.contextPackageId })
-    if (inserted.length === 1) return reference
+    return this.database.transaction(async (transaction) => {
+      const existing = await this.#getById(transaction, package_.contextPackageId, true)
+      if (existing) {
+        if (!isDeepStrictEqual(existing, package_)) throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+        return reference
+      }
 
-    const existing = await this.getById(package_.contextPackageId)
-    if (!existing || !isDeepStrictEqual(existing, package_)) {
-      throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
-    }
-    return reference
+      if (package_.parentContextPackage) {
+        if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
+          throw new ContextCompilationError(
+            'CONTRADICTORY_CONTEXT_REFERENCE',
+            package_.contextPackageId
+          )
+        }
+        if (!(await lockContextPackageReference(transaction, package_.parentContextPackage))) {
+          throw new ContextCompilationError(
+            'CONTRADICTORY_CONTEXT_REFERENCE',
+            package_.parentContextPackage.contextPackageId
+          )
+        }
+      }
+
+      const inserted = await transaction
+        .insert(contextPackages)
+        .values(toRow(package_))
+        .onConflictDoNothing()
+        .returning({ contextPackageId: contextPackages.contextPackageId })
+      if (inserted.length === 1) return reference
+
+      const raced = await this.#getById(transaction, package_.contextPackageId, true)
+      if (!raced || !isDeepStrictEqual(raced, package_)) {
+        throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+      }
+      return reference
+    })
   }
 
   async get(input: ContextPackageReference): Promise<ContextPackage | undefined> {
@@ -58,11 +82,20 @@ export class PostgresContextPackageRepository implements ContextPackageRepositor
   }
 
   async getById(contextPackageId: string): Promise<ContextPackage | undefined> {
-    const [row] = await this.database
+    return this.#getById(this.database, contextPackageId)
+  }
+
+  async #getById(
+    database: Pick<ControlPlaneDatabase, 'select'>,
+    contextPackageId: string,
+    lock = false
+  ): Promise<ContextPackage | undefined> {
+    const query = database
       .select()
       .from(contextPackages)
       .where(eq(contextPackages.contextPackageId, contextPackageId))
       .limit(1)
+    const [row] = lock ? await query.for('key share') : await query
     return row ? fromRow(row) : undefined
   }
 }
@@ -195,6 +228,13 @@ export class PostgresContextPackageRetention {
           .from(executionPlans)
           .where(sql`plan->'contextPackage'->>'contextPackageId' = ${candidate.contextPackageId}`)
           .limit(1)
+        const [childPackagePin] = await transaction
+          .select({ contextPackageId: contextPackages.contextPackageId })
+          .from(contextPackages)
+          .where(
+            sql`context_package->'parentContextPackage'->>'contextPackageId' = ${candidate.contextPackageId}`
+          )
+          .limit(1)
         const [authoringCommand] = await transaction
           .select({ contextPackageId: contextAuthoringCommands.contextPackageId })
           .from(contextAuthoringCommands)
@@ -216,7 +256,10 @@ export class PostgresContextPackageRetention {
           publicationSettled: true,
           rejectionKeyReserved: true,
           pendingReferences:
-            planPin !== undefined || authoringCommand !== undefined || delegation !== undefined
+            planPin !== undefined ||
+            childPackagePin !== undefined ||
+            authoringCommand !== undefined ||
+            delegation !== undefined
               ? 1
               : 0,
           holds: 0,

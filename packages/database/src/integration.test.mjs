@@ -280,6 +280,7 @@ async function waitForLockWait(database, tableName) {
 }
 
 async function createExecutionOwner(database, request, executionId, attemptId) {
+  await seedAcceptancePlan(database)
   const acceptance = ControlApiFixtures.executionAcceptance.request
   const lifecycle = new ExecutionLifecycleService(new PostgresExecutionRepository(database))
   const execution = await lifecycle.createExecution({
@@ -291,7 +292,7 @@ async function createExecutionOwner(database, request, executionId, attemptId) {
       agentId: acceptance.payload.agentId,
       requestId: request.requestId,
     },
-    executionPlan: acceptance.payload.executionPlan,
+    executionPlan: acceptancePlanReference,
     acceptedAt: request.issuedAt,
   })
   if (attemptId === undefined) return { execution, lifecycle }
@@ -1065,6 +1066,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated.migrate()
     const repository = new PostgresContextAuthoringCommandRepository(isolated.application)
     const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(contextPackageSerializationFixtures.futurePi)
     const candidates = [
       contextPackageSerializationFixtures.futureAcp,
       contextPackageSerializationFixtures.futureLangGraph,
@@ -2090,7 +2092,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       },
       await compiledAtBeforeExistingRows(isolated.application, 'plans')
     )
-    await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
+    const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(composedPackage)
+    await packages.put(contextPackage)
     await new PostgresExecutionPlanRepository(isolated.application).put(plan)
     const now = new Date(Date.parse(plan.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
     await expectFirstEligibleRetentionCandidate(
@@ -2178,6 +2182,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       profileCapabilityRequirements: ['execution.cancel', 'model.select'],
     })
     const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(composedPackage)
     await packages.put(contextPackage)
     expect(
       await new PostgresExecutionPlanRepository(isolated.application).get({
@@ -2229,6 +2234,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   }, 30_000)
 
   test('sweepEligibleInteractionReceipts removes only confirmed receipts', async () => {
+    await seedAcceptancePlan(isolated.application)
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
     const acceptedAt = '2026-08-01T11:00:00.000Z'
     const recent = '2026-11-20T11:00:00.000Z'
@@ -2248,11 +2254,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         agentId: `agt_${suffix}`,
         requestId: `req_${suffix}`,
       },
-      executionPlan: {
-        executionPlanId: `pln_${suffix}`,
-        contentDigest: `sha256:${'a'.repeat(64)}`,
-        schemaVersion: 1,
-      },
+      executionPlan: acceptancePlanReference,
       acceptedAt: '2026-01-01T10:00:00.000Z',
     })
     const ownerAttempt = await lifecycle.createAttempt({
@@ -2307,11 +2309,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FB5',
         requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FB5',
       },
-      executionPlan: {
-        executionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FB5',
-        contentDigest: `sha256:${'b'.repeat(64)}`,
-        schemaVersion: 1,
-      },
+      executionPlan: acceptancePlanReference,
       acceptedAt: '2026-01-01T10:00:00.000Z',
     })
     await lifecycle.createAttempt({
@@ -2539,6 +2537,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   }, 60_000)
 
   test('an old accepted cancellation remains a resume guard while its PostgreSQL execution is active', async () => {
+    await seedAcceptancePlan(isolated.application)
     const acceptedAt = '2026-08-01T11:00:00.000Z'
     const assessedAt = new Date('2027-12-01T12:00:00.000Z')
     const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB4'
@@ -2563,7 +2562,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         taskId: base.payload.taskId,
         agentId: base.payload.agentId,
       },
-      executionPlan: base.payload.executionPlan,
+      executionPlan: acceptancePlanReference,
       receivedAt: acceptedAt,
       retentionExpiresAt: '2026-09-01T11:00:00.000Z',
     })
@@ -4739,6 +4738,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       compiledAt,
     })
     const packages = new PostgresContextPackageRepository(isolated.application)
+    await packages.put(parent)
     await packages.put(fixture)
     // A plan pin: the pin lives inside the plan JSON.
     await isolated.application.execute(

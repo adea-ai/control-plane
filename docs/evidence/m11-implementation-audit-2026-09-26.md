@@ -33,6 +33,7 @@ findings are release blockers, not accepted deferrals.
 | High     | Plan/package expiry uses compilation time instead of the ratified 90-day interval after the last reference is released.                      | M11 implementation agent, #194: persist a conservative release-time anchor and prove renewed references reset the interval.                          |
 | High     | No durable owner hold state is consulted; deletion supplies `holds: 0`.                                                                      | M11 implementation agent, #194: durable scoped holds and atomic hold checks at physical deletion, including concurrent hold creation.                |
 | High     | Restore journal operations are not bound to their declared class/backend.                                                                    | M11 implementation agent, #194: reject mismatched operations before any restored data is mutated.                                                    |
+| Medium   | The pure eligibility predicate returns eligible for calendar-invalid, canonical-shaped expiry strings.                                       | M11 implementation agent, #194: reject invalid/normalized calendar dates before any eligible verdict; focused red/green checks now pass.             |
 | Medium   | SQLite checks sweep bounds after journalling/deletion; compound receipt and messaging sweeps reset the bound per half.                       | M11 implementation agent, #194: admit before mutation and enforce one total class bound; assert remaining rows and journal count.                    |
 | Medium   | Approval CLI accepts an input principal/authority as if authenticated.                                                                       | M11 implementation agent, #188/#190: record actual operator-session provenance, not a caller's claimed product principal.                            |
 
@@ -77,7 +78,7 @@ Independent review found cross-execution attempt linkage and SQLite JSON/key
 identity gaps; targeted red regressions reproduced them and the corrected cases
 now retain those receipts. Atomic plan/package claims for the core writers are
 now integrated; the separate PostgreSQL execution-deletion/new-receipt writer
-race repair is prepared. A full
+race repair is integrated too. A full
 integrated candidate suite, current-head CI and deployment verification have not
 yet been completed.
 
@@ -92,8 +93,61 @@ tests (45 assertions). The latter reproduced and repaired dropped marketplace
 pins during reconciliation resume. Reference schema/payload identity checks
 also passed a real PostgreSQL probe (11 assertions, other tests filtered).
 These counts overlap earlier focused groups and must not be summed as a unique
-full-suite total. Delegation writer coordination, ancestry-reference coverage,
-complete reference-clock wiring and final integrated validation remain open.
+full-suite total. Delegation writer coordination is now integrated, including
+same-or-derived context lineage and locked ancestor existence. Its isolated
+PostgreSQL suite passed 20 cases and bounded independent source review closed
+the lineage finding. The execution/receipt claim lane also now checks complete
+attempt history, retaining missing latest-attempt data as ambiguous without
+journalling deletion; its isolated checks passed 26 SQLite tests (148 assertions)
+and eight PostgreSQL tests (65 assertions).
+
+After these integrations, all 35 Local/database dependency build tasks passed.
+The first focused integrated run passed all 20 delegation cases, but eight shared
+PostgreSQL cases and one SQLite receipt case failed because their old fixtures
+admitted nonexistent plan parents through the newly guarded writers. Those
+fixtures are now corrected without disabling production guards. After fresh
+backend builds, the parent passed all eight former PostgreSQL failures plus the
+authoring isolation case (nine tests, 71 assertions) and all 13 SQLite receipt
+cases (37 assertions). Other PostgreSQL cases were filtered, not skipped or
+claimed passing. This is still not a full green integrated candidate.
+Complete reference-clock wiring and final integrated
+validation remain open. The continuation result/CLI
+contract is prepared and focused-tested, but backend continuation and clock
+wiring are not yet implemented.
+
+Ancestry-reference coordination is now integrated: new derived plan/package puts
+verify and claim exact ancestors, deletion claims recheck surviving descendants,
+and identical historical replay stays duplicate-first. The isolated lane passed
+14 SQLite tests (61 assertions), five PostgreSQL ancestry tests (24 assertions,
+including both real lock-contention probes), and two existing PostgreSQL
+authoring tests (20 assertions). Both backend builds/lints passed; independent
+bounded source review found no actionable defect. The authoring pair exposed a
+pre-existing test-order dependency, now repaired and independently passing in
+the parent focused selection. These are not full integrated candidate results.
+
+The subsequent all-writer inventory found two additional SQLite paths:
+`SqliteExecutionValidationCommandRepository.commit` and
+`SqliteContextAuthoringCommandRepository.commit` insert previously absent targets
+directly without claiming their plan/package ancestor. PostgreSQL command
+writers delegate their guarded target repositories. These SQLite integration
+gaps are assigned to the reference-window lane with missing-parent regressions;
+the bounded seven-file ancestry review did not cover those separate writers.
+
+The standalone fixture increment seeds exact catalog/context parents and passed
+all 11 standalone tests without skips (84 assertions) after a fresh 37-package
+closure. A separate calendar-invalid expiry regression reproduced an unsafe
+eligible verdict. The corrected pure predicate rejects invalid or normalized
+calendar dates and passed 18 tests (31 assertions). A root CLI regression is
+still deliberately red because bounded reference scans do not yet return a
+continuation token; the parser now allows SQLite's actual `r-<hash>` target IDs.
+
+Root fixture repairs already passed 14 profile/restore/recovery tests (108
+assertions), with the real PostgreSQL M10/CP1 flags enabled. Six earlier CLI
+fixture tests passed 39 assertions. The later continuation/argument checks and
+domain result schema tests passed 24 tests (75 assertions); these overlap earlier
+CLI checks. Actual context/plan parents and current catalog versions are seeded
+instead of weakening guards. These are component checks, not frozen-candidate
+release acceptance.
 
 Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
 conservative clock helper are prepared. Six helper tests (14 assertions), the

@@ -65,7 +65,7 @@ export async function retentionApply({
     if (
       afterId !== undefined &&
       (!['execution-plans', 'context-packages'].includes(values.class) ||
-        !/^[A-Za-z0-9_]{1,128}$/.test(afterId))
+        !/^[A-Za-z0-9_-]{1,128}$/.test(afterId))
     )
       throw new Error('INVALID_CONTINUATION')
     const policy = decidedRetentionPolicy
