@@ -31,6 +31,7 @@ import {
   type RetentionJournalSink,
   RetentionJournalOperationSchema,
 } from '@control-plane/domain'
+import { assertContextPackageIntegrity } from '@control-plane/context'
 import {
   ExecutionPlanReferenceSchema,
   ExecutionValidationCommandScopeSchema,
@@ -41,6 +42,7 @@ import {
   type ExecutionValidationCommandRecord,
   type ExecutionValidationCommandRepository,
   assertExecutionPlanIntegrity,
+  ExecutionPlanError,
   type ExecutionPlan,
   type ExecutionPlanReference,
   type ExecutionPlanRepository,
@@ -54,9 +56,44 @@ const namespaces = {
   executions: 'executions',
   attempts: 'execution-attempts',
   plans: 'execution-plans',
+  contextPackages: 'context-packages',
   events: 'execution-events',
   reconciliation: 'reconciliation-checkpoints',
 } as const
+
+export async function assertSqliteStoredPlanReference(
+  transaction: PersistenceTransaction,
+  referenceInput: ExecutionPlanReference & { readonly schemaVersion?: number }
+): Promise<ExecutionPlan> {
+  const reference = ExecutionPlanReferenceSchema.parse(referenceInput)
+  const stored = await transaction.get(namespaces.plans, recordId(reference.executionPlanId))
+  if (stored === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  const plan = assertExecutionPlanIntegrity(stored.value)
+  if (
+    plan.contentDigest !== reference.contentDigest ||
+    (referenceInput.schemaVersion !== undefined &&
+      referenceInput.schemaVersion !== plan.schemaVersion)
+  ) {
+    throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  }
+  const context = await transaction.get(
+    namespaces.contextPackages,
+    recordId(plan.contextPackage.contextPackageId)
+  )
+  if (context === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  const package_ = assertContextPackageIntegrity(context.value)
+  if (package_.contentDigest !== plan.contextPackage.contentDigest)
+    throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  return plan
+}
+
+function workflowJobPlanId(value: unknown): string | undefined {
+  const input = (value as { input?: unknown } | null)?.input as
+    | { executionPlan?: { executionPlanId?: unknown } }
+    | undefined
+  const executionPlanId = input?.executionPlan?.executionPlanId
+  return typeof executionPlanId === 'string' ? executionPlanId : undefined
+}
 
 const executionStates = new Set<string>([
   'accepted',
@@ -97,6 +134,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         ) {
           throw new Error('EXECUTION_ID_CONFLICT')
         }
+        await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
         await transaction.put({
           namespace: namespaces.commands,
           id: commandId,
@@ -657,6 +695,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
     return this.provider.transaction(async (transaction) => {
       const id = recordId(execution.executionId)
       if ((await transaction.get(namespaces.executions, id)) !== undefined) return false
+      await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
       await transaction.put({ namespace: namespaces.executions, id, value: json(execution) })
       return true
     })
@@ -848,22 +887,6 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       )
       if (page.length === 0) break
       afterId = page[page.length - 1]?.id
-      // Reference sets are computed once per page rather than per candidate.
-      const references = await this.provider.transaction(async (transaction) => {
-        const pinned = new Set<string>()
-        for (const record of await transaction.list(namespaces.executions)) {
-          pinned.add(ExecutionSchema.parse(record.value).executionPlan.executionPlanId)
-        }
-        for (const record of await transaction.list(namespaces.commands)) {
-          pinned.add(CommandInboxRecordSchema.parse(record.value).executionPlan.executionPlanId)
-        }
-        for (const record of await transaction.list('execution-validation-commands')) {
-          pinned.add(
-            ExecutionValidationCommandRecordSchema.parse(record.value).executionPlan.executionPlanId
-          )
-        }
-        return pinned
-      })
       for (const record of page) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.plans, record.id)
@@ -871,6 +894,27 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
           const plan = assertExecutionPlanIntegrity(stored.value)
           if (!expiredAt(plan.compiledAt, now))
             return { verdict: undefined, admitted: false, removed: false }
+          // BEGIN IMMEDIATE serializes this fresh reference scan with every
+          // writer that creates a plan reference in this provider.
+          const references = new Set<string>()
+          for (const reference of await transaction.list(namespaces.executions)) {
+            references.add(ExecutionSchema.parse(reference.value).executionPlan.executionPlanId)
+          }
+          for (const reference of await transaction.list(namespaces.commands)) {
+            references.add(
+              CommandInboxRecordSchema.parse(reference.value).executionPlan.executionPlanId
+            )
+          }
+          for (const reference of await transaction.list('execution-validation-commands')) {
+            references.add(
+              ExecutionValidationCommandRecordSchema.parse(reference.value).executionPlan
+                .executionPlanId
+            )
+          }
+          for (const job of await transaction.list('workflow-jobs')) {
+            const executionPlanId = workflowJobPlanId(job.value)
+            if (executionPlanId !== undefined) references.add(executionPlanId)
+          }
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -923,6 +967,23 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       const id = recordId(plan.executionPlanId)
       const record = await transaction.get(namespaces.plans, id)
       if (record === undefined) {
+        const context = await transaction.get(
+          namespaces.contextPackages,
+          recordId(plan.contextPackage.contextPackageId)
+        )
+        if (context === undefined) {
+          throw new ExecutionPlanError(
+            'MISSING_CONTEXT_PACKAGE',
+            plan.contextPackage.contextPackageId
+          )
+        }
+        const package_ = assertContextPackageIntegrity(context.value)
+        if (package_.contentDigest !== plan.contextPackage.contentDigest) {
+          throw new ExecutionPlanError(
+            'MISSING_CONTEXT_PACKAGE',
+            plan.contextPackage.contextPackageId
+          )
+        }
         await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
         return reference
       }
@@ -971,7 +1032,26 @@ export class SqliteExecutionValidationCommandRepository implements ExecutionVali
       if (stored && !isDeepStrictEqual(assertExecutionPlanIntegrity(stored.value), plan)) {
         throw new Error('EXECUTION_PLAN_ID_CONFLICT')
       }
-      if (!stored) await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
+      const context = await transaction.get(
+        namespaces.contextPackages,
+        recordId(plan.contextPackage.contextPackageId)
+      )
+      if (context === undefined) {
+        throw new ExecutionPlanError(
+          'MISSING_CONTEXT_PACKAGE',
+          plan.contextPackage.contextPackageId
+        )
+      }
+      const package_ = assertContextPackageIntegrity(context.value)
+      if (package_.contentDigest !== plan.contextPackage.contentDigest) {
+        throw new ExecutionPlanError(
+          'MISSING_CONTEXT_PACKAGE',
+          plan.contextPackage.contextPackageId
+        )
+      }
+      if (!stored) {
+        await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
+      }
       await transaction.put({
         namespace: 'execution-validation-commands',
         id: `r-${executionValidationCommandKey(record.scope)}`,

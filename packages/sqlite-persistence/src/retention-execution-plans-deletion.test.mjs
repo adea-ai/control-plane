@@ -3,8 +3,15 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CommandInboxService } from '@control-plane/domain'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { SqliteExecutionPlanRepository, SqlitePersistenceProvider } from './index.js'
+import {
+  SqliteContextPackageRepository,
+  SqliteCommandAcceptanceRepository,
+  SqliteExecutionPlanRepository,
+  SqlitePersistenceProvider,
+} from './index.js'
 
 const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
 // The compiler stamps `compiledAt`, so the clock is derived from the fixture it
@@ -28,12 +35,96 @@ async function withProvider(run) {
   }
 }
 
+async function putPlanWithContext(provider, plans, plan) {
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  return plans.put(plan)
+}
+
 describe('SQLite execution-plan retention deletion (#194)', () => {
+  test('new plans require their exact context package while identical replay survives parent cleanup', async () => {
+    await withProvider(async (provider) => {
+      const plans = new SqliteExecutionPlanRepository(provider)
+      const plan = createExecutionPlanTestFixture()
+      await expect(plans.put(plan)).rejects.toMatchObject({ code: 'MISSING_CONTEXT_PACKAGE' })
+
+      const packages = new SqliteContextPackageRepository(provider)
+      const contextPackage = contextPackageSerializationFixtures.futurePi
+      await packages.put(contextPackage)
+      const reference = await plans.put(plan)
+      await provider.transaction(async (transaction) => {
+        const stored = (await transaction.list('context-packages')).find(
+          (record) => record.value.contextPackageId === contextPackage.contextPackageId
+        )
+        expect(stored).toBeDefined()
+        await transaction.delete('context-packages', stored.id, stored.revision)
+      })
+      expect(await plans.put(plan)).toEqual(reference)
+    })
+  })
+
+  test('new command acceptance racing plan deletion fails closed when deletion linearizes first', async () => {
+    await withProvider(async (provider) => {
+      const plan = createExecutionPlanTestFixture()
+      const plans = new SqliteExecutionPlanRepository(provider)
+      await putPlanWithContext(provider, plans, plan)
+      const now = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
+      const commandService = new CommandInboxService({
+        repository: new SqliteCommandAcceptanceRepository(provider),
+        executionIdFactory: () => 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        executionPlanValidator: { validate: async () => true },
+        now: () => now.toISOString(),
+      })
+      const input = {
+        callerPrincipalId: 'svc_agent-hq',
+        operation: 'execution.accept',
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        requestId: plan.correlation.requestId,
+        idempotencyKey: 'plan-retention-race-0001',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          taskId: plan.correlation.taskId,
+          agentId: plan.correlation.agentId,
+        },
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
+        receivedAt: now.toISOString(),
+        retentionExpiresAt: new Date(now.getTime() + ninetyDaysMs).toISOString(),
+      }
+      let competingAcceptance
+
+      const deletion = await plans.deleteEligibleExecutionPlans(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        journal: async () => {
+          // Do not await from inside the transaction: SQLite holds the writer
+          // lock until deletion commits, then the new acceptance must recheck.
+          competingAcceptance = commandService.acceptExecution(input)
+        },
+      })
+
+      expect(deletion.deleted).toBe(1)
+      await expect(competingAcceptance).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      await provider.transaction(async (transaction) => {
+        expect(await transaction.list('command-inbox')).toEqual([])
+        expect(await transaction.list('executions')).toEqual([])
+      })
+    })
+  })
+
   test('an unreferenced plan past its window is deleted', async () => {
     await withProvider(async (provider) => {
       const plans = new SqliteExecutionPlanRepository(provider)
       const plan = createExecutionPlanTestFixture()
-      await plans.put(plan)
+      await putPlanWithContext(provider, plans, plan)
 
       const dry = await plans.deleteEligibleExecutionPlans(now, {
         policyRetainMs: ninetyDaysMs,
@@ -56,11 +147,11 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
     })
   }, 60000)
 
-  test('pins from executions, acceptance records and validation commands all retain a plan', async () => {
+  test('pins from executions, acceptance, validation, and workflow jobs all retain a plan', async () => {
     await withProvider(async (provider) => {
       const plans = new SqliteExecutionPlanRepository(provider)
       const plan = createExecutionPlanTestFixture()
-      await plans.put(plan)
+      await putPlanWithContext(provider, plans, plan)
       const pin = { executionPlanId: plan.executionPlanId }
 
       // An execution compiled from the plan.
@@ -167,6 +258,40 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
       await provider.transaction((transaction) =>
         transaction.delete('execution-validation-commands', storedId('validation-fixture'))
       )
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'workflow-jobs',
+          id: storedId('workflow-plan-fixture'),
+          value: {
+            workflowKey: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+            status: 'queued',
+            input: {
+              executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+              workflowId: 'wfl_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+              executionPlan: {
+                executionPlanId: plan.executionPlanId,
+                contentDigest: plan.contentDigest,
+                schemaVersion: plan.schemaVersion,
+              },
+              deadlineAt: compiledAt,
+            },
+            attempt: 0,
+            maximumAttempts: 5,
+            runAt: compiledAt,
+            createdAt: compiledAt,
+            updatedAt: compiledAt,
+          },
+        })
+      )
+      const withWorkflowJob = await plans.deleteEligibleExecutionPlans(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(withWorkflowJob.retainedByReason).toEqual({ reference_pending: 1 })
+
+      await provider.transaction((transaction) =>
+        transaction.delete('workflow-jobs', storedId('workflow-plan-fixture'))
+      )
       const freed = await plans.deleteEligibleExecutionPlans(now, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
@@ -185,7 +310,7 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
     await withProvider(async (provider) => {
       const plans = new SqliteExecutionPlanRepository(provider)
       const plan = createExecutionPlanTestFixture()
-      await plans.put(plan)
+      await putPlanWithContext(provider, plans, plan)
 
       const inside = new Date(Date.parse(compiledAt) + ninetyDaysMs - 1_000)
       expect(

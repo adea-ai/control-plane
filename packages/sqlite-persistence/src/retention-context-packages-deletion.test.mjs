@@ -3,7 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { SqliteContextPackageRepository, SqlitePersistenceProvider } from './index.js'
+import { SqliteExecutionPlanRepository } from './index.js'
 
 const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
 // The package digest covers compiledAt, so the clock is derived from the
@@ -28,6 +30,37 @@ async function withProvider(run) {
 }
 
 describe('SQLite context-package retention deletion (#194)', () => {
+  test('a plan put racing package deletion fails closed when deletion linearizes first', async () => {
+    await withProvider(async (provider) => {
+      const package_ = packageFixture()
+      const packages = new SqliteContextPackageRepository(provider)
+      await packages.put(package_)
+      const plan = createExecutionPlanTestFixture({ contextPackage: package_ })
+      const plans = new SqliteExecutionPlanRepository(provider)
+      let competingPut
+
+      const deletion = await packages.deleteEligibleContextPackages(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        journal: async () => {
+          // The claim transaction holds SQLite's BEGIN IMMEDIATE writer lock.
+          // Start, but do not await, the competing writer here; it resumes only
+          // after the claim commits and then must see the missing parent.
+          competingPut = plans.put(plan)
+        },
+      })
+
+      expect(deletion.deleted).toBe(1)
+      await expect(competingPut).rejects.toMatchObject({ code: 'MISSING_CONTEXT_PACKAGE' })
+      expect(
+        await plans.get({
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        })
+      ).toBeUndefined()
+    })
+  })
+
   test('an unreferenced package past its window is deleted', async () => {
     await withProvider(async (provider) => {
       const packages = new SqliteContextPackageRepository(provider)

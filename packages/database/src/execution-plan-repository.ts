@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import {
   ExecutionPlanReferenceSchema,
+  ExecutionPlanError,
   assertExecutionPlanIntegrity,
   type ExecutionPlan,
   type ExecutionPlanReference,
@@ -12,15 +13,17 @@ import {
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
-import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { executionValidationCommands } from './schema/execution-validation-commands.js'
 import { executionPlans } from './schema/execution-plans.js'
 import { executions } from './schema/executions.js'
+import { delegations } from './schema/delegations.js'
+import { lockContextPackageReference } from './context-package-repository.js'
 
 export class PostgresExecutionPlanRepository implements ExecutionPlanRepository {
-  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert'>) {}
+  constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>) {}
 
   async put(input: ExecutionPlan): Promise<ExecutionPlanReference> {
     const plan = assertExecutionPlanIntegrity(input)
@@ -28,18 +31,32 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
       executionPlanId: plan.executionPlanId,
       contentDigest: plan.contentDigest,
     }
-    const inserted = await this.database
-      .insert(executionPlans)
-      .values(toRow(plan))
-      .onConflictDoNothing()
-      .returning({ executionPlanId: executionPlans.executionPlanId })
-    if (inserted.length === 1) return reference
+    return this.database.transaction(async (transaction) => {
+      const existing = await this.#getById(transaction, plan.executionPlanId, true)
+      if (existing) {
+        if (!isDeepStrictEqual(existing, plan)) throw new Error('EXECUTION_PLAN_ID_CONFLICT')
+        return reference
+      }
 
-    const existing = await this.#getById(plan.executionPlanId)
-    if (!existing || !isDeepStrictEqual(existing, plan)) {
-      throw new Error('EXECUTION_PLAN_ID_CONFLICT')
-    }
-    return reference
+      if (!(await lockContextPackageReference(transaction, plan.contextPackage))) {
+        throw new ExecutionPlanError(
+          'MISSING_CONTEXT_PACKAGE',
+          plan.contextPackage.contextPackageId
+        )
+      }
+      const inserted = await transaction
+        .insert(executionPlans)
+        .values(toRow(plan))
+        .onConflictDoNothing()
+        .returning({ executionPlanId: executionPlans.executionPlanId })
+      if (inserted.length === 1) return reference
+
+      const raced = await this.#getById(transaction, plan.executionPlanId, true)
+      if (!raced || !isDeepStrictEqual(raced, plan)) {
+        throw new Error('EXECUTION_PLAN_ID_CONFLICT')
+      }
+      return reference
+    })
   }
 
   async get(input: ExecutionPlanReference): Promise<ExecutionPlan | undefined> {
@@ -57,14 +74,43 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
     return row ? assertExecutionPlanIntegrity(row.plan) : undefined
   }
 
-  async #getById(executionPlanId: string): Promise<ExecutionPlan | undefined> {
-    const [row] = await this.database
+  async #getById(
+    database: Pick<ControlPlaneDatabase, 'select'>,
+    executionPlanId: string,
+    lock = false
+  ): Promise<ExecutionPlan | undefined> {
+    const query = database
       .select({ plan: executionPlans.plan })
       .from(executionPlans)
       .where(eq(executionPlans.executionPlanId, executionPlanId))
       .limit(1)
+    const [row] = lock ? await query.for('key share') : await query
     return row ? assertExecutionPlanIntegrity(row.plan) : undefined
   }
+}
+
+/** Lock and verify the exact plan row before a writer creates a plan reference. */
+export async function lockExecutionPlanReference(
+  database: Pick<ControlPlaneDatabase, 'select'>,
+  input: ExecutionPlanReference
+): Promise<boolean> {
+  const reference = ExecutionPlanReferenceSchema.parse(input)
+  const [row] = await database
+    .select({ plan: executionPlans.plan, contentDigest: executionPlans.contentDigest })
+    .from(executionPlans)
+    .where(eq(executionPlans.executionPlanId, reference.executionPlanId))
+    .limit(1)
+    .for('key share')
+  if (!row) return false
+  const plan = assertExecutionPlanIntegrity(row.plan)
+  if (
+    row.contentDigest !== reference.contentDigest ||
+    plan.contentDigest !== reference.contentDigest
+  )
+    return false
+  // Lock order is plan then context. Context retention locks only the context
+  // target before its fresh plan-reference scan, so this ordering cannot cycle.
+  return lockContextPackageReference(database, plan.contextPackage)
 }
 
 function toRow(plan: ExecutionPlan): typeof executionPlans.$inferInsert {
@@ -130,65 +176,105 @@ export class PostgresExecutionPlanRetention {
       )
       .orderBy(asc(executionPlans.compiledAt))
       .limit(counter.bound + 1)
-    const referenced = await this.#referencedPlans(
-      candidates.map((candidate) => candidate.executionPlanId)
-    )
+    let admittedCandidates = 0
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.compiledAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: referenced.has(candidate.executionPlanId) ? 1 : 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          { kind: 'postgres.deleteExecutionPlan', executionPlanId: candidate.executionPlanId },
-        ])
+      if (admittedCandidates >= counter.bound) {
+        counter.add({ verdict: 'eligible' })
+        break
       }
-      const removed = await this.database
-        .delete(executionPlans)
-        .where(
-          and(
-            eq(executionPlans.executionPlanId, candidate.executionPlanId),
-            eq(executionPlans.contentDigest, candidate.contentDigest)
+      const outcome = await this.database.transaction(async (transaction) => {
+        // Lock the target before reading references. New-reference writers take
+        // KEY SHARE on this same row before inserting their reference.
+        const [stored] = await transaction
+          .select({
+            contentDigest: executionPlans.contentDigest,
+            compiledAt: executionPlans.compiledAt,
+          })
+          .from(executionPlans)
+          .where(
+            and(
+              eq(executionPlans.executionPlanId, candidate.executionPlanId),
+              eq(executionPlans.contentDigest, candidate.contentDigest)
+            )
           )
+          .limit(1)
+          .for('update')
+        if (!stored) return { verdict: undefined, removed: false, raced: true }
+        const pendingReference = await this.#isReferencedPlan(
+          transaction,
+          candidate.executionPlanId
         )
-        .returning({ executionPlanId: executionPlans.executionPlanId })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.compiledAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences: pendingReference ? 1 : 0,
+          holds: 0,
+        })
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { verdict, removed: false, raced: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            { kind: 'postgres.deleteExecutionPlan', executionPlanId: candidate.executionPlanId },
+          ])
+        }
+        const removed = await transaction
+          .delete(executionPlans)
+          .where(
+            and(
+              eq(executionPlans.executionPlanId, candidate.executionPlanId),
+              eq(executionPlans.contentDigest, candidate.contentDigest)
+            )
+          )
+          .returning({ executionPlanId: executionPlans.executionPlanId })
+        return { verdict, removed: removed.length === 1, raced: removed.length !== 1 }
+      })
+      if (outcome.raced) raced += 1
+      if (outcome.verdict !== undefined) {
+        admittedCandidates += 1
+        if (!counter.add(outcome.verdict)) break
+      }
+      if (outcome.removed) deleted += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }
 
-  /** Plan ids among `ids` that an execution, acceptance record or validation pins. */
-  async #referencedPlans(ids: readonly string[]): Promise<Set<string>> {
-    if (ids.length === 0) return new Set()
-    const list = [...ids]
-    const [executionRows, inboxRows, validationRows] = await Promise.all([
-      this.database
-        .select({ executionPlanId: executions.executionPlanId })
-        .from(executions)
-        .where(inArray(executions.executionPlanId, list)),
-      this.database
-        .select({ executionPlanId: commandInbox.executionPlanId })
-        .from(commandInbox)
-        .where(inArray(commandInbox.executionPlanId, list)),
-      this.database
-        .select({ executionPlanId: executionValidationCommands.executionPlanId })
-        .from(executionValidationCommands)
-        .where(inArray(executionValidationCommands.executionPlanId, list)),
-    ])
-    return new Set(
-      [...executionRows, ...inboxRows, ...validationRows].map((row) => row.executionPlanId)
-    )
+  /** Fresh references read after locking the target, in the same claim transaction. */
+  async #isReferencedPlan(
+    transaction: Pick<ControlPlaneDatabase, 'select'>,
+    executionPlanId: string
+  ): Promise<boolean> {
+    const [executionRow] = await transaction
+      .select({ executionPlanId: executions.executionPlanId })
+      .from(executions)
+      .where(eq(executions.executionPlanId, executionPlanId))
+      .limit(1)
+    if (executionRow) return true
+    const [commandRow] = await transaction
+      .select({ executionPlanId: commandInbox.executionPlanId })
+      .from(commandInbox)
+      .where(eq(commandInbox.executionPlanId, executionPlanId))
+      .limit(1)
+    if (commandRow) return true
+    const [validationRow] = await transaction
+      .select({ executionPlanId: executionValidationCommands.executionPlanId })
+      .from(executionValidationCommands)
+      .where(eq(executionValidationCommands.executionPlanId, executionPlanId))
+      .limit(1)
+    if (validationRow) return true
+    const [delegationRow] = await transaction
+      .select({ delegationId: delegations.delegationId })
+      .from(delegations)
+      .where(
+        sql`record->>'parentExecutionPlanId' = ${executionPlanId} or record->>'childExecutionPlanId' = ${executionPlanId}`
+      )
+      .limit(1)
+    return delegationRow !== undefined
   }
 }

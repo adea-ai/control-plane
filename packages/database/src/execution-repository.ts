@@ -1,4 +1,5 @@
 import {
+  CommandInboxError,
   ExecutionAttemptSchema,
   ExecutionSchema,
   RetentionAssessmentCounter,
@@ -19,6 +20,7 @@ import { interactionCommands } from './schema/interaction-commands.js'
 import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
+import { lockExecutionPlanReference } from './execution-plan-repository.js'
 
 const MAXIMUM_SCAN_LIMIT = 1_000
 
@@ -347,12 +349,24 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   }
 
   async insertExecution(execution: Execution): Promise<boolean> {
-    const inserted = await this.database
-      .insert(executions)
-      .values(toExecutionRow(ExecutionSchema.parse(execution)))
-      .onConflictDoNothing()
-      .returning({ executionId: executions.executionId })
-    return inserted.length === 1
+    const parsed = ExecutionSchema.parse(execution)
+    return this.database.transaction(async (transaction) => {
+      const [existing] = await transaction
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(eq(executions.executionId, parsed.executionId))
+        .limit(1)
+      if (existing) return false
+      if (!(await lockExecutionPlanReference(transaction, parsed.executionPlan))) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+      const inserted = await transaction
+        .insert(executions)
+        .values(toExecutionRow(parsed))
+        .onConflictDoNothing()
+        .returning({ executionId: executions.executionId })
+      return inserted.length === 1
+    })
   }
 
   async getExecution(executionId: string): Promise<Execution | undefined> {
