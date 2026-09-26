@@ -104,7 +104,12 @@ export interface MarketplaceReleaseVerifier {
 
 export type MarketplaceRegistryServiceOptions = Readonly<{
   fetchImpl?: typeof fetch
-  immutableReleaseBaseUrl?: string
+  /**
+   * Template for one immutable artifact, with `{catalogId}` standing in for the
+   * catalog's digest. Defaults to the publication branch's content-addressed
+   * snapshot directory.
+   */
+  immutableArtifactBaseUrl?: string
   latestUrl?: string
   refreshIntervalMs?: number
   token?: string
@@ -173,7 +178,7 @@ export function bytesDigest(files: ReadonlyMap<string, Uint8Array>): string {
 
 export class MarketplaceRegistryService {
   readonly #fetchImpl: typeof fetch
-  readonly #immutableReleaseBaseUrl: string | undefined
+  readonly #immutableArtifactBaseUrl: string
   readonly #latestUrl: string
   readonly #token: string | undefined
   readonly #releaseVerifier: MarketplaceReleaseVerifier | undefined
@@ -187,10 +192,12 @@ export class MarketplaceRegistryService {
 
   constructor(options: MarketplaceRegistryServiceOptions = {}) {
     this.#fetchImpl = options.fetchImpl ?? fetch
-    this.#immutableReleaseBaseUrl = options.immutableReleaseBaseUrl
+    this.#immutableArtifactBaseUrl =
+      options.immutableArtifactBaseUrl ??
+      'https://raw.githubusercontent.com/adea-ai/plugins/catalog-assets/catalogs/{catalogId}'
     this.#latestUrl =
       options.latestUrl ??
-      'https://github.com/adea-ai/plugins/releases/latest/download/catalog-latest.v1.json'
+      'https://raw.githubusercontent.com/adea-ai/plugins/catalog-assets/catalog-latest.v1.json'
     this.#token = options.token
     this.#releaseVerifier = options.releaseVerifier
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 15_000
@@ -293,34 +300,33 @@ export class MarketplaceRegistryService {
     }
   }
 
+  /**
+   * One artifact of one catalog, addressed by the catalog's own digest.
+   *
+   * The template is configured rather than derived from the pointer URL. The
+   * previous scheme reconstructed the immutable URL by string-slicing the
+   * `releases/latest/download/catalog-latest.v1.json` pointer, so the shape of
+   * a mutable URL silently dictated where every immutable one lived, and any
+   * deployment that served the pointer from somewhere else produced a base URL
+   * that 404'd. An explicit template has no such coupling.
+   */
   #immutableUrl(suffix: string, name: (typeof marketplaceArtifactNames)[number]): string {
-    if (this.#immutableReleaseBaseUrl) {
-      return `${this.#immutableReleaseBaseUrl.replace(/\/$/u, '').replace('{catalogId}', suffix)}/${name}`
-    }
-    let latest: URL
+    const url = `${this.#immutableArtifactBaseUrl.replace(/\/$/u, '').replace('{catalogId}', suffix)}/${name}`
+    let parsed: URL
     try {
-      latest = new URL(this.#latestUrl)
+      parsed = new URL(url)
     } catch {
       throw new MarketplaceRegistryError(
         'MARKETPLACE_REGISTRY_UNAVAILABLE',
         'Marketplace registry URL is invalid'
       )
     }
-    if (latest.protocol !== 'https:')
+    if (parsed.protocol !== 'https:')
       throw new MarketplaceRegistryError(
         'MARKETPLACE_REGISTRY_UNAVAILABLE',
         'Marketplace registry URL must use HTTPS'
       )
-    const marker = '/releases/latest/download/catalog-latest.v1.json'
-    if (!latest.pathname.endsWith(marker))
-      throw new MarketplaceRegistryError(
-        'MARKETPLACE_REGISTRY_UNAVAILABLE',
-        'An immutable marketplace release URL is required'
-      )
-    latest.pathname = `${latest.pathname.slice(0, -marker.length)}/releases/download/catalog/${suffix}/${name}`
-    latest.search = ''
-    latest.hash = ''
-    return latest.toString()
+    return parsed.toString()
   }
 
   async #fetchArtifact(url: string): Promise<string> {

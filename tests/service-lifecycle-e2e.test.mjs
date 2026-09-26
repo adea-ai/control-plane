@@ -675,8 +675,8 @@ async function marketplaceApplication(directory) {
         ? new Response('missing', { status: 404 })
         : new Response(artifact, { status: 200 })
     },
-    latestUrl: 'https://registry.example/releases/latest/download/catalog-latest.v1.json',
-    immutableReleaseBaseUrl: 'https://registry.example/releases/download/catalog/{catalogId}',
+    latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+    immutableArtifactBaseUrl: 'https://registry.example/catalog-assets/catalogs/{catalogId}',
     releaseVerifier: { verify: async () => true },
   })
   const installations = new MarketplaceInstallationService({
