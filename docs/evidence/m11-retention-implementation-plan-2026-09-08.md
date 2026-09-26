@@ -628,3 +628,49 @@ Validation and context-authoring receipts require their own policy-compatible
 payload disposition and durable rejection/replay identity. Do not assign them a
 new duration, silently drop their reference pins, or reuse the billing outcome
 contract merely to make plan/package deletion tests pass.
+
+## Durable-hold implementation direction (2026-09-26)
+
+The hold inventory found 23 hard-coded zero facts across ten implemented
+classes. Implement storage and authority before wiring those facts; neither an
+owner label nor a read-only assessment is deletion authority.
+
+- Persist class-, workspace- and project-scoped holds with immutable identity,
+  verified owner/session provenance, reason code, creation time and explicit
+  release provenance/time. No automatic expiry of active holds. An identical
+  create replay after release must not reactivate the hold.
+- PostgreSQL hold create/release and physical deletion take the same
+  class-global advisory transaction mutex before target row claims. Within that
+  transaction, re-read scope and matching active holds. Low-frequency operator
+  deletion may serialize per class; avoiding an absence-of-hold race is more
+  important than speculative throughput. SQLite uses its existing serialized
+  writer transaction. Holds do not update reference clocks.
+- Require an explicit host-supplied verified owner authority check. Compare any
+  claimed actor with verified session provenance, as approval administration
+  does. Do not default-allow missing checks, invent workspace ownership from
+  ProjectState attribution, or reinterpret `holdOwner` labels as credentials.
+  The current CLI pattern can establish operator identity, but no general
+  workspace-owner authorization port is composed yet.
+- Only use canonical stored tenant scope. Runtime project scope requires a
+  verified execution join. Evaluation, audit and messaging storage currently
+  lacks reliable tenant columns, so only operator-authorized class-wide holds
+  are supported until that scope exists. Never infer ownership from arbitrary
+  JSON evidence or aggregate IDs. Unknown/malformed stored hold state fails
+  closed, and a target with unavailable scope must not silently disregard a
+  potentially matching scoped hold.
+- Convert nontransactional PostgreSQL command/event/runtime/evaluation/audit/
+  messaging deletion facts into fresh transactional claims when wiring holds.
+  Preserve total bounds, replay fences and journal ordering. Existing target
+  locks for executions, plans, packages and receipts must join the hold mutex
+  protocol too; the mutex precedes target claims and clock lock order remains
+  sorted contexts before sorted plans.
+- Prove owner denial, supported scopes, tenant isolation, duplicate create and
+  release, reopen, actual hold-versus-delete contention and SQLite parity.
+  Storage-only tests do not prove composed owner authorization. Released hold
+  history needs the audit-policy disposition; active holds remain protected.
+- A snapshot can predate a hold. Independently durable ordered hold events and
+  deletion-outcome reconciliation must run before restored state is exposed.
+  Database holds alone cannot stop provider TTLs: object/filesystem, workflows,
+  telemetry and backups require provider hold/delete-job coordination too.
+
+This direction does not close the hold, restore or provider acceptance gates.
