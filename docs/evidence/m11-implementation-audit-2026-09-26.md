@@ -46,8 +46,13 @@ compositions. Historical accepted-command and validation replay remain exempt
 from recompilation. The Local and Hosted validation services now receive the
 configured gate. The increment passed 94 focused tests across seven files and
 31 scoped build tasks; independent agent review found no current production
-acceptance bypass, but requested a composed acceptance-before-persistence test.
-These are implementation checks, not independent human release acceptance.
+acceptance bypass. Its requested composed acceptance-before-persistence regression
+was subsequently added and passed after 35 parent dependency build tasks: one
+test, 34 assertions. It proves missing approval leaves zero command/execution
+records, matching approval permits admission, and approval removal preserves the
+original accepted replay with exactly one durable command/execution. This later
+run is separate from the earlier 94-test increment count. These are
+implementation checks, not independent human release acceptance.
 
 The journal increment rejects class/backend/namespace mismatches before replay
 mutation. Its scoped checks passed 16 root tests and 141 domain tests. Operator
