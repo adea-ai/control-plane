@@ -235,8 +235,11 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #                               execution, acceptance record or validation
 #                               command still pins them)
 #   --class interaction-receipts (deletes confirmed interaction/cancellation
-#                               receipts past the replay window; unconfirmed
-#                               receipts are lost-ack identities and always stay)
+#                               receipts only after their scoped execution is
+#                               terminal and settled through attempts,
+#                               reconciliation and event delivery; the window
+#                               starts at the later of acceptance/settlement;
+#                               unconfirmed receipts always stay)
 #   --class runtime-ledgers    (deletes commands with a recorded result and their
 #                               event receipts; expired or unresolved commands are
 #                               reconciliation work and stay)
@@ -250,10 +253,13 @@ retained while a plan pins it or the authoring command that produced it still
 exists.
 
 Executions are the last class to become eligible: an execution stays retained
-while its acceptance record, its events, a reconciliation checkpoint or a
-non-terminal attempt still exists, so a pass over the earlier classes is what
-frees it. Running `--class executions` first is harmless — the pass reports
-`reference_pending` until those records are gone.
+while its acceptance record, either interaction/cancellation receipt, its
+interaction requests, events, a reconciliation checkpoint or a non-terminal
+attempt still exists, so a pass over the earlier classes is what frees it.
+Interaction requests currently have no configured retention deletion class;
+they remain a durable reference until that lifecycle is defined. Running
+`--class executions` first is harmless — the pass reports `reference_pending`
+until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
 are eligible, and why the rest are retained. Deleting requires

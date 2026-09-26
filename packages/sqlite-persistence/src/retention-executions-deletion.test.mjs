@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
+import { ControlApiFixtures } from '@control-plane/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SqliteExecutionRepository, SqlitePersistenceProvider } from './index.js'
+import {
+  SqliteExecutionRepository,
+  SqliteInteractionRepository,
+  SqlitePersistenceProvider,
+} from './index.js'
 
 const executionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const attemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -242,6 +247,99 @@ describe('SQLite execution retention deletion (#194)', () => {
       expect(
         await provider.transaction((transaction) => transaction.list('execution-attempts'))
       ).toHaveLength(1)
+    })
+  }, 60000)
+
+  test('execution deletion waits until cancellation and interaction receipts are cleaned up', async () => {
+    await withProvider(async (provider) => {
+      await seedExecution(provider)
+      const cancellation = {
+        request: {
+          ...ControlApiFixtures.executionCancellation.request,
+          payload: { executionId },
+        },
+        acceptedAt: terminalAt,
+      }
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'execution-cancellation-receipts',
+          id: 'r-cancellation-retention-reference',
+          value: cancellation,
+        })
+      )
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'interaction-command-receipts',
+          id: 'r-interaction-retention-reference',
+          value: {
+            request: {
+              ...ControlApiFixtures.interactionResponse.request,
+              payload: {
+                ...ControlApiFixtures.interactionResponse.request.payload,
+                executionId,
+              },
+            },
+            acceptedAt: terminalAt,
+          },
+        })
+      )
+      const interactionId = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+      const interactionAttemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+      await new SqliteInteractionRepository(provider).insert({
+        interactionId,
+        executionId,
+        attemptId: interactionAttemptId,
+        kind: 'approval',
+        prompt: { title: 'Approve the retained action' },
+        allowedActions: ['approve', 'deny'],
+        allowedPrincipalIds: ['svc_agent-hq'],
+        state: 'pending',
+        version: 1,
+        requestedAt: acceptedAt,
+        expiresAt: '2026-05-01T11:00:00.000Z',
+      })
+      const repository = new SqliteExecutionRepository(provider)
+      const now = new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000)
+      const retained = await repository.deleteEligibleExecutions(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+      expect(await repository.getExecution(executionId)).toBeDefined()
+
+      await provider.transaction(async (transaction) => {
+        await transaction.delete(
+          'execution-cancellation-receipts',
+          'r-cancellation-retention-reference'
+        )
+        await transaction.delete(
+          'interaction-command-receipts',
+          'r-interaction-retention-reference'
+        )
+      })
+      const cleaned = await repository.deleteEligibleExecutions(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(cleaned).toMatchObject({
+        deleted: 0,
+        retainedByReason: { reference_pending: 1 },
+      })
+      expect(await repository.getExecution(executionId)).toBeDefined()
+
+      const interactionIndex = `interaction-attempt-${createHash('sha256')
+        .update(JSON.stringify([executionId, interactionAttemptId]))
+        .digest('hex')}`
+      await provider.transaction(async (transaction) => {
+        await transaction.delete('interaction-requests', storedId(interactionId))
+        await transaction.delete(interactionIndex, storedId(interactionId))
+      })
+      const afterInteractionRequestCleanup = await repository.deleteEligibleExecutions(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(afterInteractionRequestCleanup.deleted).toBe(1)
+      expect(await repository.getExecution(executionId)).toBeUndefined()
     })
   }, 60000)
 

@@ -13,7 +13,10 @@ import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { executionEvents } from './schema/events.js'
+import { executionCancellations } from './schema/execution-cancellations.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import { interactionCommands } from './schema/interaction-commands.js'
+import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
 
@@ -51,8 +54,9 @@ export class PostgresExecutionRepository implements ExecutionRepository {
    *
    * The ordering proof for this class is reference safety, so it is the last
    * class to become eligible: an execution stays retained while its acceptance
-   * record, its events, its reconciliation checkpoint or a non-terminal attempt
-   * still exists. Attempts are removed with the execution, terminal ones only,
+   * record, either command receipt, an interaction request, its events, its
+   * reconciliation checkpoint or a non-terminal attempt still exists.
+   * Attempts are removed with the execution, terminal ones only,
    * and every delete is guarded by the row version so a concurrent transition
    * is reported as `raced` rather than forced. `dryRun` defaults to true.
    */
@@ -107,7 +111,10 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           references.events.has(candidate.executionId) ||
           references.checkpoints.has(candidate.executionId) ||
           references.activeAttempts.has(candidate.executionId) ||
-          references.runtimeCommands.has(candidate.executionId)
+          references.runtimeCommands.has(candidate.executionId) ||
+          references.cancellationReceipts.has(candidate.executionId) ||
+          references.interactionReceipts.has(candidate.executionId) ||
+          references.interactionRequests.has(candidate.executionId)
             ? 1
             : 0,
         holds: 0,
@@ -151,8 +158,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
 
   /**
    * Every namespace that carries execution identity, as sets of execution ids
-   * among `executionIds`. Plain selects rather than correlated subqueries: the
-   * driver's boolean representation is not JS truthiness.
+   * among `executionIds`. Receipt references are read from their validated
+   * JSON identity fields; interaction requests are a separate durable FK.
    */
   async #referenceSets(executionIds: readonly string[]): Promise<{
     commands: Set<string>
@@ -160,6 +167,9 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     checkpoints: Set<string>
     activeAttempts: Set<string>
     runtimeCommands: Set<string>
+    cancellationReceipts: Set<string>
+    interactionReceipts: Set<string>
+    interactionRequests: Set<string>
   }> {
     if (executionIds.length === 0) {
       return {
@@ -168,10 +178,23 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         checkpoints: new Set(),
         activeAttempts: new Set(),
         runtimeCommands: new Set(),
+        cancellationReceipts: new Set(),
+        interactionReceipts: new Set(),
+        interactionRequests: new Set(),
       }
     }
     const ids = [...executionIds]
-    const [commands, events, checkpoints, activeAttempts, runtimeCommandRefs] = await Promise.all([
+    const [
+      commands,
+      events,
+      checkpoints,
+      activeAttempts,
+      runtimeCommandRefs,
+      cancellationReceiptRefs,
+      interactionPayloadRefs,
+      interactionRequestRefs,
+      directInteractionRequests,
+    ] = await Promise.all([
       this.database
         .select({ executionId: commandInbox.executionId })
         .from(commandInbox)
@@ -201,6 +224,40 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         .select({ executionId: runtimeCommands.executionId })
         .from(runtimeCommands)
         .where(inArray(runtimeCommands.executionId, ids)),
+      this.database
+        .select({
+          executionId: sql<string>`${executionCancellations.receipt}->'request'->'payload'->>'executionId'`,
+        })
+        .from(executionCancellations)
+        .where(
+          inArray(
+            sql<string>`${executionCancellations.receipt}->'request'->'payload'->>'executionId'`,
+            ids
+          )
+        ),
+      this.database
+        .select({
+          executionId: sql<string>`${interactionCommands.receipt}->'request'->'payload'->>'executionId'`,
+        })
+        .from(interactionCommands)
+        .where(
+          inArray(
+            sql<string>`${interactionCommands.receipt}->'request'->'payload'->>'executionId'`,
+            ids
+          )
+        ),
+      this.database
+        .select({ executionId: interactionRequests.executionId })
+        .from(interactionRequests)
+        .innerJoin(
+          interactionCommands,
+          sql`${interactionCommands.receipt}->'request'->'payload'->>'interactionId' = ${interactionRequests.interactionId}`
+        )
+        .where(inArray(interactionRequests.executionId, ids)),
+      this.database
+        .select({ executionId: interactionRequests.executionId })
+        .from(interactionRequests)
+        .where(inArray(interactionRequests.executionId, ids)),
     ])
     return {
       commands: new Set(commands.map((row) => row.executionId)),
@@ -208,6 +265,12 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       checkpoints: new Set(checkpoints.map((row) => row.executionId)),
       activeAttempts: new Set(activeAttempts.map((row) => row.executionId)),
       runtimeCommands: new Set(runtimeCommandRefs.map((row) => row.executionId)),
+      cancellationReceipts: new Set(cancellationReceiptRefs.map((row) => row.executionId)),
+      interactionReceipts: new Set([
+        ...interactionPayloadRefs.map((row) => row.executionId),
+        ...interactionRequestRefs.map((row) => row.executionId),
+      ]),
+      interactionRequests: new Set(directInteractionRequests.map((row) => row.executionId)),
     }
   }
 

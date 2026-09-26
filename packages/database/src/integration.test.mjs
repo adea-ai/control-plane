@@ -45,6 +45,7 @@ import {
   PostgresCatalogApprovalRepository,
 } from './catalog-approval-repository.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
+import { PostgresReconciliationEffects } from './reconciliation-projection.ts'
 import {
   PostgresContextPackageRepository,
   PostgresContextPackageRetention,
@@ -1765,38 +1766,211 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
     const acceptedAt = '2026-08-01T11:00:00.000Z'
     const recent = '2026-11-20T11:00:00.000Z'
+    const ownerExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+    const ownerAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+    const ownerInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+    const ownerWorkspaceId = `wsp_${suffix}`
+    const ownerProjectId = `prj_${suffix}`
+    const executionRepository = new PostgresExecutionRepository(isolated.application)
+    const lifecycle = new ExecutionLifecycleService(executionRepository)
+    const owner = await lifecycle.createExecution({
+      executionId: ownerExecutionId,
+      correlation: {
+        workspaceId: ownerWorkspaceId,
+        projectId: ownerProjectId,
+        taskId: `tsk_${suffix}`,
+        agentId: `agt_${suffix}`,
+        requestId: `req_${suffix}`,
+      },
+      executionPlan: {
+        executionPlanId: `pln_${suffix}`,
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      acceptedAt: '2026-01-01T10:00:00.000Z',
+    })
+    const ownerAttempt = await lifecycle.createAttempt({
+      executionId: ownerExecutionId,
+      attemptId: ownerAttemptId,
+      expectedExecutionVersion: owner.version,
+      queuedAt: '2026-01-02T10:00:00.000Z',
+    })
+    await lifecycle.transitionAttempt({
+      attemptId: ownerAttemptId,
+      expectedVersion: ownerAttempt.version,
+      to: 'failed',
+      transitionedAt: '2026-01-03T10:00:00.000Z',
+      failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
+    })
+    const currentOwner = await executionRepository.getExecution(ownerExecutionId)
+    await lifecycle.transitionExecution({
+      executionId: ownerExecutionId,
+      expectedVersion: currentOwner.version,
+      to: 'failed',
+      transitionedAt: '2026-01-04T10:00:00.000Z',
+      failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
+    })
+    await new PostgresInteractionRepository(isolated.application).insert({
+      interactionId: ownerInteractionId,
+      executionId: ownerExecutionId,
+      attemptId: ownerAttemptId,
+      kind: 'approval',
+      prompt: { title: 'Approve the operation' },
+      allowedActions: ['approve', 'deny'],
+      allowedPrincipalIds: ['svc_agent-hq'],
+      state: 'responded',
+      version: 2,
+      requestedAt: '2026-04-29T10:00:00.000Z',
+      expiresAt: '2026-04-30T10:00:00.000Z',
+      response: {
+        responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB3',
+        action: 'approve',
+        respondingPrincipalId: 'svc_agent-hq',
+        respondedAt: acceptedAt,
+      },
+    })
+    const crossExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+    const crossAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+    const crossInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+    const crossExecution = await lifecycle.createExecution({
+      executionId: crossExecutionId,
+      correlation: {
+        workspaceId: ownerWorkspaceId,
+        projectId: ownerProjectId,
+        taskId: 'tsk_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+        agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+        requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+      },
+      executionPlan: {
+        executionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+        schemaVersion: 1,
+      },
+      acceptedAt: '2026-01-01T10:00:00.000Z',
+    })
+    await lifecycle.createAttempt({
+      executionId: crossExecutionId,
+      attemptId: crossAttemptId,
+      expectedExecutionVersion: crossExecution.version,
+      queuedAt: '2026-01-02T10:00:00.000Z',
+    })
+    await new PostgresInteractionRepository(isolated.application).insert({
+      interactionId: crossInteractionId,
+      executionId: ownerExecutionId,
+      attemptId: crossAttemptId,
+      kind: 'approval',
+      prompt: { title: 'Approve the cross-owner operation' },
+      allowedActions: ['approve', 'deny'],
+      allowedPrincipalIds: ['svc_agent-hq'],
+      state: 'responded',
+      version: 2,
+      requestedAt: '2026-04-29T10:00:00.000Z',
+      expiresAt: '2026-04-30T10:00:00.000Z',
+      response: {
+        responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+        action: 'approve',
+        respondingPrincipalId: 'svc_agent-hq',
+        respondedAt: acceptedAt,
+      },
+    })
     const seed = async (table, commandKey, receipt) => {
       await isolated.application.execute(
-        sql`insert into ${sql.identifier(table)} (command_key, workspace_id, project_id, receipt) values (${commandKey}, ${`wsp_${suffix}`}, ${`prj_${suffix}`}, ${JSON.stringify(receipt)}::jsonb)`
+        sql`insert into ${sql.identifier(table)} (command_key, workspace_id, project_id, receipt) values (${commandKey}, ${receipt.request.workspaceId}, ${receipt.request.projectId}, ${JSON.stringify(receipt)}::jsonb)`
       )
     }
-    const request = (operation) => ({
-      caller: { servicePrincipalId: 'svc_agent-hq' },
-      workspaceId: `wsp_${suffix}`,
-      projectId: `prj_${suffix}`,
-      operation,
-      idempotencyKey: `receipt-fixture-${operation}`,
-      payloadHash: `sha256:${'a'.repeat(64)}`,
-    })
+    const request = (operation, key) => {
+      const base =
+        operation === 'interaction.respond'
+          ? ControlApiFixtures.interactionResponse.request
+          : ControlApiFixtures.executionCancellation.request
+      return {
+        ...base,
+        workspaceId: ownerWorkspaceId,
+        projectId: ownerProjectId,
+        idempotencyKey: `receipt-fixture-${operation}-${key}`,
+        payload:
+          operation === 'interaction.respond'
+            ? {
+                ...ControlApiFixtures.interactionResponse.request.payload,
+                executionId: ownerExecutionId,
+                attemptId: ownerAttemptId,
+                interactionId: ownerInteractionId,
+              }
+            : { executionId: ownerExecutionId },
+      }
+    }
     const interactionKeys = {
       settled: `${'1'.repeat(64)}`,
       confirmedYoung: `${'2'.repeat(64)}`,
       unconfirmed: `${'3'.repeat(64)}`,
     }
+    const missingOwnerKey = `${'7'.repeat(64)}`
+    const scopeMismatchKey = `${'8'.repeat(64)}`
+    const missingInteractionKey = `${'0'.repeat(64)}`
+    const interactionMismatchKey = `${'9'.repeat(64)}`
+    const crossOwnerAttemptKey = `${'b'.repeat(64)}`
     await seed('interaction_commands', interactionKeys.settled, {
-      request: request('interaction.respond'),
+      request: request('interaction.respond', 'settled'),
       acceptedAt,
     })
     await seed('interaction_commands', interactionKeys.confirmedYoung, {
-      request: request('interaction.respond'),
+      request: request('interaction.respond', 'young'),
       acceptedAt: recent,
     })
     await seed('interaction_commands', interactionKeys.unconfirmed, {
-      request: request('interaction.respond'),
+      request: request('interaction.respond', 'unconfirmed'),
     })
     const cancellationKey = `${'4'.repeat(64)}`
     await seed('execution_cancellations', cancellationKey, {
-      request: request('execution.cancel'),
+      request: request('execution.cancel', 'settled-cancellation'),
+      acceptedAt,
+    })
+    await seed('execution_cancellations', missingOwnerKey, {
+      request: {
+        ...request('execution.cancel', 'missing-owner'),
+        payload: { executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      },
+      acceptedAt,
+    })
+    await seed('execution_cancellations', scopeMismatchKey, {
+      request: {
+        ...request('execution.cancel', 'scope-mismatch'),
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+      },
+      acceptedAt,
+    })
+    const missingInteractionRequest = request('interaction.respond', 'missing-interaction')
+    await seed('interaction_commands', missingInteractionKey, {
+      request: {
+        ...missingInteractionRequest,
+        payload: {
+          ...missingInteractionRequest.payload,
+          interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        },
+      },
+      acceptedAt,
+    })
+    const mismatchedInteractionRequest = request('interaction.respond', 'mismatched-interaction')
+    await seed('interaction_commands', interactionMismatchKey, {
+      request: {
+        ...mismatchedInteractionRequest,
+        payload: {
+          ...mismatchedInteractionRequest.payload,
+          executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        },
+      },
+      acceptedAt,
+    })
+    const crossOwnerAttemptRequest = request('interaction.respond', 'cross-owner-attempt')
+    await seed('interaction_commands', crossOwnerAttemptKey, {
+      request: {
+        ...crossOwnerAttemptRequest,
+        payload: {
+          ...crossOwnerAttemptRequest.payload,
+          attemptId: crossAttemptId,
+          interactionId: crossInteractionId,
+        },
+      },
       acceptedAt,
     })
 
@@ -1812,7 +1986,11 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
     const applied = await retention.sweepEligibleInteractionReceipts(assessedAt, options)
     expect(applied.deleted).toBe(2)
-    expect(applied.retainedByReason.unconfirmed_signal).toBeGreaterThanOrEqual(1)
+    expect(applied.retainedByReason).toMatchObject({
+      unconfirmed_signal: 1,
+      non_terminal_owner: 4,
+      unsettled_publication: 1,
+    })
 
     const remaining = await isolated.application.execute(
       sql`select command_key from interaction_commands where command_key in (${interactionKeys.settled}, ${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
@@ -1824,20 +2002,50 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       sql`select command_key from execution_cancellations where command_key = ${cancellationKey}`
     )
     expect(cancellations).toHaveLength(0)
+    const unsafeCancellationRows = await isolated.application.execute(
+      sql`select command_key from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
+    )
+    expect(unsafeCancellationRows.map((row) => row.command_key).toSorted()).toEqual(
+      [missingOwnerKey, scopeMismatchKey].toSorted()
+    )
+    const unsafeInteractionRows = await isolated.application.execute(
+      sql`select command_key from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
+    )
+    expect(unsafeInteractionRows.map((row) => row.command_key).toSorted()).toEqual(
+      [missingInteractionKey, interactionMismatchKey, crossOwnerAttemptKey].toSorted()
+    )
 
     // Clear the first scenario before checking the pass-wide bound.
     await isolated.application.execute(
       sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
     )
+    await isolated.application.execute(
+      sql`delete from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
+    )
+    await isolated.application.execute(
+      sql`delete from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
+    )
+    await isolated.application.execute(
+      sql`delete from interaction_requests where interaction_id = ${crossInteractionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_events where execution_id = ${crossExecutionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_attempts where execution_id = ${crossExecutionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from executions where execution_id = ${crossExecutionId}`
+    )
 
     const boundedInteractionKey = `${'5'.repeat(64)}`
     const boundedCancellationKey = `${'6'.repeat(64)}`
     await seed('interaction_commands', boundedInteractionKey, {
-      request: request('interaction.respond'),
+      request: request('interaction.respond', 'bounded-interaction'),
       acceptedAt,
     })
     await seed('execution_cancellations', boundedCancellationKey, {
-      request: request('execution.cancel'),
+      request: request('execution.cancel', 'bounded-cancellation'),
       acceptedAt,
     })
     const journal = []
@@ -1864,6 +2072,103 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated.application.execute(
       sql`delete from execution_cancellations where command_key = ${boundedCancellationKey}`
     )
+    await isolated.application.execute(
+      sql`delete from interaction_requests where interaction_id = ${ownerInteractionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_events where execution_id = ${ownerExecutionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_attempts where execution_id = ${ownerExecutionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from executions where execution_id = ${ownerExecutionId}`
+    )
+  }, 60_000)
+
+  test('an old accepted cancellation remains a resume guard while its PostgreSQL execution is active', async () => {
+    const acceptedAt = '2026-08-01T11:00:00.000Z'
+    const assessedAt = new Date('2027-12-01T12:00:00.000Z')
+    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB4'
+    const base = ControlApiFixtures.executionAcceptance.request
+    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+    const executionRepository = new PostgresExecutionRepository(isolated.application)
+    const accepted = await new CommandInboxService({
+      repository: commands,
+      executionIdFactory: () => executionId,
+      executionPlanValidator: { validate: async () => true },
+      now: () => acceptedAt,
+    }).acceptExecution({
+      callerPrincipalId: base.caller.servicePrincipalId,
+      operation: base.operation,
+      commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB4',
+      requestId: base.requestId,
+      idempotencyKey: 'retention-pg-resume-guard-active',
+      payloadHash: base.payloadHash,
+      correlation: {
+        workspaceId: base.workspaceId,
+        projectId: base.projectId,
+        taskId: base.payload.taskId,
+        agentId: base.payload.agentId,
+      },
+      executionPlan: base.payload.executionPlan,
+      receivedAt: acceptedAt,
+      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+    })
+    const cancellationRequest = {
+      ...ControlApiFixtures.executionCancellation.request,
+      idempotencyKey: 'retention-pg-cancel-active-execution-1',
+      payload: { executionId },
+    }
+    const cancellations = new PostgresExecutionCancellationRepository(isolated.application)
+    await cancellations.reserve({ request: cancellationRequest })
+    await cancellations.markAccepted(cancellationRequest, acceptedAt)
+    try {
+      const result = await new PostgresReceiptRetention(
+        isolated.application
+      ).sweepEligibleInteractionReceipts(assessedAt, {
+        policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
+        dryRun: false,
+      })
+      expect(result).toMatchObject({
+        deleted: 0,
+        retainedByReason: { non_terminal_owner: 1 },
+      })
+      const stored = await cancellations.listByExecution({
+        executionId,
+        workspaceId: base.workspaceId,
+        projectId: base.projectId,
+        limit: 1,
+      })
+      expect(stored).toHaveLength(1)
+
+      const submissions = []
+      await new PostgresReconciliationEffects({
+        executions: executionRepository,
+        commands,
+        events: { rearmPendingDelivery: async () => 0 },
+        workflowSubmitter: { submit: async (input) => submissions.push(input) },
+        cancellations,
+      }).resumeWorkflow({ executionId, checkpointId: `rcp_${'b'.repeat(32)}` })
+      expect(submissions).toEqual([])
+      expect(accepted.command.status).toBe('accepted')
+    } finally {
+      await isolated.application.execute(
+        sql`delete from execution_cancellations where receipt->'request'->'payload'->>'executionId' = ${executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from command_inbox where execution_id = ${executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_attempts where execution_id = ${executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from executions where execution_id = ${executionId}`
+      )
+    }
   }, 60_000)
 
   test('deleteEligibleRuntimeCommands removes settled commands with their receipts', async () => {
@@ -3867,8 +4172,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     const referenced = await accept('execution-retention-1', '01CRZ3NDEKTSV4RRFFQ69G5FFG')
     const clean = await accept('execution-retention-2', '01CRZ3NDEKTSV4RRFFQ69G5FFH')
+    const receiptReferenced = await accept('execution-retention-3', '01CRZ3NDEKTSV4RRFFQ69G5FFJ')
     const terminalAt = '2026-07-15T11:00:00.000Z'
-    for (const executionId of [referenced.execution.executionId, clean.execution.executionId]) {
+    for (const executionId of [
+      referenced.execution.executionId,
+      clean.execution.executionId,
+      receiptReferenced.execution.executionId,
+    ]) {
       await isolated.application.execute(
         sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
       )
@@ -3884,6 +4194,43 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     )
     await isolated.application.execute(
       sql`delete from execution_events where execution_id = ${clean.execution.executionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from command_inbox where execution_id = ${receiptReferenced.execution.executionId}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_events where execution_id = ${receiptReferenced.execution.executionId}`
+    )
+    const cancellationKey = `${'9'.repeat(64)}`
+    const interactionKey = `${'a'.repeat(64)}`
+    const cancellationReceipt = {
+      request: {
+        ...ControlApiFixtures.executionCancellation.request,
+        workspaceId: receiptReferenced.execution.correlation.workspaceId,
+        projectId: receiptReferenced.execution.correlation.projectId,
+        idempotencyKey: 'execution-retention-cancellation-reference-1',
+        payload: { executionId: receiptReferenced.execution.executionId },
+      },
+      acceptedAt: '2026-07-15T11:00:00.000Z',
+    }
+    const interactionReceipt = {
+      request: {
+        ...ControlApiFixtures.interactionResponse.request,
+        workspaceId: receiptReferenced.execution.correlation.workspaceId,
+        projectId: receiptReferenced.execution.correlation.projectId,
+        idempotencyKey: 'execution-retention-interaction-reference-1',
+        payload: {
+          ...ControlApiFixtures.interactionResponse.request.payload,
+          executionId: receiptReferenced.execution.executionId,
+        },
+      },
+      acceptedAt: '2026-07-15T11:00:00.000Z',
+    }
+    await isolated.application.execute(
+      sql`insert into execution_cancellations (command_key, workspace_id, project_id, receipt, created_at) values (${cancellationKey}, ${cancellationReceipt.request.workspaceId}, ${cancellationReceipt.request.projectId}, ${JSON.stringify(cancellationReceipt)}::jsonb, ${now}::timestamptz)`
+    )
+    await isolated.application.execute(
+      sql`insert into interaction_commands (command_key, workspace_id, project_id, receipt, created_at) values (${interactionKey}, ${interactionReceipt.request.workspaceId}, ${interactionReceipt.request.projectId}, ${JSON.stringify(interactionReceipt)}::jsonb, ${now}::timestamptz)`
     )
 
     const repository = new PostgresExecutionRepository(isolated.application)
@@ -3905,7 +4252,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       ...options,
       dryRun: true,
     })
-    expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+    expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 2 } })
 
     // Once its acceptance record goes too, it becomes eligible on a later pass.
     await isolated.application.execute(
@@ -3914,9 +4261,19 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated.application.execute(
       sql`delete from execution_events where execution_id = ${referenced.execution.executionId}`
     )
+    const receiptHeld = await repository.deleteEligibleExecutions(assessedAt, options)
+    expect(receiptHeld).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 1 } })
+    expect(await repository.getExecution(referenced.execution.executionId)).toBeUndefined()
+    expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeDefined()
+    await isolated.application.execute(
+      sql`delete from execution_cancellations where command_key = ${cancellationKey}`
+    )
+    await isolated.application.execute(
+      sql`delete from interaction_commands where command_key = ${interactionKey}`
+    )
     const final = await repository.deleteEligibleExecutions(assessedAt, options)
     expect(final.deleted).toBe(1)
-    expect(await repository.getExecution(referenced.execution.executionId)).toBeUndefined()
+    expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeUndefined()
   }, 60_000)
 
   test('reapplying the journal restores rejection identity on a snapshot without it', async () => {

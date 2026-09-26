@@ -10,8 +10,11 @@ import {
   CommandInboxRecordSchema,
   CommandInboxScopeSchema,
   CommandInboxError,
+  ExecutionCancellationReceiptSchema,
   ExecutionAttemptSchema,
   ExecutionSchema,
+  InteractionCommandReceiptSchema,
+  InteractionRequestSchema,
   ReconciliationCheckpointSchema,
   type CommandAcceptanceRepository,
   type CommandAcceptanceResult,
@@ -442,8 +445,8 @@ export class SqliteExecutionRepository implements ExecutionRepository {
    * Deletes terminal executions and their settled attempts (#194) once the
    * retention duration has passed since the terminal instant, and only when
    * nothing that must outlive them still references them: the acceptance
-   * record, any execution event, a reconciliation checkpoint or a non-terminal
-   * attempt all retain the execution. This class is therefore the last to
+   * record, either command receipt, any execution event, a reconciliation
+   * checkpoint or a non-terminal attempt all retain the execution. This class is therefore the last to
    * become eligible, which is the ordering proof it needs. `dryRun` defaults
    * to true and a record whose revision moved is reported as `raced`.
    */
@@ -513,6 +516,61 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               (record.value as { executionId?: unknown } | null)?.executionId ===
               execution.executionId
           )
+          const cancellationReceipts = (
+            await transaction.list('execution-cancellation-receipts')
+          ).some((record) => {
+            const parsed = ExecutionCancellationReceiptSchema.safeParse(record.value)
+            if (parsed.success)
+              return parsed.data.request.payload.executionId === execution.executionId
+            return (
+              (record.value as { request?: { payload?: { executionId?: unknown } } } | null)
+                ?.request?.payload?.executionId === execution.executionId
+            )
+          })
+          const interactionReceipts = await transaction.list('interaction-command-receipts')
+          let interactionReceiptReference = false
+          for (const record of interactionReceipts) {
+            const parsed = InteractionCommandReceiptSchema.safeParse(record.value)
+            const request = parsed.success ? parsed.data.request : undefined
+            const raw = record.value as {
+              request?: { payload?: { executionId?: unknown; interactionId?: unknown } }
+            } | null
+            if (
+              request?.payload.executionId === execution.executionId ||
+              raw?.request?.payload?.executionId === execution.executionId
+            ) {
+              interactionReceiptReference = true
+              break
+            }
+            const interactionId =
+              request?.payload.interactionId ?? raw?.request?.payload?.interactionId
+            if (typeof interactionId !== 'string') continue
+            const interactionRow = await transaction.get(
+              'interaction-requests',
+              recordId(interactionId)
+            )
+            if (interactionRow === undefined) continue
+            const interaction = InteractionRequestSchema.safeParse(interactionRow.value)
+            if (
+              (interaction.success && interaction.data.executionId === execution.executionId) ||
+              (!interaction.success &&
+                (interactionRow.value as { executionId?: unknown } | null)?.executionId ===
+                  execution.executionId)
+            ) {
+              interactionReceiptReference = true
+              break
+            }
+          }
+          const interactionRequestReference = (await transaction.list('interaction-requests')).some(
+            (record) => {
+              const parsed = InteractionRequestSchema.safeParse(record.value)
+              if (parsed.success) return parsed.data.executionId === execution.executionId
+              return (
+                (record.value as { executionId?: unknown } | null)?.executionId ===
+                execution.executionId
+              )
+            }
+          )
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
@@ -531,6 +589,9 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               events ||
               checkpoints ||
               runtimeCommands ||
+              cancellationReceipts ||
+              interactionReceiptReference ||
+              interactionRequestReference ||
               activeAttempts.length > 0
                 ? 1
                 : 0,
@@ -806,8 +867,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       for (const record of page) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.plans, record.id)
-          if (stored === undefined)
-            return { verdict: undefined, admitted: false, removed: false }
+          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           const plan = assertExecutionPlanIntegrity(stored.value)
           if (!expiredAt(plan.compiledAt, now))
             return { verdict: undefined, admitted: false, removed: false }
