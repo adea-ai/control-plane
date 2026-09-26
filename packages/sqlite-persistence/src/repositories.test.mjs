@@ -11,6 +11,7 @@ import {
 } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
+  REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
   SqliteContextAuthoringCommandRepository,
@@ -125,8 +126,38 @@ describe('SQLite domain repositories', () => {
           executionPlan: { ...input.executionPlan, contentDigest: `sha256:${'c'.repeat(64)}` },
         })
       ).rejects.toMatchObject({ code: 'INVALID_EXECUTION_PLAN_REFERENCE' })
+      let storedPlanId
+      let storedContextId
+      await provider.transaction(async (transaction) => {
+        storedPlanId = (await transaction.list('execution-plans')).find(
+          (record) => record.value.executionPlanId === plan.executionPlanId
+        ).id
+        storedContextId = (await transaction.list('context-packages')).find(
+          (record) => record.value.contextPackageId === plan.contextPackage.contextPackageId
+        ).id
+        await transaction.put({
+          namespace: REFERENCE_RETENTION_NAMESPACES.executionPlans,
+          id: storedPlanId,
+          value: { unreferencedSince: '2026-09-01T00:00:00.000Z' },
+        })
+        await transaction.put({
+          namespace: REFERENCE_RETENTION_NAMESPACES.contextPackages,
+          id: storedContextId,
+          value: { unreferencedSince: '2026-09-01T00:00:00.000Z' },
+        })
+      })
       const accepted = await service(provider).acceptExecution(input)
       expect(accepted.replayed).toBe(false)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(REFERENCE_RETENTION_NAMESPACES.executionPlans, storedPlanId)
+        )
+      ).toBeUndefined()
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(REFERENCE_RETENTION_NAMESPACES.contextPackages, storedContextId)
+        )
+      ).toBeUndefined()
 
       await provider.transaction(async (transaction) => {
         const storedPlan = (await transaction.list('execution-plans')).find(
@@ -161,7 +192,21 @@ describe('SQLite domain repositories', () => {
       })
 
       await seedDefaultPlan(provider)
+      const storedPlanId = await provider.transaction(async (transaction) => {
+        const row = (await transaction.list('execution-plans'))[0]
+        await transaction.put({
+          namespace: REFERENCE_RETENTION_NAMESPACES.executionPlans,
+          id: row.id,
+          value: { unreferencedSince: '2026-09-01T00:00:00.000Z' },
+        })
+        return row.id
+      })
       expect(await executions.insertExecution(template.execution)).toBe(true)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(REFERENCE_RETENTION_NAMESPACES.executionPlans, storedPlanId)
+        )
+      ).toBeUndefined()
       await provider.transaction(async (transaction) => {
         const storedPlan = (await transaction.list('execution-plans'))[0]
         await transaction.delete('execution-plans', storedPlan.id, storedPlan.revision)
@@ -603,6 +648,7 @@ describe('SQLite domain repositories', () => {
           provider.transaction((transaction) =>
             operation({
               get: transaction.get.bind(transaction),
+              delete: transaction.delete.bind(transaction),
               put: async (write) => {
                 if (write.namespace === 'context-authoring-commands')
                   throw new Error('INJECTED_COMMAND_WRITE_FAILURE')

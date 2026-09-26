@@ -48,6 +48,12 @@ import {
   type ExecutionPlanRepository,
 } from '@control-plane/execution-plan'
 import { ExecutionEventSchema } from '@control-plane/events'
+import { observeReferenceRetentionWindow } from '@control-plane/domain'
+import {
+  clearReferenceRetentionWindow,
+  getReferenceRetentionWindow,
+  setReferenceRetentionWindow,
+} from './retention-reference-metadata.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -88,6 +94,12 @@ export async function assertSqliteStoredPlanReference(
     package_.contentDigest !== plan.contextPackage.contentDigest
   )
     throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  await clearReferenceRetentionWindow(
+    transaction,
+    'contextPackages',
+    recordId(plan.contextPackage.contextPackageId)
+  )
+  await clearReferenceRetentionWindow(transaction, 'executionPlans', recordId(plan.executionPlanId))
   return plan
 }
 
@@ -110,32 +122,11 @@ async function assertSqliteStoredParentPlanReference(
   referenceInput: ExecutionPlanReference
 ): Promise<ExecutionPlan> {
   const reference = ExecutionPlanReferenceSchema.parse(referenceInput)
-  const stored = await transaction.get(namespaces.plans, recordId(reference.executionPlanId))
-  if (stored === undefined) {
+  try {
+    return await assertSqliteStoredPlanReference(transaction, reference)
+  } catch {
     throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
   }
-  const parent = assertExecutionPlanIntegrity(stored.value)
-  if (
-    parent.executionPlanId !== reference.executionPlanId ||
-    parent.contentDigest !== reference.contentDigest
-  ) {
-    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
-  }
-  const context = await transaction.get(
-    namespaces.contextPackages,
-    recordId(parent.contextPackage.contextPackageId)
-  )
-  if (context === undefined) {
-    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
-  }
-  const package_ = assertContextPackageIntegrity(context.value)
-  if (
-    package_.contextPackageId !== parent.contextPackage.contextPackageId ||
-    package_.contentDigest !== parent.contextPackage.contentDigest
-  ) {
-    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
-  }
-  return parent
 }
 
 const executionStates = new Set<string>([
@@ -949,9 +940,15 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly afterId?: string
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_PLAN_RETENTION_INVALID_TIMESTAMP')
+    if (
+      options.afterId !== undefined &&
+      (options.afterId.length === 0 || options.afterId.length > 128)
+    )
+      throw new Error('EXECUTION_PLAN_RETENTION_INVALID_CURSOR')
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
     const counter = new RetentionAssessmentCounter(
@@ -961,24 +958,39 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
     )
     let deleted = 0
     let raced = 0
-    let afterId: string | undefined
-    let done = false
-    while (!done) {
+    let scanned = 0
+    let cursor = options.afterId
+    let nextAfterId: string | undefined
+    let truncated = false
+    if (counter.bound === 0) {
+      const lookahead = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.plans, {
+          limit: 1,
+          ...(cursor === undefined ? {} : { afterId: cursor }),
+        })
+      )
+      truncated = lookahead.length > 0
+    }
+    while (scanned < counter.bound) {
+      const remaining = counter.bound - scanned
+      const limit = Math.max(1, Math.min(128, remaining + 1))
       const page = await this.provider.transaction((transaction) =>
         transaction.scan(namespaces.plans, {
-          limit: 128,
-          ...(afterId === undefined ? {} : { afterId }),
+          limit,
+          ...(cursor === undefined ? {} : { afterId: cursor }),
         })
       )
       if (page.length === 0) break
-      afterId = page[page.length - 1]?.id
-      for (const record of page) {
+      for (let index = 0; index < page.length; index += 1) {
+        const record = page[index]!
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.plans, record.id)
-          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
+          if (stored === undefined) {
+            if (!dryRun)
+              await clearReferenceRetentionWindow(transaction, 'executionPlans', record.id)
+            return { verdict: undefined, removed: false, raced: true }
+          }
           const plan = assertExecutionPlanIntegrity(stored.value)
-          if (!expiredAt(plan.compiledAt, now))
-            return { verdict: undefined, admitted: false, removed: false }
           // BEGIN IMMEDIATE serializes this fresh reference scan with every
           // writer that creates a plan reference in this provider.
           const references = new Set<string>()
@@ -1004,22 +1016,40 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             const parentPlanId = executionPlanParentId(descendant.value)
             if (parentPlanId !== undefined) references.add(parentPlanId)
           }
-          const verdict = evaluateRetentionEligibility({
-            retentionExpiresAt:
-              options.policyRetainMs === null
-                ? undefined
-                : new Date(Date.parse(plan.compiledAt) + options.policyRetainMs).toISOString(),
+          const pendingReferences = references.has(plan.executionPlanId) ? 1 : 0
+          const currentWindow = await getReferenceRetentionWindow(
+            transaction,
+            'executionPlans',
+            stored.id
+          )
+          const observed = observeReferenceRetentionWindow({
             now: assessedAt,
+            unreferencedSince: currentWindow,
+            pendingReferences,
             policyRetainMs: options.policyRetainMs,
-            ownerTerminal: true,
-            publicationSettled: true,
-            rejectionKeyReserved: true,
-            pendingReferences: references.has(plan.executionPlanId) ? 1 : 0,
-            holds: 0,
           })
-          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
+          if (!dryRun && observed.unreferencedSince !== currentWindow)
+            await setReferenceRetentionWindow(
+              transaction,
+              'executionPlans',
+              stored.id,
+              observed.unreferencedSince
+            )
+          const verdict =
+            options.policyRetainMs !== null && pendingReferences > 0
+              ? { verdict: 'retained' as const, reason: 'reference_pending' as const }
+              : evaluateRetentionEligibility({
+                  retentionExpiresAt: observed.retentionExpiresAt,
+                  now: assessedAt,
+                  policyRetainMs: options.policyRetainMs,
+                  ownerTerminal: true,
+                  publicationSettled: true,
+                  rejectionKeyReserved: true,
+                  pendingReferences,
+                  holds: 0,
+                })
           if (verdict.verdict !== 'eligible' || dryRun)
-            return { verdict, admitted: true, removed: false }
+            return { verdict, removed: false, raced: false }
           if (options.journal !== undefined) {
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
@@ -1031,19 +1061,44 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
           try {
             removed = await transaction.delete(namespaces.plans, stored.id, stored.revision)
           } catch {
-            return { verdict, admitted: true, removed: false }
+            return { verdict, removed: false, raced: true }
           }
-          return { verdict, admitted: true, removed }
+          if (removed) await clearReferenceRetentionWindow(transaction, 'executionPlans', stored.id)
+          return { verdict, removed, raced: !removed }
         })
-        if (outcome.verdict !== undefined && !outcome.admitted) {
-          done = true
+        scanned += 1
+        cursor = record.id
+        if (outcome.verdict !== undefined) counter.add(outcome.verdict)
+        if (outcome.removed) deleted += 1
+        if (outcome.raced) raced += 1
+        if (scanned >= counter.bound) {
+          let hasLookahead = index + 1 < page.length
+          if (!hasLookahead) {
+            const lookahead = await this.provider.transaction((transaction) =>
+              transaction.scan(namespaces.plans, {
+                limit: 1,
+                ...(cursor === undefined ? {} : { afterId: cursor }),
+              })
+            )
+            hasLookahead = lookahead.length > 0
+          }
+          if (hasLookahead && scanned > 0) nextAfterId = cursor
+          truncated = hasLookahead
           break
         }
-        if (outcome.removed) deleted += 1
       }
-      if (page.length < 128) break
+      if (truncated || scanned >= counter.bound) break
+      if (page.length < limit) break
     }
-    return { dryRun, deleted, raced, ...counter.result() }
+    return {
+      dryRun,
+      deleted,
+      raced,
+      ...counter.result(),
+      scanned,
+      truncated,
+      ...(nextAfterId === undefined ? {} : { nextAfterId }),
+    }
   }
 
   put(input: ExecutionPlan): Promise<ExecutionPlanReference> {
@@ -1082,6 +1137,12 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             plan.contextPackage.contextPackageId
           )
         }
+        await clearReferenceRetentionWindow(
+          transaction,
+          'contextPackages',
+          recordId(plan.contextPackage.contextPackageId)
+        )
+        await clearReferenceRetentionWindow(transaction, 'executionPlans', id)
         await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
         return reference
       }
@@ -1150,7 +1211,22 @@ export class SqliteExecutionValidationCommandRepository implements ExecutionVali
           plan.contextPackage.contextPackageId
         )
       }
+      // Preserve validation's specific missing-context error contract before
+      // the shared new-reference helper verifies the full plan/context pin.
+      if (stored) await assertSqliteStoredPlanReference(transaction, plan)
       if (!stored) {
+        if (plan.parentExecutionPlan) {
+          if (plan.parentExecutionPlan.executionPlanId === plan.executionPlanId) {
+            throw new ExecutionPlanError('INVALID_REFERENCE', plan.executionPlanId)
+          }
+          await assertSqliteStoredParentPlanReference(transaction, plan.parentExecutionPlan)
+        }
+        await clearReferenceRetentionWindow(
+          transaction,
+          'contextPackages',
+          recordId(plan.contextPackage.contextPackageId)
+        )
+        await clearReferenceRetentionWindow(transaction, 'executionPlans', id)
         await transaction.put({ namespace: namespaces.plans, id, value: json(plan) })
       }
       await transaction.put({

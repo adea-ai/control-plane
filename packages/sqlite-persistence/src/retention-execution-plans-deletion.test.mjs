@@ -11,6 +11,7 @@ import {
   createExecutionPlanTestFixtureInputs,
 } from '@control-plane/execution-plan/testing'
 import {
+  REFERENCE_RETENTION_NAMESPACES,
   SqliteContextPackageRepository,
   SqliteCommandAcceptanceRepository,
   SqliteExecutionPlanRepository,
@@ -21,7 +22,10 @@ const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
 // The compiler stamps `compiledAt`, so the clock is derived from the fixture it
 // produces rather than the fixture from the clock.
 const fixtureCompiledAt = createExecutionPlanTestFixture().compiledAt
-const retentionDeadline = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs + 60_000)
+const referenceObservedAt = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs + 60_000)
+const retentionDeadline = new Date(referenceObservedAt.getTime() + ninetyDaysMs)
+const afterRetentionDeadline = new Date(retentionDeadline.getTime() + 1)
+const cursorScanAt = new Date('2026-08-27T00:00:00.000Z')
 
 function storedId(value) {
   return `r-${createHash('sha256').update(value).digest('hex')}`
@@ -103,7 +107,11 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
       await putPlanWithContext(provider, plans, parent)
       await plans.put(child)
 
-      const now = new Date(Date.parse(child.compiledAt) + ninetyDaysMs + 60_000)
+      await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      const now = afterRetentionDeadline
       const first = await plans.deleteEligibleExecutionPlans(now, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
@@ -127,7 +135,13 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
-      expect(second.deleted).toBe(1)
+      expect(second.deleted).toBe(0)
+      expect(second.retainedByReason).toEqual({ not_expired: 1 })
+      const final = await plans.deleteEligibleExecutionPlans(
+        new Date(now.getTime() + ninetyDaysMs + 1),
+        { policyRetainMs: ninetyDaysMs, dryRun: false }
+      )
+      expect(final.deleted).toBe(1)
       expect(
         await plans.get({
           executionPlanId: parent.executionPlanId,
@@ -174,7 +188,11 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
       const plan = createExecutionPlanTestFixture()
       const plans = new SqliteExecutionPlanRepository(provider)
       await putPlanWithContext(provider, plans, plan)
-      const now = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
+      await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      const now = afterRetentionDeadline
       const commandService = new CommandInboxService({
         repository: new SqliteCommandAcceptanceRepository(provider),
         executionIdFactory: () => 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
@@ -225,29 +243,44 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
     })
   })
 
-  test('an unreferenced plan past its window is deleted', async () => {
+  test('a plan receives a full window from the first unreferenced observation', async () => {
     await withProvider(async (provider) => {
       const plans = new SqliteExecutionPlanRepository(provider)
       const plan = createExecutionPlanTestFixture()
       await putPlanWithContext(provider, plans, plan)
 
-      const dry = await plans.deleteEligibleExecutionPlans(retentionDeadline, {
+      const dry = await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
         policyRetainMs: ninetyDaysMs,
         dryRun: true,
       })
-      expect(dry.eligible).toBe(1)
+      expect(dry.eligible).toBe(0)
+      expect(dry.retainedByReason).toEqual({ not_expired: 1 })
       expect(dry.deleted).toBe(0)
 
-      const applied = await plans.deleteEligibleExecutionPlans(retentionDeadline, {
+      const applied = await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
-      expect(applied.deleted).toBe(1)
+      expect(applied.deleted).toBe(0)
+      const expired = await plans.deleteEligibleExecutionPlans(afterRetentionDeadline, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(expired.deleted).toBe(1)
+      const metadataNamespace = REFERENCE_RETENTION_NAMESPACES.executionPlans
+      const targetId = storedId(plan.executionPlanId)
+      expect(
+        await provider.transaction((transaction) => transaction.get(metadataNamespace, targetId))
+      ).toBeUndefined()
       expect(
         await plans.get({
           executionPlanId: plan.executionPlanId,
           contentDigest: plan.contentDigest,
         })
+      ).toBeUndefined()
+      await plans.put(plan)
+      expect(
+        await provider.transaction((transaction) => transaction.get(metadataNamespace, targetId))
       ).toBeUndefined()
     })
   }, 60000)
@@ -401,7 +434,13 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
-      expect(freed.deleted).toBe(1)
+      expect(freed.deleted).toBe(0)
+      expect(freed.retainedByReason).toEqual({ not_expired: 1 })
+      const expired = await plans.deleteEligibleExecutionPlans(
+        new Date(retentionDeadline.getTime() + ninetyDaysMs + 1),
+        { policyRetainMs: ninetyDaysMs, dryRun: false }
+      )
+      expect(expired.deleted).toBe(1)
       expect(
         await plans.get({
           executionPlanId: plan.executionPlanId,
@@ -411,13 +450,27 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
     })
   }, 60000)
 
-  test('the window runs from compiledAt and an unbounded policy retains plans', async () => {
+  test('the reference window respects boundaries and unbounded policy retains plans', async () => {
     await withProvider(async (provider) => {
       const plans = new SqliteExecutionPlanRepository(provider)
       const plan = createExecutionPlanTestFixture()
       await putPlanWithContext(provider, plans, plan)
 
-      const inside = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs - 1_000)
+      expect(
+        (
+          await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
+            policyRetainMs: null,
+            dryRun: false,
+          })
+        ).retainedByReason
+      ).toEqual({ unbounded_class: 1 })
+
+      const observed = await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(observed.retainedByReason).toEqual({ not_expired: 1 })
+      const inside = new Date(retentionDeadline.getTime() - 1)
       expect(
         (
           await plans.deleteEligibleExecutionPlans(inside, {
@@ -427,20 +480,154 @@ describe('SQLite execution-plan retention deletion (#194)', () => {
         ).retainedByReason
       ).toEqual({ not_expired: 1 })
 
-      expect(
-        (
-          await plans.deleteEligibleExecutionPlans(retentionDeadline, {
-            policyRetainMs: null,
-            dryRun: false,
-          })
-        ).retainedByReason
-      ).toEqual({ unbounded_class: 1 })
+      const atBoundary = await plans.deleteEligibleExecutionPlans(retentionDeadline, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(atBoundary.deleted).toBe(0)
+      expect(atBoundary.retainedByReason).toEqual({ not_expired: 1 })
 
-      const past = await plans.deleteEligibleExecutionPlans(
-        new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs + 1),
-        { policyRetainMs: ninetyDaysMs, dryRun: false }
-      )
+      const past = await plans.deleteEligibleExecutionPlans(afterRetentionDeadline, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
       expect(past.deleted).toBe(1)
     })
   }, 60000)
+
+  test('new descendant plans clear both windows and a short reference restarts the clock', async () => {
+    await withProvider(async (provider) => {
+      const contextPackage = contextPackageSerializationFixtures.futurePi
+      const packages = new SqliteContextPackageRepository(provider)
+      const plans = new SqliteExecutionPlanRepository(provider)
+      await packages.put(contextPackage)
+      await packages.deleteEligibleContextPackages(referenceObservedAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      const contextId = storedId(contextPackage.contextPackageId)
+      const contextWindowNamespace = REFERENCE_RETENTION_NAMESPACES.contextPackages
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(contextWindowNamespace, contextId)
+        )
+      ).toBeDefined()
+
+      const parent = planAt('2026-08-01T00:00:00.000Z')
+      await plans.put(parent)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(contextWindowNamespace, contextId)
+        )
+      ).toBeUndefined()
+
+      await plans.deleteEligibleExecutionPlans(referenceObservedAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      const planId = storedId(parent.executionPlanId)
+      const planWindowNamespace = REFERENCE_RETENTION_NAMESPACES.executionPlans
+      expect(
+        await provider.transaction((transaction) => transaction.get(planWindowNamespace, planId))
+      ).toBeDefined()
+
+      const child = childPlanAt(parent, '2026-08-02T00:00:00.000Z')
+      await plans.put(child)
+      expect(
+        await provider.transaction((transaction) => transaction.get(planWindowNamespace, planId))
+      ).toBeUndefined()
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.get(contextWindowNamespace, contextId)
+        )
+      ).toBeUndefined()
+
+      await provider.transaction(async (transaction) => {
+        const childId = storedId(child.executionPlanId)
+        const childRow = await transaction.get('execution-plans', childId)
+        expect(childRow).toBeDefined()
+        await transaction.delete('execution-plans', childId, childRow.revision)
+      })
+      const planReobserved = await plans.deleteEligibleExecutionPlans(afterRetentionDeadline, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(planReobserved.deleted).toBe(0)
+      expect(planReobserved.retainedByReason).toEqual({ not_expired: 1 })
+      await provider.transaction(async (transaction) => {
+        const parentId = storedId(parent.executionPlanId)
+        const parentRow = await transaction.get('execution-plans', parentId)
+        expect(parentRow).toBeDefined()
+        await transaction.delete('execution-plans', parentId, parentRow.revision)
+      })
+      const contextReobserved = await packages.deleteEligibleContextPackages(
+        afterRetentionDeadline,
+        { policyRetainMs: ninetyDaysMs, dryRun: false }
+      )
+      expect(contextReobserved.deleted).toBe(0)
+      expect(contextReobserved.retainedByReason).toEqual({ not_expired: 1 })
+    })
+  })
+
+  test('plan continuation visits young targets in key order and dry-run or bound zero writes no clocks', async () => {
+    await withProvider(async (provider) => {
+      const plans = new SqliteExecutionPlanRepository(provider)
+      await putPlanWithContext(provider, plans, planAt('2026-08-24T00:00:00.000Z'))
+      await putPlanWithContext(provider, plans, planAt('2026-08-25T00:00:00.000Z'))
+      await putPlanWithContext(provider, plans, planAt('2026-08-26T00:00:00.000Z'))
+      const ids = await provider.transaction(async (transaction) =>
+        (await transaction.scan('execution-plans', { limit: 128 })).map((record) => record.id)
+      )
+
+      const zero = await plans.deleteEligibleExecutionPlans(cursorScanAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        bound: 0,
+      })
+      expect(zero.scanned).toBe(0)
+      expect(zero.truncated).toBe(true)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.list(REFERENCE_RETENTION_NAMESPACES.executionPlans)
+        )
+      ).toEqual([])
+
+      const dry = await plans.deleteEligibleExecutionPlans(cursorScanAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: true,
+        bound: 1,
+      })
+      expect(dry.nextAfterId).toBe(ids[0])
+      expect(dry.scanned).toBe(1)
+      expect(dry.truncated).toBe(true)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.list(REFERENCE_RETENTION_NAMESPACES.executionPlans)
+        )
+      ).toEqual([])
+
+      const first = await plans.deleteEligibleExecutionPlans(cursorScanAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        bound: 1,
+      })
+      expect(first.nextAfterId).toBe(ids[0])
+      const second = await plans.deleteEligibleExecutionPlans(cursorScanAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        bound: 1,
+        afterId: first.nextAfterId,
+      })
+      expect(second.nextAfterId).toBe(ids[1])
+      const final = await plans.deleteEligibleExecutionPlans(cursorScanAt, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+        bound: 1,
+        afterId: second.nextAfterId,
+      })
+      expect(final.scanned).toBe(1)
+      expect(final.truncated).toBe(false)
+      expect(final.nextAfterId).toBeUndefined()
+    })
+  })
 })
