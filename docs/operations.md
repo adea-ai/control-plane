@@ -197,6 +197,13 @@ publication — unapproved versions stay authorable and listable.
   (`scripts/catalog-approval-admin.mjs`, `approvals.record` / `approvals.show`) against the target
   database. The request file is validated (absolute path, regular file, size-capped) and the CLI
   reports a single sanitized failure code; it never echoes database or credential content.
+  The tool replaces request-supplied actor/authority attribution with the executing OS account
+  (`operator:os-user:<encoded-account>`) and its real storage authority: Local OS access for SQLite,
+  or the PostgreSQL session's `current_user`. These identify a privileged operator session, not an
+  authenticated product user or a validated product grant. Shared OS/database accounts are shared
+  attribution; use individual operator accounts when individual accountability is required.
+  Programmatic administration must supply adapter-verified operator context and matching attribution;
+  a JSON principal or grant reference alone is not proof of authority.
 - With the gate enabled, a version published at or after the cutover denies execution with
   `*_APPROVAL_MISSING` until a decision exists, and denies with `*_APPROVAL_REJECTED` when a rejection
   was recorded. Approve deliberately: the decision is append-only and bound to the exact revision and

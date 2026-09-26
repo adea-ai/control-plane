@@ -40,7 +40,10 @@ import {
 } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { ExternalSessionRegistry, RuntimeConnectionRegistry } from '@control-plane/runtime-sdk'
-import { PostgresCatalogApprovalRepository } from './catalog-approval-repository.ts'
+import {
+  catalogApprovalDatabaseAuthority,
+  PostgresCatalogApprovalRepository,
+} from './catalog-approval-repository.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import {
   PostgresContextPackageRepository,
@@ -403,6 +406,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   })
 
   test('persists catalog approval decisions idempotently with version scoping', async () => {
+    expect(await catalogApprovalDatabaseAuthority(isolated.application)).toBe(
+      'authority:postgres:role:control_plane_app'
+    )
     const repository = new PostgresCatalogApprovalRepository(isolated.application)
     const decision = {
       versionKind: 'agent_profile',

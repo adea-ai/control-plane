@@ -8,8 +8,8 @@ import type { AgentProfileRepository, SkillRepository } from './versioned-catalo
  * actor — deliberately NOT the publication lifecycle state: publication and
  * approval are distinct facts, and this module records the latter. Decisions
  * are append-only per version revision; the latest revision's decision is the
- * current one. No execution path consults these records yet: recording an
- * approval never changes resolution or execution behavior on its own.
+ * current one. Configured execution gates consult these records; recording an
+ * approval does not enable a gate that is disabled by policy.
  */
 
 const TimestampSchema = z.iso.datetime()
@@ -27,7 +27,7 @@ export const CatalogApprovalDecisionSchema = z
     /** Content digest the decision is bound to; a mismatch means the version changed. */
     contentDigest: DigestSchema,
     decision: z.enum(['approved', 'rejected']),
-    /** Authenticated principal recording the decision. */
+    /** Principal verified by the trusted administration adapter, not by this schema. */
     actorPrincipalRef: z.string().min(1).max(256),
     /** Authority the actor acted under (e.g. a scoped grant reference). */
     authorityRef: z.string().min(1).max(256).optional(),
@@ -51,6 +51,8 @@ export type CatalogApprovalErrorCode =
   | 'CATALOG_APPROVAL_VERSION_NOT_APPROVABLE'
   | 'CATALOG_APPROVAL_STALE_VERSION'
   | 'CATALOG_APPROVAL_CONFLICT'
+  | 'CATALOG_APPROVAL_OPERATOR_REQUIRED'
+  | 'CATALOG_APPROVAL_OPERATOR_MISMATCH'
 
 export class CatalogApprovalError extends Error {
   constructor(
@@ -198,14 +200,35 @@ export interface CatalogApprovalAdministrationResult {
  */
 export class CatalogApprovalAdministration {
   readonly #service: CatalogApprovalService
+  readonly #operator:
+    | {
+        readonly actorPrincipalRef: string
+        readonly authorityRef: string
+      }
+    | undefined
 
-  constructor(options: CatalogApprovalServiceOptions) {
+  constructor(
+    options: CatalogApprovalServiceOptions & {
+      /** Verified by the adapter's OS/database session, never the request document. */
+      readonly operator?: { readonly actorPrincipalRef: string; readonly authorityRef: string }
+    }
+  ) {
     this.#service = new CatalogApprovalService(options)
+    this.#operator = options.operator
   }
 
   async apply(input: unknown): Promise<CatalogApprovalAdministrationResult> {
     const request = CatalogApprovalAdministrationRequestSchema.parse(input)
     if (request.operation === 'approvals.record') {
+      if (this.#operator === undefined) {
+        throw new CatalogApprovalError('CATALOG_APPROVAL_OPERATOR_REQUIRED')
+      }
+      if (
+        request.decision.actorPrincipalRef !== this.#operator.actorPrincipalRef ||
+        request.decision.authorityRef !== this.#operator.authorityRef
+      ) {
+        throw new CatalogApprovalError('CATALOG_APPROVAL_OPERATOR_MISMATCH')
+      }
       const recorded = await this.#service.decide(request.decision)
       return {
         status: 'applied',
