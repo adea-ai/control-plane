@@ -99,6 +99,45 @@ function workflowJobPlanId(value: unknown): string | undefined {
   return typeof executionPlanId === 'string' ? executionPlanId : undefined
 }
 
+function executionPlanParentId(value: unknown): string | undefined {
+  const plan = value as { parentExecutionPlan?: { executionPlanId?: unknown } } | null
+  const parentId = plan?.parentExecutionPlan?.executionPlanId
+  return typeof parentId === 'string' ? parentId : undefined
+}
+
+async function assertSqliteStoredParentPlanReference(
+  transaction: PersistenceTransaction,
+  referenceInput: ExecutionPlanReference
+): Promise<ExecutionPlan> {
+  const reference = ExecutionPlanReferenceSchema.parse(referenceInput)
+  const stored = await transaction.get(namespaces.plans, recordId(reference.executionPlanId))
+  if (stored === undefined) {
+    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
+  }
+  const parent = assertExecutionPlanIntegrity(stored.value)
+  if (
+    parent.executionPlanId !== reference.executionPlanId ||
+    parent.contentDigest !== reference.contentDigest
+  ) {
+    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
+  }
+  const context = await transaction.get(
+    namespaces.contextPackages,
+    recordId(parent.contextPackage.contextPackageId)
+  )
+  if (context === undefined) {
+    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
+  }
+  const package_ = assertContextPackageIntegrity(context.value)
+  if (
+    package_.contextPackageId !== parent.contextPackage.contextPackageId ||
+    package_.contentDigest !== parent.contextPackage.contentDigest
+  ) {
+    throw new ExecutionPlanError('INVALID_REFERENCE', reference.executionPlanId)
+  }
+  return parent
+}
+
 const executionStates = new Set<string>([
   'accepted',
   'queued',
@@ -961,6 +1000,10 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             const executionPlanId = workflowJobPlanId(job.value)
             if (executionPlanId !== undefined) references.add(executionPlanId)
           }
+          for (const descendant of await transaction.list(namespaces.plans)) {
+            const parentPlanId = executionPlanParentId(descendant.value)
+            if (parentPlanId !== undefined) references.add(parentPlanId)
+          }
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -1013,6 +1056,12 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       const id = recordId(plan.executionPlanId)
       const record = await transaction.get(namespaces.plans, id)
       if (record === undefined) {
+        if (plan.parentExecutionPlan) {
+          if (plan.parentExecutionPlan.executionPlanId === plan.executionPlanId) {
+            throw new ExecutionPlanError('INVALID_REFERENCE', plan.executionPlanId)
+          }
+          await assertSqliteStoredParentPlanReference(transaction, plan.parentExecutionPlan)
+        }
         const context = await transaction.get(
           namespaces.contextPackages,
           recordId(plan.contextPackage.contextPackageId)

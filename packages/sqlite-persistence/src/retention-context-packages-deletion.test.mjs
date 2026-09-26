@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { SqliteContextPackageRepository, SqlitePersistenceProvider } from './index.js'
 import { SqliteExecutionPlanRepository } from './index.js'
@@ -10,11 +11,36 @@ import { SqliteExecutionPlanRepository } from './index.js'
 const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
 // The package digest covers compiledAt, so the clock is derived from the
 // fixture rather than the fixture from the clock.
-const compiledAt = contextPackageSerializationFixtures.futurePi.compiledAt
-const now = new Date(Date.parse(compiledAt) + ninetyDaysMs + 60_000)
+const fixtureCompiledAt = contextPackageSerializationFixtures.futurePi.compiledAt
+const retentionDeadline = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs + 60_000)
 
 function packageFixture() {
   return contextPackageSerializationFixtures.futurePi
+}
+
+function storedId(value) {
+  return `r-${createHash('sha256').update(value).digest('hex')}`
+}
+
+function childPackageAt(parent, compiledAt, objective = 'retention ancestry child') {
+  return deriveContextPackage(parent, {
+    objective,
+    allowedStateItemIds: [],
+    allowedArtifactIds: [],
+    budgets: parent.budgets,
+    successCriteria: parent.successCriteria,
+    returnContract: parent.returnContract,
+    compiledAt,
+  })
+}
+
+function childPackageAfterParentKey(parent) {
+  for (let day = 1; day <= 366; day += 1) {
+    const compiledAt = new Date(Date.parse(parent.compiledAt) + day * 86_400_000).toISOString()
+    const child = childPackageAt(parent, compiledAt)
+    if (storedId(parent.contextPackageId) < storedId(child.contextPackageId)) return child
+  }
+  throw new Error('UNABLE_TO_ORDER_CHILD_PACKAGE_AFTER_PARENT')
 }
 
 async function withProvider(run) {
@@ -30,6 +56,70 @@ async function withProvider(run) {
 }
 
 describe('SQLite context-package retention deletion (#194)', () => {
+  test('a child package pins its parent through deletion and then the ancestor becomes eligible', async () => {
+    await withProvider(async (provider) => {
+      const parent = packageFixture()
+      const child = childPackageAfterParentKey(parent)
+      const packages = new SqliteContextPackageRepository(provider)
+      await packages.put(parent)
+      await packages.put(child)
+
+      const now = new Date(Date.parse(child.compiledAt) + ninetyDaysMs + 60_000)
+      const first = await packages.deleteEligibleContextPackages(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(first.deleted).toBe(1)
+      expect(first.retainedByReason).toEqual({ reference_pending: 1 })
+      expect(await packages.get(parent)).toBeDefined()
+      expect(await packages.get(child)).toBeUndefined()
+
+      const second = await packages.deleteEligibleContextPackages(now, {
+        policyRetainMs: ninetyDaysMs,
+        dryRun: false,
+      })
+      expect(second.deleted).toBe(1)
+      expect(await packages.get(parent)).toBeUndefined()
+    })
+  })
+
+  test('new child packages require the exact parent but identical replay survives parent cleanup', async () => {
+    await withProvider(async (provider) => {
+      const parent = packageFixture()
+      const child = childPackageAt(parent, '2026-08-22T12:00:00.000Z')
+      const wrongParent = childPackageAt(
+        parent,
+        '2026-08-23T12:00:00.000Z',
+        'wrong stored ancestor fixture'
+      )
+      const packages = new SqliteContextPackageRepository(provider)
+
+      await expect(packages.put(child)).rejects.toMatchObject({
+        code: 'CONTRADICTORY_CONTEXT_REFERENCE',
+      })
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'context-packages',
+          id: storedId(parent.contextPackageId),
+          value: wrongParent,
+        })
+      )
+      await expect(packages.put(child)).rejects.toMatchObject({
+        code: 'CONTRADICTORY_CONTEXT_REFERENCE',
+      })
+      await provider.transaction((transaction) =>
+        transaction.delete('context-packages', storedId(parent.contextPackageId))
+      )
+
+      await packages.put(parent)
+      const reference = await packages.put(child)
+      await provider.transaction((transaction) =>
+        transaction.delete('context-packages', storedId(parent.contextPackageId))
+      )
+      expect(await packages.put(child)).toEqual(reference)
+    })
+  })
+
   test('a plan put racing package deletion fails closed when deletion linearizes first', async () => {
     await withProvider(async (provider) => {
       const package_ = packageFixture()
@@ -39,7 +129,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       const plans = new SqliteExecutionPlanRepository(provider)
       let competingPut
 
-      const deletion = await packages.deleteEligibleContextPackages(now, {
+      const deletion = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
         journal: async () => {
@@ -67,7 +157,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       const package_ = packageFixture()
       await packages.put(package_)
 
-      const dry = await packages.deleteEligibleContextPackages(now, {
+      const dry = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: true,
       })
@@ -75,7 +165,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       expect(dry.deleted).toBe(0)
       expect(await packages.get(package_)).toBeDefined()
 
-      const applied = await packages.deleteEligibleContextPackages(now, {
+      const applied = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
@@ -90,7 +180,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       const package_ = packageFixture()
       await packages.put(package_)
 
-      const insideWindow = new Date(Date.parse(compiledAt) + ninetyDaysMs - 1_000)
+      const insideWindow = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs - 1_000)
       const early = await packages.deleteEligibleContextPackages(insideWindow, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
@@ -98,7 +188,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       expect(early.deleted).toBe(0)
       expect(early.retainedByReason).toEqual({ not_expired: 1 })
 
-      const atDeadline = new Date(Date.parse(compiledAt) + ninetyDaysMs)
+      const atDeadline = new Date(Date.parse(fixtureCompiledAt) + ninetyDaysMs)
       const boundary = await packages.deleteEligibleContextPackages(atDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
@@ -131,7 +221,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
           },
         })
       )
-      const withPlan = await packages.deleteEligibleContextPackages(now, {
+      const withPlan = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
@@ -153,7 +243,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
           },
         })
       )
-      const withCommand = await packages.deleteEligibleContextPackages(now, {
+      const withCommand = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
@@ -164,7 +254,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       await provider.transaction((transaction) =>
         transaction.delete('context-authoring-commands', 'r-authoring-fixture')
       )
-      const freed = await packages.deleteEligibleContextPackages(now, {
+      const freed = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: ninetyDaysMs,
         dryRun: false,
       })
@@ -179,7 +269,7 @@ describe('SQLite context-package retention deletion (#194)', () => {
       const package_ = packageFixture()
       await packages.put(package_)
 
-      const unbounded = await packages.deleteEligibleContextPackages(now, {
+      const unbounded = await packages.deleteEligibleContextPackages(retentionDeadline, {
         policyRetainMs: null,
         dryRun: false,
       })

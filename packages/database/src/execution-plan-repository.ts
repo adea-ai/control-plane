@@ -38,6 +38,19 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
         return reference
       }
 
+      if (plan.parentExecutionPlan) {
+        if (plan.parentExecutionPlan.executionPlanId === plan.executionPlanId) {
+          throw new ExecutionPlanError('INVALID_REFERENCE', plan.executionPlanId)
+        }
+        // Acquire the parent lifetime claim before publishing this child row.
+        // The shared helper verifies both stored row identity and its context pin.
+        if (!(await lockExecutionPlanReference(transaction, plan.parentExecutionPlan))) {
+          throw new ExecutionPlanError(
+            'INVALID_REFERENCE',
+            plan.parentExecutionPlan.executionPlanId
+          )
+        }
+      }
       if (!(await lockContextPackageReference(transaction, plan.contextPackage))) {
         throw new ExecutionPlanError(
           'MISSING_CONTEXT_PACKAGE',
@@ -282,6 +295,12 @@ export class PostgresExecutionPlanRetention {
         sql`record->>'parentExecutionPlanId' = ${executionPlanId} or record->>'childExecutionPlanId' = ${executionPlanId}`
       )
       .limit(1)
-    return delegationRow !== undefined
+    if (delegationRow) return true
+    const [childPlan] = await transaction
+      .select({ executionPlanId: executionPlans.executionPlanId })
+      .from(executionPlans)
+      .where(sql`plan->'parentExecutionPlan'->>'executionPlanId' = ${executionPlanId}`)
+      .limit(1)
+    return childPlan !== undefined
   }
 }
