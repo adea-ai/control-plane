@@ -73,6 +73,24 @@ zero. Production has **zero** `unreferenced_since` columns: unmerged `0049`
 was deliberately not applied. These additive migrations require no image
 redeployment and no destructive schema rollback was attempted.
 
+## Rehearsal cleanup
+
+The dedicated `NEON_PRODUCTION_MIGRATION_URL` secret was provisioned in GitHub's
+`control-plane / production` environment, with name-only metadata readback.
+It uses the existing direct-TLS production migration role, not an administrator,
+OAuth token, runtime role, or CI staging password. No database role/password,
+branch protection, or environment approval policy was changed. The environment
+currently has no reviewer protection rules; environment scoping is not a claim
+of human deployment approval. The prepared workflow must validate the final
+tagged main source and runtime target before using this credential.
+
+The exact task-owned rehearsal branch was deleted after evidence capture.
+Subsequent branch inventory verified it absent and confirmed production,
+staging, and both unrelated preview branches remain. No production data was
+deleted. The rehearsal can be recreated from the preserved production parent
+and canonical migration source; the disposable child's transient state was
+not retained.
+
 ## Remaining gates
 
 - Add and independently review a fail-closed tagged-source migration step before
@@ -84,7 +102,8 @@ redeployment and no destructive schema rollback was attempted.
 - Complete the original M11 profile, retention, security, documentation,
   recovery, evaluation, skill, and independent human acceptance gates. This
   repair does not close those issues.
-- Delete only the task-owned rehearsal child after its evidence is no longer
-  needed. Production, staging, and unrelated preview branches are not cleanup targets.
+- Clean up task-owned local helpers and test resources after validation. The
+  Neon rehearsal child is already removed; production, staging, and unrelated
+  preview branches are not cleanup targets.
 
 See also [released image promotion readback](m11-release-promotion-readback-2026-09-26.md).
