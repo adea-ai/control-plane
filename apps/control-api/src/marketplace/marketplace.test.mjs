@@ -205,7 +205,7 @@ describe('Control Plane marketplace contract', () => {
     const service = (fetchImpl) =>
       new MarketplaceRegistryService({
         fetchImpl,
-        latestUrl: 'https://registry.example.com/releases/latest/download/catalog-latest.v1.json',
+        latestUrl: 'https://registry.example.com/catalog-assets/catalog-latest.v1.json',
         token: 't',
       })
 
@@ -335,8 +335,8 @@ describe('Control Plane marketplace contract', () => {
         const name = url.split('/').at(-1)
         return new globalThis.Response(fixture.artifacts[name] ?? '', { status: 200 })
       },
-      latestUrl: 'https://registry.example/releases/latest/download/catalog-latest.v1.json',
-      immutableReleaseBaseUrl: 'https://registry.example/releases/{catalogId}',
+      latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+      immutableArtifactBaseUrl: 'https://registry.example/catalogs/{catalogId}',
       refreshIntervalMs: 0,
     })
     expect((await registry.getCatalog()).catalogId).toBe(fixture.catalog.catalogId)
@@ -608,8 +608,8 @@ describe('Control Plane marketplace contract', () => {
 test('aborts artifact downloads that exceed the size cap mid-stream', async () => {
   const registry = new MarketplaceRegistryService({
     fetchImpl: async () => new globalThis.Response('x'.repeat(64), { status: 200 }),
-    latestUrl: 'https://registry.example/releases/latest/download/catalog-latest.v1.json',
-    immutableReleaseBaseUrl: 'https://registry.example/releases/{catalogId}',
+    latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+    immutableArtifactBaseUrl: 'https://registry.example/catalogs/{catalogId}',
     refreshIntervalMs: 0,
     maxArtifactBytes: 16,
   })

@@ -171,7 +171,9 @@ export function createManagedCloudControlApiComposition(
     maxArtifactBytes: 64 * 1024 * 1024,
     ...(process.env['MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL'] === undefined
       ? {}
-      : { immutableReleaseBaseUrl: process.env['MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL'] }),
+      : {
+          immutableArtifactBaseUrl: process.env['MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL'],
+        }),
     ...(process.env['MARKETPLACE_REGISTRY_LATEST_URL'] === undefined
       ? {}
       : { latestUrl: process.env['MARKETPLACE_REGISTRY_LATEST_URL'] }),
