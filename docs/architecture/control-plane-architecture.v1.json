@@ -1424,7 +1424,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:d53a0bdec08ca012bc891e2352051b47f7e65280642a87f177a42f0022e3f506"
+      "sourceDigest": "sha256:c11b335f05444fc4f84728c9d60ed0f53fb11cc9d5c3712625dbd6f3883076d6"
     },
     {
       "id": "hosted-server",

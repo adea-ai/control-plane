@@ -2,37 +2,47 @@
 
 Control Plane is the server-side authority for the Adea marketplace. It
 fetches the registry's stable latest pointer, resolves the digest-derived
-immutable release, verifies every published artifact, and returns sanitized
+immutable snapshot, verifies every published artifact, and returns sanitized
 catalog metadata through authenticated API endpoints.
 
 The registry URLs are:
 
-- latest catalog:
-  `https://github.com/adea-ai/plugins/releases/latest/download/catalog-latest.v1.json`
-- latest integrity manifest:
-  `https://github.com/adea-ai/plugins/releases/latest/download/integrity.json`
-- immutable catalog release:
-  `https://github.com/adea-ai/plugins/releases/download/catalog/<catalogId-suffix>/catalog.v1.json`
-- immutable tag: `catalog/<catalogId-suffix>` for `catalog:<64 lowercase hex>`.
+- latest catalog pointer:
+  `https://raw.githubusercontent.com/adea-ai/plugins/catalog-assets/catalog-latest.v1.json`
+- immutable catalog snapshot:
+  `https://raw.githubusercontent.com/adea-ai/plugins/catalog-assets/catalogs/<catalogId-suffix>/catalog.v1.json`
+- snapshot directory: `catalogs/<catalogId-suffix>` for `catalog:<64 lowercase hex>`.
+
+The snapshot path is derived from the catalog's own digest, so it is immutable
+by construction: a build that produced different bytes has a different
+`catalogId` and cannot write over an existing path. The pointer is the only
+mutable path, and it is byte-identical to the `catalog.v1.json` of the snapshot
+it names.
 
 The default implementation is server-only. Set `MARKETPLACE_REGISTRY_TOKEN`
 only when the registry requires authenticated access. The optional
 `MARKETPLACE_REGISTRY_LATEST_URL` and
 `MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL` variables are for controlled registry
 endpoints and test environments; production endpoints must use HTTPS. The
-immutable base URL is a template ending in `{catalogId}` and must serve the
-seven required release assets: `catalog.v1.json`, `catalog-latest.v1.json`,
+immutable base URL is a template containing `{catalogId}` and must serve the
+seven required artifacts: `catalog.v1.json`, `catalog-latest.v1.json`,
 `catalog-summary.v1.json`, `categories.v1.json`, `compatibility.v1.json`,
 `integrity.json`, and `sources.lock.json`.
 
+Note that the immutable base URL is configured independently of the pointer
+URL. It used to be derived by string-slicing the pointer's
+`releases/latest/download/catalog-latest.v1.json` path, so the shape of a
+mutable URL silently determined where every immutable one lived, and a
+deployment serving the pointer from anywhere else produced a base that 404'd.
+
 It may additionally serve `catalog-index.v1.json`, the consumer browsing index
-(added in #709). That one asset is optional, because a release published before
-#709 predates it: Control Plane omits it from the response and clients fall back
-to rendering from the full catalog. Only a genuine 404 is read as absence — a
-5xx, a timeout, or a transport failure fails the refresh, so a registry outage
-can never masquerade as a legacy release. When the index _is_ published it is
-verified in full and its digest must be declared in `integrity.json` alongside
-the other assets.
+(added in #709). That one artifact is optional, because a snapshot published
+before #709 predates it: Control Plane omits it from the response and clients
+fall back to rendering from the full catalog. Only a genuine 404 is read as
+absence — a 5xx, a timeout, or a transport failure fails the refresh, so a
+registry outage can never masquerade as an older snapshot. When the index _is_
+published it is verified in full and its digest must be declared in
+`integrity.json` alongside the other artifacts.
 
 ## API boundary
 
