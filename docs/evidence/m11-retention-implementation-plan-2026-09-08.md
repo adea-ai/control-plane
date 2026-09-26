@@ -562,10 +562,21 @@ to justify deleting a recently unpinned object.
   context authoring, Local embedded job enqueue and the exported PostgreSQL
   delegation repository. A reference that is created and removed between two
   sweeps must still restart the 90-day interval.
+- Portable imports are new reference writers too. After staging the missing
+  bulk-import rows, validate exact target identity, context/plan ancestry and
+  authoring/validation scope, then claim and clear every newly referenced
+  target in the same commit transaction. Validate after the bulk inserts so
+  imported dependencies do not depend on within-class lexical write order.
+  Missing or tampered references roll back the whole import; do not weaken
+  ordinary writer guards. Clear stale auxiliary metadata for newly recreated
+  targets. An all-equivalent historical import creates no new reference and
+  must not reset clocks. Prove both backend destinations and SQLite CLI wiring.
 - PostgreSQL deletion claims use `FOR UPDATE` before fresh reference reads;
   new writers claim parents in the same transaction. When clearing multiple
   clocks, update context packages in sorted-ID order, then plans in sorted-ID
   order. Avoid inconsistent metadata update order across writer paths.
+  Combining duplicate plan claims must preserve any supplied schema-version
+  constraint; an unconstrained duplicate must not erase a stricter claim.
 - Dry runs never persist clocks. Actual physical deletion removes auxiliary
   clocks; recreating an ID must not inherit an earlier target's clock. Restore
   and journal reapplication invalidate these clocks before exposure, while

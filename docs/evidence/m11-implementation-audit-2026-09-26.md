@@ -110,10 +110,28 @@ backend builds, the parent passed all eight former PostgreSQL failures plus the
 authoring isolation case (nine tests, 71 assertions) and all 13 SQLite receipt
 cases (37 assertions). Other PostgreSQL cases were filtered, not skipped or
 claimed passing. This is still not a full green integrated candidate.
-Complete reference-clock wiring and final integrated
-validation remain open. The continuation result/CLI
-contract is prepared and focused-tested, but backend continuation and clock
-wiring are not yet implemented.
+Final integrated validation remains open. SQLite reference clocks and backend
+continuation are now integrated: a first unreferenced observation grants the
+full 90-day window; new references clear clocks atomically; dry-run/bound-zero
+do not write metadata; every inspected target consumes the bounded cursor.
+The isolated lane passed 38 tests (269 assertions), with bounded source review
+and a separate closure of validation's missing-context error ordering. A fresh
+parent SQLite build and all eight root retention CLI tests (66 assertions)
+passed. The wider SQLite package run passed 127 tests but failed 17 old orphan
+plan fixtures in four existing test files. Fixture-only repairs are assigned;
+production guards are not waived. PostgreSQL window wiring and portable-import
+reference claims still await integration and final combined validation.
+
+Durable-hold storage and owner/session administration are reviewed and retained
+on a separate implementation branch, not activated in PR #740. A review found
+an inherited-object-key class-policy lookup: an unconfigured `constructor`
+class could return a zero hold count. The regression reproduced it; own-property
+checks now fail closed, while explicitly configured own keys remain valid.
+Focused checks passed nine domain tests (34 assertions), four SQLite tests
+(16 assertions) and four real PostgreSQL tests (20 assertions), with fresh
+builds and independent finding closure. This is foundation evidence only:
+migration generation, all physical-deletion hold checks, operational owner
+composition and restore/provider hold coordination remain open.
 
 Ancestry-reference coordination is now integrated: new derived plan/package puts
 verify and claim exact ancestors, deletion claims recheck surviving descendants,
