@@ -44,8 +44,8 @@ regression evidence before these findings can be closed.
 ## Repair checkpoint
 
 Draft implementation PR [#740](https://github.com/adea-ai/control-plane/pull/740)
-is based on current main `755d6c2f0e22b929ac7c882c80738a4d7fb1dc34`
-(including marketplace PR #738). Its approval increment rechecks current catalog
+includes current main `e70f279dc2b63e2507cd14db781d42cfe849123e`
+(release 1.58.2 and marketplace PR #738). Its approval increment rechecks current catalog
 pins and configured approval at new acceptance in the API, Hosted and Local
 compositions. Historical accepted-command and validation replay remain exempt
 from recompilation. The Local and Hosted validation services now receive the
@@ -87,6 +87,16 @@ probe (seven assertions) verified migration/defaults and that metadata updates
 leave immutable plan/package JSON and digests unchanged. This is not yet a
 completed retention path: deletion claims and every reference writer still need
 to maintain and consult those clocks under their lifetime transaction/lock.
+
+Restore invalidation is prepared alongside that foundation: SQLite restore
+clears only the two auxiliary clock namespaces on its validated staged copy,
+and both backend reapplication commands reset clocks even for an empty valid
+journal. Ordinary migration/reopen preserves them. Focused checks passed 11
+SQLite provider tests (47 assertions), six restore-wrapper tests (42 assertions)
+and one real PostgreSQL metadata/reset probe (nine assertions). Seventeen
+dependency/backend build tasks and scoped lint/format checks passed. This
+prevents an older snapshot's clock from ignoring a later reference cycle; it
+does not establish completed sweep/writer wiring or external journal durability.
 
 Validation receipts are an additional retention coverage gap: they indefinitely
 pin plans, have no registered age/deletion path, and current plan-deletion tests

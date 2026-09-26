@@ -93,6 +93,9 @@ export async function retentionReapply({
       // Opens the database and applies any pending migration to the restored
       // copy before the journal is replayed onto it.
       await provider.migrate()
+      // Do this even for an empty journal: restored metadata may precede a
+      // reference cycle, making an old release clock unsafe to reuse.
+      await provider.resetReferenceRetentionWindows()
       for (const record of operations) {
         for (const operation of record.operations) {
           if (operation.kind === 'sqlite.put') {
@@ -141,6 +144,7 @@ export async function retentionReapply({
       // SQL for each operation kind lives in the package that declares the
       // driver dependency; this command stays a thin operator wrapper.
       const reapplication = new PostgresRetentionReapplication(connection.database)
+      await reapplication.resetReferenceRetentionWindows()
       for (const record of operations) {
         const outcome = await reapplication.apply(record.operations)
         applied += outcome.applied

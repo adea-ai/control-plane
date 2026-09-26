@@ -10,6 +10,7 @@ import {
   parseRetentionJournalLine,
 } from '@control-plane/domain'
 import {
+  REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
   SqlitePersistenceProvider,
 } from '../packages/sqlite-persistence/src/index.ts'
@@ -112,6 +113,47 @@ async function seedTerminalRetiredCommand(provider) {
 }
 
 describe('retention restore-time reapplication (#194)', () => {
+  test('an empty valid journal still invalidates restored reference clocks', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-clocks-'))
+    const path = join(directory, 'restored.sqlite')
+    const journalPath = join(directory, 'retention.jsonl')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await provider.transaction(async (transaction) => {
+        for (const namespace of [
+          ...Object.values(REFERENCE_RETENTION_NAMESPACES),
+          'unrelated-metadata',
+        ])
+          await transaction.put({
+            namespace,
+            id: 'target',
+            value: { unreferencedSince: '2025-01-01T00:00:00.000Z' },
+          })
+      })
+      await writeFile(journalPath, '')
+      const result = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        path,
+        '--journal',
+        journalPath,
+      ])
+      expect(result.status).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({ records: 0, applied: 0, skipped: 0 })
+      for (const namespace of Object.values(REFERENCE_RETENTION_NAMESPACES))
+        expect(
+          await provider.transaction((transaction) => transaction.get(namespace, 'target'))
+        ).toBeUndefined()
+      expect(
+        await provider.transaction((transaction) => transaction.get('unrelated-metadata', 'target'))
+      ).toBeDefined()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('rejects journal operations outside their declared class or backend', () => {
     const record = { version: 1, at: assessedAt, backend: 'sqlite', classId: 'evaluation-runs' }
     for (const operation of [

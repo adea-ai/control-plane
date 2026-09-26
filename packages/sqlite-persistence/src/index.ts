@@ -19,6 +19,7 @@ import {
   type SqliteRemoteDatabase,
 } from 'drizzle-orm/sqlite-proxy'
 import { records, sqliteSchema } from './schema.js'
+import { clearReferenceRetentionWindows } from './retention-reference-metadata.js'
 import {
   applyMigrations,
   EXPIRY_INDEX_STATEMENTS,
@@ -39,6 +40,7 @@ export * from './runtime-channel-sequence-repository.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 export * from './receipt-retention.js'
+export { REFERENCE_RETENTION_NAMESPACES } from './retention-reference-metadata.js'
 
 const MAX_RECORD_BYTES = 16 * 1024 * 1024
 const NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/
@@ -156,6 +158,11 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     } finally {
       await unlink(temporaryPath).catch(() => undefined)
     }
+  }
+
+  /** Restore maintenance only; normal migrate/reopen deliberately preserves clocks. */
+  async resetReferenceRetentionWindows(): Promise<void> {
+    await this.transaction(async () => clearReferenceRetentionWindows(this.#assertOpen()))
   }
 
   async restore(snapshot: PersistenceBackup): Promise<void> {
@@ -285,6 +292,9 @@ function validateRestoreDatabase(path: string, expectedSnapshotVersion: number):
         throw new Error('Incompatible SQLite expiry index')
       }
     }
+    // A backup can predate a reference cycle that reset these clocks in the
+    // source database. Invalidate the staged copy before it can be exposed.
+    clearReferenceRetentionWindows(database)
   } catch {
     throw new SqlitePersistenceError('SQLITE_BACKUP_INVALID')
   } finally {

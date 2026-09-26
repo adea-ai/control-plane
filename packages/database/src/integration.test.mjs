@@ -115,6 +115,7 @@ import {
   statePromotionProposals,
 } from './schema/index.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
+import { PostgresRetentionReapplication } from './retention-reapplication.ts'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 
@@ -170,6 +171,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
           .where(eq(executionPlans.executionPlanId, planReference.executionPlanId))
         expect(await packageClock()).toEqual([{ clock: observedAt }])
         expect(await planClock()).toEqual([{ clock: observedAt }])
+        await new PostgresRetentionReapplication(transaction).resetReferenceRetentionWindows()
+        expect(await packageClock()).toEqual([{ clock: null }])
+        expect(await planClock()).toEqual([{ clock: null }])
         expect(await packages.get(packageReference)).toEqual(package_)
         expect(await plans.get(planReference)).toEqual(plan)
         throw rollback

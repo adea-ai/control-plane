@@ -33,6 +33,14 @@ export interface RetentionReapplicationOutcome {
 export class PostgresRetentionReapplication {
   constructor(readonly database: ControlPlaneDatabase) {}
 
+  /** Offline restore maintenance; never run on ordinary startup/migration. */
+  async resetReferenceRetentionWindows(): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.update(executionPlans).set({ unreferencedSince: null })
+      await transaction.update(contextPackages).set({ unreferencedSince: null })
+    })
+  }
+
   async apply(
     operations: readonly RetentionJournalOperation[]
   ): Promise<RetentionReapplicationOutcome> {
