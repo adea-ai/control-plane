@@ -148,6 +148,34 @@ describe('SQLite runtime-ledger retention deletion (#194)', () => {
     })
   }, 60000)
 
+  test('bound one admits only one settled command and journals no overflow deletion', async () => {
+    await withProvider(async (provider) => {
+      const repository = new SqliteRuntimeCommandRepository(provider)
+      const first = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FFJ'
+      const second = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FGK'
+      await seedCommand(provider, first)
+      await seedCommand(provider, second, { idempotencyKey: 'runtime-command-fixture-0002' })
+      await seedReceipt(provider, first)
+      await seedReceipt(provider, second)
+
+      const journal = []
+      const result = await repository.deleteEligibleRuntimeCommands(
+        new Date(Date.parse(settledAt) + thirtyDaysMs + 1_000),
+        {
+          policyRetainMs: thirtyDaysMs,
+          bound: 1,
+          dryRun: false,
+          journal: async (operations) => journal.push(operations),
+        }
+      )
+
+      expect(result).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
+      expect(journal).toHaveLength(1)
+      expect(await provider.transaction((t) => t.list('runtime-commands'))).toHaveLength(1)
+      expect(await provider.transaction((t) => t.list('runtime-event-receipts'))).toHaveLength(1)
+    })
+  }, 60000)
+
   test('expired and unresolved commands are reconciliation work, never candidates', async () => {
     await withProvider(async (provider) => {
       const repository = new SqliteRuntimeCommandRepository(provider)

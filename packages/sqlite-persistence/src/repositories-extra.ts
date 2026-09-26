@@ -421,7 +421,8 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.contextPackages, candidate.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false }
           const package_ = assertContextPackageIntegrity(stored.value)
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
@@ -440,8 +441,9 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
                 : 0,
             holds: 0,
           })
+          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
           if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
           if (options.journal !== undefined) {
             await options.journal(
@@ -458,11 +460,11 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
               stored.revision
             )
           } catch {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
-          return { verdict, removed }
+          return { verdict, admitted: true, removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }

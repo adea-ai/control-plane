@@ -182,7 +182,7 @@ export class RetentionAssessmentCounter {
   readonly #retained = new Map<RetentionEligibilityReason, number>()
 
   constructor(classId: string, assessedAt: string, bound: number) {
-    if (!Number.isSafeInteger(bound) || bound < 1)
+    if (!Number.isSafeInteger(bound) || bound < 0)
       throw new Error('RETENTION_ASSESSMENT_INVALID_BOUND')
     this.#classId = classId
     this.#assessedAt = assessedAt

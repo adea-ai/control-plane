@@ -136,8 +136,24 @@ describe('retention eligibility (#194)', () => {
     })
   })
 
-  test('the counter rejects an invalid bound', () => {
-    expect(() => new RetentionAssessmentCounter('command-inbox', now, 0)).toThrow(
+  test('a zero bound admits no candidates and reports truncation when one is offered', () => {
+    const counter = new RetentionAssessmentCounter('command-inbox', now, 0)
+    expect(counter.add({ verdict: 'eligible' })).toBe(false)
+    expect(counter.result()).toEqual({
+      classId: 'command-inbox',
+      assessedAt: now,
+      scanned: 0,
+      truncated: true,
+      eligible: 0,
+      retainedByReason: {},
+    })
+  })
+
+  test('the counter rejects negative and non-integer bounds', () => {
+    expect(() => new RetentionAssessmentCounter('command-inbox', now, -1)).toThrow(
+      'RETENTION_ASSESSMENT_INVALID_BOUND'
+    )
+    expect(() => new RetentionAssessmentCounter('command-inbox', now, 1.5)).toThrow(
       'RETENTION_ASSESSMENT_INVALID_BOUND'
     )
   })

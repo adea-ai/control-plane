@@ -90,6 +90,99 @@ describe('SQLite interaction-receipt retention deletion (#194)', () => {
     })
   }, 60000)
 
+  test('bound one limits deletions and journals across both receipt namespaces', async () => {
+    await withProvider(async (provider) => {
+      await seed(provider, 'interaction-command-receipts', 'a-interaction', interactionReceipt())
+      await seed(
+        provider,
+        'execution-cancellation-receipts',
+        'b-cancellation',
+        cancellationReceipt()
+      )
+      const journal = []
+      const result = await new SqliteReceiptRetention(provider).sweepEligibleInteractionReceipts(
+        now,
+        {
+          policyRetainMs: thirtyDaysMs,
+          bound: 1,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
+      )
+
+      expect(result).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
+      expect(journal).toHaveLength(1)
+      expect(
+        (await provider.transaction((t) => t.list('interaction-command-receipts'))).length +
+          (await provider.transaction((t) => t.list('execution-cancellation-receipts'))).length
+      ).toBe(1)
+    })
+  }, 60000)
+
+  test('a retained first namespace candidate consumes the shared bound before journaling', async () => {
+    await withProvider(async (provider) => {
+      await seed(
+        provider,
+        'interaction-command-receipts',
+        'a-unconfirmed-interaction',
+        interactionReceipt({ acceptedAt: undefined })
+      )
+      await seed(
+        provider,
+        'execution-cancellation-receipts',
+        'b-cancellation',
+        cancellationReceipt()
+      )
+      const journal = []
+      const result = await new SqliteReceiptRetention(provider).sweepEligibleInteractionReceipts(
+        now,
+        {
+          policyRetainMs: thirtyDaysMs,
+          bound: 1,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
+      )
+
+      expect(result).toMatchObject({
+        scanned: 1,
+        eligible: 0,
+        deleted: 0,
+        truncated: true,
+        retainedByReason: { unconfirmed_signal: 1 },
+      })
+      expect(journal).toHaveLength(0)
+      expect(await provider.transaction((t) => t.list('interaction-command-receipts'))).toHaveLength(
+        1
+      )
+      expect(
+        await provider.transaction((t) => t.list('execution-cancellation-receipts'))
+      ).toHaveLength(1)
+    })
+  }, 60000)
+
+  test('zero bound reports truncation without journaling or deleting', async () => {
+    await withProvider(async (provider) => {
+      await seed(provider, 'interaction-command-receipts', 'a-interaction', interactionReceipt())
+      const journal = []
+      const result = await new SqliteReceiptRetention(provider).sweepEligibleInteractionReceipts(
+        now,
+        {
+          policyRetainMs: thirtyDaysMs,
+          bound: 0,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
+      )
+
+      expect(result).toMatchObject({ scanned: 0, eligible: 0, deleted: 0, truncated: true })
+      expect(journal).toHaveLength(0)
+      expect(
+        await provider.transaction((t) => t.list('interaction-command-receipts'))
+      ).toHaveLength(1)
+    })
+  }, 60000)
+
   test('an unconfirmed receipt is the lost-ack identity and is never a candidate', async () => {
     await withProvider(async (provider) => {
       await seed(

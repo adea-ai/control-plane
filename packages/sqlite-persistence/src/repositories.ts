@@ -292,56 +292,10 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         return parsed.success && expiredAt(parsed.data.retentionExpiresAt, now)
       })
       for (const candidate of candidates) {
-        // Journal the effects before applying them (at-least-once): a crash
-        // between the journal append and the transaction leaves an entry for a
-        // change that did not happen, which reapply treats as a no-op.
-        if (options.journal !== undefined) {
-          const journaled = await this.provider.transaction(async (transaction) => {
-            const record = await transaction.get(namespaces.commands, candidate.id)
-            if (record === undefined) return undefined
-            const command = CommandInboxRecordSchema.parse(record.value)
-            return {
-              command,
-              retirement: await transaction.get(
-                namespaces.retiredCommands,
-                recordId(scopeKey(command))
-              ),
-            }
-          })
-          if (journaled !== undefined) {
-            const journaledCommand = journaled.command
-            // The retirement identity is a precondition of eligibility, so the
-            // journal restates it: a snapshot that predates the retirement must
-            // regain it during reapply, not just lose the payload.
-            const retirementId = recordId(scopeKey(journaledCommand))
-            const retirement = journaled.retirement
-            // Validated through the journal schema so a malformed entry cannot
-            // be written in the first place.
-            await options.journal(
-              RetentionJournalOperationSchema.array().parse([
-                ...(retirement === undefined
-                  ? []
-                  : [
-                      {
-                        kind: 'sqlite.put' as const,
-                        namespace: namespaces.retiredCommands,
-                        id: retirementId,
-                        value: retirement.value,
-                      },
-                    ]),
-                { kind: 'sqlite.delete', namespace: namespaces.commands, id: candidate.id },
-                {
-                  kind: 'sqlite.delete',
-                  namespace: namespaces.commandByExecution,
-                  id: recordId(journaledCommand.executionId),
-                },
-              ])
-            )
-          }
-        }
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.commands, candidate.id)
-          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           const command = CommandInboxRecordSchema.parse(stored.value)
           const tombstone = await transaction.get(
             namespaces.retiredCommands,
@@ -366,23 +320,52 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
             holds: 0,
           })
+          if (!counter.add(verdict)) {
+            return { verdict, admitted: false, removed: false, conflicted: false }
+          }
           if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false, conflicted: false }
+            return { verdict, admitted: true, removed: false, conflicted: false }
+          }
+          // Journal only after this candidate has been admitted to the bounded
+          // pass. The trusted journal records an approved deletion intent for
+          // restoration to replay before this transaction applies it.
+          if (options.journal !== undefined) {
+            const retirementId = recordId(scopeKey(command))
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                ...(tombstone === undefined
+                  ? []
+                  : [
+                      {
+                        kind: 'sqlite.put' as const,
+                        namespace: namespaces.retiredCommands,
+                        id: retirementId,
+                        value: tombstone.value,
+                      },
+                    ]),
+                { kind: 'sqlite.delete', namespace: namespaces.commands, id: candidate.id },
+                {
+                  kind: 'sqlite.delete',
+                  namespace: namespaces.commandByExecution,
+                  id: recordId(command.executionId),
+                },
+              ])
+            )
           }
           const removed = await transaction.delete(
             namespaces.commands,
             candidate.id,
             stored.revision
           )
-          if (!removed) return { verdict, removed: false, conflicted: true }
+          if (!removed) return { verdict, admitted: true, removed: false, conflicted: true }
           await transaction.delete(
             namespaces.commandByExecution,
             recordId(command.executionId),
             undefined
           )
-          return { verdict, removed: true, conflicted: false }
+          return { verdict, admitted: true, removed: true, conflicted: false }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }
@@ -499,10 +482,11 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.executions, candidate.record.id)
-          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           const execution = ExecutionSchema.parse(stored.value)
           if (!terminalExecutionStates.has(execution.state) || execution.terminalAt === undefined) {
-            return { verdict: undefined, removed: false, conflicted: false }
+            return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           }
           // Reference checks: every namespace that carries execution identity
           // has to be free of this execution before it can be removed.
@@ -552,8 +536,11 @@ export class SqliteExecutionRepository implements ExecutionRepository {
                 : 0,
             holds: 0,
           })
+          if (!counter.add(verdict)) {
+            return { verdict, admitted: false, removed: false, conflicted: false }
+          }
           if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false, conflicted: false }
+            return { verdict, admitted: true, removed: false, conflicted: false }
           }
           if (options.journal !== undefined) {
             await options.journal(
@@ -590,9 +577,9 @@ export class SqliteExecutionRepository implements ExecutionRepository {
           } catch {
             conflicted = true
           }
-          return { verdict, removed, conflicted: conflicted || !removed }
+          return { verdict, admitted: true, removed, conflicted: conflicted || !removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }
@@ -819,9 +806,11 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       for (const record of page) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.plans, record.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false }
           const plan = assertExecutionPlanIntegrity(stored.value)
-          if (!expiredAt(plan.compiledAt, now)) return { verdict: undefined, removed: false }
+          if (!expiredAt(plan.compiledAt, now))
+            return { verdict: undefined, admitted: false, removed: false }
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -835,7 +824,9 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             pendingReferences: references.has(plan.executionPlanId) ? 1 : 0,
             holds: 0,
           })
-          if (verdict.verdict !== 'eligible' || dryRun) return { verdict, removed: false }
+          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, admitted: true, removed: false }
           if (options.journal !== undefined) {
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
@@ -847,11 +838,11 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
           try {
             removed = await transaction.delete(namespaces.plans, stored.id, stored.revision)
           } catch {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
-          return { verdict, removed }
+          return { verdict, admitted: true, removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }

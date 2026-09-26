@@ -2,7 +2,6 @@ import {
   RetentionAssessmentCounter,
   acceptedInstant,
   evaluateRetentionEligibility,
-  realizedCounts,
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
@@ -40,19 +39,21 @@ export class PostgresReceiptRetention {
       readonly journal?: RetentionJournalSink
     }
   ): Promise<RetentionDeletionResult> {
-    const interactions = await this.#sweepTable('interaction', now, options)
-    const cancellations = await this.#sweepTable('cancellation', now, options)
+    if (Number.isNaN(now.getTime())) throw new Error('RECEIPT_RETENTION_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'interaction-receipts',
+      assessedAt,
+      options.bound ?? 64
+    )
+    const interactions = await this.#sweepTable('interaction', now, options, counter)
+    const cancellations = await this.#sweepTable('cancellation', now, options, counter)
     return {
-      ...interactions,
+      dryRun,
       deleted: interactions.deleted + cancellations.deleted,
       raced: interactions.raced + cancellations.raced,
-      scanned: interactions.scanned + cancellations.scanned,
-      eligible: interactions.eligible + cancellations.eligible,
-      truncated: interactions.truncated || cancellations.truncated,
-      retainedByReason: realizedCounts(
-        interactions.retainedByReason,
-        cancellations.retainedByReason
-      ),
+      ...counter.result(),
     }
   }
 
@@ -64,16 +65,12 @@ export class PostgresReceiptRetention {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
-    }
+    },
+    counter: RetentionAssessmentCounter
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('RECEIPT_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
-    const counter = new RetentionAssessmentCounter(
-      'interaction-receipts',
-      assessedAt,
-      options.bound ?? 64
-    )
     let deleted = 0
     let raced = 0
     const table = kind === 'interaction' ? interactionCommands : executionCancellations

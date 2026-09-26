@@ -1783,10 +1783,44 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     )
     expect(cancellations).toHaveLength(0)
 
+    // Clear the first scenario before checking the pass-wide bound.
+    await isolated.application.execute(
+      sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+    )
+
+    const boundedInteractionKey = `${'5'.repeat(64)}`
+    const boundedCancellationKey = `${'6'.repeat(64)}`
+    await seed('interaction_commands', boundedInteractionKey, {
+      request: request('interaction.respond'),
+      acceptedAt,
+    })
+    await seed('execution_cancellations', boundedCancellationKey, {
+      request: request('execution.cancel'),
+      acceptedAt,
+    })
+    const journal = []
+    const bounded = await retention.sweepEligibleInteractionReceipts(assessedAt, {
+      ...options,
+      bound: 1,
+      journal: async (operations) => journal.push(...operations),
+    })
+    expect(bounded).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
+    expect(journal).toHaveLength(1)
+    const boundedInteraction = await isolated.application.execute(
+      sql`select command_key from interaction_commands where command_key = ${boundedInteractionKey}`
+    )
+    const boundedCancellation = await isolated.application.execute(
+      sql`select command_key from execution_cancellations where command_key = ${boundedCancellationKey}`
+    )
+    expect(boundedInteraction.length + boundedCancellation.length).toBe(1)
+
     // Everything this test created is removed again: other tests in this file
     // count rows globally.
     await isolated.application.execute(
-      sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+      sql`delete from interaction_commands where command_key = ${boundedInteractionKey}`
+    )
+    await isolated.application.execute(
+      sql`delete from execution_cancellations where command_key = ${boundedCancellationKey}`
     )
   }, 60_000)
 
@@ -3674,6 +3708,30 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     // A second sweep has nothing left to compact.
     const again = await retention.sweepEligibleMessaging(assessedAt, options)
     expect(again.compacted).toBe(0)
+
+    const boundedOutbox = await seed('06', 'published', publishedAt)
+    await seedInbox('sha256:bounded-inbox', publishedAt)
+    const journal = []
+    const bounded = await retention.sweepEligibleMessaging(assessedAt, {
+      ...options,
+      bound: 1,
+      journal: async (operations) => journal.push(...operations),
+    })
+    expect(bounded).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, compacted: 0, truncated: true })
+    expect(journal).toHaveLength(1)
+    const boundedOutboxRows = await isolated.application.execute(
+      sql`select id from outbox_events where id = ${boundedOutbox}`
+    )
+    const boundedInboxRows = await isolated.application.execute(
+      sql`select payload, deleted_at from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
+    )
+    expect(boundedOutboxRows).toHaveLength(0)
+    expect(boundedInboxRows).toHaveLength(1)
+    expect(boundedInboxRows[0].payload).toEqual({ deliveryKey: 'sha256:bounded-inbox' })
+    expect(boundedInboxRows[0].deleted_at).toBeNull()
+    await isolated.application.execute(
+      sql`delete from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
+    )
   }, 60_000)
 
   test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {

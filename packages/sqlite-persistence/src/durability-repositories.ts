@@ -216,33 +216,10 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
         .map((record) => ({ record, event: ExecutionEventSchema.parse(record.value) }))
         .filter(({ event }) => expiredAt(event.retentionExpiresAt, now))
       for (const candidate of candidates) {
-        // Journal the retirement and the delete before applying them: the
-        // retirement identity is what a restored snapshot must regain.
-        if (options.journal !== undefined) {
-          const stored = await this.provider.transaction((transaction) =>
-            transaction.get(namespaces.events, candidate.record.id)
-          )
-          if (stored !== undefined) {
-            const event = ExecutionEventSchema.parse(stored.value)
-            await options.journal([
-              {
-                kind: 'sqlite.put',
-                namespace: namespaces.retiredEventIds,
-                id: candidate.record.id,
-                value: {
-                  eventId: event.eventId,
-                  executionId: event.executionId,
-                  sequence: event.sequence,
-                  retiredAt: assessedAt,
-                },
-              },
-              { kind: 'sqlite.delete', namespace: namespaces.events, id: candidate.record.id },
-            ])
-          }
-        }
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.events, candidate.record.id)
-          if (stored === undefined) return { verdict: undefined, removed: false, conflicted: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           const event = ExecutionEventSchema.parse(stored.value)
           const execution = await transaction.get(
             namespaces.executions,
@@ -260,8 +237,29 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             pendingReferences: 0,
             holds: 0,
           })
+          if (!counter.add(verdict)) {
+            return { verdict, admitted: false, removed: false, conflicted: false }
+          }
           if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false, conflicted: false }
+            return { verdict, admitted: true, removed: false, conflicted: false }
+          }
+          // The retirement identity is what a restored snapshot must regain.
+          // Admit this candidate before journalling or mutating either record.
+          if (options.journal !== undefined) {
+            await options.journal([
+              {
+                kind: 'sqlite.put',
+                namespace: namespaces.retiredEventIds,
+                id: stored.id,
+                value: {
+                  eventId: event.eventId,
+                  executionId: event.executionId,
+                  sequence: event.sequence,
+                  retiredAt: assessedAt,
+                },
+              },
+              { kind: 'sqlite.delete', namespace: namespaces.events, id: stored.id },
+            ])
           }
           const retired = await transaction.get(namespaces.retiredEventIds, stored.id)
           if (retired === undefined) {
@@ -277,9 +275,9 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
             })
           }
           const removed = await transaction.delete(namespaces.events, stored.id, stored.revision)
-          return { verdict, removed, conflicted: !removed }
+          return { verdict, admitted: true, removed, conflicted: !removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }
@@ -695,7 +693,8 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.runtimeCommands, candidate.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
+          if (stored === undefined)
+            return { verdict: undefined, admitted: false, removed: false }
           const command = RuntimeCommandRecordSchema.parse(stored.value)
           const settledAt = command.resultRecordedAt
           const verdict = evaluateRetentionEligibility({
@@ -711,7 +710,9 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
             pendingReferences: 0,
             holds: 0,
           })
-          if (verdict.verdict !== 'eligible' || dryRun) return { verdict, removed: false }
+          if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, admitted: true, removed: false }
           const receipts = (await transaction.list(namespaces.runtimeEventReceipts)).filter(
             (record) => receiptCommandId(record.value) === command.commandId
           )
@@ -742,11 +743,11 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
               stored.revision
             )
           } catch {
-            return { verdict, removed: false }
+            return { verdict, admitted: true, removed: false }
           }
-          return { verdict, removed }
+          return { verdict, admitted: true, removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
+        if (outcome.verdict !== undefined && !outcome.admitted) {
           done = true
           break
         }
