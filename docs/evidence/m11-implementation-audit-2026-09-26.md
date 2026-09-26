@@ -92,8 +92,31 @@ tests (45 assertions). The latter reproduced and repaired dropped marketplace
 pins during reconciliation resume. Reference schema/payload identity checks
 also passed a real PostgreSQL probe (11 assertions, other tests filtered).
 These counts overlap earlier focused groups and must not be summed as a unique
-full-suite total. Delegation writer coordination, ancestry-reference coverage,
-complete reference-clock wiring and final integrated validation remain open.
+full-suite total. Delegation writer coordination is now integrated, including
+same-or-derived context lineage and locked ancestor existence. Its isolated
+PostgreSQL suite passed 20 cases and bounded independent source review closed
+the lineage finding. The execution/receipt claim lane also now checks complete
+attempt history, retaining missing latest-attempt data as ambiguous without
+journalling deletion; its isolated checks passed 26 SQLite tests (148 assertions)
+and eight PostgreSQL tests (65 assertions).
+
+After these integrations, all 35 Local/database dependency build tasks passed.
+The focused integrated run passed all 20 delegation cases, but eight shared
+PostgreSQL cases and one SQLite receipt case failed because their old fixtures
+admit nonexistent plan parents through the newly guarded writers. Those fixtures
+are being corrected, without disabling production guards. This is not a green
+integrated candidate. Ancestry-reference coverage, complete reference-clock
+wiring and final integrated validation remain open. The continuation result/CLI
+contract is prepared and focused-tested, but backend continuation and clock
+wiring are not yet implemented.
+
+Root fixture repairs already passed 14 profile/restore/recovery tests (108
+assertions), with the real PostgreSQL M10/CP1 flags enabled. Six earlier CLI
+fixture tests passed 39 assertions. The later continuation/argument checks and
+domain result schema tests passed 24 tests (75 assertions); these overlap earlier
+CLI checks. Actual context/plan parents and current catalog versions are seeded
+instead of weakening guards. These are component checks, not frozen-candidate
+release acceptance.
 
 Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
 conservative clock helper are prepared. Six helper tests (14 assertions), the
