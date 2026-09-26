@@ -37,6 +37,7 @@ import { ExecutionEventDispatcher, ExecutionEventService } from '@control-plane/
 import {
   ExecutionPlanCompiler,
   ExecutionPlanAcceptanceValidator,
+  deriveExecutionPlan,
   executionValidationCommandKey,
   executionValidationPayloadHash,
 } from '@control-plane/execution-plan'
@@ -201,6 +202,67 @@ function retentionDelegationRecord(input) {
     acceptedAt: '2026-08-25T18:00:00.000Z',
     updatedAt: '2026-08-25T18:00:00.000Z',
   }
+}
+
+/** Historical partial rows exercise conservative retention, not NEW admission. */
+async function seedHistoricalDelegationPin(database, record) {
+  await database.insert(delegations).values({
+    delegationId: record.delegationId,
+    parentExecutionId: record.parentExecutionId,
+    childExecutionId: record.childExecutionId,
+    state: record.state,
+    revision: record.revision,
+    inputDigest: record.inputDigest,
+    record,
+    acceptedAt: new Date(record.acceptedAt),
+    updatedAt: new Date(record.updatedAt),
+  })
+}
+
+async function seedDelegationLineage(database, parentExecutionId, childExecutionId) {
+  const contextPackage = composeProviderContextPackage(
+    contextPackageSerializationFixtures.futurePi,
+    {
+      callerContextRefs: [`contract://delegation-fixture/${parentExecutionId}`],
+      localProjectGrantRefs: [],
+      contributions: [],
+    }
+  )
+  const parent = createExecutionPlanTestFixture({ contextPackage })
+  const child = deriveExecutionPlan(parent, {
+    correlation: {
+      ...parent.correlation,
+      taskId: childExecutionId.replace('exe_', 'tsk_'),
+      requestId: childExecutionId.replace('exe_', 'req_'),
+    },
+    contextPackage,
+    constraints: structuredClone(parent.constraints),
+    runtimeRequirements: parent.runtimeRequirements,
+    outputContract: parent.outputContract,
+    compiledAt: parent.compiledAt,
+  })
+  await new PostgresContextPackageRepository(database).put(contextPackage)
+  const plans = new PostgresExecutionPlanRepository(database)
+  await plans.put(parent)
+  await plans.put(child)
+  const lifecycle = new ExecutionLifecycleService(new PostgresExecutionRepository(database))
+  for (const [executionId, plan] of [
+    [parentExecutionId, parent],
+    [childExecutionId, child],
+  ]) {
+    await lifecycle.createExecution({
+      executionId,
+      ...(executionId === childExecutionId ? { parentExecutionId } : {}),
+      correlation: plan.correlation,
+      executionPlan: {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      },
+      acceptedAt: plan.compiledAt,
+    })
+  }
+  return { parent, child, contextPackage }
 }
 
 async function waitForLockWait(database, tableName) {
@@ -1692,18 +1754,22 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   test('persists delegation lineage across service restart with compare-and-set', async () => {
     await isolated.migrate()
     const repository = new PostgresDelegationRepository(isolated.application)
+    const lineage = await seedDelegationLineage(
+      isolated.application,
+      'exe_01MRZ3NDEKTSV4RRFFQ69G5FAV',
+      'exe_01MRZ3NDEKTSV4RRFFQ69G5FAW'
+    )
     const record = {
       delegationId: 'dlg_01MRZ3NDEKTSV4RRFFQ69G5FAV',
       delegationGroupId: 'dgr_01MRZ3NDEKTSV4RRFFQ69G5FAV',
       parentExecutionId: 'exe_01MRZ3NDEKTSV4RRFFQ69G5FAV',
       childExecutionId: 'exe_01MRZ3NDEKTSV4RRFFQ69G5FAW',
-      childAttemptId: 'att_01MRZ3NDEKTSV4RRFFQ69G5FAV',
-      parentExecutionPlanId: 'pln_01MRZ3NDEKTSV4RRFFQ69G5FAV',
-      parentExecutionPlanDigest: `sha256:${'a'.repeat(64)}`,
-      childExecutionPlanId: 'pln_01MRZ3NDEKTSV4RRFFQ69G5FAW',
-      childExecutionPlanDigest: `sha256:${'b'.repeat(64)}`,
-      contextPackageId: 'ctx_01MRZ3NDEKTSV4RRFFQ69G5FAV',
-      contextPackageDigest: `sha256:${'c'.repeat(64)}`,
+      parentExecutionPlanId: lineage.parent.executionPlanId,
+      parentExecutionPlanDigest: lineage.parent.contentDigest,
+      childExecutionPlanId: lineage.child.executionPlanId,
+      childExecutionPlanDigest: lineage.child.contentDigest,
+      contextPackageId: lineage.contextPackage.contextPackageId,
+      contextPackageDigest: lineage.contextPackage.contentDigest,
       role: 'researcher',
       profileVersionId: 'pfv_01MRZ3NDEKTSV4RRFFQ69G5FAV',
       objective: 'Durably research the bounded question',
@@ -1935,7 +2001,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await isolated.application.execute(
       sql`delete from execution_validation_commands where execution_plan_id = ${plan.executionPlanId}`
     )
-    const delegationRepository = new PostgresDelegationRepository(isolated.application)
     const unrelatedPlanId = 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA1'
     const delegationPins = [
       retentionDelegationRecord({
@@ -1960,7 +2025,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       }),
     ]
     for (const delegation of delegationPins)
-      expect(await delegationRepository.insert(delegation)).toBe(true)
+      await seedHistoricalDelegationPin(isolated.application, delegation)
     expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
     for (const delegation of delegationPins) {
       await isolated.application
@@ -4603,9 +4668,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       contextPackageId: fixture.contextPackageId,
       contextPackageDigest: fixture.contentDigest,
     })
-    expect(await new PostgresDelegationRepository(isolated.application).insert(delegation)).toBe(
-      true
-    )
+    await seedHistoricalDelegationPin(isolated.application, delegation)
     await retention.deleteEligibleContextPackages(now, options)
     expect(await packages.get(fixture)).toBeDefined()
     await isolated.application
