@@ -4,6 +4,7 @@ import { ControlApiFixtures } from '@control-plane/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ExecutionAttemptSchema } from '@control-plane/domain'
 import {
   SqliteExecutionRepository,
   SqliteInteractionRepository,
@@ -91,9 +92,43 @@ async function withProvider(run) {
 }
 
 describe('SQLite execution retention deletion (#194)', () => {
+  test('execution retention preserves terminal usage receipts and workflow jobs', async () => {
+    for (const [namespace, value] of [
+      [
+        'runtime-terminal-usage',
+        { schemaVersion: 1, executionId, attemptId, state: 'cancelled', usage: { inputTokens: 1 } },
+      ],
+      [
+        'workflow-jobs',
+        {
+          workflowKey: executionId,
+          status: 'succeeded',
+          input: { executionId },
+          attempt: 1,
+          maximumAttempts: 5,
+        },
+      ],
+    ]) {
+      await withProvider(async (provider) => {
+        await seedExecution(provider)
+        await provider.transaction((transaction) =>
+          transaction.put({ namespace, id: `retention-reference-${namespace}`, value })
+        )
+        const result = await new SqliteExecutionRepository(provider).deleteEligibleExecutions(
+          new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000),
+          { policyRetainMs: ninetyDaysMs, dryRun: false }
+        )
+        expect(result.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(
+          await new SqliteExecutionRepository(provider).getExecution(executionId)
+        ).toBeDefined()
+      })
+    }
+  }, 60_000)
+
   test('an unreferenced terminal execution becomes eligible and leaves with its attempt', async () => {
     await withProvider(async (provider) => {
-      await seedExecution(provider)
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
       await seedAttempt(provider, 'completed')
       const repository = new SqliteExecutionRepository(provider)
       const now = new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000)
@@ -115,6 +150,29 @@ describe('SQLite execution retention deletion (#194)', () => {
       expect(await provider.transaction((t) => t.list('execution-attempts'))).toHaveLength(0)
     })
   }, 60000)
+
+  test('a terminal execution with a missing latest attempt remains ambiguous', async () => {
+    await withProvider(async (provider) => {
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+      const repository = new SqliteExecutionRepository(provider)
+      const journal = []
+      const result = await repository.deleteEligibleExecutions(
+        new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000),
+        {
+          policyRetainMs: ninetyDaysMs,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
+      )
+
+      expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+      expect(journal).toEqual([])
+      expect(await repository.getExecution(executionId)).toBeDefined()
+      expect(
+        await provider.transaction((transaction) => transaction.list('execution-attempts'))
+      ).toHaveLength(0)
+    })
+  }, 60_000)
 
   test('the retention window is measured from the terminal instant', async () => {
     await withProvider(async (provider) => {
@@ -151,7 +209,7 @@ describe('SQLite execution retention deletion (#194)', () => {
       const now = new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000)
 
       // 1. acceptance record
-      await seedExecution(provider)
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
       await provider.transaction((transaction) =>
         transaction.put({
           namespace: 'command-by-execution',
@@ -252,7 +310,8 @@ describe('SQLite execution retention deletion (#194)', () => {
 
   test('execution deletion waits until cancellation and interaction receipts are cleaned up', async () => {
     await withProvider(async (provider) => {
-      await seedExecution(provider)
+      const interactionAttemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: interactionAttemptId })
       const cancellation = {
         request: {
           ...ControlApiFixtures.executionCancellation.request,
@@ -284,7 +343,24 @@ describe('SQLite execution retention deletion (#194)', () => {
         })
       )
       const interactionId = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
-      const interactionAttemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'execution-attempts',
+          id: storedId(interactionAttemptId),
+          value: ExecutionAttemptSchema.parse({
+            attemptId: interactionAttemptId,
+            executionId,
+            sequence: 1,
+            state: 'completed',
+            version: 1,
+            acceptedAt,
+            queuedAt: acceptedAt,
+            terminalAt,
+            createdAt: acceptedAt,
+            updatedAt: terminalAt,
+          }),
+        })
+      )
       await new SqliteInteractionRepository(provider).insert({
         interactionId,
         executionId,

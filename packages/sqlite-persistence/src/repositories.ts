@@ -110,6 +110,24 @@ const executionStates = new Set<string>([
 ])
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
 
+function hasCompleteAttemptHistory(
+  attemptCount: number,
+  latestAttemptId: string | null | undefined,
+  attempts: readonly { attemptId: string; sequence: number }[]
+): boolean {
+  if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attempts.length !== attemptCount)
+    return false
+  if (attemptCount === 0) return latestAttemptId == null
+  if (latestAttemptId == null) return false
+
+  const ordered = [...attempts].toSorted((left, right) => left.sequence - right.sequence)
+  return (
+    new Set(ordered.map((attempt) => attempt.attemptId)).size === attemptCount &&
+    ordered.every((attempt, index) => attempt.sequence === index + 1) &&
+    ordered.at(-1)?.attemptId === latestAttemptId
+  )
+}
+
 export interface SqliteReconciliationCandidateScan {
   /** ISO timestamp; executions updated before it are stale enough to reconcile. */
   readonly staleBefore: string
@@ -488,7 +506,8 @@ export class SqliteExecutionRepository implements ExecutionRepository {
    * retention duration has passed since the terminal instant, and only when
    * nothing that must outlive them still references them: the acceptance
    * record, either command receipt, any execution event, a reconciliation
-   * checkpoint or a non-terminal attempt all retain the execution. This class is therefore the last to
+   * checkpoint, a non-terminal attempt, runtime terminal-usage receipt, or
+   * workflow job all retain the execution. This class is therefore the last to
    * become eligible, which is the ordering proof it needs. `dryRun` defaults
    * to true and a record whose revision moved is reported as `raced`.
    */
@@ -558,6 +577,21 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               (record.value as { executionId?: unknown } | null)?.executionId ===
               execution.executionId
           )
+          const terminalUsage = (await transaction.list('runtime-terminal-usage')).some(
+            (record) =>
+              (record.value as { executionId?: unknown } | null)?.executionId ===
+              execution.executionId
+          )
+          const workflowJobs = (await transaction.list('workflow-jobs')).some((record) => {
+            const value = record.value as {
+              workflowKey?: unknown
+              input?: { executionId?: unknown } | null
+            } | null
+            return (
+              value?.workflowKey === execution.executionId ||
+              value?.input?.executionId === execution.executionId
+            )
+          })
           const cancellationReceipts = (
             await transaction.list('execution-cancellation-receipts')
           ).some((record) => {
@@ -616,6 +650,11 @@ export class SqliteExecutionRepository implements ExecutionRepository {
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
+          const attemptsComplete = hasCompleteAttemptHistory(
+            execution.attemptCount,
+            execution.latestAttemptId,
+            attempts
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -631,10 +670,13 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               events ||
               checkpoints ||
               runtimeCommands ||
+              terminalUsage ||
+              workflowJobs ||
               cancellationReceipts ||
               interactionReceiptReference ||
               interactionRequestReference ||
-              activeAttempts.length > 0
+              activeAttempts.length > 0 ||
+              !attemptsComplete
                 ? 1
                 : 0,
             holds: 0,

@@ -425,7 +425,9 @@ describe('SQLite interaction-receipt retention deletion (#194)', () => {
           updatedAt: '2026-01-02T10:00:00.000Z',
         })
       )
-      await new SqliteInteractionRepository(provider).insert({
+      // This malformed cross-owner pair is intentionally seeded below the
+      // repository validation boundary to exercise the retention fail-closed path.
+      await seed(provider, 'interaction-requests', storedId(otherInteractionId), {
         interactionId: otherInteractionId,
         executionId: receiptOwnerId,
         attemptId: otherAttemptId,
