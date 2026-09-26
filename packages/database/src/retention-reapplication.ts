@@ -17,7 +17,7 @@ import { runtimeCommands } from './schema/runtime-commands.js'
 export interface RetentionReapplicationOutcome {
   /** Operations that changed something. */
   readonly applied: number
-  /** Operations that were already satisfied, including effects that never happened. */
+  /** Operations already satisfied in this restored copy. */
   readonly skipped: number
 }
 

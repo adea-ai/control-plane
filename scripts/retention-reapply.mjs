@@ -12,7 +12,9 @@ import { loadDatabaseCredentials } from '@control-plane/config'
 // It is idempotent by construction: inserts are "insert if absent" and deletes
 // are by identity, so applying a journal twice — or applying an entry for an
 // effect that never happened because the process died between the journal
-// append and the storage change — is a no-op. Operations are applied by the
+// append and the storage change — still applies its approved deletion intent.
+// Idempotence is not evidence of the original transaction's commit outcome.
+// Operations are applied by the
 // explicit branch below, never by building SQL from journal content.
 const MAXIMUM_JOURNAL_BYTES = 64 * 1024 * 1024
 

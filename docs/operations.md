@@ -285,10 +285,14 @@ bun scripts/retention-reapply.mjs --backend postgres --database control_plane \
   --host <neon-host> --journal <retention-journal.jsonl>
 ```
 
-Reapply is idempotent: inserts are insert-if-absent and deletes are by identity,
-so replaying a journal — or replaying an entry whose storage change never
-happened — is safe. Keep the journal with the backups; without it a restored
-snapshot cannot be brought forward.
+Reapply is idempotent: inserts are insert-if-absent and deletes are by identity.
+An entry whose transaction never committed still applies its approved deletion
+intent; idempotence alone does not reconcile that outcome or later holds and
+references. The current command is not proof of full restore acceptance. Keep
+the journal independently of the database and reconcile ambiguous outcomes
+before exposing a restored copy; without the journal a snapshot cannot be
+brought forward. External durability and outcome reconciliation remain open
+M11 gates.
 
 Which classes can ever be swept, and which the policy keeps reference-governed,
 is one command away — it prints the decided duration, the governance mode, the

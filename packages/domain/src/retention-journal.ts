@@ -12,9 +12,11 @@ import { z } from 'zod'
  *
  * Ordering rule: entries are appended *before* the storage effect, so a crash
  * between the two leaves an entry for an effect that did not happen. Reapplying
- * such an entry is a no-op (inserts are idempotent, deletes are by identity),
- * which makes the journal at-least-once rather than at-most-once — the safe
- * direction.
+ * such an entry still applies the approved deletion intent to the restored
+ * copy. Idempotence prevents a repeated effect, but does not prove that the
+ * original transaction committed or that later references/holds are absent.
+ * Commit-outcome reconciliation and externally durable provenance remain
+ * required before this protocol establishes full restore acceptance.
  *
  * Operations are explicit per backend and restricted to their declared class.
  * The operator must preserve journal integrity: schema validation constrains

@@ -98,6 +98,12 @@ dependency/backend build tasks and scoped lint/format checks passed. This
 prevents an older snapshot's clock from ignoring a later reference cycle; it
 does not establish completed sweep/writer wiring or external journal durability.
 
+The current journal records deletion intent before the transaction commits;
+replay applies that intent even if the transaction never committed. This is
+idempotent, not a no-op or proof of commit. Restore acceptance must also
+reconcile ambiguous outcomes and later holds/references before exposure; the
+existing restore component probes do not establish those cases.
+
 Validation receipts are an additional retention coverage gap: they indefinitely
 pin plans, have no registered age/deletion path, and current plan-deletion tests
 remove them through raw fixture writes. Such fixture cleanup is not evidence of

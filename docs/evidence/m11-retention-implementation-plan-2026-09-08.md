@@ -256,8 +256,11 @@ carries the effects for one candidate, and reapply applies them by explicit
 per-backend branches (never by building SQL from journal content, so a tampered
 journal cannot widen its own authority). Ordering is at-least-once: an entry for
 an effect that never happened — the process died between the append and the
-storage change — replays as a no-op, because inserts are insert-if-absent and
-deletes are by identity.
+storage change — still applies its approved deletion intent to the restored
+copy. Inserts are insert-if-absent and deletes are by identity, so repeated
+effects are idempotent; this does not prove the original commit outcome or
+absence of later references/holds. Commit-outcome reconciliation remains an
+open restore-acceptance requirement, alongside external journal durability.
 
 The journal therefore also **restates the rejection identity**, not just the
 delete. That distinction matters for commands: retirement is a precondition of
