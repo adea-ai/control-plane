@@ -68,9 +68,17 @@ claimed.
 
 Bound admission now precedes journal/mutation and receipt/messaging sweeps use
 one shared counter. After rebuilding dependencies, the parent integration
-passed 38 focused retention tests (141 assertions). Receipt lifecycle and atomic
-reference-claim repairs remain in progress. A full integrated candidate suite,
-current-head CI and deployment verification have not yet been completed.
+passed 38 focused retention tests (141 assertions). The receipt lifecycle repair
+is integrated: exact owner/interaction/attempt linkage, terminal settlement and
+latest attempt/checkpoint/event times are checked inside the deletion
+transaction. Parent validation passed 18 SQLite tests (66 assertions) and four
+focused PostgreSQL tests (32 assertions, including the metadata probe below).
+Independent review found cross-execution attempt linkage and SQLite JSON/key
+identity gaps; targeted red regressions reproduced them and the corrected cases
+now retain those receipts. Atomic plan/package claims and the separate
+PostgreSQL execution-deletion/new-receipt writer race remain in progress. A full
+integrated candidate suite, current-head CI and deployment verification have not
+yet been completed.
 
 Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
 conservative clock helper are prepared. Six helper tests (14 assertions), the
