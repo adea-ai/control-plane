@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.58.2...workspace-v1.58.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* **marketplace:** read the latest pointer from the publication root ([#741](https://github.com/adea-ai/control-plane/issues/741)) ([ae26cc9](https://github.com/adea-ai/control-plane/commit/ae26cc982450fbbda654c94262fdc50b85c342c0))
+
 ## [1.58.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.58.1...workspace-v1.58.2) (2026-09-26)
 
 
