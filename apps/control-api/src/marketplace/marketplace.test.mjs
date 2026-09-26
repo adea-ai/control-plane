@@ -325,6 +325,42 @@ describe('Control Plane marketplace contract', () => {
     ).toThrow(/digest mismatch/)
   })
 
+  test('never requests the latest pointer from a snapshot directory', async () => {
+    // The pointer is what names the catalog identity, so it lives at the
+    // publication root and is re-pointed on every publication; it is not part
+    // of any snapshot. Requesting it from `catalogs/<catalogId>/` is a 404 by
+    // construction, and a live fetch against the real publication failed the
+    // whole refresh on exactly that.
+    const fixture = snapshotFixture()
+    const bodies = new Map(Object.entries(fixture.artifacts).map(([name, body]) => [name, body]))
+    const requested = []
+    const service = new MarketplaceRegistryService({
+      fetchImpl: async (input) => {
+        const url = String(input)
+        requested.push(url)
+        const name = new URL(url).pathname.split('/').pop()
+        if (name === 'catalog-latest.v1.json' && url.includes('/catalogs/'))
+          return new Response('not found', { status: 404 })
+        return new Response(bodies.get(name) ?? 'not found', {
+          status: bodies.has(name) ? 200 : 404,
+        })
+      },
+      latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+      immutableArtifactBaseUrl: 'https://registry.example/catalog-assets/catalogs/{catalogId}',
+    })
+
+    const snapshot = await service.getCatalog()
+    expect(snapshot.state).toBe('ready')
+    expect(
+      requested.filter(
+        (url) => url.includes('/catalogs/') && url.endsWith('catalog-latest.v1.json')
+      )
+    ).toEqual([])
+    // The bytes already read to learn the catalogId are the pointer's own, so
+    // verification still sees the pointer and the catalog it names agree.
+    expect(snapshot.artifacts['catalog-latest.v1.json']).toBe(snapshot.artifacts['catalog.v1.json'])
+  })
+
   test('keeps the last-known-good registry snapshot after a failed refresh', async () => {
     const fixture = snapshotFixture()
     let fail = false

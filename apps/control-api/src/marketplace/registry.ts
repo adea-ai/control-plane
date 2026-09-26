@@ -237,7 +237,7 @@ export class MarketplaceRegistryService {
     try {
       const latestText = await this.#fetchArtifact(this.#latestUrl)
       const latest = parseCatalog(parseJson(latestText, 'catalog-latest.v1.json'))
-      const artifacts = await this.#fetchImmutableArtifacts(latest.catalogId)
+      const artifacts = await this.#fetchImmutableArtifacts(latest.catalogId, latestText)
       const snapshot = verifyArtifacts(artifacts)
       if (snapshot.catalogId !== latest.catalogId)
         throw verificationError('Latest catalog pointer changed during refresh')
@@ -271,13 +271,25 @@ export class MarketplaceRegistryService {
     }
   }
 
-  async #fetchImmutableArtifacts(catalogId: string): Promise<MarketplaceArtifacts> {
+  async #fetchImmutableArtifacts(
+    catalogId: string,
+    latestText: string
+  ): Promise<MarketplaceArtifacts> {
     const match = /^catalog:([a-f0-9]{64})$/.exec(catalogId)
     if (!match) throw verificationError('Catalog ID is invalid')
     const suffix = match[1]
     if (!suffix) throw verificationError('Catalog ID is invalid')
     const artifacts: Record<string, string | undefined> = {}
     for (const name of marketplaceArtifactNames) {
+      // The pointer is the one artifact that is not addressed by catalog
+      // identity: it is what names the identity, so it lives at the
+      // publication root and is re-pointed on every publication. Requesting it
+      // from a snapshot directory is a 404 by construction, and the text the
+      // refresh already read to learn the catalogId is the same bytes.
+      if (name === 'catalog-latest.v1.json') {
+        artifacts[name] = latestText
+        continue
+      }
       const url = this.#immutableUrl(suffix, name)
       artifacts[name] = isOptionalMarketplaceArtifact(name)
         ? await this.#fetchOptionalArtifact(url)
