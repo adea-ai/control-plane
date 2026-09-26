@@ -118,9 +118,23 @@ The isolated lane passed 38 tests (269 assertions), with bounded source review
 and a separate closure of validation's missing-context error ordering. A fresh
 parent SQLite build and all eight root retention CLI tests (66 assertions)
 passed. The wider SQLite package run passed 127 tests but failed 17 old orphan
-plan fixtures in four existing test files. Fixture-only repairs are assigned;
-production guards are not waived. PostgreSQL window wiring and portable-import
-reference claims still await integration and final combined validation.
+plan fixtures in four existing test files. The fixture-only repair is now
+integrated: all four files passed 29 tests / 141 assertions with real immutable
+parents and accepted execution/attempt owners. Production guards are not waived.
+PostgreSQL window wiring and portable-import reference claims still await
+integration and final combined validation. Independent portable-import review
+found missing canonical descendant-limit checks and incomplete schema/compiler
+pins; these are assigned for domain-validator reuse and red/green regression
+repair, not considered closed by self-consistent record hashes.
+
+The released image baseline's production schema was separately found behind:
+both Railway services' exact database bindings were verified, then released
+`0047` and `0048` were rehearsed on an isolated Neon child and applied through
+the canonical immutable released-source migrator. Full journal readback,
+idempotent replay, individual runtime grants and least-privilege checks passed.
+Unmerged `0049` remains off production. A fail-closed pre-deploy migration gate
+is in preparation; the full rollout/profile acceptance remains open. See
+[production schema readback](m11-production-schema-readback-2026-09-26.md).
 
 Durable-hold storage and owner/session administration are reviewed and retained
 on a separate implementation branch, not activated in PR #740. A review found
