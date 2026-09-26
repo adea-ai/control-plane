@@ -84,6 +84,13 @@ currently has no reviewer protection rules; environment scoping is not a claim
 of human deployment approval. The prepared workflow must validate the final
 tagged main source and runtime target before using this credential.
 
+The gate credential was subsequently tightened to `sslmode=verify-full`, after
+an actual read-only connection verified the production certificate and exact
+migrator/database identity. This matters because the installed PostgreSQL
+driver's `require` mode alone disables certificate verification (unless other
+configuration upgrades it). No runtime service variables were changed; this
+gate-credential check must not be reported as runtime TLS hardening.
+
 The exact task-owned rehearsal branch was deleted after evidence capture.
 Subsequent branch inventory verified it absent and confirmed production,
 staging, and both unrelated preview branches remain. No production data was
