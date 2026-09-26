@@ -146,6 +146,12 @@ export { withDomainTransaction } from './transaction.js'
 export type { DomainTransaction } from './transaction.js'
 export { PostgresInteractionCommandRepository } from './interaction-command-repository.js'
 export { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.js'
+export {
+  PostgresRetentionHoldRepository,
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+} from './retention-hold-repository.js'
+export { retentionHolds } from './schema/retention-holds.js'
 export { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.js'
 export { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.js'
 export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'

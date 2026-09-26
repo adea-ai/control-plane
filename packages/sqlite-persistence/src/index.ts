@@ -40,6 +40,7 @@ export * from './runtime-channel-sequence-repository.js'
 export * from './runtime-discovery-repository.js'
 export * from './evaluation-repository.js'
 export * from './receipt-retention.js'
+export * from './retention-hold-repository.js'
 export { REFERENCE_RETENTION_NAMESPACES } from './retention-reference-metadata.js'
 export { assertSqliteWorkflowExecutionReference } from './workflow-reference-guard.js'
 
