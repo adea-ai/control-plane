@@ -66,7 +66,10 @@ import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresExecutionEventRepository } from './execution-event-repository.ts'
 import { PostgresExternalSessionRepository } from './external-session-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
-import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
+import {
+  PostgresExecutionPlanRepository,
+  lockExecutionPlanReference,
+} from './execution-plan-repository.ts'
 import { PostgresExecutionValidationCommandRepository } from './validation-command-repository.ts'
 import { PostgresEvaluationRepository } from './evaluation-repository.ts'
 import { PostgresInteractionRepository } from './interaction-repository.ts'
@@ -242,6 +245,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         const plan = createExecutionPlanTestFixture({ contextPackage: package_ })
         const packageReference = await packages.put(package_)
         const planReference = await plans.put(plan)
+        expect(
+          await lockExecutionPlanReference(transaction, {
+            ...planReference,
+            schemaVersion: plan.schemaVersion,
+          })
+        ).toBe(true)
+        expect(
+          await lockExecutionPlanReference(transaction, { ...planReference, schemaVersion: 2 })
+        ).toBe(false)
         const packageClock = () =>
           transaction
             .select({ clock: contextPackages.unreferencedSince })
@@ -2110,7 +2122,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         try {
           await waitForLockWait(isolated.application, 'context_packages')
         } catch (error) {
-          throw new Error(`${error.message}; competingPut=${competingPutState}`)
+          throw new Error(`${error.message}; competingPut=${competingPutState}`, { cause: error })
         }
       },
     })

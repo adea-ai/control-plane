@@ -75,10 +75,25 @@ transaction. Parent validation passed 18 SQLite tests (66 assertions) and four
 focused PostgreSQL tests (32 assertions, including the metadata probe below).
 Independent review found cross-execution attempt linkage and SQLite JSON/key
 identity gaps; targeted red regressions reproduced them and the corrected cases
-now retain those receipts. Atomic plan/package claims and the separate
-PostgreSQL execution-deletion/new-receipt writer race remain in progress. A full
+now retain those receipts. Atomic plan/package claims for the core writers are
+now integrated; the separate PostgreSQL execution-deletion/new-receipt writer
+race repair is prepared. A full
 integrated candidate suite, current-head CI and deployment verification have not
 yet been completed.
+
+The integrated core reference patch passed 26 focused SQLite tests (166
+assertions) and ten focused PostgreSQL tests (87 assertions) in its isolated
+lane. Local job admission now checks exact execution/workflow/plan identities,
+scope and marketplace pins inside the enqueue transaction; duplicate jobs
+retain historical replay. Parent checks passed 35 dependency build tasks, four
+Local composed tests (27 assertions), 13 SQLite reference/retention tests (68
+assertions), 16 queue-store tests (84 assertions) and 16 domain reconciliation
+tests (45 assertions). The latter reproduced and repaired dropped marketplace
+pins during reconciliation resume. Reference schema/payload identity checks
+also passed a real PostgreSQL probe (11 assertions, other tests filtered).
+These counts overlap earlier focused groups and must not be summed as a unique
+full-suite total. Delegation writer coordination, ancestry-reference coverage,
+complete reference-clock wiring and final integrated validation remain open.
 
 Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
 conservative clock helper are prepared. Six helper tests (14 assertions), the

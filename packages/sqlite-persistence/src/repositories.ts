@@ -70,6 +70,7 @@ export async function assertSqliteStoredPlanReference(
   if (stored === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
   const plan = assertExecutionPlanIntegrity(stored.value)
   if (
+    plan.executionPlanId !== reference.executionPlanId ||
     plan.contentDigest !== reference.contentDigest ||
     (referenceInput.schemaVersion !== undefined &&
       referenceInput.schemaVersion !== plan.schemaVersion)
@@ -82,7 +83,10 @@ export async function assertSqliteStoredPlanReference(
   )
   if (context === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
   const package_ = assertContextPackageIntegrity(context.value)
-  if (package_.contentDigest !== plan.contextPackage.contentDigest)
+  if (
+    package_.contextPackageId !== plan.contextPackage.contextPackageId ||
+    package_.contentDigest !== plan.contextPackage.contentDigest
+  )
     throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
   return plan
 }
@@ -978,7 +982,10 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
           )
         }
         const package_ = assertContextPackageIntegrity(context.value)
-        if (package_.contentDigest !== plan.contextPackage.contentDigest) {
+        if (
+          package_.contextPackageId !== plan.contextPackage.contextPackageId ||
+          package_.contentDigest !== plan.contextPackage.contentDigest
+        ) {
           throw new ExecutionPlanError(
             'MISSING_CONTEXT_PACKAGE',
             plan.contextPackage.contextPackageId
@@ -1043,7 +1050,10 @@ export class SqliteExecutionValidationCommandRepository implements ExecutionVali
         )
       }
       const package_ = assertContextPackageIntegrity(context.value)
-      if (package_.contentDigest !== plan.contextPackage.contentDigest) {
+      if (
+        package_.contextPackageId !== plan.contextPackage.contextPackageId ||
+        package_.contentDigest !== plan.contextPackage.contentDigest
+      ) {
         throw new ExecutionPlanError(
           'MISSING_CONTEXT_PACKAGE',
           plan.contextPackage.contextPackageId

@@ -128,6 +128,14 @@ export interface WorkflowCancellation {
 
 type RecordTransaction = Parameters<Parameters<PersistenceProvider['transaction']>[0]>[0]
 
+export interface WorkflowJobStoreOptions {
+  /** New-reference admission in the same writer transaction; duplicates skip it. */
+  readonly beforeEnqueue?: (
+    transaction: RecordTransaction,
+    record: WorkflowJobRecord
+  ) => Promise<void>
+}
+
 function validTimestampSchema() {
   return z.string().refine((value) => !Number.isNaN(Date.parse(value)), 'INVALID_TIMESTAMP')
 }
@@ -140,7 +148,10 @@ function validTimestampSchema() {
  * and reclaimed only after the lease expires.
  */
 export class WorkflowJobStore {
-  constructor(readonly provider: PersistenceProvider) {}
+  constructor(
+    readonly provider: PersistenceProvider,
+    readonly options: WorkflowJobStoreOptions = {}
+  ) {}
 
   /** Creates the job on first sight; replays of the same workflow key are duplicates. */
   async enqueue(
@@ -164,6 +175,7 @@ export class WorkflowJobStore {
       if (existing !== undefined) {
         return { outcome: 'duplicate' as const, record: decodeJob(existing.value) }
       }
+      await this.options.beforeEnqueue?.(transaction, record)
       await transaction.put({ namespace: namespaces.jobs, id, value: json(record) })
       return { outcome: 'created' as const, record }
     })

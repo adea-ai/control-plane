@@ -92,11 +92,15 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
 /** Lock and verify the exact plan row before a writer creates a plan reference. */
 export async function lockExecutionPlanReference(
   database: Pick<ControlPlaneDatabase, 'select'>,
-  input: ExecutionPlanReference
+  input: ExecutionPlanReference & { readonly schemaVersion?: number }
 ): Promise<boolean> {
   const reference = ExecutionPlanReferenceSchema.parse(input)
   const [row] = await database
-    .select({ plan: executionPlans.plan, contentDigest: executionPlans.contentDigest })
+    .select({
+      plan: executionPlans.plan,
+      contentDigest: executionPlans.contentDigest,
+      schemaVersion: executionPlans.schemaVersion,
+    })
     .from(executionPlans)
     .where(eq(executionPlans.executionPlanId, reference.executionPlanId))
     .limit(1)
@@ -104,6 +108,9 @@ export async function lockExecutionPlanReference(
   if (!row) return false
   const plan = assertExecutionPlanIntegrity(row.plan)
   if (
+    plan.executionPlanId !== reference.executionPlanId ||
+    row.schemaVersion !== plan.schemaVersion ||
+    (input.schemaVersion !== undefined && input.schemaVersion !== plan.schemaVersion) ||
     row.contentDigest !== reference.contentDigest ||
     plan.contentDigest !== reference.contentDigest
   )
