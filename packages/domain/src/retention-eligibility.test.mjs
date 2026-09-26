@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   RetentionAssessmentCounter,
+  RetentionDeletionResultSchema,
   RetentionEligibilityReasonSchema,
   evaluateRetentionEligibility,
 } from './retention-eligibility.js'
@@ -20,6 +21,27 @@ const eligibleFacts = {
 }
 
 describe('retention eligibility (#194)', () => {
+  test('preserves an optional bounded scan continuation without turning it into authority', () => {
+    const result = {
+      classId: 'execution-plans',
+      assessedAt: now,
+      dryRun: true,
+      scanned: 1,
+      eligible: 0,
+      deleted: 0,
+      raced: 0,
+      truncated: true,
+      nextAfterId: 'target',
+      retainedByReason: { reference_pending: 1 },
+    }
+    expect(RetentionDeletionResultSchema.parse(result)).toEqual(result)
+    expect(RetentionDeletionResultSchema.safeParse({ ...result, nextAfterId: '' }).success).toBe(
+      false
+    )
+    expect(
+      RetentionDeletionResultSchema.safeParse({ ...result, nextAfterId: 'x'.repeat(129) }).success
+    ).toBe(false)
+  })
   test('a fully covered expired record is eligible', () => {
     expect(evaluateRetentionEligibility(eligibleFacts)).toEqual({ verdict: 'eligible' })
   })

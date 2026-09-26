@@ -312,4 +312,30 @@ describe('retention apply CLI (#194)', () => {
       await rm(directory, { recursive: true, force: true })
     }
   }, 60000)
+
+  test('rejects malformed bounds and unsupported or malformed continuation before storage', async () => {
+    for (const extra of [
+      ['--bound', '1junk'],
+      ['--bound', '1.5'],
+      ['--bound', '0'],
+      ['--bound', '9007199254740992'],
+      ['--after-id', 'target'],
+    ]) {
+      const result = await run('/tmp/absent-retention-cursor-fixture.sqlite', extra)
+      expect(result).toEqual({ status: 1, stdout: '', stderr: 'RETENTION_APPLY_FAILED\n' })
+    }
+    for (const afterId of ['', 'private/data', 'x'.repeat(129)]) {
+      const result = await apply([
+        '--backend',
+        'sqlite',
+        '--class',
+        'execution-plans',
+        '--database',
+        '/tmp/absent-retention-cursor-fixture.sqlite',
+        '--after-id',
+        afterId,
+      ])
+      expect(result).toEqual({ status: 1, stdout: '', stderr: 'RETENTION_APPLY_FAILED\n' })
+    }
+  })
 })
