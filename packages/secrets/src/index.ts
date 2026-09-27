@@ -1,4 +1,5 @@
-import { lstat, readFile, realpath } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, open, realpath, type FileHandle } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import type {
   DeploymentComponentHealth,
@@ -133,6 +134,7 @@ export class PrivateFileSecretsProvider implements SecretsProvider {
     if (path !== this.#rootDirectory && !path.startsWith(`${this.#rootDirectory}${sep}`)) {
       throw new SecretsProviderError('SECRET_REFERENCE_INVALID')
     }
+    let file: FileHandle | undefined
     try {
       const info = await lstat(path)
       if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) {
@@ -143,10 +145,43 @@ export class PrivateFileSecretsProvider implements SecretsProvider {
       if (!canonicalPath.startsWith(`${canonicalRoot}${sep}`)) {
         throw new SecretsProviderError('SECRET_FILE_UNSAFE')
       }
-      return lease(reference, new Uint8Array(await readFile(canonicalPath)))
+      file = await open(canonicalPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+      const openedInfo = await file.stat()
+      if (
+        !openedInfo.isFile() ||
+        (openedInfo.mode & 0o077) !== 0 ||
+        openedInfo.dev !== info.dev ||
+        openedInfo.ino !== info.ino
+      ) {
+        throw new SecretsProviderError('SECRET_FILE_UNSAFE')
+      }
+      if (openedInfo.size > MAX_SECRET_BYTES) {
+        throw new SecretsProviderError('SECRET_VALUE_INVALID')
+      }
+
+      // Read at most one byte over the contract limit, even if the file grows
+      // after stat. The extra byte distinguishes a valid max-sized value from
+      // an oversized one without materializing the whole file.
+      const bounded = new Uint8Array(MAX_SECRET_BYTES + 1)
+      try {
+        let length = 0
+        while (length < bounded.byteLength) {
+          const { bytesRead } = await file.read(bounded, length, bounded.byteLength - length, null)
+          if (bytesRead === 0) break
+          length += bytesRead
+        }
+        if (length > MAX_SECRET_BYTES) {
+          throw new SecretsProviderError('SECRET_VALUE_INVALID')
+        }
+        return lease(reference, bounded.subarray(0, length))
+      } finally {
+        bounded.fill(0)
+      }
     } catch (error) {
       if (error instanceof SecretsProviderError) throw error
       throw new SecretsProviderError('SECRET_NOT_FOUND')
+    } finally {
+      await file?.close().catch(() => undefined)
     }
   }
 
