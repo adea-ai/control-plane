@@ -1,4 +1,5 @@
 export * from './provider.js'
+export * from './usage-store.js'
 export * from './context-command-grant-repository.js'
 export * from './context-provider-registration-repository.js'
 export * from './reconciliation-projection.js'

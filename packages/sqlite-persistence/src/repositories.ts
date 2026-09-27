@@ -644,6 +644,37 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               (record.value as { executionId?: unknown } | null)?.executionId ===
               execution.executionId
           )
+          // Billing state has a separate retention lifecycle. Retaining only the
+          // runtime terminal receipt does not protect budgets or replay receipts.
+          // Positively identified references pin owners even when payloads are
+          // damaged; a failed schema parse must never authorize owner deletion.
+          let durableUsage = false
+          for (const namespace of [
+            'usage-budgets',
+            'usage-effects',
+            'usage-ledger-entries',
+            'usage-entry-sequences',
+          ]) {
+            const referenced = (await transaction.list(namespace)).some((record) => {
+              const value = record.value as {
+                executionId?: unknown
+                parentExecutionId?: unknown
+                reservations?: { childExecutionId?: unknown }[]
+              } | null
+              return (
+                value?.executionId === execution.executionId ||
+                value?.parentExecutionId === execution.executionId ||
+                (Array.isArray(value?.reservations) &&
+                  value.reservations.some(
+                    (reservation) => reservation?.childExecutionId === execution.executionId
+                  ))
+              )
+            })
+            if (referenced) {
+              durableUsage = true
+              break
+            }
+          }
           const workflowJobs = (await transaction.list('workflow-jobs')).some((record) => {
             const value = record.value as {
               workflowKey?: unknown
@@ -745,6 +776,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               checkpoints ||
               runtimeCommands ||
               terminalUsage ||
+              durableUsage ||
               workflowJobs ||
               cancellationReceipts ||
               interactionReceiptReference ||

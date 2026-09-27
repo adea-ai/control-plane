@@ -92,6 +92,50 @@ async function withProvider(run) {
 }
 
 describe('SQLite execution retention deletion (#194)', () => {
+  test('durable usage budgets, receipts, entries and child funding pin execution owners', async () => {
+    const childExecutionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+    for (const [namespace, value] of [
+      ['usage-budgets', { workspaceId, executionId }],
+      ['usage-effects', { workspaceId, executionId }],
+      ['usage-ledger-entries', { workspaceId, executionId }],
+      ['usage-entry-sequences', { workspaceId, executionId }],
+      [
+        'usage-budgets',
+        {
+          workspaceId,
+          executionId: childExecutionId,
+          reservations: [{ childExecutionId: executionId }],
+        },
+      ],
+      [
+        'usage-budgets',
+        { workspaceId, executionId: childExecutionId, parentExecutionId: executionId },
+      ],
+      [
+        'usage-ledger-entries',
+        { workspaceId, executionId: childExecutionId, parentExecutionId: executionId },
+      ],
+    ]) {
+      await withProvider(async (provider) => {
+        await seedExecution(provider)
+        // Even damaged usage records must not release a positively identified owner.
+        await provider.transaction((transaction) =>
+          transaction.put({ namespace, id: 'usage-retention-fixture', value })
+        )
+        const repository = new SqliteExecutionRepository(provider)
+        const result = await repository.deleteEligibleExecutions(
+          new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000),
+          { policyRetainMs: ninetyDaysMs, dryRun: false }
+        )
+        expect(result.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(await repository.getExecution(executionId)).toBeDefined()
+        expect(
+          await provider.transaction((transaction) => transaction.list(namespace))
+        ).toHaveLength(1)
+      })
+    }
+  }, 60_000)
+
   test('execution retention preserves terminal usage receipts and workflow jobs', async () => {
     for (const [namespace, value] of [
       [

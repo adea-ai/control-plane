@@ -15,3 +15,40 @@ HQ-managed charges carry exact microunit attribution. External-subscription effe
 usage units but must record zero authoritative provider cost and `costExact: false`. Public summaries
 aggregate safe units and funding classifications without exposing provider source IDs, idempotency
 keys, credentials, or payloads.
+
+## Implementation and activation status
+
+The accounting rules above are the required behavior, not a claim that every production
+composition enforces them. The existing `InMemoryUsageLedger` is not a durable authority.
+The PostgreSQL append/read repository alone cannot recover budget openings, token ceilings,
+reservation state, or whole-budget settlement after a restart.
+
+The public `@control-plane/usage-ledger/durable-contract` port defines versioned budget
+projections and workspace-global operation receipts. `SqliteDurableUsageStore` implements
+that port using native SQLite transactions: budgets, raw entries, sequence identities, and
+receipts commit or roll back together. New writes verify the stored execution's exact ID,
+workspace and parent attribution, and any attempt's exact ID and owner. Identical entry and
+receipt writes are immutable; divergent identities or damaged persisted state are rejected.
+
+Execution retention keeps owners referenced by these usage namespaces, including parent and
+funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
+implementation. Raw usage retention, surviving aggregates/replay fences, the PostgreSQL budget
+store, and activation before runtime/model/tool/sandbox work remain required under M11.3/M11.9.
+Native-store tests do not certify those production paths or provider billing attribution.
+
+`DurableUsageLedger` now supplies the shared transactional accounting service for this
+port. It persists budget opening, money and token reservations, charges, reservation
+settlement, and whole-budget finalization. Child budgets reserve both resources against
+the parent's available authority before admission; child finalization rolls actual usage
+into the parent once without creating a duplicate billable charge. Identical operations
+replay their original receipts after reopen; conflicting input is rejected. Entry-bearing
+receipts are checked against immutable entries bound to the original operation, including
+the released amount in a settlement receipt.
+
+Budget summaries include finalized child funding consumption. Public usage summaries
+describe billable entries owned by the requested execution, not duplicated descendant
+charges. Neither summary includes provider credentials or source/idempotency identifiers.
+The service and native adapter remain component implementations: application admission,
+terminal reconciliation, PostgreSQL budget persistence and production activation are
+still required. Policy-authorized budget extensions are not yet implemented by the
+durable service. Historical budget-summary receipt integrity is under additional review.

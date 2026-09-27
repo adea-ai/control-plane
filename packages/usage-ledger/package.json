@@ -13,6 +13,11 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./durable-contract": {
+      "types": "./dist/durable-contract.d.ts",
+      "node": "./dist/durable-contract.js",
+      "default": "./dist/durable-contract.js"
     }
   },
   "scripts": {
