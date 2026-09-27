@@ -693,8 +693,7 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
       for (const candidate of candidates) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.runtimeCommands, candidate.id)
-          if (stored === undefined)
-            return { verdict: undefined, admitted: false, removed: false }
+          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           const command = RuntimeCommandRecordSchema.parse(stored.value)
           const settledAt = command.resultRecordedAt
           const verdict = evaluateRetentionEligibility({

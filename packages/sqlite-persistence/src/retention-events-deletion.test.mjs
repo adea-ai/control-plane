@@ -246,9 +246,9 @@ describe('SQLite execution-event retention deletion (#194)', () => {
       expect(result).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
       expect(journal).toHaveLength(1)
       expect(journal[0]).toHaveLength(2)
-      expect(await events.get(first) === undefined || (await events.get(second)) === undefined).toBe(
-        true
-      )
+      expect(
+        (await events.get(first)) === undefined || (await events.get(second)) === undefined
+      ).toBe(true)
       expect(await provider.transaction((t) => t.list('execution-events'))).toHaveLength(1)
     } finally {
       await provider.close()

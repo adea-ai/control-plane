@@ -219,13 +219,14 @@ CLI checks. Actual context/plan parents and current catalog versions are seeded
 instead of weakening guards. These are component checks, not frozen-candidate
 release acceptance.
 
-Post-reference window storage foundation: nullable PostgreSQL clocks and a pure
-conservative clock helper are prepared. Six helper tests (14 assertions), the
+Historical post-reference window foundation checkpoint: nullable PostgreSQL
+clocks and a pure conservative clock helper were prepared. Six helper tests (14 assertions), the
 domain build and migration/schema check passed. One real isolated PostgreSQL
 probe (seven assertions) verified migration/defaults and that metadata updates
-leave immutable plan/package JSON and digests unchanged. This is not yet a
-completed retention path: deletion claims and every reference writer still need
-to maintain and consult those clocks under their lifetime transaction/lock.
+leave immutable plan/package JSON and digests unchanged. At that checkpoint,
+deletion claims and reference writers still needed lifetime transaction/lock
+wiring. The subsequent SQLite and PostgreSQL integrations are recorded above;
+their component evidence does not establish full retention acceptance.
 
 Restore invalidation is prepared alongside that foundation: SQLite restore
 clears only the two auxiliary clock namespaces on its validated staged copy,
@@ -248,6 +249,35 @@ pin plans, have no registered age/deletion path, and current plan-deletion tests
 remove them through raw fixture writes. Such fixture cleanup is not evidence of
 a supported operational retention path. Their disposition must be reconciled
 with the ratified retention policy before plan retention is accepted in full.
+
+## Frozen change-set security review and formatting
+
+The source-only PR #740 scan reviewed immutable range
+`03e7bfc646a1d4377e65b8ec7b4d840d3f409405` to
+`b44c4a2ad25cec3d8fb193638e82d6e848aeb223`: three nonoverlapping Luna lanes
+accounted for all 96 canonical source items, and the parent reviewed the 16
+additional changed root tests/documentation files. No plausible diff-related
+security candidates were returned; no application execution or exploit
+reproduction was performed by these lanes.
+
+Scan `4dbb9d31-ff26-451c-94e4-54b4cb08efb6` was sealed, but canonical readback
+still labels coverage **partial** and retains five stale architecture/discovery
+deferrals from earlier checkpoints. Its 168 surface entries represent 112
+unique labels, not 168 unique file reviews. The final progress reports 96/96
+source items, but this checkpoint does not claim a clean complete-coverage
+canonical report, rewrite the sealed artifacts, or waive #190. The reporting
+discrepancy remains explicit.
+
+The SQLite lane raised an archived-but-unpublished event settlement question.
+Parent source inspection found `ExecutionEventService.archive` called only by
+the service and tests, with the events package private; no ordinary application
+or API archive path was identified. This is an unresolved full-retention policy
+acceptance question, not a confirmed attacker-reachable vulnerability.
+
+The first combined acceptance attempt stopped at formatting in three SQLite
+files; no subsequent combined lint/build/test/integration gates ran. After the
+immutable review ended, only those three files were mechanically formatted.
+Current-head combined validation and deployment remain open.
 
 ## Baseline evidence
 

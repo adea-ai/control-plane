@@ -87,8 +87,7 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
       for (const record of page) {
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get('evaluation-runs', record.id)
-          if (stored === undefined)
-            return { verdict: undefined, admitted: false, removed: false }
+          if (stored === undefined) return { verdict: undefined, admitted: false, removed: false }
           let run: EvalRun
           try {
             run = EvalRunSchema.parse(stored.value)
