@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test as runTest } from 'bun:test'
 import process from 'node:process'
+import { readFile } from 'node:fs/promises'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { eq, sql } from 'drizzle-orm'
 import postgres from 'postgres'
@@ -336,6 +337,43 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
             sql`update admission_rollout_gate set state = 'open' where gate_key = 'intake'`
           ))()
       ).rejects.toThrow()
+
+      // Re-provisioning's broad CRUD grant must not reopen the operator-only boundary.
+      await operatorDatabase.execute(
+        sql`grant select, insert, update, delete on all tables in schema public to control_plane_app`
+      )
+      await expect(
+        new PostgresAdmissionRolloutService(isolated.application).pause()
+      ).resolves.toMatchObject({ state: 'paused', revision: 1 })
+      const bootstrap = await readFile(
+        new URL('../../../infrastructure/compose/postgres/bootstrap-roles.sh', import.meta.url),
+        'utf8'
+      )
+      const gateStatements = [
+        ...bootstrap.matchAll(
+          /SELECT '(?:REVOKE ALL PRIVILEGES|GRANT SELECT) ON TABLE public\.admission_rollout_gate (?:FROM|TO) control_plane_app'\nWHERE to_regclass\('public\.admission_rollout_gate'\) IS NOT NULL \\gexec/g
+        ),
+      ]
+      expect(gateStatements).toHaveLength(2)
+      for (const [statement] of gateStatements) {
+        const commands = await operatorDatabase.execute(sql.raw(statement.replace(/\\gexec$/, '')))
+        expect(commands).toHaveLength(1)
+        for (const row of commands) {
+          const command = Object.values(row)[0]
+          expect(typeof command).toBe('string')
+          await operatorDatabase.execute(sql.raw(command))
+        }
+      }
+      await expect(
+        new PostgresAdmissionRolloutService(isolated.application).pause()
+      ).rejects.toMatchObject({ code: 'ADMISSION_ROLLOUT_AUTHORITY_DENIED' })
+      await expect(
+        (async () =>
+          await isolated.application.execute(
+            sql`update admission_rollout_gate set state = 'open' where gate_key = 'intake'`
+          ))()
+      ).rejects.toThrow()
+      await expect(gate.getStatus()).resolves.toMatchObject({ state: 'paused', revision: 1 })
 
       expect(
         await isolated.application
