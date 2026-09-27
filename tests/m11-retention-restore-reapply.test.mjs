@@ -20,6 +20,7 @@ import {
 } from '../packages/sqlite-persistence/src/index.ts'
 import { retentionApply } from '../scripts/retention-apply.mjs'
 import { retentionReapply } from '../scripts/retention-reapply.mjs'
+import { writeOperatorPolicyFixture } from './fixtures/retention-hold-operator-fixtures.mjs'
 
 const reapplyScript = fileURLToPath(new URL('../scripts/retention-reapply.mjs', import.meta.url))
 
@@ -254,6 +255,7 @@ describe('retention restore-time reapplication (#194)', () => {
 
       // The snapshot predates the deletion — this is the hazard case.
       const snapshot = await provider.backup()
+      const { path: operatorPolicy } = await writeOperatorPolicyFixture(path)
 
       const applied = await apply([
         '--backend',
@@ -265,6 +267,8 @@ describe('retention restore-time reapplication (#194)', () => {
         '--now',
         assessedAt,
         '--apply',
+        '--hold-policy',
+        operatorPolicy,
         '--confirm',
         'command-inbox',
         '--journal',

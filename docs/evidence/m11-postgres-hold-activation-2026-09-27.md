@@ -117,8 +117,10 @@ historical failed SQLite suite or establish a complete fix.
 
 Current-head whole-package/workspace validation, CI and released activation remain required;
 the prior full SQLite package failures are not superseded by these PostgreSQL
-results. Host owner/session authorization and operator policy composition,
-released-hold disposition, independently durable hold/delete-outcome restore
+results. The subsequent [operator authorization checkpoint](m11-retention-operator-authorization-2026-09-27.md)
+wires protected target-bound policy and verified host grants into operator commands;
+it does not prove complete application/profile authorization or provisioning.
+Released-hold disposition, independently durable hold/delete-outcome restore
 reconciliation, all remaining durable classes and provider deletion coordination
 are incomplete. Original supported-profile/runtime/provider, security/evaluation,
 native-document and independent-human acceptance gates remain unchanged.

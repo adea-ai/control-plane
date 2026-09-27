@@ -148,6 +148,7 @@ export { PostgresInteractionCommandRepository } from './interaction-command-repo
 export { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.js'
 export {
   PostgresRetentionHoldRepository,
+  retentionHoldDatabaseAuthority,
   acquirePostgresRetentionHoldClassMutex,
   countPostgresMatchingActiveRetentionHolds,
 } from './retention-hold-repository.js'

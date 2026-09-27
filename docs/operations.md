@@ -295,14 +295,105 @@ they remain a durable reference until that lifecycle is defined. Running
 until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
-are eligible, and why the rest are retained. Deleting requires
-`--apply --confirm <class>`, where the class is `command-inbox` or
-`execution-events`. Only records that are expired, terminal,
+are eligible, and why the rest are retained. Deleting any supported class requires
+`--apply --confirm <class> --hold-policy /absolute/path/operator-policy.json`.
+The protected policy must bind the exact target and grant the verified operator
+class-wide `sweep` authority. Confirmation alone is not authorization, even when
+the database has no holds. Only records that are expired, terminal,
 reconciled, unreferenced and already carry their reserved rejection key are
 removed; the rejection key itself is kept, so a replay of the same scoped
 idempotency key still fails closed. `raced` counts candidates whose state moved
 between selection and deletion — those are left alone and picked up by a later
 pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
+
+### Operator policy and durable holds
+
+The host operator adapter is `scripts/retention-hold-admin.mjs`. Its policy is an
+explicit UTF-8 JSON file, not request-body policy, environment identity claims, or
+an implicit administrator grant. Keep it under the trusted operator's control:
+an absolute regular file owned by the current process UID, with no group/world
+write permission (for example `0600`). Symlinks, files over 256 KiB, unconfigured
+classes, unknown fields, target mismatches, and owners that differ from the decided
+retention policy are refused. Parent directories must also remain operator-controlled.
+This adapter fails closed where Unix UID/no-follow checks are unavailable; it is
+not Windows certification or a hosted product-user authorization endpoint.
+
+A SQLite policy for one class looks like this (replace the canonical database
+path and encoded OS username with the actual operator's values):
+
+```json
+{
+  "schemaVersion": 1,
+  "target": { "backend": "sqlite", "database": "/var/lib/control-plane/state.sqlite" },
+  "policy": {
+    "command-inbox": {
+      "owner": "platform-operator",
+      "scopes": ["class", "workspace", "project"],
+      "reasonCodes": ["legal-case"]
+    }
+  },
+  "grants": [
+    {
+      "actorPrincipalRef": "operator:os-user:alice",
+      "authorityRef": "authority:sqlite:local-os",
+      "classId": "command-inbox",
+      "scope": { "kind": "class" },
+      "actions": ["create", "release", "assess", "sweep"]
+    }
+  ]
+}
+```
+
+For PostgreSQL, the target is
+`{"backend":"postgres","database":"control_plane","host":"<neon-host>"}`;
+it must match the application credential's database and hostname exactly. The
+grant's authority is `authority:postgres:role:<encoded-current_user>`, read from
+the actual connection, not a role supplied in JSON or inferred from a username
+in the connection URL. The actor remains the verified encoded OS username.
+Provision individual trusted operator accounts and least-privilege database
+credentials; shared accounts give shared attribution. Database access alone is
+not an implicit owner grant.
+
+Include explicit class policies for all stored holds that a pass validates. A
+missing policy for a stored hold fails closed. Class owners remain those printed
+by `retention-report --classes`. Grant only necessary actions: `create` and
+`release` administer holds; `assess` and `sweep` authorize configured dry-run and
+physical passes. Workspace/project grants cannot authorize the current unscoped
+whole-class passes, even if they list `sweep`. There is no implicit widening to
+another workspace, project, or class.
+
+Create input is a strict JSON object with `operation: "create"`, a UUID-v4
+`holdId`, `classId`, canonical `scope`, configured `reasonCode`, and the verified
+session's `actorPrincipalRef` and `authorityRef`. Release input uses
+`operation: "release"`, the existing `holdId`, a UUID-v4 `requestId`,
+`expectedRevision: 0`, and the same matching session claims. Claims are compared
+with the real host session; the adapter never overwrites spoofed attribution.
+Release is explicit and revision-checked; retrying a create after release does
+not reactivate the hold. Output contains only status, operation, hold ID and
+revision, not the reason or principal.
+
+```sh
+bun scripts/retention-hold-admin.mjs --backend sqlite \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json --input /secure/hold-request.json
+
+bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json
+
+# Only after reviewing the dry run:
+bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json --apply --confirm command-inbox
+```
+
+PostgreSQL administration uses the same flags plus `--host <neon-host>` and
+`--database control_plane`. An unconfigured dry run remains possible only when
+the existing storage guards can prove there are no holds. An active matching
+hold prevents deletion and produces no deletion-journal entry; releasing it
+does not restart the retention/reference clock. This host path does not prove
+full application/profile wiring, hold-event backup durability, provider TTL
+coordination, or restore-time outcome reconciliation.
 
 Restoring a snapshot that predates a deletion pass brings the compacted records
 back and can lose the rejection identities that keep replays failing closed. Every

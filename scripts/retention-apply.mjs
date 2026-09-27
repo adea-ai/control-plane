@@ -1,5 +1,5 @@
 import { closeSync, fsyncSync, openSync, writeSync } from 'node:fs'
-import { lstat } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
@@ -11,7 +11,8 @@ import { loadDatabaseCredentials } from '../packages/config/src/database.ts'
 
 // Operator-invoked retention deletion (#194). Physical deletion stays out of
 // the running services: nothing deletes unless an operator runs this command
-// with --apply --confirm <class> against an explicit target.
+// with --apply --confirm <class> and an explicit authorized operator policy
+// against an explicit target. Class-wide passes need class-wide authority.
 //
 // Dry-run is the default. Every pass revalidates the shared eligibility
 // predicate per candidate at deletion time, reserves nothing it cannot prove,
@@ -30,6 +31,7 @@ const optionSchema = {
   class: { type: 'string' },
   database: { type: 'string' },
   host: { type: 'string' },
+  'hold-policy': { type: 'string' },
   bound: { type: 'string' },
   'after-id': { type: 'string' },
   journal: { type: 'string' },
@@ -45,6 +47,7 @@ export async function retentionApply({
   writeErr = (text) => process.stderr.write(text),
 } = {}) {
   let close = async () => {}
+  let exitCode = 1
   try {
     const { values } = parseArgs({
       args: argv,
@@ -56,6 +59,7 @@ export async function retentionApply({
       throw new Error('INVALID_ARGUMENTS')
     const dryRun = values.apply !== true
     if (!dryRun && values.confirm !== values.class) throw new Error('CONFIRMATION_REQUIRED')
+    if (!dryRun && !values['hold-policy']) throw new Error('OPERATOR_POLICY_REQUIRED')
     const now = values.now === undefined ? new Date() : new Date(values.now)
     if (Number.isNaN(now.getTime())) throw new Error('INVALID_INSTANT')
     const bound = values.bound === undefined ? undefined : Number(values.bound)
@@ -115,6 +119,24 @@ export async function retentionApply({
       if (values.host || !isAbsolute(values.database)) throw new Error('INVALID_TARGET')
       const stat = await lstat(values.database)
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('INVALID_TARGET')
+      if (values['hold-policy']) {
+        const { loadRetentionHoldOperatorPolicy, readVerifiedRetentionHoldSession } =
+          await import('./retention-hold-operator.mjs')
+        const operator = await loadRetentionHoldOperatorPolicy({
+          path: values['hold-policy'],
+          target: { backend: 'sqlite', database: await realpath(values.database) },
+        })
+        const session = await readVerifiedRetentionHoldSession()
+        if (
+          (await operator.authorizeClassAction({
+            session,
+            classId: values.class,
+            action: dryRun ? 'assess' : 'sweep',
+          })) !== true
+        )
+          throw new Error('OPERATOR_CLASS_DENIED')
+        options.retentionHoldPolicy = operator.policy
+      }
       const sqlite = await import('@control-plane/sqlite-persistence')
       const provider = new sqlite.SqlitePersistenceProvider({ path: values.database })
       close = async () => provider.close()
@@ -135,6 +157,24 @@ export async function retentionApply({
       ])
       const connection = createPostgresConnection(credentials)
       close = () => connection.close()
+      if (values['hold-policy']) {
+        const { loadRetentionHoldOperatorPolicy, readVerifiedRetentionHoldSession } =
+          await import('./retention-hold-operator.mjs')
+        const operator = await loadRetentionHoldOperatorPolicy({
+          path: values['hold-policy'],
+          target: { backend: 'postgres', host: target.hostname, database: values.database },
+        })
+        const session = await readVerifiedRetentionHoldSession({ database: connection.database })
+        if (
+          (await operator.authorizeClassAction({
+            session,
+            classId: values.class,
+            action: dryRun ? 'assess' : 'sweep',
+          })) !== true
+        )
+          throw new Error('OPERATOR_CLASS_DENIED')
+        options.retentionHoldPolicy = operator.policy
+      }
       const Repository = await resolvePostgresRepository(postgresRepositoryFor)
       result = await new Repository(connection.database)[apply](now, options)
     } else throw new Error('INVALID_BACKEND')
@@ -154,18 +194,18 @@ export async function retentionApply({
         result,
       })}\n`
     )
-    return 0
+    exitCode = 0
   } catch {
     writeErr('RETENTION_APPLY_FAILED\n')
-    return 1
   } finally {
     try {
       await close()
     } catch {
       writeErr('RETENTION_APPLY_CLOSE_FAILED\n')
-      process.exitCode = 1
+      exitCode = 1
     }
   }
+  return exitCode
 }
 
 if (import.meta.main) {

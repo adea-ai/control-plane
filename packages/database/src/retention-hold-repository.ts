@@ -28,6 +28,19 @@ type PostgresRetentionHoldTarget = {
     | { readonly kind: 'project'; readonly workspaceId: string; readonly projectId: string }
 }
 
+/** Authority is read from the authenticated connection, not request or URL claims. */
+export async function retentionHoldDatabaseAuthority(
+  database: ControlPlaneDatabase
+): Promise<string> {
+  const rows = await database.execute<{ operator_role: string }>(
+    sql`select current_user as operator_role`
+  )
+  const role = rows[0]?.operator_role
+  if (typeof role !== 'string' || role.length === 0)
+    throw new RetentionHoldError('RETENTION_HOLD_SESSION_REQUIRED')
+  return `authority:postgres:role:${encodeURIComponent(role)}`
+}
+
 export class PostgresRetentionHoldRepository implements RetentionHoldRepository {
   readonly #policy: RetentionHoldPolicy
 

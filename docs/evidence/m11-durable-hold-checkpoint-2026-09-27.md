@@ -56,11 +56,13 @@ preserving schema-validated identifiers without casts or weakened validation.
 
 The subsequent [PostgreSQL activation checkpoint](m11-postgres-hold-activation-2026-09-27.md)
 wires all thirteen hold facts, corrects two independently reviewed claim defects
-and records actual physical hold tests for five classes. Physical hold activation
-tests for the other five classes and complete current-candidate validation are
-still required; the PostgreSQL results do not supersede the SQLite failures above.
-Owner authorization must be composed, not inferred from role labels or OS/database attribution
-alone. Operator policy wiring, released-hold disposition, independently durable
+and now records actual physical hold tests for all ten existing deletion classes.
+Complete current-candidate validation remains required; the PostgreSQL results
+do not supersede the SQLite failures above. The subsequent
+[operator authorization checkpoint](m11-retention-operator-authorization-2026-09-27.md)
+composes explicit policy and host-verified grants into hold administration and
+physical sweeps. This does not certify every application/profile boundary.
+Released-hold disposition, independently durable
 hold/deletion-outcome reconciliation before restore exposure, remaining durable
 classes and external provider deletion/hold coordination are incomplete.
 
