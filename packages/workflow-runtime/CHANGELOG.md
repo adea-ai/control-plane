@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.4.2...workflow-runtime-v1.4.3) (2026-09-27)
+
+
+### Bug Fixes
+
+* **m11:** close approval and retention audit gaps ([#740](https://github.com/adea-ai/control-plane/issues/740)) ([58559d9](https://github.com/adea-ai/control-plane/commit/58559d9a0b4b4283396635f8b25bf633f4a87beb))
+
 ## [1.4.2](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.4.1...workflow-runtime-v1.4.2) (2026-09-21)
 
 
