@@ -220,7 +220,7 @@ export class RuntimeEventIngestionService {
     source: RuntimeEventSourceChannel
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayProgressEnvelopeSchema.parse(frameValue)
-    const context = await this.#context(frame, source, false)
+    let context = await this.#context(frame, source, false)
     this.#assertInlineBound(frame.event.data)
     let normalized: RuntimeExecutionProgress
     try {
@@ -234,6 +234,9 @@ export class RuntimeEventIngestionService {
       return this.#reject(frame, 'RUNTIME_EVENT_STALE_SEQUENCE')
     }
     this.#assertInlineBound(normalized.data)
+    // Normalization may perform remote artifact/policy reads. Do not borrow
+    // channel or command authority observed before that asynchronous work.
+    context = await this.#context(frame, source, false)
     const result = await this.#effects.applyProgress({
       commandId: frame.commandId,
       eventSequence: frame.eventSequence,
@@ -254,7 +257,7 @@ export class RuntimeEventIngestionService {
     source: RuntimeEventSourceChannel
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayResultEnvelopeSchema.parse(frameValue)
-    const context = await this.#context(frame, source, true)
+    let context = await this.#context(frame, source, true)
     if ('data' in frame.result) this.#assertInlineBound(frame.result.data)
     let normalized: NormalizedRuntimeTerminal | undefined
     try {
@@ -262,6 +265,7 @@ export class RuntimeEventIngestionService {
     } catch {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
+    context = await this.#context(frame, source, true)
     if (normalized === undefined) return { outcome: 'applied' }
     const expectedState = {
       succeeded: 'completed',
@@ -286,7 +290,7 @@ export class RuntimeEventIngestionService {
       return this.#reject(frame, 'RUNTIME_EVENT_SCOPE_MISMATCH')
     }
     const commandFrame = { ...frame, commandId: frame.commandId, payloadHash: frame.payloadHash }
-    const context = await this.#context(commandFrame, source, false, true)
+    let context = await this.#context(commandFrame, source, false, true)
     let normalized: NormalizedRuntimeTerminal
     try {
       normalized = await this.#normalizer.normalizeError({ frame: commandFrame, ...context })
@@ -296,6 +300,7 @@ export class RuntimeEventIngestionService {
     if (normalized.state !== 'failed') {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
+    context = await this.#context(commandFrame, source, false, true)
     return this.#applyTerminal(commandFrame, context, normalized)
   }
 

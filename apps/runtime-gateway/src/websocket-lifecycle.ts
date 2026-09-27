@@ -230,6 +230,43 @@ export class RuntimeGatewayWebSocketLifecycle {
     this.#metrics.increment('runtime_gateway.inbound_failures')
   }
 
+  /** Current local channel authority, including durable credential revocation. */
+  async isChannelActive(
+    source: Pick<ActiveRuntimeNodeChannelRecord, 'nodeId' | 'workspaceId' | 'channelGeneration'>
+  ): Promise<boolean> {
+    if (this.#draining) return false
+    try {
+      const owner = await this.#coordination.lookup(source.nodeId)
+      const connection =
+        owner?.gatewayInstanceId === this.#instanceId
+          ? this.#connections.get(owner.connectionId)
+          : undefined
+      if (
+        !owner ||
+        owner.nodeId !== source.nodeId ||
+        owner.workspaceId !== source.workspaceId ||
+        owner.channelGeneration !== source.channelGeneration ||
+        connection?.state !== 'active' ||
+        !connection.record ||
+        !sameChannel(connection.record, owner)
+      )
+        return false
+      await connection.authenticatedChannel.assertActive()
+      // Revocation reads can yield while another instance replaces ownership.
+      const current = await this.#coordination.lookup(source.nodeId)
+      return (
+        !this.#draining &&
+        connection.state === 'active' &&
+        connection.authenticatedChannel.active &&
+        current !== undefined &&
+        sameChannel(owner, current)
+      )
+    } catch {
+      // Registry/coordination outages cannot confer credential authority.
+      return false
+    }
+  }
+
   async disconnect(connectionId: string, reason = 'peer_disconnected'): Promise<void> {
     const connection = this.#connections.get(connectionId)
     if (connection !== undefined) await this.#disconnect(connection, 1000, reason)

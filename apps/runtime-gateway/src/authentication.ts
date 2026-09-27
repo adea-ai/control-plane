@@ -60,7 +60,8 @@ export class RuntimeNodeChannel {
     this.#invalidationReason ??= reason
   }
 
-  async assertCommandAllowed(commandValue: unknown): Promise<void> {
+  /** Rechecks durable revocation even when its notification has not arrived. */
+  async assertActive(): Promise<void> {
     if (
       await this.#identityValidator.isRevoked(
         this.claims.credentialId,
@@ -78,6 +79,10 @@ export class RuntimeNodeChannel {
             : 'RUNTIME_NODE_CHANNEL_REPLACED'
       )
     }
+  }
+
+  async assertCommandAllowed(commandValue: unknown): Promise<void> {
+    await this.assertActive()
     const command = GatewayCommandEnvelopeSchema.parse(commandValue)
     if (
       command.nodeId !== this.claims.nodeId ||

@@ -25,6 +25,56 @@ const source = {
 }
 
 describe('Runtime Gateway event ingestion', () => {
+  test.each(
+    ['Progress', 'Result', 'Error'].flatMap((kind) =>
+      ['revoked', 'replaced'].map((change) => [kind, change])
+    )
+  )('rechecks channel authority after %s normalization when %s', async (kind, change) => {
+    const normalizer = new FixtureNormalizer()
+    const method = `normalize${kind}`
+    const normalize = normalizer[method].bind(normalizer)
+    let fixture
+    normalizer[method] = async (input) => {
+      const normalized = await normalize(input)
+      if (change === 'revoked') fixture.authority.active = false
+      else
+        await fixture.delivery.deliver(golden.command.commandId, {
+          channelGeneration: 2,
+          sequence: 10,
+        })
+      return normalized
+    }
+    fixture = await setup(normalizer)
+
+    await expect(
+      fixture.ingestion[`ingest${kind}`](golden[kind.toLowerCase()], source)
+    ).rejects.toMatchObject({ code: 'RUNTIME_EVENT_STALE_CHANNEL' })
+
+    expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
+    expect(await fixture.lifecycle.getExecution(golden.command.executionId)).toMatchObject({
+      state: 'running',
+    })
+    expect(await fixture.executions.getAttempt(golden.command.attemptId)).toMatchObject({
+      state: 'running',
+    })
+    expect(fixture.quarantine.records.at(-1).reason).toBe('RUNTIME_EVENT_STALE_CHANNEL')
+  })
+
+  test('rechecks authority before accepting a result with no normalized terminal effect', async () => {
+    const normalizer = new FixtureNormalizer()
+    let fixture
+    normalizer.normalizeResult = async () => {
+      fixture.authority.active = false
+      return undefined
+    }
+    fixture = await setup(normalizer)
+
+    await expect(fixture.ingestion.ingestResult(golden.result, source)).rejects.toMatchObject({
+      code: 'RUNTIME_EVENT_STALE_CHANNEL',
+    })
+    expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
+  })
+
   test.each(['succeeded', 'failed', 'cancelled'])(
     'persists observed %s terminal usage once with authenticated command attribution',
     async (status) => {

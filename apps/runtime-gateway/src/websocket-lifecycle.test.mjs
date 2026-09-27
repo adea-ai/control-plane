@@ -15,6 +15,67 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test('checks local authenticated ownership rather than coordinated metadata alone', async () => {
+    const fixture = setup('authority-check')
+    const authenticated = channel(1)
+    const source = { nodeId, workspaceId, channelGeneration: 1 }
+    fixture.gateway.open(connection('authority-channel', authenticated, new FakeSocket()))
+    try {
+      expect(await fixture.gateway.isChannelActive(source)).toBe(false)
+      await fixture.gateway.receive('authority-channel', JSON.stringify(hello(1)))
+      expect(await fixture.gateway.isChannelActive(source)).toBe(true)
+      expect(await fixture.gateway.isChannelActive({ ...source, channelGeneration: 2 })).toBe(false)
+      expect(
+        await fixture.gateway.isChannelActive({
+          ...source,
+          workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG',
+        })
+      ).toBe(false)
+      authenticated.invalidate('revoked')
+      expect(await fixture.coordination.lookup(nodeId)).toBeDefined()
+      expect(await fixture.gateway.isChannelActive(source)).toBe(false)
+    } finally {
+      await fixture.gateway.close()
+    }
+    expect(await fixture.gateway.isChannelActive(source)).toBe(false)
+  })
+
+  test.each(['revoked', 'unavailable', 'replaced'])(
+    'fails channel authority closed when durable validation is %s without a sweep',
+    async (failure) => {
+      const fixture = setup('durable-authority-check')
+      let changed = false
+      const authenticated = new RuntimeNodeChannel(
+        channel(1).claims,
+        {
+          async isRevoked() {
+            if (!changed) return false
+            if (failure === 'unavailable') throw new Error('private-registry-detail')
+            if (failure === 'replaced') {
+              const owner = await fixture.coordination.lookup(nodeId)
+              await fixture.coordination.claim({ ...owner, channelGeneration: 2 })
+              return false
+            }
+            return true
+          },
+          subscribeRevocations: () => () => undefined,
+          verify: async () => undefined,
+        },
+        { now: () => new Date('2026-08-25T12:00:01.000Z') }
+      )
+      fixture.gateway.open(connection('durable-authority-channel', authenticated, new FakeSocket()))
+      try {
+        await fixture.gateway.receive('durable-authority-channel', JSON.stringify(hello(1)))
+        const source = { nodeId, workspaceId, channelGeneration: 1 }
+        expect(await fixture.gateway.isChannelActive(source)).toBe(true)
+        changed = true
+        expect(await fixture.gateway.isChannelActive(source)).toBe(false)
+      } finally {
+        await fixture.gateway.close()
+      }
+    }
+  )
+
   test('recovers bounded context pages on connection and heartbeat and resets cursor on replacement', async () => {
     const calls = []
     const signals = []
