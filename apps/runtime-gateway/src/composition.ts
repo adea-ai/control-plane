@@ -50,6 +50,7 @@ import {
   type GatewayContextProviderBinding,
 } from './context-provider-composition.js'
 import { ContextCommandArtifactStore } from './context-result-store.js'
+import { RuntimeCommandArtifactVerifier } from './runtime-artifact-verifier.js'
 import { RuntimeGatewayMessageRouter } from './runtime-message-handler.js'
 import {
   RuntimeCommandDeliveryError,
@@ -307,12 +308,14 @@ export async function composeRuntimeGateway(
     let runtimePending: RuntimePendingCommandDispatcher | undefined
     if (runtimeOptions !== undefined && runtimeCommands !== undefined) {
       const baseNormalizer = new DefaultRuntimeAdapterEventNormalizer()
+      const storedArtifactVerifier = new RuntimeCommandArtifactVerifier(objectStore)
       const normalizer: RuntimeAdapterEventNormalizer = {
         normalizeProgress: (input) => baseNormalizer.normalizeProgress(input),
         normalizeError: (input) => baseNormalizer.normalizeError(input),
         normalizeResult: async (input) => {
           if (input.frame.status === 'succeeded' && 'artifact' in input.frame.result) {
             const artifact = GatewayArtifactReferenceSchema.parse(input.frame.result.artifact)
+            await storedArtifactVerifier.verify({ command: input.command, artifact })
             await runtimeOptions.artifactVerifier.verify({ command: input.command, artifact })
           }
           return baseNormalizer.normalizeResult(input)
@@ -395,15 +398,7 @@ export async function composeRuntimeGateway(
         metrics,
         ...(runtimeOptions.now === undefined ? {} : { now: runtimeOptions.now }),
         channelAuthority: {
-          isActive: async (source: RuntimeEventSourceChannel) => {
-            const owner = await coordination.lookup(source.nodeId)
-            return (
-              owner !== undefined &&
-              owner.nodeId === source.nodeId &&
-              owner.workspaceId === source.workspaceId &&
-              owner.channelGeneration === source.channelGeneration
-            )
-          },
+          isActive: (source: RuntimeEventSourceChannel) => lifecycle.isChannelActive(source),
         },
       })
       runtime = {

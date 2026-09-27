@@ -3,6 +3,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control-plane/domain'
+import { FilesystemObjectStore } from '@control-plane/object-store'
 import {
   InMemoryExecutionEventRepository,
   InMemoryRuntimeEventEffectSink,
@@ -107,6 +108,7 @@ test.each(['succeeded', 'failed', 'cancelled'])(
         )
 
         const terminalUsage = { inputTokens: 12, outputTokens: 4, durationMs: 120 }
+        const storedArtifact = status === 'succeeded' ? await fixture.seedArtifact() : undefined
         const result = {
           ...golden.result,
           protocolVersion: { major: 1, minor: 7 },
@@ -117,12 +119,7 @@ test.each(['succeeded', 'failed', 'cancelled'])(
           result:
             status === 'succeeded'
               ? {
-                  artifact: {
-                    artifactId: 'art_01JABCDEF0123456789ABCDEFG',
-                    digest: `sha256:${'a'.repeat(64)}`,
-                    mediaType: 'application/json',
-                    sizeBytes: 10,
-                  },
+                  artifact: storedArtifact.artifact,
                 }
               : { data: { error: { code: 'RUNTIME_FAILED', retryable: false } } },
         }
@@ -211,6 +208,39 @@ test('context-only composition stays backward compatible and exposes no runtime 
 test('composed terminal artifact requires the host verifier before execution effects', async () => {
   const fixture = await createFixture({ artifactDenied: true })
   try {
+    const storedArtifact = await fixture.seedArtifact()
+    await fixture.composition.runtime.delivery.enqueue(golden.command)
+    fixture.composition.webSocketServer.start()
+    const socket = await fixture.connect(1)
+    try {
+      const command = await fixture.waitForFrame(socket, (frame) => frame.type === 'command')
+      socket.send(
+        JSON.stringify({
+          ...golden.result,
+          sequence: command.sequence + 1,
+          channelGeneration: 1,
+          status: 'succeeded',
+          result: { artifact: storedArtifact.artifact },
+        })
+      )
+      await fixture.until(() => fixture.quarantine.records.length === 1)
+      expect(fixture.artifactVerifications).toHaveLength(1)
+      expect(
+        await fixture.composition.runtime.delivery.get(golden.command.commandId)
+      ).toMatchObject({ status: 'dispatched' })
+      expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
+      expect(fixture.quarantine.records).toHaveLength(1)
+    } finally {
+      socket.close()
+    }
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('a no-op host verifier cannot authorize a missing terminal artifact', async () => {
+  const fixture = await createFixture()
+  try {
     await fixture.composition.runtime.delivery.enqueue(golden.command)
     fixture.composition.webSocketServer.start()
     const socket = await fixture.connect(1)
@@ -224,7 +254,7 @@ test('composed terminal artifact requires the host verifier before execution eff
           status: 'succeeded',
           result: {
             artifact: {
-              artifactId: 'art_01JABCDEF0123456789ABCDEFG',
+              artifactId: `art_${golden.command.attemptId.slice(4)}`,
               digest: `sha256:${'a'.repeat(64)}`,
               mediaType: 'application/json',
               sizeBytes: 10,
@@ -232,13 +262,143 @@ test('composed terminal artifact requires the host verifier before execution eff
           },
         })
       )
-      await fixture.until(() => fixture.quarantine.records.length === 1)
-      expect(fixture.artifactVerifications).toHaveLength(1)
+      await fixture.until(async () => {
+        const commandRecord = await fixture.composition.runtime.delivery.get(
+          golden.command.commandId
+        )
+        return (
+          fixture.quarantine.records.length > 0 ||
+          ['succeeded', 'failed', 'cancelled'].includes(commandRecord?.status)
+        )
+      })
+      expect(fixture.quarantine.records).toHaveLength(1)
+      expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
       expect(
         await fixture.composition.runtime.delivery.get(golden.command.commandId)
       ).toMatchObject({ status: 'dispatched' })
+    } finally {
+      socket.close()
+    }
+  } finally {
+    await fixture.close()
+  }
+})
+
+test.each([
+  ['missing object', async (fixture, reference) => fixture.objectStore.delete(reference.key)],
+  [
+    'corrupt stored bytes',
+    async (fixture, reference) =>
+      fixture.objectStore.put({
+        key: reference.key,
+        body: new TextEncoder().encode('{"result":"corrupt"}'),
+        contentType: 'application/json',
+        metadata: { attempt: golden.command.attemptId },
+      }),
+  ],
+  [
+    'wrong attempt metadata',
+    async (fixture, reference) =>
+      fixture.objectStore.put({
+        key: reference.key,
+        body: reference.body,
+        contentType: 'application/json',
+        metadata: { attempt: `${golden.command.attemptId.slice(0, -1)}H` },
+      }),
+  ],
+  [
+    'wrong stored key',
+    async (fixture) => {
+      fixture.setArtifactStoreHooks({ head: (head) => ({ ...head, key: 'runtime-results/other' }) })
+    },
+  ],
+  [
+    'wrong artifact ID',
+    async (_fixture, reference) =>
+      (reference.artifact.artifactId = 'art_01JBBCDEF0123456789ABCDEFG'),
+  ],
+  [
+    'wrong media type',
+    async (_fixture, reference) => (reference.artifact.mediaType = 'text/plain'),
+  ],
+  ['wrong size', async (_fixture, reference) => (reference.artifact.sizeBytes += 1)],
+  ['oversized reference', async (_fixture, reference) => (reference.artifact.sizeBytes = 262145)],
+  [
+    'HEAD GET swap',
+    async (fixture, reference) => {
+      fixture.setArtifactStoreHooks({
+        beforeGet: async (key) =>
+          fixture.objectStore.put({
+            key,
+            body: new TextEncoder().encode('{"result":"replaced"}'),
+            contentType: 'application/json',
+            metadata: { attempt: golden.command.attemptId },
+          }),
+      })
+      return reference
+    },
+  ],
+])(
+  'composed %s artifact does not apply terminal effects or settle its command',
+  async (_name, mutate) => {
+    const fixture = await createFixture()
+    try {
+      const storedArtifact = await fixture.seedArtifact()
+      const reference = { ...storedArtifact, artifact: { ...storedArtifact.artifact } }
+      await mutate(fixture, reference)
+      await fixture.composition.runtime.delivery.enqueue(golden.command)
+      fixture.composition.webSocketServer.start()
+      const socket = await fixture.connect(1)
+      try {
+        const command = await fixture.waitForFrame(socket, (frame) => frame.type === 'command')
+        socket.send(
+          JSON.stringify({
+            ...golden.result,
+            sequence: command.sequence + 1,
+            channelGeneration: 1,
+            status: 'succeeded',
+            result: { artifact: reference.artifact },
+          })
+        )
+        await fixture.until(() => fixture.quarantine.records.length === 1)
+        expect(fixture.artifactVerifications).toEqual([])
+        expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
+        expect(
+          await fixture.composition.runtime.delivery.get(golden.command.commandId)
+        ).toMatchObject({ status: 'dispatched' })
+      } finally {
+        socket.close()
+      }
+    } finally {
+      await fixture.close()
+    }
+  }
+)
+
+test('revocation during supplemental artifact policy prevents terminal effects', async () => {
+  const fixture = await createFixture({ revokeCredentialDuringArtifactVerification: true })
+  try {
+    const storedArtifact = await fixture.seedArtifact()
+    await fixture.composition.runtime.delivery.enqueue(golden.command)
+    fixture.composition.webSocketServer.start()
+    const socket = await fixture.connect(1)
+    try {
+      const command = await fixture.waitForFrame(socket, (frame) => frame.type === 'command')
+      socket.send(
+        JSON.stringify({
+          ...golden.result,
+          sequence: command.sequence + 1,
+          channelGeneration: 1,
+          status: 'succeeded',
+          result: { artifact: storedArtifact.artifact },
+        })
+      )
+      await fixture.until(() => fixture.quarantine.records.length === 1)
+      expect(fixture.artifactVerifications).toHaveLength(1)
       expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toEqual([])
-      expect(fixture.quarantine.records).toHaveLength(1)
+      expect(
+        await fixture.composition.runtime.delivery.get(golden.command.commandId)
+      ).toMatchObject({ status: 'dispatched' })
     } finally {
       socket.close()
     }
@@ -304,7 +464,12 @@ test('a queued command above the negotiated protocol version remains unsent and 
   }
 })
 
-async function createFixture({ runtime = true, artifactDenied = false, denyAtValidation } = {}) {
+async function createFixture({
+  runtime = true,
+  artifactDenied = false,
+  revokeCredentialDuringArtifactVerification = false,
+  denyAtValidation,
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-runtime-gateway-'))
   ownedDirectories.add(directory)
   const path = join(directory, 'gateway.sqlite')
@@ -365,6 +530,12 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
     },
   }
   const artifactVerifications = []
+  const objectStoreStorage = new FilesystemObjectStore({
+    rootDirectory: join(directory, 'objects'),
+    maxObjectBytes: 64 * 1024 * 1024,
+  })
+  let artifactStoreHooks = {}
+  let activeCredentialId
   let validationCalls = 0
   const reconciled = []
   const authority = new SyntheticRuntimeNodeIdentityAuthority({
@@ -395,18 +566,19 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
     const result = await composeRuntimeGateway({
       store: { backend: 'sqlite', path },
       objectStore: {
-        async put() {
-          throw new Error('unused')
+        put: (input) => objectStoreStorage.put(input),
+        putIfAbsent: (input) => objectStoreStorage.putIfAbsent(input),
+        async get(key) {
+          await artifactStoreHooks.beforeGet?.(key)
+          const stored = await objectStoreStorage.get(key)
+          return artifactStoreHooks.get?.(stored, key) ?? stored
         },
-        async get() {
-          throw new Error('unused')
+        async head(key) {
+          const stored = await objectStoreStorage.head(key)
+          return artifactStoreHooks.head?.(stored, key) ?? stored
         },
-        async head() {
-          throw new Error('unused')
-        },
-        async delete() {
-          throw new Error('unused')
-        },
+        delete: (key) => objectStoreStorage.delete(key),
+        close: () => objectStoreStorage.close(),
       },
       authenticateUpgrade: async (request) => {
         const authenticationProof = JSON.parse(request.headers.get('x-test-node-proof') ?? 'null')
@@ -445,6 +617,12 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
               artifactVerifier: {
                 async verify(value) {
                   artifactVerifications.push(value)
+                  if (
+                    revokeCredentialDuringArtifactVerification &&
+                    activeCredentialId !== undefined
+                  ) {
+                    authority.revokeCredential(activeCredentialId)
+                  }
                   if (artifactDenied) throw new Error('artifact is not host-authorized')
                 },
               },
@@ -454,6 +632,7 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
         : {}),
       serve: (options) => {
         native = Bun.serve(options)
+        console.info(`owned-runtime-gateway pid=${process.pid} port=${native.port}`)
         return native
       },
       ...overrides,
@@ -477,6 +656,35 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
     events,
     quarantine,
     artifactVerifications,
+    objectStore: objectStoreStorage,
+    setArtifactStoreHooks(hooks) {
+      artifactStoreHooks = hooks
+    },
+    async seedArtifact({
+      attemptId = golden.command.attemptId,
+      key = `runtime-results/${attemptId}/result.json`,
+      body = new TextEncoder().encode('{"result":"ok"}'),
+      mediaType = 'application/json',
+      metadataAttempt = attemptId,
+    } = {}) {
+      const bytes = new Uint8Array(body)
+      const descriptor = await objectStoreStorage.put({
+        key,
+        body: bytes,
+        contentType: mediaType,
+        metadata: { attempt: metadataAttempt },
+      })
+      return {
+        key,
+        body: bytes,
+        artifact: {
+          artifactId: `art_${attemptId.slice(4)}`,
+          digest: descriptor.sha256,
+          mediaType,
+          sizeBytes: descriptor.size,
+        },
+      }
+    },
     reconciled,
     framesFor(socket) {
       return allFrames.get(socket) ?? []
@@ -495,6 +703,7 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
     async connect(channelGeneration, retainedCommandOutcomes = [], protocolMinor = 7) {
       generation = channelGeneration
       const issued = authority.issueCredential(device, { channelGeneration })
+      activeCredentialId = issued.claims.credentialId
       const proof = device.authenticationAttempt(issued.credential, expectation.challenge)
       const socket = new WebSocket(`ws://127.0.0.1:${native.port}/runtime-gateway/v1/connect`, {
         headers: { 'x-test-node-proof': JSON.stringify(proof) },
@@ -519,6 +728,7 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
       for (const socket of openSockets) socket.close()
       await composition.close()
       authenticator.close()
+      objectStoreStorage.close()
       await rm(directory, { recursive: true, force: true })
       ownedDirectories.delete(directory)
     },
