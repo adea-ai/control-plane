@@ -40,7 +40,7 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
     expect(await fixture.gateway.isChannelActive(source)).toBe(false)
   })
 
-  test.each(['revoked', 'unavailable', 'replaced'])(
+  test.each(['revoked', 'unavailable', 'replaced', 'workspace-changed'])(
     'fails channel authority closed when durable validation is %s without a sweep',
     async (failure) => {
       const fixture = setup('durable-authority-check')
@@ -54,6 +54,14 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
             if (failure === 'replaced') {
               const owner = await fixture.coordination.lookup(nodeId)
               await fixture.coordination.claim({ ...owner, channelGeneration: 2 })
+              return false
+            }
+            if (failure === 'workspace-changed') {
+              const lookup = fixture.coordination.lookup.bind(fixture.coordination)
+              fixture.coordination.lookup = async (id) => ({
+                ...(await lookup(id)),
+                workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG',
+              })
               return false
             }
             return true

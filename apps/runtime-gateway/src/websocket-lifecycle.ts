@@ -633,6 +633,7 @@ function sameChannel(
 ): boolean {
   return (
     left.nodeId === right.nodeId &&
+    left.workspaceId === right.workspaceId &&
     left.gatewayInstanceId === right.gatewayInstanceId &&
     left.connectionId === right.connectionId &&
     left.channelGeneration === right.channelGeneration
