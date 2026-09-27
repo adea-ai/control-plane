@@ -53,6 +53,13 @@ implement raw usage retention.
   root-relative formatting corrected them. The final full format check passed all 1,092
   files in 14.74s, followed by a clean whitespace check.
   The repository credential scanner passed 1,250 files; this is not a full security audit.
+- Final bounded replay-guard review found no actionable defect, but requested explicit
+  positive settlement replay after finalization and native reopen. That assertion and
+  actual SQLite persisted receipt corruption coverage were added. Valid-schema substitution
+  of another charge or alteration of released money survives reopen and is rejected without
+  changing entries; restoring the original receipt restores exact replay. Focused native
+  store/retention verification passed 19 tests, zero failures, 128 assertions in 6.69s.
+  These are additional native regressions, not a new full workspace run.
 
 - Initial native tests: four usage-store tests passed after correcting a fixture's missing
   expected revision. The native optimistic-concurrency guard was preserved.

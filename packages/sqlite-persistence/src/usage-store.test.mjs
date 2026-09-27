@@ -377,6 +377,91 @@ describe('SQLite durable usage transactions', () => {
     })
   })
 
+  test('native reopen rejects schema-valid altered replay receipts without changing entries', async () => {
+    const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
+    await withStore(async (provider, store) => {
+      const ledger = new DurableUsageLedger({ store })
+      const source = (idempotencyKey) => ({ sourceId: 'receipt-integrity', idempotencyKey })
+      await ledger.openBudget({
+        workspaceId,
+        executionId,
+        currency: 'USD',
+        maximumMicrounits: 1000,
+        maximumTokens: 100,
+        source: source('open'),
+      })
+      await ledger.reserve({
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'provider',
+        maximumMicrounits: 800,
+        maximumTokens: 80,
+        source: source('reserve'),
+      })
+      const chargeInput = {
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'provider',
+        kind: 'model_usage',
+        quantity: { unit: 'tokens', value: 10 },
+        costMicrounits: 100,
+        fundingSource: 'hq_managed',
+        source: source('charge-one'),
+      }
+      const charge = await ledger.charge(chargeInput)
+      const otherCharge = await ledger.charge({ ...chargeInput, source: source('charge-two') })
+      const settleInput = {
+        workspaceId,
+        executionId,
+        reservationKey: 'provider',
+        source: source('settle'),
+      }
+      const settlement = await ledger.settle(settleInput)
+      const before = await ledger.entries(workspaceId, executionId)
+      for (const [key, corruptedResult, replay, expected] of [
+        ['charge-one', otherCharge, (reopened) => reopened.charge(chargeInput), charge],
+        [
+          'settle',
+          { ...settlement, releasedMicrounits: settlement.releasedMicrounits + 1 },
+          (reopened) => reopened.settle(settleInput),
+          settlement,
+        ],
+      ]) {
+        const original = await provider.transaction(async (tx) => {
+          const record = (await tx.list(SQLITE_USAGE_NAMESPACES.effects)).find(
+            (receipt) => receipt.value.idempotencyKey === key
+          )
+          expect(record).toBeDefined()
+          await tx.put({
+            namespace: SQLITE_USAGE_NAMESPACES.effects,
+            id: record.id,
+            expectedRevision: record.revision,
+            value: { ...record.value, result: corruptedResult },
+          })
+          return record
+        })
+        provider.close()
+        await provider.migrate()
+        const reopened = new DurableUsageLedger({ store: new SqliteDurableUsageStore(provider) })
+        await expect(replay(reopened)).rejects.toThrow('STORE_STATE_INVALID')
+        expect(await reopened.entries(workspaceId, executionId)).toEqual(before)
+        await provider.transaction(async (tx) => {
+          const damaged = await tx.get(SQLITE_USAGE_NAMESPACES.effects, original.id)
+          await tx.put({
+            namespace: SQLITE_USAGE_NAMESPACES.effects,
+            id: original.id,
+            expectedRevision: damaged.revision,
+            value: original.value,
+          })
+        })
+        expect(await replay(reopened)).toEqual(expected)
+        expect(await reopened.entries(workspaceId, executionId)).toEqual(before)
+      }
+    })
+  })
+
   test('public durable service preserves charge replay after native reopen and budget finalization', async () => {
     const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
     await withStore(async (provider, store) => {
@@ -411,18 +496,20 @@ describe('SQLite durable usage transactions', () => {
         source: source('charge'),
       }
       const first = await ledger.charge(charge)
-      await ledger.settle({
+      const settleInput = {
         workspaceId,
         executionId,
         reservationKey: 'provider',
         source: source('settle'),
-      })
+      }
+      const settled = await ledger.settle(settleInput)
       await ledger.finalizeBudget({ workspaceId, executionId, source: source('finalize') })
       const before = await ledger.entries(workspaceId, executionId)
       provider.close()
       await provider.migrate()
       const reopened = new DurableUsageLedger({ store: new SqliteDurableUsageStore(provider) })
       expect(await reopened.charge(charge)).toEqual(first)
+      expect(await reopened.settle(settleInput)).toEqual(settled)
       await expect(reopened.charge({ ...charge, costMicrounits: 251 })).rejects.toThrow(
         'IDEMPOTENCY_CONFLICT'
       )
