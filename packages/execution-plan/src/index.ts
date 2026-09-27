@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
-import { ContextPackageReferenceSchema, ContextPackageSchema } from '@control-plane/context'
+import {
+  ContextPackageReferenceSchema,
+  ContextPackageSchema,
+  assertContextPackageIntegrity,
+  assertContextPackageDerivedFrom,
+} from '@control-plane/context'
 import {
   IdentifierSchemas,
   ServiceCallerAssertionSchema,
@@ -262,6 +267,57 @@ export function deriveExecutionPlan(parentInput: unknown, input: unknown): Execu
       contentDigest: parent.contentDigest,
     },
   })
+}
+
+/** Verify a child plan using the same authority and runtime derivation rules used at creation. */
+export function assertExecutionPlanDerivedFrom(
+  parentInput: unknown,
+  childInput: unknown,
+  parentContextPackageInput: unknown,
+  childContextPackageInput: unknown
+): ExecutionPlan {
+  const parent = assertExecutionPlanIntegrity(parentInput)
+  const child = assertExecutionPlanIntegrity(childInput)
+  let parentContextPackage: z.output<typeof ContextPackageSchema>
+  let childContextPackage: z.output<typeof ContextPackageSchema>
+  try {
+    parentContextPackage = assertContextPackageIntegrity(parentContextPackageInput)
+    childContextPackage = assertContextPackageIntegrity(childContextPackageInput)
+  } catch {
+    fail('CONTRADICTORY_REFERENCE', child.executionPlanId)
+  }
+  if (
+    canonical(contextPin(parentContextPackage)) !== canonical(parent.contextPackage) ||
+    canonical(contextPin(childContextPackage)) !== canonical(child.contextPackage)
+  ) {
+    fail('CONTRADICTORY_REFERENCE', child.executionPlanId)
+  }
+
+  const derivationParentContext = canonicalContextPackage(parentContextPackage)
+  const derivationChildContext = canonicalContextPackage(childContextPackage)
+  const sameContext =
+    canonical(contextPin(parentContextPackage)) === canonical(contextPin(childContextPackage))
+  if (!sameContext) {
+    assertContextPackageDerivedFrom(parentContextPackage, childContextPackage)
+  }
+  const derivationParent = sameContext
+    ? { ...parent, contextPackage: contextPin(derivationParentContext) }
+    : parent
+  const derived = deriveExecutionPlan(derivationParent, {
+    correlation: child.correlation,
+    contextPackage: derivationChildContext,
+    constraints: child.constraints,
+    runtimeRequirements: child.runtimeRequirements,
+    outputContract: child.outputContract,
+    compiledAt: child.compiledAt,
+  })
+  if (
+    canonical(withoutExecutionPlanIdentity(derived)) !==
+    canonical(withoutExecutionPlanIdentity(child))
+  ) {
+    fail('CHILD_AUTHORITY_EXPANSION', child.executionPlanId)
+  }
+  return child
 }
 
 export interface ExecutionPlanRepository {
@@ -619,6 +675,28 @@ function assertContextIntegrity(contextPackage: z.output<typeof ContextPackageSc
     contextPackage.contextPackageId !== hashIdentifier('ctx', expectedDigest)
   ) {
     fail('CONTRADICTORY_REFERENCE', contextPackage.contextPackageId)
+  }
+}
+
+function canonicalContextPackage(
+  contextPackage: z.output<typeof ContextPackageSchema>
+): z.output<typeof ContextPackageSchema> {
+  const content = omitIdentity(contextPackage, 'contextPackageId')
+  const contentDigest = sha256(normalize(content))
+  return ContextPackageSchema.parse({
+    ...content,
+    contextPackageId: hashIdentifier('ctx', contentDigest),
+    contentDigest,
+  })
+}
+
+function withoutExecutionPlanIdentity(plan: ExecutionPlan): Record<string, unknown> {
+  return {
+    ...omitIdentity(plan, 'executionPlanId'),
+    contextPackage: {
+      schemaVersion: plan.contextPackage.schemaVersion,
+      compilerVersion: plan.contextPackage.compilerVersion,
+    },
   }
 }
 

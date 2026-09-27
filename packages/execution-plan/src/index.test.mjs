@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
+import {
+  contextPackageSerializationFixtures,
+  deriveContextPackage,
+  assertContextPackageIntegrity,
+} from '@control-plane/context'
 import {
   CommandInboxService,
   InMemoryCommandAcceptanceRepository,
@@ -11,6 +15,8 @@ import {
   ExecutionPlanError,
   InMemoryExecutionPlanRepository,
   deriveExecutionPlan,
+  assertExecutionPlanIntegrity,
+  assertExecutionPlanDerivedFrom,
 } from './index.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -55,7 +61,14 @@ function legacyDigest(content) {
   return `sha256:${createHash('sha256').update(serialized).digest('hex')}`
 }
 
-function legacyIdentifier(digestValue) {
+function legacyContextDigest(content) {
+  const { createHash } = require('node:crypto')
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(legacyNormalize(content)))
+    .digest('hex')}`
+}
+
+function legacyIdentifier(digestValue, prefix = 'pln') {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
   const bytes = Buffer.from(digestValue.slice(7, 39), 'hex')
   let bits = 0
@@ -70,7 +83,31 @@ function legacyIdentifier(digestValue) {
     }
   }
   if (bits > 0) output += alphabet[(value << (5 - bits)) & 31]
-  return `pln_${output.slice(0, 26)}`
+  return `${prefix}_${output.slice(0, 26)}`
+}
+
+function rehashExecutionPlan(plan) {
+  const { executionPlanId: _executionPlanId, contentDigest: _contentDigest, ...content } = plan
+  const contentDigest = legacyDigest(content)
+  return {
+    ...content,
+    executionPlanId: legacyIdentifier(contentDigest),
+    contentDigest,
+  }
+}
+
+function rehashContextPackage(package_) {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    ...content
+  } = package_
+  const contentDigest = legacyContextDigest(content)
+  return {
+    ...content,
+    contextPackageId: legacyIdentifier(contentDigest, 'ctx'),
+    contentDigest,
+  }
 }
 
 describe('execution plan digest cutover', () => {
@@ -329,6 +366,207 @@ describe('immutable ExecutionPlan compilation', () => {
         'CHILD_AUTHORITY_EXPANSION'
       )
     }
+  })
+
+  test('revalidates child plan authority, inherited pins, and resolved context pins', () => {
+    const parent = compile(baseInput())
+    const parentContext = contextPackageSerializationFixtures.futurePi
+    const childContext = deriveContextPackage(parentContext, {
+      objective: 'Complete the focused child task',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: { maximumBytes: 512, maximumTokens: 128 },
+      successCriteria: ['Return focused output'],
+      returnContract: { contractRef: 'contract://adapter-result/v1' },
+      compiledAt: '2026-08-23T12:30:00.000Z',
+    })
+    const childConstraints = globalThis.structuredClone(parent.constraints)
+    childConstraints.tools.grants[0].operations = ['read']
+    const child = deriveExecutionPlan(parent, childInput(childConstraints, childContext))
+    expect(assertExecutionPlanDerivedFrom(parent, child, parentContext, childContext)).toEqual(
+      child
+    )
+
+    const legacyChild = rehashExecutionPlan(child)
+    expect(assertExecutionPlanIntegrity(legacyChild)).toEqual(legacyChild)
+    expect(
+      assertExecutionPlanDerivedFrom(parent, legacyChild, parentContext, childContext)
+    ).toEqual(legacyChild)
+
+    const requiredCapability = parent.runtimeRequirements.find(
+      ({ necessity }) => necessity === 'required'
+    )?.capability
+    expect(requiredCapability).toBeDefined()
+    const invalidPlans = [
+      {
+        plan: {
+          ...child,
+          constraints: {
+            ...child.constraints,
+            tools: {
+              ...child.constraints.tools,
+              grants: child.constraints.tools.grants.map((grant, index) =>
+                index === 0 ? { ...grant, operations: [...grant.operations, 'admin'] } : grant
+              ),
+            },
+          },
+        },
+        code: 'CHILD_AUTHORITY_EXPANSION',
+      },
+      {
+        plan: {
+          ...child,
+          runtimeRequirements: child.runtimeRequirements.filter(
+            ({ capability }) => capability !== requiredCapability
+          ),
+        },
+        code: 'CHILD_AUTHORITY_EXPANSION',
+      },
+      {
+        plan: { ...child, profile: { ...child.profile, contentDigest: digest('c') } },
+        code: 'CHILD_AUTHORITY_EXPANSION',
+      },
+      {
+        plan: {
+          ...child,
+          skills: child.skills.map((skill, index) =>
+            index === 0 ? { ...skill, contentDigest: digest('c') } : skill
+          ),
+        },
+        code: 'CHILD_AUTHORITY_EXPANSION',
+      },
+      {
+        plan: {
+          ...child,
+          contextPackage: {
+            ...child.contextPackage,
+            schemaVersion: child.contextPackage.schemaVersion + 1,
+          },
+        },
+        code: 'CONTRADICTORY_REFERENCE',
+      },
+      {
+        plan: {
+          ...child,
+          contextPackage: { ...child.contextPackage, compilerVersion: '2.0.0' },
+        },
+        code: 'CONTRADICTORY_REFERENCE',
+      },
+    ]
+
+    for (const { plan, code } of invalidPlans) {
+      const rehashed = rehashExecutionPlan(plan)
+      expect(assertExecutionPlanIntegrity(rehashed)).toEqual(rehashed)
+      expect(() =>
+        assertExecutionPlanDerivedFrom(parent, rehashed, parentContext, childContext)
+      ).toThrow(code)
+    }
+  })
+
+  test('revalidates a legacy same-context child without weakening resolved pins', () => {
+    const parentContext = rehashContextPackage(contextPackageSerializationFixtures.futurePi)
+    expect(assertContextPackageIntegrity(parentContext)).toEqual(parentContext)
+    const parent = compile(baseInput())
+    const parentWithLegacyPin = rehashExecutionPlan({
+      ...parent,
+      contextPackage: {
+        contextPackageId: parentContext.contextPackageId,
+        contentDigest: parentContext.contentDigest,
+        schemaVersion: parentContext.schemaVersion,
+        compilerVersion: parentContext.compiler.version,
+      },
+    })
+    const child = deriveExecutionPlan(
+      parent,
+      childInput(parent.constraints, contextPackageSerializationFixtures.futurePi)
+    )
+    const childWithLegacyPins = rehashExecutionPlan({
+      ...child,
+      contextPackage: { ...parentWithLegacyPin.contextPackage },
+      parentExecutionPlan: {
+        executionPlanId: parentWithLegacyPin.executionPlanId,
+        contentDigest: parentWithLegacyPin.contentDigest,
+      },
+    })
+
+    expect(
+      assertExecutionPlanDerivedFrom(
+        parentWithLegacyPin,
+        childWithLegacyPins,
+        parentContext,
+        parentContext
+      )
+    ).toEqual(childWithLegacyPins)
+
+    const changedContext = rehashContextPackage({
+      ...parentContext,
+      objective: `${parentContext.objective} changed`,
+    })
+    expect(() =>
+      assertExecutionPlanDerivedFrom(
+        parentWithLegacyPin,
+        childWithLegacyPins,
+        changedContext,
+        parentContext
+      )
+    ).toThrow('CONTRADICTORY_REFERENCE')
+  })
+
+  test('revalidates a distinct child context whose parent uses a legacy digest', () => {
+    const canonicalParentContext = contextPackageSerializationFixtures.futurePi
+    const legacyParentContext = rehashContextPackage(canonicalParentContext)
+    const canonicalChildContext = deriveContextPackage(legacyParentContext, {
+      objective: 'Complete a child task under the legacy parent pin',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: { maximumBytes: 512, maximumTokens: 128 },
+      successCriteria: ['Return focused output'],
+      returnContract: { contractRef: 'contract://adapter-result/v1' },
+      compiledAt: '2026-08-23T12:30:00.000Z',
+    })
+    const legacyChildContext = rehashContextPackage(canonicalChildContext)
+    expect(assertContextPackageIntegrity(legacyParentContext)).toEqual(legacyParentContext)
+    expect(assertContextPackageIntegrity(legacyChildContext)).toEqual(legacyChildContext)
+    expect(legacyChildContext.parentContextPackage).toEqual({
+      contextPackageId: legacyParentContext.contextPackageId,
+      contentDigest: legacyParentContext.contentDigest,
+    })
+
+    const parent = compile(baseInput())
+    const parentWithLegacyPin = rehashExecutionPlan({
+      ...parent,
+      contextPackage: contextPin(legacyParentContext),
+    })
+    const canonicalChildPlan = deriveExecutionPlan(
+      parentWithLegacyPin,
+      childInput(parentWithLegacyPin.constraints, canonicalChildContext)
+    )
+    const legacyChildPlan = rehashExecutionPlan({
+      ...canonicalChildPlan,
+      contextPackage: contextPin(legacyChildContext),
+    })
+
+    expect(
+      assertExecutionPlanDerivedFrom(
+        parentWithLegacyPin,
+        legacyChildPlan,
+        legacyParentContext,
+        legacyChildContext
+      )
+    ).toEqual(legacyChildPlan)
+
+    const changedParentContext = rehashContextPackage({
+      ...legacyParentContext,
+      objective: `${legacyParentContext.objective} changed`,
+    })
+    expect(() =>
+      assertExecutionPlanDerivedFrom(
+        parentWithLegacyPin,
+        legacyChildPlan,
+        changedParentContext,
+        legacyChildContext
+      )
+    ).toThrow('CONTRADICTORY_REFERENCE')
   })
 
   test('requires child context to be equal to or derived from the parent package', () => {
@@ -597,6 +835,15 @@ function childInput(constraints, contextPackage) {
     ],
     outputContract: { contractRef: 'contract://execution-result/v1' },
     compiledAt: '2026-08-23T12:30:00.000Z',
+  }
+}
+
+function contextPin(contextPackage) {
+  return {
+    contextPackageId: contextPackage.contextPackageId,
+    contentDigest: contextPackage.contentDigest,
+    schemaVersion: contextPackage.schemaVersion,
+    compilerVersion: contextPackage.compiler.version,
   }
 }
 

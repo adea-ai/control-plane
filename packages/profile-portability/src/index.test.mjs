@@ -4,13 +4,23 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { executionValidationCommandKey } from '@control-plane/execution-plan'
 import {
+  assertExecutionPlanIntegrity,
+  deriveExecutionPlan,
+  executionValidationCommandKey,
+} from '@control-plane/execution-plan'
+import {
+  assertContextPackageIntegrity,
   contextPackageSerializationFixtures,
   contextAuthoringCommandKey,
+  deriveContextPackage,
 } from '@control-plane/context'
 import {
+  REFERENCE_RETENTION_NAMESPACES,
+  SqliteContextPackageRepository,
+  SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
   SqliteProjectStateRepository,
   SqliteVersionedCatalogRepository,
@@ -30,13 +40,24 @@ import {
 const createdAt = '2026-08-30T12:00:00.000Z'
 const secretCanary = 'portable-secret-canary-7834'
 const temporaryDirectories = []
+const temporaryProviders = []
 
 afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map(async (directory) => rm(directory, { recursive: true, force: true }))
-  )
+  const cleanupResults = await Promise.all([
+    Promise.allSettled(temporaryProviders.splice(0).map((provider) => provider.close())),
+    Promise.allSettled(
+      temporaryDirectories
+        .splice(0)
+        .map(async (directory) => rm(directory, { recursive: true, force: true }))
+    ),
+  ])
+  const cleanupErrors = cleanupResults
+    .flat()
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, 'portable test resource cleanup failed')
+  }
 })
 
 function source(overrides = {}) {
@@ -154,6 +175,471 @@ class MemoryObjectStore {
 }
 
 describe('portable profile export and import', () => {
+  test('resets only clocks for references created by a new portable import and preserves clocks on replay', async () => {
+    const provider = await sqliteProvider('local')
+    const { records, contextPackages, executionPlans } = portableReferenceRecords()
+    const manifest = await exportPortableState(
+      source({ records, artifacts: [], secretReferences: [] }),
+      {
+        exportId: 'reference-clock-import',
+        createdAt,
+      }
+    )
+    const destination = new PersistencePortableStateDestination({
+      persistence: provider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+
+    await seedReferenceWindows(provider, contextPackages, executionPlans)
+    const plan = await planPortableImport(manifest, destination)
+    expect(
+      await applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).toMatchObject({ outcome: 'applied' })
+    expect(await referenceWindows(provider, contextPackages, executionPlans)).toEqual({
+      contextPackages: [undefined, undefined],
+      executionPlans: [undefined, undefined],
+    })
+
+    await seedReferenceWindows(
+      provider,
+      contextPackages,
+      executionPlans,
+      '2025-02-03T04:05:06.000Z'
+    )
+    const replayPlan = await planPortableImport(manifest, destination)
+    await expect(
+      applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'replayed' })
+    expect(await referenceWindows(provider, contextPackages, executionPlans)).toEqual({
+      contextPackages: ['2025-02-03T04:05:06.000Z', '2025-02-03T04:05:06.000Z'],
+      executionPlans: ['2025-02-03T04:05:06.000Z', '2025-02-03T04:05:06.000Z'],
+    })
+  })
+
+  test('rolls back a newly imported child package when its exact parent is missing', async () => {
+    const provider = await sqliteProvider('local')
+    const parent = contextPackageSerializationFixtures.futureLangGraph
+    const child = derivePortableChildContext(parent)
+    const record = {
+      category: 'context-package',
+      logicalId: `context-packages/${child.contextPackageId}`,
+      revision: 0,
+      value: child,
+    }
+    const manifest = await exportPortableState(
+      source({ records: [record], artifacts: [], secretReferences: [] }),
+      {
+        exportId: 'missing-parent-import',
+        createdAt,
+      }
+    )
+    const destination = new PersistencePortableStateDestination({
+      persistence: provider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    await seedReferenceWindows(provider, [child.contextPackageId], [])
+    const plan = await planPortableImport(manifest, destination)
+
+    await expect(
+      applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).rejects.toThrow()
+    await provider.transaction(async (transaction) => {
+      expect(
+        await transaction.get('context-packages', sqliteRecordId(child.contextPackageId))
+      ).toBeUndefined()
+      expect(
+        (
+          await transaction.get(
+            REFERENCE_RETENTION_NAMESPACES.contextPackages,
+            sqliteRecordId(child.contextPackageId)
+          )
+        )?.value
+      ).toEqual({ unreferencedSince: '2025-01-02T03:04:05.000Z' })
+      expect(await transaction.get('profile-migrations', 'missing-parent-import')).toBeUndefined()
+    })
+  })
+
+  test('resets an existing parent clock for a new reference but leaves unrelated and replay clocks unchanged', async () => {
+    const provider = await sqliteProvider('local')
+    const fixture = portableReferenceRecords()
+    const parentContext = fixture.parentContext
+    const childContext = fixture.childContext
+    const parentPlan = fixture.parentPlan
+    const childPlan = fixture.childPlan
+    const unrelatedContext = contextPackageSerializationFixtures.futureLangGraph
+    const contextRepository = new SqliteContextPackageRepository(provider)
+    const planRepository = new SqliteExecutionPlanRepository(provider)
+    await contextRepository.put(parentContext)
+    await contextRepository.put(unrelatedContext)
+    await planRepository.put(parentPlan)
+
+    const manifest = await exportPortableState(
+      source({ records: fixture.records, artifacts: [], secretReferences: [] }),
+      { exportId: 'mixed-reference-import', createdAt }
+    )
+    const destination = new PersistencePortableStateDestination({
+      persistence: provider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    const unrelatedClock = '2025-03-04T05:06:07.000Z'
+    await seedReferenceWindows(
+      provider,
+      [
+        parentContext.contextPackageId,
+        childContext.contextPackageId,
+        unrelatedContext.contextPackageId,
+      ],
+      [parentPlan.executionPlanId, childPlan.executionPlanId]
+    )
+
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.records.filter(({ state }) => state === 'equivalent')).toHaveLength(2)
+    expect(plan.records.filter(({ state }) => state === 'missing')).toHaveLength(4)
+    expect(
+      await applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).toMatchObject({ outcome: 'applied' })
+    expect(
+      await referenceWindows(
+        provider,
+        [
+          parentContext.contextPackageId,
+          childContext.contextPackageId,
+          unrelatedContext.contextPackageId,
+        ],
+        [parentPlan.executionPlanId, childPlan.executionPlanId]
+      )
+    ).toEqual({
+      contextPackages: [undefined, undefined, '2025-01-02T03:04:05.000Z'],
+      executionPlans: [undefined, undefined],
+    })
+
+    await seedReferenceWindows(
+      provider,
+      [
+        parentContext.contextPackageId,
+        childContext.contextPackageId,
+        unrelatedContext.contextPackageId,
+      ],
+      [parentPlan.executionPlanId, childPlan.executionPlanId],
+      unrelatedClock
+    )
+    const replayPlan = await planPortableImport(manifest, destination)
+    await expect(
+      applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'replayed' })
+    expect(
+      await referenceWindows(
+        provider,
+        [
+          parentContext.contextPackageId,
+          childContext.contextPackageId,
+          unrelatedContext.contextPackageId,
+        ],
+        [parentPlan.executionPlanId, childPlan.executionPlanId]
+      )
+    ).toEqual({
+      contextPackages: [unrelatedClock, unrelatedClock, unrelatedClock],
+      executionPlans: [unrelatedClock, unrelatedClock],
+    })
+  })
+
+  test('rolls back when an existing parent target is present but its canonical digest is tampered', async () => {
+    const provider = await sqliteProvider('local')
+    const parent = contextPackageSerializationFixtures.futureLangGraph
+    const child = derivePortableChildContext(parent)
+    const parentTargetId = sqliteRecordId(parent.contextPackageId)
+    const parentClock = '2025-04-05T06:07:08.000Z'
+    await new SqliteContextPackageRepository(provider).put(parent)
+    await provider.transaction(async (transaction) => {
+      const stored = await transaction.get('context-packages', parentTargetId)
+      await transaction.put({
+        namespace: 'context-packages',
+        id: parentTargetId,
+        expectedRevision: stored.revision,
+        value: { ...stored.value, contentDigest: `sha256:${'0'.repeat(64)}` },
+      })
+    })
+    const record = {
+      category: 'context-package',
+      logicalId: `context-packages/${child.contextPackageId}`,
+      revision: 0,
+      value: child,
+    }
+    const manifest = await exportPortableState(
+      source({ records: [record], artifacts: [], secretReferences: [] }),
+      { exportId: 'tampered-parent-import', createdAt }
+    )
+    const destination = new PersistencePortableStateDestination({
+      persistence: provider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    await seedReferenceWindows(
+      provider,
+      [parent.contextPackageId, child.contextPackageId],
+      [],
+      parentClock
+    )
+    const plan = await planPortableImport(manifest, destination)
+    await expect(
+      applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).rejects.toMatchObject({ code: 'PORTABLE_PLAN_STALE' })
+    await provider.transaction(async (transaction) => {
+      expect(
+        await transaction.get('context-packages', sqliteRecordId(child.contextPackageId))
+      ).toBeUndefined()
+      expect(
+        (
+          await transaction.get(
+            REFERENCE_RETENTION_NAMESPACES.contextPackages,
+            sqliteRecordId(child.contextPackageId)
+          )
+        )?.value
+      ).toEqual({ unreferencedSince: parentClock })
+      expect(
+        (await transaction.get(REFERENCE_RETENTION_NAMESPACES.contextPackages, parentTargetId))
+          ?.value
+      ).toEqual({ unreferencedSince: parentClock })
+      expect(await transaction.get('profile-migrations', 'tampered-parent-import')).toBeUndefined()
+    })
+  })
+
+  test('resets an existing parent clock for an only-child import and preserves an unrelated plan sentinel', async () => {
+    const provider = await sqliteProvider('local')
+    const parent = contextPackageSerializationFixtures.futurePi
+    const child = derivePortableChildContext(parent)
+    const unrelatedContext = contextPackageSerializationFixtures.futureLangGraph
+    const unrelatedPlan = createExecutionPlanTestFixture({ contextPackage: unrelatedContext })
+    await new SqliteContextPackageRepository(provider).put(parent)
+    await new SqliteContextPackageRepository(provider).put(unrelatedContext)
+    await seedReferenceWindows(
+      provider,
+      [parent.contextPackageId, child.contextPackageId, unrelatedContext.contextPackageId],
+      [unrelatedPlan.executionPlanId]
+    )
+    const record = portableRecord('context-package', child.contextPackageId, child)
+    const manifest = await exportPortableState(
+      source({ records: [record], artifacts: [], secretReferences: [] }),
+      { exportId: 'only-child-reference-import', createdAt }
+    )
+    const destination = new PersistencePortableStateDestination({
+      persistence: provider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    const plan = await planPortableImport(manifest, destination)
+
+    expect(
+      await applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).toMatchObject({ outcome: 'applied' })
+    expect(
+      await referenceWindows(
+        provider,
+        [parent.contextPackageId, child.contextPackageId, unrelatedContext.contextPackageId],
+        [unrelatedPlan.executionPlanId]
+      )
+    ).toEqual({
+      contextPackages: [undefined, undefined, '2025-01-02T03:04:05.000Z'],
+      executionPlans: ['2025-01-02T03:04:05.000Z'],
+    })
+  })
+
+  test('rejects correctly rehashed context children that widen authority or budget transactionally', async () => {
+    const fixture = portableReferenceRecords()
+    const widenedScope = rehashPortableRecordValue(
+      {
+        ...fixture.childContext,
+        constraints: {
+          ...fixture.childContext.constraints,
+          allowedStateItemIds: ['psi_01JBBCDEF0123456789ABCDEFG'],
+        },
+      },
+      'contextPackageId',
+      'ctx'
+    )
+    const widenedBudget = rehashPortableRecordValue(
+      {
+        ...fixture.childContext,
+        budgets: {
+          ...fixture.childContext.budgets,
+          maximumBytes: fixture.parentContext.budgets.maximumBytes + 1,
+        },
+      },
+      'contextPackageId',
+      'ctx'
+    )
+
+    expect(assertContextPackageIntegrity(widenedScope)).toEqual(widenedScope)
+    expect(assertContextPackageIntegrity(widenedBudget)).toEqual(widenedBudget)
+    for (const [index, child] of [widenedScope, widenedBudget].entries()) {
+      await assertPortableImportRollback({
+        record: portableRecord('context-package', child.contextPackageId, child),
+        exportId: `invalid-context-child-${index}`,
+        storedContexts: [fixture.parentContext],
+        contextWindowIds: [fixture.parentContext.contextPackageId, child.contextPackageId],
+        missingContextIds: [child.contextPackageId],
+        expectedCode: 'PORTABLE_PLAN_STALE',
+      })
+    }
+  })
+
+  test('rejects correctly rehashed child plans that widen authority or change inherited pins transactionally', async () => {
+    const fixture = portableReferenceRecords()
+    const requiredCapability = fixture.parentPlan.runtimeRequirements.find(
+      ({ necessity }) => necessity === 'required'
+    )?.capability
+    expect(requiredCapability).toBeDefined()
+    const invalidPlans = [
+      {
+        ...fixture.childPlan,
+        constraints: {
+          ...fixture.childPlan.constraints,
+          tools: {
+            ...fixture.childPlan.constraints.tools,
+            grants: fixture.childPlan.constraints.tools.grants.map((grant, index) =>
+              index === 0 ? { ...grant, operations: [...grant.operations, 'admin'] } : grant
+            ),
+          },
+        },
+      },
+      {
+        ...fixture.childPlan,
+        runtimeRequirements: fixture.childPlan.runtimeRequirements.filter(
+          ({ capability }) => capability !== requiredCapability
+        ),
+      },
+      {
+        ...fixture.childPlan,
+        profile: { ...fixture.childPlan.profile, contentDigest: `sha256:${'f'.repeat(64)}` },
+      },
+      {
+        ...fixture.childPlan,
+        skills: fixture.childPlan.skills.map((skill, index) =>
+          index === 0 ? { ...skill, contentDigest: `sha256:${'f'.repeat(64)}` } : skill
+        ),
+      },
+    ].map((plan) => rehashPortableRecordValue(plan, 'executionPlanId', 'pln'))
+
+    for (const [index, plan] of invalidPlans.entries()) {
+      expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+      await assertPortableImportRollback({
+        record: portableRecord('execution-plan', plan.executionPlanId, plan),
+        exportId: `invalid-child-plan-${index}`,
+        storedContexts: [fixture.parentContext, fixture.childContext],
+        storedPlans: [fixture.parentPlan],
+        contextWindowIds: [
+          fixture.parentContext.contextPackageId,
+          fixture.childContext.contextPackageId,
+        ],
+        planWindowIds: [fixture.parentPlan.executionPlanId, plan.executionPlanId],
+        missingPlanIds: [plan.executionPlanId],
+        expectedCode: 'PORTABLE_PLAN_STALE',
+      })
+    }
+  })
+
+  test('rejects false resolved context pins on root plans and child plans transactionally', async () => {
+    const fixture = portableReferenceRecords()
+    const rootPlan = createExecutionPlanTestFixture({ contextPackage: fixture.parentContext })
+    const rootPinMismatches = [
+      {
+        ...rootPlan,
+        contextPackage: {
+          ...rootPlan.contextPackage,
+          schemaVersion: rootPlan.contextPackage.schemaVersion + 1,
+        },
+      },
+      {
+        ...rootPlan,
+        contextPackage: { ...rootPlan.contextPackage, compilerVersion: '2.0.0' },
+      },
+    ].map((plan) => rehashPortableRecordValue(plan, 'executionPlanId', 'pln'))
+
+    for (const [index, plan] of rootPinMismatches.entries()) {
+      expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+      await assertPortableImportRollback({
+        record: portableRecord('execution-plan', plan.executionPlanId, plan),
+        exportId: `invalid-root-pin-${index}`,
+        storedContexts: [fixture.parentContext],
+        contextWindowIds: [fixture.parentContext.contextPackageId],
+        planWindowIds: [plan.executionPlanId],
+        missingPlanIds: [plan.executionPlanId],
+        expectedCode: 'PORTABLE_PLAN_STALE',
+      })
+    }
+
+    const childPinMismatches = [
+      {
+        ...fixture.childPlan,
+        contextPackage: {
+          ...fixture.childPlan.contextPackage,
+          schemaVersion: fixture.childPlan.contextPackage.schemaVersion + 1,
+        },
+      },
+      {
+        ...fixture.childPlan,
+        contextPackage: { ...fixture.childPlan.contextPackage, compilerVersion: '2.0.0' },
+      },
+    ].map((plan) => rehashPortableRecordValue(plan, 'executionPlanId', 'pln'))
+
+    for (const [index, plan] of childPinMismatches.entries()) {
+      expect(assertExecutionPlanIntegrity(plan)).toEqual(plan)
+      await assertPortableImportRollback({
+        record: portableRecord('execution-plan', plan.executionPlanId, plan),
+        exportId: `invalid-child-pin-${index}`,
+        storedContexts: [fixture.parentContext, fixture.childContext],
+        storedPlans: [fixture.parentPlan],
+        contextWindowIds: [
+          fixture.parentContext.contextPackageId,
+          fixture.childContext.contextPackageId,
+        ],
+        planWindowIds: [fixture.parentPlan.executionPlanId, plan.executionPlanId],
+        missingPlanIds: [plan.executionPlanId],
+        expectedCode: 'PORTABLE_PLAN_STALE',
+      })
+    }
+  })
+
+  test('rejects self-referential context and plan payloads before importing any rows', async () => {
+    const fixture = portableReferenceRecords()
+    const contextId = 'ctx_01JBBCDEF0123456789ABCDEFG'
+    const selfContext = {
+      ...fixture.childContext,
+      contextPackageId: contextId,
+      parentContextPackage: {
+        contextPackageId: contextId,
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      },
+    }
+    const planId = 'pln_01JBBCDEF0123456789ABCDEFG'
+    const selfPlan = {
+      ...fixture.childPlan,
+      executionPlanId: planId,
+      parentExecutionPlan: {
+        executionPlanId: planId,
+        contentDigest: `sha256:${'b'.repeat(64)}`,
+      },
+    }
+
+    await assertPortableImportRollback({
+      record: portableRecord('context-package', contextId, selfContext),
+      exportId: 'self-context-reference',
+      contextWindowIds: [contextId],
+      missingContextIds: [contextId],
+      expectedCode: 'PORTABLE_SCHEMA_INCOMPATIBLE',
+    })
+    await assertPortableImportRollback({
+      record: portableRecord('execution-plan', planId, selfPlan),
+      exportId: 'self-plan-reference',
+      planWindowIds: [planId],
+      missingPlanIds: [planId],
+      expectedCode: 'PORTABLE_SCHEMA_INCOMPATIBLE',
+    })
+  })
+
   test('requires validation replay records to retain exact scoped plans and logical identities', async () => {
     const plan = createExecutionPlanTestFixture()
     const command = {
@@ -610,8 +1096,6 @@ describe('portable profile export and import', () => {
     await expect(
       applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
     ).resolves.toMatchObject({ outcome: 'replayed' })
-    sourceProvider.close()
-    destinationProvider.close()
   })
 })
 
@@ -697,6 +1181,256 @@ async function sqliteProvider(profile) {
     path: join(directory, 'state.sqlite'),
     profile,
   })
+  temporaryProviders.push(provider)
   await provider.migrate()
   return provider
+}
+
+function portableReferenceRecords() {
+  const parentContext = contextPackageSerializationFixtures.futurePi
+  const childContext = derivePortableChildContext(parentContext)
+  const parentPlan = createExecutionPlanTestFixture({ contextPackage: parentContext })
+  const childPlan = deriveExecutionPlan(parentPlan, {
+    correlation: parentPlan.correlation,
+    contextPackage: childContext,
+    constraints: parentPlan.constraints,
+    runtimeRequirements: parentPlan.runtimeRequirements,
+    outputContract: parentPlan.outputContract,
+    compiledAt: '2026-08-30T13:00:00.000Z',
+  })
+  const authoring = {
+    scope: {
+      principalRef: 'service:portable-reference-test',
+      workspaceId: childContext.projectState.workspaceId,
+      projectId: childContext.projectState.projectId,
+      operation: 'context.author',
+      idempotencyKey: 'portable-authoring-edge-0001',
+    },
+    payloadHash: `sha256:${'d'.repeat(64)}`,
+    contextPackage: {
+      contextPackageId: childContext.contextPackageId,
+      contentDigest: childContext.contentDigest,
+    },
+  }
+  const validation = {
+    scope: {
+      callerPrincipalId: 'svc_portablereferencetest',
+      workspaceId: childPlan.correlation.workspaceId,
+      projectId: childPlan.correlation.projectId,
+      operation: 'execution.validate',
+      idempotencyKey: 'portable-validation-edge-0001',
+    },
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+    requestId: childPlan.correlation.requestId,
+    payloadHash: `sha256:${'e'.repeat(64)}`,
+    executionPlan: {
+      executionPlanId: childPlan.executionPlanId,
+      contentDigest: childPlan.contentDigest,
+    },
+    recordedAt: createdAt,
+  }
+  return {
+    parentContext,
+    childContext,
+    parentPlan,
+    childPlan,
+    contextPackages: [parentContext.contextPackageId, childContext.contextPackageId],
+    executionPlans: [parentPlan.executionPlanId, childPlan.executionPlanId],
+    records: [
+      {
+        category: 'context-package',
+        logicalId: `context-packages/${parentContext.contextPackageId}`,
+        revision: 0,
+        value: parentContext,
+      },
+      {
+        category: 'context-package',
+        logicalId: `context-packages/${childContext.contextPackageId}`,
+        revision: 0,
+        value: childContext,
+      },
+      {
+        category: 'context-authoring-command',
+        logicalId: `context-authoring-commands/${contextAuthoringCommandKey(authoring.scope)}`,
+        revision: 0,
+        value: authoring,
+      },
+      {
+        category: 'execution-plan',
+        logicalId: `execution-plans/${parentPlan.executionPlanId}`,
+        revision: 0,
+        value: parentPlan,
+      },
+      {
+        category: 'execution-plan',
+        logicalId: `execution-plans/${childPlan.executionPlanId}`,
+        revision: 0,
+        value: childPlan,
+      },
+      {
+        category: 'execution-validation-command',
+        logicalId: `execution-validation-commands/${executionValidationCommandKey(validation.scope)}`,
+        revision: 0,
+        value: validation,
+      },
+    ],
+  }
+}
+
+function derivePortableChildContext(parent) {
+  return deriveContextPackage(parent, {
+    objective: 'Portable child context',
+    allowedStateItemIds: [],
+    allowedArtifactIds: [],
+    budgets: { maximumBytes: 512, maximumTokens: 128 },
+    successCriteria: ['Preserve durable parent references'],
+    returnContract: parent.returnContract,
+    compiledAt: '2026-08-30T13:00:00.000Z',
+  })
+}
+
+async function seedReferenceWindows(provider, contextPackageIds, executionPlanIds, instant) {
+  const unreferencedSince = instant ?? '2025-01-02T03:04:05.000Z'
+  await provider.transaction(async (transaction) => {
+    for (const id of contextPackageIds) {
+      const namespace = REFERENCE_RETENTION_NAMESPACES.contextPackages
+      const recordId = sqliteRecordId(id)
+      const existing = await transaction.get(namespace, recordId)
+      await transaction.put({
+        namespace,
+        id: recordId,
+        ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
+        value: { unreferencedSince },
+      })
+    }
+    for (const id of executionPlanIds) {
+      const namespace = REFERENCE_RETENTION_NAMESPACES.executionPlans
+      const recordId = sqliteRecordId(id)
+      const existing = await transaction.get(namespace, recordId)
+      await transaction.put({
+        namespace,
+        id: recordId,
+        ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
+        value: { unreferencedSince },
+      })
+    }
+  })
+}
+
+async function referenceWindows(provider, contextPackageIds, executionPlanIds) {
+  return provider.transaction(async (transaction) => ({
+    contextPackages: await Promise.all(
+      contextPackageIds.map(async (id) => {
+        const record = await transaction.get(
+          REFERENCE_RETENTION_NAMESPACES.contextPackages,
+          sqliteRecordId(id)
+        )
+        return record?.value.unreferencedSince
+      })
+    ),
+    executionPlans: await Promise.all(
+      executionPlanIds.map(async (id) => {
+        const record = await transaction.get(
+          REFERENCE_RETENTION_NAMESPACES.executionPlans,
+          sqliteRecordId(id)
+        )
+        return record?.value.unreferencedSince
+      })
+    ),
+  }))
+}
+
+function sqliteRecordId(value) {
+  return `r-${createHash('sha256').update(value).digest('hex')}`
+}
+
+function portableRecord(category, id, value) {
+  const namespace = category === 'context-package' ? 'context-packages' : 'execution-plans'
+  const identityField = category === 'context-package' ? 'contextPackageId' : 'executionPlanId'
+  if (value[identityField] !== id) throw new Error('portable fixture identity mismatch')
+  return { category, logicalId: `${namespace}/${id}`, revision: 0, value }
+}
+
+function rehashPortableRecordValue(value, idField, prefix) {
+  const { [idField]: _id, contentDigest: _digest, ...content } = value
+  const contentDigest = `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(content))
+    .digest('hex')}`
+  const bytes = Buffer.from(contentDigest.slice(7, 39), 'hex')
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  let bits = 0
+  let accumulator = 0
+  let identifier = ''
+  for (const byte of bytes) {
+    accumulator = (accumulator << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      identifier += alphabet[(accumulator >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) identifier += alphabet[(accumulator << (5 - bits)) & 31]
+  return {
+    ...content,
+    [idField]: `${prefix}_${identifier.slice(0, 26)}`,
+    contentDigest,
+  }
+}
+
+async function assertPortableImportRollback({
+  record,
+  exportId,
+  storedContexts = [],
+  storedPlans = [],
+  contextWindowIds = [],
+  planWindowIds = [],
+  missingContextIds = [],
+  missingPlanIds = [],
+  expectedCode,
+}) {
+  const provider = await sqliteProvider('local')
+  const contextRepository = new SqliteContextPackageRepository(provider)
+  const planRepository = new SqliteExecutionPlanRepository(provider)
+  for (const package_ of storedContexts) await contextRepository.put(package_)
+  for (const plan of storedPlans) await planRepository.put(plan)
+  const clock = '2025-04-05T06:07:08.000Z'
+  await seedReferenceWindows(provider, contextWindowIds, planWindowIds, clock)
+
+  const manifest = await exportPortableState(
+    source({ records: [record], artifacts: [], secretReferences: [] }),
+    { exportId, createdAt }
+  )
+  const destination = new PersistencePortableStateDestination({
+    persistence: provider,
+    capabilities: new Set(),
+    secretProviders: new Set(),
+  })
+  const plan = await planPortableImport(manifest, destination)
+  expect(plan.records).toHaveLength(1)
+  expect(plan.records[0].state).toBe('missing')
+  await expect(
+    applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+  ).rejects.toMatchObject({ code: expectedCode })
+
+  await provider.transaction(async (transaction) => {
+    for (const id of missingContextIds) {
+      expect(await transaction.get('context-packages', sqliteRecordId(id))).toBeUndefined()
+    }
+    for (const id of missingPlanIds) {
+      expect(await transaction.get('execution-plans', sqliteRecordId(id))).toBeUndefined()
+    }
+    expect(await transaction.get('profile-migrations', exportId)).toBeUndefined()
+    for (const id of contextWindowIds) {
+      expect(
+        (await transaction.get(REFERENCE_RETENTION_NAMESPACES.contextPackages, sqliteRecordId(id)))
+          ?.value
+      ).toEqual({ unreferencedSince: clock })
+    }
+    for (const id of planWindowIds) {
+      expect(
+        (await transaction.get(REFERENCE_RETENTION_NAMESPACES.executionPlans, sqliteRecordId(id)))
+          ?.value
+      ).toEqual({ unreferencedSince: clock })
+    }
+  })
 }
