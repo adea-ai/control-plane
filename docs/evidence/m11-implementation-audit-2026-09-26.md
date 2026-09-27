@@ -279,6 +279,24 @@ files; no subsequent combined lint/build/test/integration gates ran. After the
 immutable review ended, only those three files were mechanically formatted.
 Current-head combined validation and deployment remain open.
 
+The subsequent combined run at `ad16a60641e69dec79b1721731aa73c027cafcb5`
+passed formatting, package lint, boundary/canonical-ordering checks, all 43
+build/OpenAPI tasks, migration and compatibility checks, the 200-requirement /
+103-issue audit, architecture and infrastructure type checks. Its end-to-end
+group passed 146 tests / 876 assertions across 17 files. Smoke passed 188 tests
+but failed one exact test-discovery inventory assertion: the expected list
+omitted the three newly added database integration files. PostgreSQL integration
+and final infrastructure validation did not run; unit completion is not claimed.
+
+The two portability test imports previously rejected by the boundary checker
+now use domain's existing exact reexport, with no new dependency or weaker
+assertion. The focused boundary check passes 1,432 files in 41 packages. A focused
+red discovery test confirmed precisely the three missing filenames; the expected
+list now includes them, preserving exact/disjoint inventory assertions. All 26
+repository tests and scoped format/lint/diff checks pass. These repairs are
+test-only changes after the frozen security snapshot, not rescanned production
+changes. Remaining local gates and required current-head CI remain open.
+
 ## Baseline evidence
 
 - Frozen install and build: all 41 packages built successfully.
