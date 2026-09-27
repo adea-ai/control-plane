@@ -7,6 +7,127 @@ import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.ts'
 
+test.each([
+  ['cancelled', 'valid'],
+  ['completed', 'valid'],
+  ['failed', 'valid'],
+  ['cancelled', 'handleId'],
+  ['cancelled', 'attemptId'],
+  ['cancelled', 'startedAt'],
+  ['cancelled', 'nonterminal'],
+])(
+  'queued Local cancellation preserves the confirmed terminal winner and usage: %s / %s',
+  async (state, observation) => {
+    const directory = await mkdtemp(join(tmpdir(), 'm11-local-queued-cancel-'))
+    const persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
+    const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
+    const handle = {
+      handleId: 'native:queued-cancel',
+      attemptId,
+      startedAt: '2026-09-27T00:00:00.000Z',
+    }
+    const usage = { inputTokens: 11, outputTokens: 3, durationMs: 20 }
+    const status = {
+      handle,
+      state,
+      observedAt: handle.startedAt,
+      ...(state === 'completed'
+        ? { result: { outcome: 'completed', output: 'done', usage, artifacts: [] } }
+        : { terminalUsage: usage }),
+      ...(state === 'failed'
+        ? {
+            error: {
+              code: 'RUNTIME_FAILED',
+              classification: 'runtime',
+              message: 'Fixture failure',
+              retryable: false,
+            },
+          }
+        : {}),
+    }
+    let observedStatus = status
+    if (observation === 'nonterminal') {
+      observedStatus = { handle, state: 'running', observedAt: handle.startedAt }
+    } else if (observation !== 'valid') {
+      observedStatus = {
+        ...status,
+        handle: {
+          ...handle,
+          [observation]:
+            observation === 'attemptId'
+              ? 'att_01JABCDEF0123456789ABCDEFH'
+              : observation === 'startedAt'
+                ? '2026-09-27T00:00:01.000Z'
+                : 'native:other',
+        },
+      }
+    }
+    let starts = 0
+    let cancels = 0
+    let publishes = 0
+    const runtime = {
+      transportKind: 'direct-local',
+      start: async () => {
+        starts++
+        return handle
+      },
+      cancel: async () => {
+        cancels++
+        return status
+      },
+      status: async () => observedStatus,
+      reconcile: async () => status,
+      async *progress() {},
+    }
+    const objectStore = {
+      put: async () => {
+        publishes++
+      },
+    }
+    const input = {
+      executionId,
+      attemptId,
+      effectKey: 'queued-cancel:dispatch',
+      executionPlan: createExecutionPlanTestFixture(),
+    }
+    try {
+      await persistence.migrate()
+      let activities = new DirectRuntimeActivityPort(persistence, objectStore, runtime)
+      await activities.cancel({
+        ...input,
+        effectKey: 'queued-cancel:cancel',
+        reason: 'user_request',
+      })
+      if (observation !== 'valid') {
+        await expect(activities.dispatch(input)).rejects.toThrow(
+          observation === 'nonterminal'
+            ? 'RUNTIME_CANCEL_UNCONFIRMED'
+            : 'RUNTIME_CANCEL_HANDLE_MISMATCH'
+        )
+        expect(publishes).toBe(0)
+        observedStatus = status
+      }
+      const first = await activities.dispatch(input)
+      expect(first).toMatchObject({ outcome: state, terminalUsage: usage })
+      persistence.close({ checkpoint: true })
+      await persistence.migrate()
+      activities = new DirectRuntimeActivityPort(persistence, objectStore, runtime)
+      expect(await activities.dispatch(input)).toEqual(first)
+      expect(starts).toBe(1)
+      expect(cancels).toBe(1)
+      expect(publishes).toBe(state === 'completed' ? 1 : 0)
+      const key = `r-${createHash('sha256').update(`${executionId}:${attemptId}`).digest('hex')}`
+      expect(
+        (await persistence.transaction((tx) => tx.get('runtime-terminal-usage', key))).value
+      ).toMatchObject({ state, usage })
+    } finally {
+      persistence.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 test.each(['failed', 'timed_out', 'cancelled'])(
   'Local %s outcome preserves externally funded terminal evidence without erasing provider cost',
   async (state) => {

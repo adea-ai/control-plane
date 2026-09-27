@@ -133,7 +133,19 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       if (cancellation !== undefined) {
         this.#assertAttempt(handle, cancellation.attemptId)
         await this.#cancelHandle(input.executionId, handle, cancellation)
-        return { outcome: 'cancelled' }
+        // A cancellation request is not the terminal winner: completion or
+        // failure may have won the race. Preserve the confirmed state and its
+        // measurements instead of synthesizing an unmeasured cancellation.
+        const status = RuntimeExecutionStatusSchema.parse(await this.runtime.status(handle))
+        if (
+          status.handle.handleId !== handle.handleId ||
+          status.handle.attemptId !== handle.attemptId ||
+          status.handle.startedAt !== handle.startedAt
+        )
+          throw new Error('RUNTIME_CANCEL_HANDLE_MISMATCH')
+        if (!['completed', 'failed', 'cancelled', 'timed_out'].includes(status.state))
+          throw new Error('RUNTIME_CANCEL_UNCONFIRMED')
+        return this.#outcome(input.executionId, input.attemptId, status)
       }
       return this.#observe(input.executionId, input.attemptId, handle)
     })
