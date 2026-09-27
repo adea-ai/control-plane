@@ -212,6 +212,29 @@ Railway build/readiness results, Restate registration/restart evidence, resource
 sanitized harness record together in the M9.6 evidence attachment. The harness is not by itself
 proof of rollback, restart recovery, load, isolation, secret-canary, or cost acceptance.
 
+## M11 intake rollout fence — incomplete operator workflow
+
+The development candidate adds migration 0052 and a durable PostgreSQL intake
+gate. A newly empty database starts open; any retained execution, attempt,
+command, runtime command or delegation rows conservatively seed it paused.
+Both command acceptance and bare/delegated owner insertion respect the gate.
+Existing replay and already-accepted work are not cancelled by an intake pause.
+New valid API intake while paused returns a sanitized 503
+`EXECUTION_INTAKE_UNAVAILABLE`, without new owner or accounting records.
+
+`PostgresAdmissionRolloutService.pause()` requires actual database update
+authority. The application role has only SELECT on the gate, including after
+Hosted role re-provisioning. Production schema preflight checks effective
+table and column permissions, not a caller-supplied operator flag.
+
+**Do not promote this checkpoint as a complete rollout workflow.** Bounded
+paginated inventory, verified drain, fresh exclusive-lock resume, an operator
+CLI and concurrent cutover acceptance are still unimplemented. There is no
+supported resume command yet. A deployment must also externally quiesce old
+API/workflow replicas that do not honor the fence before migration; the current
+automatic schema/image promotion does not establish that proof. Never restore
+intake with an arbitrary SQL update or invent historical funding authority.
+
 ## Catalog approval gate (#188)
 
 Approval is a version-bound decision separate from publication: a catalog profile or skill version is

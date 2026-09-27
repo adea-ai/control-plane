@@ -263,6 +263,77 @@ inventory plus verified intake quiescence, drain and explicit reconciliation is
 still required; a clean snapshot alone cannot prove rollout safety. Historical
 usage is not funding authority, and an unknown effect cost must not become zero.
 
+## Durable intake pause and permission checkpoint
+
+Code checkpoint `bd22f7b` integrates Luna's initial gate and two permission
+verification fixes. Migration 0052 seeds an empty database open and an existing
+execution-related inventory paused. Both new-owner writers acquire the shared
+advisory fence before domain locks; privileged pause takes its exclusive lock.
+Application-role pause and direct writes are denied. Exact retained replay is
+still available. Audit/resume/CLI are not implemented, so this is not a safe
+production rollout or financial acceptance claim.
+
+The shared lightweight Domain error contract now gives Database and API one
+class identity. Actual signed Cloud HTTP intake while paused returns sanitized
+503, has no dispatch or owner/accounting writes, and remains paused across API
+restart. Existing replay still succeeds after removing its retained plan.
+
+Regression evidence distinguishes behavioral failures from setup failures:
+
+- Removing the command gate assertion accepted fresh intake while paused.
+- A valid signed HTTP request returned 500 before sharing the Domain error;
+  the original service-only four-case regression likewise failed to return 503.
+- The actual old production privilege SELECT omitted effective column grants;
+  the updated SELECT detects column INSERT, UPDATE and REFERENCES grants.
+- Missing direct-driver dependency, invalid fixture ID, and a new-intake
+  assertion after intentional plan deletion were separately corrected test
+  setup/ordering failures, not behavioral RED evidence.
+
+Root full validation on frozen pre-column-verifier checkpoint `27b61e0`:
+
+- Canonical build/unit/E2E/smoke completed exit 0: **1,856 unit / 8,070 assertions /
+  219 files / 88.07s**, **177 E2E / 1,068 assertions / 18 files / 66.00s**,
+  **209 smoke / 2,154 assertions / 24 files / 49.10s**, all zero failures.
+  PostgreSQL profile cases were enabled. Coverage: 82.38% lines / 84.03%
+  functions, unchanged 80% minimum.
+- Full discovered PostgreSQL lane completed exit 0: **147 tests / 1,316
+  assertions / 21 files / 163.42s**, no failures, filters or retries; seed 1104,
+  default 30-second runner timeout with existing per-case deadlines preserved.
+  No integration time budget is configured.
+- Distribution 11.7 MiB/12, dependencies 274/285, and measured unit, E2E and
+  smoke durations passed configured budgets.
+
+The final verifier/column test delta passed **53 focused tests / 180 assertions /
+5 files / 15.36s**. The real PostgreSQL regression executes the exact production
+privilege SELECT and bootstrap gate statements. It proves table UPDATE can be
+false while column UPDATE is true and actually usable, then confirms bootstrap
+REVOKE ALL clears those grants. An initial reviewer claim that bootstrap did
+not revoke column grants was retracted after primary documentation and this
+actual test; no redundant revocation code was added. Final bounded Luna review
+found the verifier issue resolved, not full M11 acceptance.
+
+Initial full type-check and lint passed; full formatting identified two
+generated Drizzle JSON files. They were normalized with identical canonical
+JSON hashes before/after and migration consistency passed. On final code
+checkpoint `bd22f7b`, full type-check, lint, formatting, credential scan
+(1,296 repository files) and whitespace checks completed exit 0. Final enabled
+smoke completed exit 0: **209 tests / 2,154 assertions / 24 files / 33.51s**,
+zero failures. These final delta checks do not relabel the preceding full
+unit/E2E/PostgreSQL runs as tests of a different source checkpoint.
+
+All owned test handles are terminal. Six native workers are completed, with
+zero live delegated lanes. PostgreSQL inventory contained only the fixture and
+administration databases, with no generated test sessions. The owned container
+was stopped and its listener verified closed. Worktrees and the fixture volume
+are retained for the unfinished goal; no cloud resources, release, PR readiness,
+merge or issue closure were changed.
+
+Next required work remains the complete paginated owner/attempt/delivery audit,
+drain and fresh privileged resume under the exclusive fence; concurrency,
+restart and old-replica cutover proof; and the operator CLI/runbook. No allowance
+backfill, fabricated funding, arbitrary capacity or unknown-cost-as-zero is
+permitted. Migration 0052 must not be promoted alone to bypass these gates.
+
 ## Remaining full-scope gates (unchanged)
 
 Allowance preflight remains read-only, not capacity reserved across an effect.
