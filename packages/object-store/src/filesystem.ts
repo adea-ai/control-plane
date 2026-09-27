@@ -13,9 +13,14 @@ import { ObjectStoreError } from './index.js'
 
 const METADATA_SUFFIX = '.control-plane.json'
 const CONDITIONAL_SUFFIX = '.conditional-v1'
+const WRITE_MODE_SUFFIX = '.write-mode-v1'
 const CONDITIONAL_MAGIC = Buffer.from('CPFSOBJ1', 'ascii')
 const CONDITIONAL_PREFIX_BYTES = CONDITIONAL_MAGIC.byteLength + 4
 const MAX_CONDITIONAL_HEADER_BYTES = 64 * 1024
+const WRITE_MODE_MAGIC = 'CPFSMOD1\n'
+const MAX_WRITE_MODE_BYTES = 64
+
+type FilesystemWriteMode = 'mutable' | 'conditional'
 
 interface FilesystemObjectMetadata {
   readonly schemaVersion: 1
@@ -66,6 +71,11 @@ export class FilesystemObjectStore implements ObjectStore {
       metadata,
     }
     const paths = await this.#paths(input.key, true)
+    if (await assertRegularFileOrMissing(paths.conditional)) integrityFailure()
+    const existingMode = await this.#readWriteMode(paths)
+    if (existingMode === 'conditional') integrityFailure()
+    const claimedMode = await this.#claimWriteMode(paths, 'mutable')
+    if (claimedMode !== 'mutable') integrityFailure()
     if (await assertRegularFileOrMissing(paths.conditional)) integrityFailure()
     await Promise.all([
       assertRegularFileOrMissing(paths.body),
@@ -118,10 +128,32 @@ export class FilesystemObjectStore implements ObjectStore {
     prefix.writeUInt32BE(header.byteLength, CONDITIONAL_MAGIC.byteLength)
     const envelope = Buffer.concat([prefix, header, Buffer.from(input.body)])
     const paths = await this.#paths(key, true)
-    const conditionalExists = await assertRegularFileOrMissing(paths.conditional)
-    const legacyBodyExists = await assertRegularFileOrMissing(paths.body)
-    const legacyMetadataExists = await assertRegularFileOrMissing(paths.metadata)
-    if (conditionalExists || legacyBodyExists || legacyMetadataExists) return { outcome: 'exists' }
+    let mode = await this.#readWriteMode(paths)
+    let conditionalExists = await assertRegularFileOrMissing(paths.conditional)
+    let legacyState = await this.#legacyObjectState(paths)
+    if (mode === 'mutable') {
+      if (conditionalExists) integrityFailure()
+      if (legacyState === 'complete') return { outcome: 'exists' }
+      throw providerFailure()
+    }
+    if (mode === 'conditional') {
+      if (legacyState !== 'empty') integrityFailure()
+      if (conditionalExists) return { outcome: 'exists' }
+    } else if (conditionalExists || legacyState === 'complete') {
+      // Objects written before mode claims remain readable and count as existing.
+      return { outcome: 'exists' }
+    } else {
+      if (legacyState === 'partial') integrityFailure()
+      mode = await this.#claimWriteMode(paths, 'conditional')
+      if (mode === 'mutable') {
+        legacyState = await this.#legacyObjectState(paths)
+        if (legacyState === 'complete') return { outcome: 'exists' }
+        throw providerFailure()
+      }
+      if (legacyState !== 'empty') integrityFailure()
+      conditionalExists = await assertRegularFileOrMissing(paths.conditional)
+      if (conditionalExists) return { outcome: 'exists' }
+    }
 
     const temporary = `${paths.conditional}.${randomUUID()}.tmp`
     let handle: Awaited<ReturnType<typeof open>> | undefined
@@ -188,7 +220,12 @@ export class FilesystemObjectStore implements ObjectStore {
 
   async delete(key: string): Promise<void> {
     this.#assertOpen()
-    let paths: { readonly body: string; readonly metadata: string; readonly conditional: string }
+    let paths: {
+      readonly body: string
+      readonly metadata: string
+      readonly conditional: string
+      readonly mode: string
+    }
     try {
       paths = await this.#paths(key, false)
     } catch (error) {
@@ -197,6 +234,7 @@ export class FilesystemObjectStore implements ObjectStore {
     }
     await Promise.all([
       assertRegularFileOrMissing(paths.conditional),
+      assertRegularFileOrMissing(paths.mode),
       assertRegularFileOrMissing(paths.body),
       assertRegularFileOrMissing(paths.metadata),
     ])
@@ -204,6 +242,7 @@ export class FilesystemObjectStore implements ObjectStore {
       await this.#paths(key, false)
       await Promise.all([
         rm(paths.conditional, { force: true }),
+        rm(paths.mode, { force: true }),
         rm(paths.body, { force: true }),
         rm(paths.metadata, { force: true }),
       ])
@@ -315,6 +354,7 @@ export class FilesystemObjectStore implements ObjectStore {
     readonly body: string
     readonly metadata: string
     readonly conditional: string
+    readonly mode: string
     readonly root: string
   }> {
     const validKey = validateKey(key)
@@ -324,8 +364,105 @@ export class FilesystemObjectStore implements ObjectStore {
       body,
       metadata: `${body}${METADATA_SUFFIX}`,
       conditional: `${body}${CONDITIONAL_SUFFIX}`,
+      mode: `${body}${WRITE_MODE_SUFFIX}`,
       root,
     }
+  }
+
+  async #readWriteMode(paths: {
+    readonly mode: string
+    readonly root: string
+  }): Promise<FilesystemWriteMode | undefined> {
+    if (!(await assertRegularFileOrMissing(paths.mode))) return undefined
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      if (constants.O_NOFOLLOW === undefined) throw providerFailure()
+      handle = await open(
+        paths.mode,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+      )
+      const fileStat = await handle.stat()
+      if (
+        !fileStat.isFile() ||
+        !Number.isSafeInteger(fileStat.size) ||
+        fileStat.size > MAX_WRITE_MODE_BYTES
+      ) {
+        integrityFailure()
+      }
+      const contents = await readBoundedFile(handle, fileStat.size)
+      const mutableMode = Buffer.from(`${WRITE_MODE_MAGIC}mutable\n`)
+      const conditionalMode = Buffer.from(`${WRITE_MODE_MAGIC}conditional\n`)
+      if (!contents.equals(mutableMode) && !contents.equals(conditionalMode)) integrityFailure()
+      // Readers sync too, covering a writer that died after linking the claim.
+      await syncDirectory(paths.root, this.#rootDevice, this.#rootInode)
+      return contents.equals(mutableMode) ? 'mutable' : 'conditional'
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      if (isMissing(error) || isSymlinkLoop(error)) integrityFailure()
+      throw providerFailure()
+    } finally {
+      await handle?.close().catch(() => undefined)
+    }
+  }
+
+  async #claimWriteMode(
+    paths: { readonly mode: string; readonly root: string },
+    requestedMode: FilesystemWriteMode
+  ): Promise<FilesystemWriteMode> {
+    const currentMode = await this.#readWriteMode(paths)
+    if (currentMode !== undefined) return currentMode
+
+    const temporary = `${paths.mode}.${randomUUID()}.tmp`
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    let ownsTemporary = false
+    try {
+      if (constants.O_NOFOLLOW === undefined) throw providerFailure()
+      handle = await open(
+        temporary,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600
+      )
+      ownsTemporary = true
+      await handle.writeFile(`${WRITE_MODE_MAGIC}${requestedMode}\n`)
+      await handle.sync()
+      await handle.close()
+      handle = undefined
+
+      await this.#secureRoot(false)
+      try {
+        // This permanent per-key mode choice is the cross-process writer fence.
+        await link(temporary, paths.mode)
+      } catch (error) {
+        if (errorCode(error) === 'EEXIST') {
+          const winner = await this.#readWriteMode(paths)
+          if (winner === undefined) throw providerFailure()
+          return winner
+        }
+        throw error
+      }
+      await syncDirectory(paths.root, this.#rootDevice, this.#rootInode)
+      return requestedMode
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      if (isSymlinkLoop(error)) integrityFailure()
+      throw providerFailure()
+    } finally {
+      await handle?.close().catch(() => undefined)
+      if (ownsTemporary) await rm(temporary, { force: true }).catch(() => undefined)
+    }
+  }
+
+  async #legacyObjectState(paths: {
+    readonly body: string
+    readonly metadata: string
+  }): Promise<'empty' | 'partial' | 'complete'> {
+    const [bodyExists, metadataExists] = await Promise.all([
+      assertRegularFileOrMissing(paths.body),
+      assertRegularFileOrMissing(paths.metadata),
+    ])
+    if (bodyExists && metadataExists) return 'complete'
+    if (!bodyExists && !metadataExists) return 'empty'
+    return 'partial'
   }
 
   async #secureRoot(create: boolean): Promise<string> {

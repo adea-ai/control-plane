@@ -2,7 +2,17 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FilesystemObjectStore } from './filesystem.ts'
@@ -41,6 +51,20 @@ function conditionalPath(rootDirectory, key) {
   return `${legacyBodyPath(rootDirectory, key)}.conditional-v1`
 }
 
+function writeModePath(rootDirectory, key) {
+  return `${legacyBodyPath(rootDirectory, key)}.write-mode-v1`
+}
+
+async function createModeClaim(path, mode) {
+  const handle = await open(path, 'wx', 0o600)
+  try {
+    await handle.writeFile(`CPFSMOD1\n${mode}\n`)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 const value = (key, bytes, metadata = { attempt: 'one' }) => ({
   key,
   body: new Uint8Array(bytes),
@@ -65,7 +89,7 @@ describe('FilesystemObjectStore conditional publication', () => {
       },
     })
     expect(await store.get(input.key)).toMatchObject({ ...result.object, body: input.body })
-    expect(await readdir(rootDirectory)).toHaveLength(1)
+    expect(await readdir(rootDirectory)).toHaveLength(2)
     store.close()
     const reopened = openStore(rootDirectory)
     expect(await reopened.get(input.key)).toMatchObject({ ...result.object, body: input.body })
@@ -93,7 +117,7 @@ describe('FilesystemObjectStore conditional publication', () => {
     const winner = await first.get(firstValue.key)
     expect([firstValue.body, secondValue.body]).toContainEqual(winner.body)
     expect(await second.putIfAbsent({ ...firstValue })).toEqual({ outcome: 'exists' })
-    expect(await readdir(rootDirectory)).toHaveLength(1)
+    expect(await readdir(rootDirectory)).toHaveLength(2)
   })
 
   test('separate child processes wait after both observe missing and leave one durable winner', async () => {
@@ -157,17 +181,169 @@ describe('FilesystemObjectStore conditional publication', () => {
   })
 
   test('ordinary mutable put cannot replace a conditional envelope, but delete removes it', async () => {
-    const { store } = await makeStore()
+    const { rootDirectory, store: conditionalStore } = await makeStore()
+    const mutableStore = openStore(rootDirectory)
     const original = value('immutable/result', [1, 2, 3])
-    await store.putIfAbsent(original)
+    await conditionalStore.putIfAbsent(original)
 
-    await expect(store.put({ ...original, body: new Uint8Array([9]) })).rejects.toMatchObject({
+    await expect(
+      mutableStore.put({ ...original, body: new Uint8Array([9]) })
+    ).rejects.toMatchObject({
       code: 'OBJECT_STORE_INTEGRITY_FAILURE',
     })
-    expect(await store.get(original.key)).toMatchObject({ body: original.body })
-    await store.delete(original.key)
-    await store.delete(original.key)
-    await expect(store.get(original.key)).rejects.toMatchObject({ code: 'OBJECT_STORE_NOT_FOUND' })
+    expect(await conditionalStore.get(original.key)).toMatchObject({ body: original.body })
+    await conditionalStore.delete(original.key)
+    await mutableStore.delete(original.key)
+    await expect(conditionalStore.get(original.key)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_NOT_FOUND',
+    })
+    expect(await readdir(rootDirectory)).toEqual([])
+  })
+
+  test('mutable publication mode fences a cross-process conditional race after mutable preflight', async () => {
+    const { rootDirectory, store } = await makeStore()
+    const input = value('mixed-mode/result', [1, 2, 3])
+    const script = `
+      import fs from 'node:fs';
+      import { createInterface } from 'node:readline';
+      const originalRename = fs.promises.rename;
+      let resumeMutable;
+      let paused = false;
+      fs.promises.rename = async (...args) => {
+        if (!paused && String(args[0]).includes('.tmp')) {
+          paused = true;
+          process.stdout.write('mutable-paused' + String.fromCharCode(10));
+          await new Promise((resolve) => { resumeMutable = resolve; });
+        }
+        return originalRename(...args);
+      };
+      const { FilesystemObjectStore } = await import(${JSON.stringify(new URL('./filesystem.ts', import.meta.url).href)});
+      const [root, bodyBase64] = process.argv.slice(1);
+      const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 });
+      const input = { key: 'mixed-mode/result', body: new Uint8Array(Buffer.from(bodyBase64, 'base64')), metadata: { writer: 'mutable' } };
+      const control = createInterface({ input: process.stdin });
+      control.on('line', (line) => {
+        if (line === 'start') {
+          void store.put(input).then((object) => {
+            process.stdout.write(JSON.stringify({ object }) + String.fromCharCode(10));
+            store.close(); control.close();
+          }, (error) => {
+            process.stderr.write(String(error?.code ?? error)); process.exitCode = 1;
+            store.close(); control.close();
+          });
+        } else if (line === 'resume') {
+          resumeMutable?.();
+        }
+      });
+      process.stdout.write('ready' + String.fromCharCode(10));
+    `
+    const child = startContender(script, rootDirectory, 'fs-mixed-mode-mutable-child', input.body)
+    let conditionalResult
+    let mutableResult
+    let childResult
+    let childExit
+    try {
+      expect(await child.readLine()).toBe('ready')
+      child.process.stdin.write('start\n')
+      expect(await child.readLine()).toBe('mutable-paused')
+      try {
+        conditionalResult = await store.putIfAbsent(input)
+      } catch (error) {
+        conditionalResult = { error }
+      }
+    } finally {
+      if (child.process.exitCode === null && child.process.signalCode === null) {
+        child.process.stdin.write('resume\n')
+        childResult = await child.readLine().catch(() => undefined)
+      }
+      childExit = await child.exit
+    }
+    mutableResult = JSON.parse(childResult).object
+    expect(childExit.code).toBe(0)
+    expect(childExit.signal).toBeNull()
+    expect(conditionalResult).toMatchObject({
+      error: { code: 'OBJECT_STORE_PROVIDER_FAILURE', retryable: true },
+    })
+    expect(await store.head(input.key)).toEqual(mutableResult)
+    expect(await store.get(input.key)).toMatchObject({ ...mutableResult, body: input.body })
+  })
+
+  test('a durable conditional-only mode claim is resumed after cold reopen', async () => {
+    const { rootDirectory, store } = await makeStore()
+    const input = value('mode-recovery/conditional', [4, 5, 6])
+    await createModeClaim(writeModePath(rootDirectory, input.key), 'conditional')
+    store.close()
+    const reopened = openStore(rootDirectory)
+    await expect(reopened.put(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+
+    const result = await reopened.putIfAbsent(input)
+
+    expect(result.outcome).toBe('created')
+    expect(await reopened.get(input.key)).toMatchObject({ ...result.object, body: input.body })
+    expect(await readdir(rootDirectory)).toHaveLength(2)
+  })
+
+  test('a pre-mode conditional envelope still blocks mutable overwrite and counts as existing', async () => {
+    const { rootDirectory, store } = await makeStore()
+    const input = value('legacy-mode/conditional', [8, 9])
+    await store.putIfAbsent(input)
+    await rm(writeModePath(rootDirectory, input.key))
+    const previousModeStore = openStore(rootDirectory)
+
+    await expect(previousModeStore.put(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+    expect(await previousModeStore.putIfAbsent(input)).toEqual({ outcome: 'exists' })
+    expect(await previousModeStore.get(input.key)).toMatchObject({ body: input.body })
+  })
+
+  test('a mutable-only claim is retryable for create-only until the legacy object is complete', async () => {
+    const { rootDirectory, store } = await makeStore()
+    const input = value('mode-recovery/mutable', [7, 8])
+    await createModeClaim(writeModePath(rootDirectory, input.key), 'mutable')
+
+    await expect(store.putIfAbsent(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_PROVIDER_FAILURE',
+      retryable: true,
+    })
+    const descriptor = await store.put(input)
+    expect(await store.putIfAbsent(input)).toEqual({ outcome: 'exists' })
+    expect(await store.get(input.key)).toMatchObject({ ...descriptor, body: input.body })
+  })
+
+  test('write mode claims reject symlinks, special files, malformed bytes, and oversized contents', async () => {
+    const { rootDirectory, store } = await makeStore()
+    const input = value('invalid-mode/result', [1])
+    const modePath = writeModePath(rootDirectory, input.key)
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'm11-filesystem-artifact-mode-'))
+    ownedRoots.add(outsideRoot)
+    const target = join(outsideRoot, 'target')
+    await writeFile(target, 'CPFSMOD1\nconditional\n')
+
+    await symlink(target, modePath)
+    await expect(store.putIfAbsent(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+    await expect(store.put(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+    await rm(modePath)
+    await mkdir(modePath, { mode: 0o700 })
+    await expect(store.putIfAbsent(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+    await rm(modePath, { recursive: true })
+    await writeFile(modePath, 'not-a-mode')
+    await expect(store.putIfAbsent(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
+    await rm(modePath)
+    await writeFile(modePath, 'x'.repeat(65))
+    await expect(store.put(input)).rejects.toMatchObject({
+      code: 'OBJECT_STORE_INTEGRITY_FAILURE',
+    })
   })
 
   test('legacy two-file objects remain readable and count as existing without replacement', async () => {
