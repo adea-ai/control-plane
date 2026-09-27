@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm'
 
 const identifier = (name: string) => varchar(name, { length: 30 })
 
-/** Durable hold metadata. Migration generation is intentionally owned elsewhere. */
+/** Durable owner hold metadata, installed by the canonical migration chain. */
 export const retentionHolds = pgTable(
   'retention_holds',
   {
