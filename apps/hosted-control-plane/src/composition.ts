@@ -296,7 +296,9 @@ export class HostedServerControlPlaneComposition {
     }
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
       commands: new CommandInboxService({
-        repository: new PostgresCommandAcceptanceRepository(this.connection.database),
+        repository: new PostgresCommandAcceptanceRepository(this.connection.database, {
+          budgetAdmission: true,
+        }),
         executionIdFactory: createExecutionId,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(
           plans,
@@ -421,7 +423,9 @@ export class HostedServerControlPlaneComposition {
       graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
       runtimeRouter: this.runtimeAttemptRouter,
       commands: new CommandInboxService({
-        repository: new PostgresCommandAcceptanceRepository(this.connection.database),
+        repository: new PostgresCommandAcceptanceRepository(this.connection.database, {
+          budgetAdmission: true,
+        }),
         executionIdFactory: unavailableExecutionIdFactory,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(
           plans,

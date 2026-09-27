@@ -193,6 +193,37 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
     }
   })
 
+  test('serializes concurrent acceptance across separate connections without duplicate allocation', async () => {
+    const { isolated, credentials } = await createDatabase()
+    const databaseUrl = new URL(credentials.application.url)
+    databaseUrl.pathname = `/${isolated.name}`
+    const second = createPostgresConnection({
+      ...credentials.application,
+      url: databaseUrl.toString(),
+    })
+    try {
+      const input = commandInput(plan)
+      const attempts = await Promise.allSettled([
+        acceptanceService(isolated.application).service.acceptExecution(input),
+        acceptanceService(second.database).service.acceptExecution(input),
+      ])
+      for (const attempt of attempts) expect(attempt.status).toBe('fulfilled')
+      const results = attempts.map((attempt) => attempt.value)
+      expect(results.map((result) => result.replayed).toSorted()).toEqual([false, true])
+      expect(results[0].execution.executionId).toBe(results[1].execution.executionId)
+      expect(await isolated.application.select().from(commandInbox)).toHaveLength(1)
+      expect(await isolated.application.select().from(executions)).toHaveLength(1)
+      expect(
+        await ledger(second.database).entries(
+          input.correlation.workspaceId,
+          results[0].execution.executionId
+        )
+      ).toHaveLength(1)
+    } finally {
+      await second.close()
+    }
+  })
+
   test('rolls back command and owner when parent budget exhaustion denies child admission', async () => {
     const { isolated } = await createDatabase()
     const parentInput = commandInput(plan)

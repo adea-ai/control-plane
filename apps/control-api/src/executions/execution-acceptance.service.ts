@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
 import {
   BadRequestException,
   ConflictException,
@@ -339,6 +340,27 @@ function transitionTimestamp(now: string, previous: string): string {
 }
 
 function normalizeCommandError(error: unknown): never {
+  if (error instanceof DurableUsageError) {
+    if (error.code === 'BUDGET_EXHAUSTED') {
+      throw new UnprocessableEntityException({
+        code: error.code,
+        message: 'Execution budget capacity is exhausted',
+      })
+    }
+    if (error.code === 'BUDGET_SETTLED') {
+      throw new ConflictException({
+        code: error.code,
+        message: 'Execution budget is already settled',
+      })
+    }
+    throw new ServiceUnavailableException(
+      {
+        code: 'BUDGET_ADMISSION_UNAVAILABLE',
+        message: 'Execution budget admission is unavailable',
+      },
+      { cause: error }
+    )
+  }
   if (!(error instanceof CommandInboxError)) throw error
   if (error.code === 'INVALID_EXECUTION_PLAN_REFERENCE') {
     throw new UnprocessableEntityException({

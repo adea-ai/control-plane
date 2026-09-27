@@ -2,6 +2,52 @@ import { expect, test } from 'bun:test'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
 import { DurableExecutionAcceptanceService } from './execution-acceptance.service.ts'
+import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
+
+test.each([
+  ['BUDGET_EXHAUSTED', 422, 'BUDGET_EXHAUSTED'],
+  ['BUDGET_SETTLED', 409, 'BUDGET_SETTLED'],
+  ['BUDGET_NOT_FOUND', 503, 'BUDGET_ADMISSION_UNAVAILABLE'],
+  ['STORE_STATE_INVALID', 503, 'BUDGET_ADMISSION_UNAVAILABLE'],
+  ['USAGE_LEDGER_SCOPE_MISMATCH', 503, 'BUDGET_ADMISSION_UNAVAILABLE'],
+])('budget admission %s rejects safely before dispatch', async (code, status, publicCode) => {
+  const fixture = ControlApiFixtures.executionAcceptance.request
+  const request = {
+    ...fixture,
+    payload: {
+      ...fixture.payload,
+      retentionExpiresAt: new Date(Date.parse(fixture.issuedAt) + 30 * 86_400_000).toISOString(),
+    },
+  }
+  let dispatched = 0
+  const service = new DurableExecutionAcceptanceService({
+    commands: {
+      acceptExecution: async () => {
+        throw new DurableUsageError(code)
+      },
+    },
+    dispatcher: {
+      submit: async () => {
+        dispatched += 1
+      },
+    },
+    now: () => request.issuedAt,
+  })
+  let rejection
+  try {
+    await service.accept(request, 'svc_admission-test')
+  } catch (error) {
+    rejection = error
+  }
+  expect(rejection?.getStatus()).toBe(status)
+  expect(rejection?.getResponse().code).toBe(publicCode)
+  expect(dispatched).toBe(0)
+  if (status === 503) {
+    expect(JSON.stringify(rejection.getResponse())).not.toContain(code)
+    expect(rejection.cause).toBeInstanceOf(DurableUsageError)
+    expect(rejection.cause.code).toBe(code)
+  }
+})
 
 test.each(['optimistic replay', 'acceptance race'])(
   'admission denial prevents workflow submission on %s',

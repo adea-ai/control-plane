@@ -99,7 +99,9 @@ export function createManagedCloudWorkflowWorkerComposition(
       ? undefined
       : createConsistencyMetricEmitter(metricAdapter, 'workflow-worker')
   const inbox = new CommandInboxService({
-    repository: new PostgresCommandAcceptanceRepository(connection.database),
+    repository: new PostgresCommandAcceptanceRepository(connection.database, {
+      budgetAdmission: true,
+    }),
     executionIdFactory: unavailableExecutionIdFactory,
     executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
       catalog: { profiles: catalog, skills: catalog },

@@ -1,9 +1,60 @@
-# M11 native plan-budget admission checkpoint — 2026-09-27
+# M11 plan-budget admission checkpoints — 2026-09-27
 
 This is partial M11.3 implementation evidence, not milestone completion or
 production deployment proof. The original seven open issues and all profile,
 security, evaluation, operations, documentation and independent acceptance gates
 remain in force.
+
+## PostgreSQL and supported composition activation
+
+The later PostgreSQL implementation acquires execution-retention and workspace
+locks before command/plan/owner locks, uses READ COMMITTED, and hydrates the
+canonical stored plan inside the acceptance transaction. Command, owner and
+allowance commit together. Duplicate and public verification validate the
+recorded owner, accounting and original opening receipt without re-funding or
+reloading a retired plan. Cloud API, Hosted acceptance/lifecycle and Cloud worker
+command compositions now enable admission; compatibility repositories remain
+opt-in. Accepted historical owners with missing accounting fail closed, not an
+automatic backfill. Operators must reconcile those owners before activation.
+
+The API maps exhausted capacity to 422, settled allowance to 409, and internal
+accounting failures to a generic 503 while retaining the internal error cause.
+The new test is included in the existing Control API integration command.
+
+Fresh verification against the owned local PostgreSQL fixture, with separate
+application, migration and administration roles and canonical migrations:
+
+- PostgreSQL admission and signed Cloud-composition HTTP: 6 passed, 0 failed,
+  44 assertions across two files. This covers one allocation, concurrent
+  acceptance over separate connections, exhausted-child rollback, parent-project
+  isolation, missing/corrupt accounting, authenticated scope denial, stored-plan
+  ceilings despite request-supplied limits, no submission after denied admission,
+  cold API replay after plan deletion and damaged opening-receipt rejection.
+- The HTTP fixture uses the real Cloud composition and in-process Fastify HTTP
+  injection with a mock Restate ingress, not a deployed workflow runtime.
+- New native admission tests: 9 passed, 0 failed, 30 assertions. Independent-file
+  connections exercise SQLite BUSY handling and retry; other cases cover atomic
+  rollback after receipt-write failure, missing/corrupt replay, settled-active
+  owner rejection, child scope/exhaustion and positively clipped child allowance.
+- Full SQLite and Local package test commands pass; full Local records 77 passed,
+  0 failed, 442 assertions. Control API, Hosted and worker package test commands
+  pass; database-gated tests skipped by those ungated commands are not acceptance
+  proof. Worker records 66 passed, 0 failed, 249 assertions.
+- Database, Control API, Hosted and worker TypeScript builds pass. Changed-code
+  strict lint, formatting, whitespace and frozen-lockfile installation pass.
+
+The first signed HTTP run exposed an incorrect fixture assertion: empty credential
+scopes are malformed (401), whereas a valid token with another scope is forbidden
+(403). The next run exposed a mock Restate response missing its required status
+and invocation ID. Both fixtures were corrected; production verification was not
+weakened. A diagnostic rerun retained that second failure before correction.
+
+No deployed Hosted/Cloud runtime, funding/charge provenance, per-attempt capacity
+reservation, terminal settlement, extension policy, usage-retention/aggregate
+fences, restore/capacity certification or independent human acceptance is proven
+by this checkpoint. No staging/production deployment, issue closure or merge.
+
+## Prior native checkpoint (historical)
 
 ## Policy and implementation
 
