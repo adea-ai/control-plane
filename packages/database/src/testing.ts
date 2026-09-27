@@ -22,6 +22,9 @@ export interface IsolatedTestDatabase {
   readonly name: string
   dispose(): Promise<void>
   migrate(): Promise<void>
+  withMigrationDatabase<Result>(
+    operation: (database: ControlPlaneDatabase) => Promise<Result>
+  ): Promise<Result>
   transaction<Result>(
     operation: (transaction: DomainTransaction) => Promise<Result>
   ): Promise<Result>
@@ -77,6 +80,14 @@ export async function createIsolatedTestDatabase(
       async migrate() {
         await migrateDatabase({ role: 'migration', url: migrationUrl })
         await grantApplicationAccess(migrationUrl, applicationRole)
+      },
+      async withMigrationDatabase(operation) {
+        const client = postgres(migrationUrl, { max: 1, prepare: false })
+        try {
+          return await operation(drizzle(client, { schema }))
+        } finally {
+          await client.end({ timeout: 5 })
+        }
       },
       transaction: (operation) => withDomainTransaction(application, operation),
     }

@@ -12,6 +12,7 @@ import {
   PostgresContextPackageRepository,
   PostgresExecutionPlanRepository,
   PostgresDurableUsageStore,
+  PostgresAdmissionRolloutService,
   commandInbox,
   executions,
   executionPlans,
@@ -233,9 +234,30 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
           expect(denied.json().error.code).toBe('BUDGET_EXHAUSTED')
           expect(submissions).toBe(1)
           expect(await snapshot(isolated.application)).toEqual(before)
-          await isolated.application.delete(executionPlans)
+          const pausedState = await isolated.withMigrationDatabase((database) =>
+            new PostgresAdmissionRolloutService(database).pause()
+          )
+          expect(pausedState).toMatchObject({ state: 'paused', revision: 1 })
+          const gate = new PostgresAdmissionRolloutService(isolated.application)
+          const pausedRequest = {
+            ...request,
+            commandId: id('cmd', 'J'),
+            idempotencyKey: 'paused-budget-admission-0001',
+          }
+          const paused = await send(first, pausedRequest)
+          expect(paused.statusCode).toBe(503)
+          expect(paused.json().error).toMatchObject({
+            code: 'EXECUTION_INTAKE_UNAVAILABLE',
+            message: 'Execution intake is temporarily unavailable',
+          })
+          expect(JSON.stringify(paused.json())).not.toContain('ADMISSION_ROLLOUT_PAUSED')
+          expect(await snapshot(isolated.application)).toEqual(before)
+          expect(submissions).toBe(1)
           await close(first)
           const reopened = await open()
+          expect(await gate.getStatus()).toMatchObject({ state: 'paused', revision: 1 })
+          expect((await send(reopened, pausedRequest)).statusCode).toBe(503)
+          await isolated.application.delete(executionPlans)
           const replay = await send(reopened)
           expect(replay.statusCode).toBe(202)
           expect(replay.json().data).toMatchObject({ executionId, replayed: true })

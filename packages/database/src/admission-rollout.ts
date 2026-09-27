@@ -1,25 +1,12 @@
 import { eq, sql, type SQL } from 'drizzle-orm'
+import { AdmissionRolloutError } from '@control-plane/domain'
 import type { ControlPlaneDatabase } from './connection.js'
 import { admissionRolloutGate } from './schema/admission-rollout.js'
 
 const ADMISSION_ROLLOUT_GATE_KEY = 'intake'
 const ADMISSION_ROLLOUT_ADVISORY_LOCK_ID = 724_193_560_984_241
 
-export type AdmissionRolloutErrorCode =
-  | 'ADMISSION_ROLLOUT_PAUSED'
-  | 'ADMISSION_ROLLOUT_GATE_UNAVAILABLE'
-  | 'ADMISSION_ROLLOUT_STATE_INVALID'
-  | 'ADMISSION_ROLLOUT_AUTHORITY_DENIED'
-
-export class AdmissionRolloutError extends Error {
-  readonly code: AdmissionRolloutErrorCode
-
-  constructor(code: AdmissionRolloutErrorCode) {
-    super('Admission rollout gate operation was denied')
-    this.name = 'AdmissionRolloutError'
-    this.code = code
-  }
-}
+export { AdmissionRolloutError, type AdmissionRolloutErrorCode } from '@control-plane/domain'
 
 interface AdvisoryLockTransaction {
   execute(query: SQL): Promise<unknown>
