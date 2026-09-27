@@ -338,6 +338,42 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
           ))()
       ).rejects.toThrow()
 
+      // Table-only preflight misses a separately granted column UPDATE.
+      await operatorDatabase.execute(
+        sql`grant update (state), insert (schema_version), references (gate_key) on admission_rollout_gate to control_plane_app`
+      )
+      const columnCapabilities = () =>
+        isolated.application.execute(sql`
+        select has_table_privilege(current_user, 'public.admission_rollout_gate', 'UPDATE') as table_update,
+          has_any_column_privilege(current_user, 'public.admission_rollout_gate', 'UPDATE') as column_update,
+          has_any_column_privilege(current_user, 'public.admission_rollout_gate', 'INSERT') as column_insert,
+          has_any_column_privilege(current_user, 'public.admission_rollout_gate', 'REFERENCES') as column_reference
+      `)
+      expect(await columnCapabilities()).toMatchObject([
+        { table_update: false, column_update: true, column_insert: true, column_reference: true },
+      ])
+      const migrationSource = await readFile(
+        new URL('../../../scripts/migrate-production-schema.mjs', import.meta.url),
+        'utf8'
+      )
+      const privilegeQuery = migrationSource.match(
+        /async readRuntimeTablePrivileges\(\) \{\s*return client`([\s\S]*?)`/
+      )?.[1]
+      expect(typeof privilegeQuery).toBe('string')
+      const runtimeGatePrivileges = async () =>
+        (await isolated.application.execute(sql.raw(privilegeQuery))).find(
+          (row) => row.table_name === 'admission_rollout_gate'
+        )
+      expect(await runtimeGatePrivileges()).toMatchObject({
+        can_update: false,
+        has_column_insert: true,
+        has_column_update: true,
+        has_column_references: true,
+      })
+      // Mutating the same value demonstrates the real permission without reopening intake.
+      await isolated.application.execute(
+        sql`update admission_rollout_gate set state = 'paused' where gate_key = 'intake'`
+      )
       // Re-provisioning's broad CRUD grant must not reopen the operator-only boundary.
       await operatorDatabase.execute(
         sql`grant select, insert, update, delete on all tables in schema public to control_plane_app`
@@ -364,6 +400,14 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
           await operatorDatabase.execute(sql.raw(command))
         }
       }
+      expect(await columnCapabilities()).toMatchObject([
+        {
+          table_update: false,
+          column_update: false,
+          column_insert: false,
+          column_reference: false,
+        },
+      ])
       await expect(
         new PostgresAdmissionRolloutService(isolated.application).pause()
       ).rejects.toMatchObject({ code: 'ADMISSION_ROLLOUT_AUTHORITY_DENIED' })
@@ -373,6 +417,15 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
             sql`update admission_rollout_gate set state = 'open' where gate_key = 'intake'`
           ))()
       ).rejects.toThrow()
+      expect(await runtimeGatePrivileges()).toMatchObject({
+        can_select: true,
+        can_insert: false,
+        can_update: false,
+        can_delete: false,
+        has_column_insert: false,
+        has_column_update: false,
+        has_column_references: false,
+      })
       await expect(gate.getStatus()).resolves.toMatchObject({ state: 'paused', revision: 1 })
 
       expect(
