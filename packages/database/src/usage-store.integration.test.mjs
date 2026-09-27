@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import process from 'node:process'
+import { and, eq, sql } from 'drizzle-orm'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   DurableUsageBudgetSchema,
@@ -15,6 +16,9 @@ import { PostgresExecutionRepository } from './execution-repository.ts'
 import { createPostgresConnection } from './connection.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
+import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.ts'
+import { usageLedgerEntries } from './schema/usage-ledger.ts'
+import { executions } from './schema/executions.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
@@ -57,7 +61,10 @@ function idsForWorkspace(workspaceId) {
   }
 }
 
-async function createOwner(database, { workspaceId = nextId('wsp'), parentExecutionId } = {}) {
+async function createOwner(
+  database,
+  { workspaceId = nextId('wsp'), parentExecutionId, withAttempt = true } = {}
+) {
   const executionId = nextId('exe')
   const repository = new PostgresExecutionRepository(database)
   const lifecycle = new ExecutionLifecycleService(repository)
@@ -68,13 +75,54 @@ async function createOwner(database, { workspaceId = nextId('wsp'), parentExecut
     ...(parentExecutionId === undefined ? {} : { parentExecutionId }),
     acceptedAt,
   })
-  const attempt = await lifecycle.createAttempt({
-    executionId,
-    attemptId: nextId('att'),
-    expectedExecutionVersion: execution.version,
-    queuedAt,
-  })
+  const attempt = withAttempt
+    ? await lifecycle.createAttempt({
+        executionId,
+        attemptId: nextId('att'),
+        expectedExecutionVersion: execution.version,
+        queuedAt,
+      })
+    : undefined
   return { execution, attempt }
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
+
+async function waitForAdvisoryLockWait(database) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const rows = await database.execute(sql`
+      select pid
+      from pg_stat_activity
+      where datname = current_database()
+        and wait_event_type = 'Lock'
+        and cardinality(pg_blocking_pids(pid)) > 0
+        and lower(query) like '%pg_advisory_xact_lock%'
+      limit 1
+    `)
+    if (rows.length > 0) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('EXPECTED_POSTGRES_ADVISORY_LOCK_WAIT')
+}
+
+async function withinBound(promise, label, timeoutMs = 15_000) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`POSTGRES_TEST_TIMEOUT:${label}`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
@@ -183,6 +231,49 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
     } finally {
       await reconnected.close()
     }
+  })
+
+  test('returns identical duplicates but rejects changed operation identity and inputs', async () => {
+    const { isolated } = await createDatabase()
+    const owner = await createOwner(isolated.application)
+    const workspaceId = owner.execution.correlation.workspaceId
+    const executionId = owner.execution.executionId
+    const service = ledger(isolated.application)
+    const openInput = {
+      workspaceId,
+      executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('duplicate-open'),
+    }
+    const opened = await service.openBudget(openInput)
+    await expect(service.openBudget(openInput)).resolves.toEqual(opened)
+    await expect(
+      service.openBudget({ ...openInput, maximumMicrounits: 1_001 })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+
+    const reserveInput = {
+      workspaceId,
+      executionId,
+      reservationKey: 'duplicate-reservation',
+      maximumMicrounits: 500,
+      maximumTokens: 5,
+      source: source('duplicate-reserve'),
+    }
+    const reservation = await service.reserve(reserveInput)
+    await expect(service.reserve(reserveInput)).resolves.toEqual(reservation)
+    await expect(service.reserve({ ...reserveInput, maximumTokens: 6 })).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_CONFLICT',
+    })
+
+    const otherOwner = await createOwner(isolated.application, { workspaceId })
+    await expect(
+      service.openBudget({
+        ...openInput,
+        executionId: otherOwner.execution.executionId,
+      })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
   })
 
   test('rolls back budgets, immutable entries, and replay receipts when the callback throws', async () => {
@@ -338,5 +429,451 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
       availableMicrounits: 400,
       availableTokens: 40,
     })
+  })
+
+  test('funds child money and tokens once, then rolls measured spend into its parent', async () => {
+    const { isolated } = await createDatabase()
+    const parent = await createOwner(isolated.application)
+    const workspaceId = parent.execution.correlation.workspaceId
+    const child = await createOwner(isolated.application, {
+      workspaceId,
+      parentExecutionId: parent.execution.executionId,
+    })
+    const service = ledger(isolated.application)
+    await service.openBudget({
+      workspaceId,
+      executionId: parent.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 10_000,
+      maximumTokens: 1_000,
+      source: source('child-parent-open'),
+    })
+    const childOpenInput = {
+      workspaceId,
+      executionId: child.execution.executionId,
+      parentExecutionId: parent.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 8_000,
+      maximumTokens: 800,
+      source: source('child-open'),
+    }
+    const childOpened = await service.openBudget(childOpenInput)
+    expect(childOpened.maximumMicrounits).toBe(8_000)
+    expect(childOpened.maximumTokens).toBe(800)
+    await expect(service.summary(workspaceId, parent.execution.executionId)).resolves.toMatchObject(
+      {
+        reservedMicrounits: 8_000,
+        reservedTokens: 800,
+        availableMicrounits: 2_000,
+        availableTokens: 200,
+      }
+    )
+
+    await service.reserve({
+      workspaceId,
+      executionId: child.execution.executionId,
+      attemptId: child.attempt.attemptId,
+      reservationKey: 'child-model',
+      maximumMicrounits: 5_000,
+      maximumTokens: 500,
+      source: source('child-reserve'),
+    })
+    await service.charge({
+      workspaceId,
+      executionId: child.execution.executionId,
+      attemptId: child.attempt.attemptId,
+      reservationKey: 'child-model',
+      kind: 'model_usage',
+      quantity: { unit: 'tokens', value: 100 },
+      costMicrounits: 2_000,
+      fundingSource: 'hq_managed',
+      source: source('child-charge'),
+    })
+    await service.settle({
+      workspaceId,
+      executionId: child.execution.executionId,
+      reservationKey: 'child-model',
+      source: source('child-settle'),
+    })
+    const childFinalizeInput = {
+      workspaceId,
+      executionId: child.execution.executionId,
+      source: source('child-finalize'),
+    }
+    const childFinalized = await service.finalizeBudget(childFinalizeInput)
+    await expect(service.summary(workspaceId, parent.execution.executionId)).resolves.toMatchObject(
+      {
+        spentMicrounits: 2_000,
+        spentTokens: 100,
+        reservedMicrounits: 0,
+        reservedTokens: 0,
+        availableMicrounits: 8_000,
+        availableTokens: 900,
+      }
+    )
+
+    const parentFinalized = await service.finalizeBudget({
+      workspaceId,
+      executionId: parent.execution.executionId,
+      source: source('child-parent-finalize'),
+    })
+    expect(parentFinalized.settled).toBe(true)
+    const parentEntriesAfterRollup = await service.entries(
+      workspaceId,
+      parent.execution.executionId
+    )
+    expect(parentEntriesAfterRollup.map((entry) => entry.kind)).toEqual([
+      'credit',
+      'reservation',
+      'release',
+      'settlement',
+      'settlement',
+    ])
+
+    await expect(service.openBudget(childOpenInput)).resolves.toEqual(childOpened)
+    await expect(service.finalizeBudget(childFinalizeInput)).resolves.toEqual(childFinalized)
+    await expect(service.entries(workspaceId, parent.execution.executionId)).resolves.toEqual(
+      parentEntriesAfterRollup
+    )
+  })
+
+  test('rejects cross-workspace owners, incorrect parent attribution, and foreign attempts', async () => {
+    const { isolated } = await createDatabase()
+    const workspaceId = nextId('wsp')
+    const owner = await createOwner(isolated.application, { workspaceId })
+    const foreignWorkspaceOwner = await createOwner(isolated.application)
+    const service = ledger(isolated.application)
+    await service.openBudget({
+      workspaceId,
+      executionId: owner.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 5_000,
+      maximumTokens: 50,
+      source: source('scope-owner-open'),
+    })
+
+    const store = new PostgresDurableUsageStore(isolated.application)
+    await expect(
+      store.transaction(foreignWorkspaceOwner.execution.correlation.workspaceId, (scope) =>
+        scope.getBudget(owner.execution.executionId)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      ledger(isolated.application).openBudget({
+        workspaceId: foreignWorkspaceOwner.execution.correlation.workspaceId,
+        executionId: owner.execution.executionId,
+        currency: 'USD',
+        maximumMicrounits: 5_000,
+        maximumTokens: 50,
+        source: source('scope-cross-workspace-open'),
+      })
+    ).rejects.toMatchObject({ code: 'USAGE_LEDGER_SCOPE_MISMATCH' })
+    await expect(
+      service.summary(workspaceId, foreignWorkspaceOwner.execution.executionId)
+    ).rejects.toMatchObject({
+      code: 'BUDGET_NOT_FOUND',
+    })
+
+    const firstParent = await createOwner(isolated.application, { workspaceId })
+    const otherParent = await createOwner(isolated.application, { workspaceId })
+    const child = await createOwner(isolated.application, {
+      workspaceId,
+      parentExecutionId: firstParent.execution.executionId,
+    })
+    for (const parent of [firstParent, otherParent]) {
+      await service.openBudget({
+        workspaceId,
+        executionId: parent.execution.executionId,
+        currency: 'USD',
+        maximumMicrounits: 2_000,
+        maximumTokens: 20,
+        source: source(`scope-parent-${parent.execution.executionId}`),
+      })
+    }
+    await expect(
+      service.openBudget({
+        workspaceId,
+        executionId: child.execution.executionId,
+        parentExecutionId: otherParent.execution.executionId,
+        currency: 'USD',
+        maximumMicrounits: 1_000,
+        maximumTokens: 10,
+        source: source('scope-wrong-parent'),
+      })
+    ).rejects.toThrow()
+    await expect(service.summary(workspaceId, child.execution.executionId)).rejects.toMatchObject({
+      code: 'BUDGET_NOT_FOUND',
+    })
+    await expect(
+      service.summary(workspaceId, otherParent.execution.executionId)
+    ).resolves.toMatchObject({
+      reservedMicrounits: 0,
+      reservedTokens: 0,
+    })
+
+    await expect(
+      service.reserve({
+        workspaceId,
+        executionId: owner.execution.executionId,
+        attemptId: foreignWorkspaceOwner.attempt.attemptId,
+        reservationKey: 'foreign-attempt',
+        maximumMicrounits: 100,
+        maximumTokens: 1,
+        source: source('scope-foreign-attempt'),
+      })
+    ).rejects.toMatchObject({ code: 'USAGE_LEDGER_SCOPE_MISMATCH' })
+    await expect(service.entries(workspaceId, owner.execution.executionId)).resolves.toHaveLength(1)
+  })
+
+  test('fails closed on schema-valid indexed-payload and persisted attempt ownership corruption', async () => {
+    const { isolated } = await createDatabase()
+    const workspaceId = nextId('wsp')
+    const service = ledger(isolated.application)
+    const damagedBudgetOwner = await createOwner(isolated.application, { workspaceId })
+    const budgetInput = {
+      workspaceId,
+      executionId: damagedBudgetOwner.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('corruption-budget-open'),
+    }
+    await service.openBudget(budgetInput)
+    const [storedBudget] = await isolated.application
+      .select()
+      .from(usageBudgetStates)
+      .where(eq(usageBudgetStates.executionId, budgetInput.executionId))
+    await isolated.application
+      .update(usageBudgetStates)
+      .set({
+        state: {
+          ...storedBudget.state,
+          executionId: nextId('exe'),
+        },
+      })
+      .where(eq(usageBudgetStates.executionId, budgetInput.executionId))
+    await expect(service.summary(workspaceId, budgetInput.executionId)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+
+    const damagedReceiptOwner = await createOwner(isolated.application, { workspaceId })
+    const receiptInput = {
+      workspaceId,
+      executionId: damagedReceiptOwner.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('corruption-receipt-open'),
+    }
+    await service.openBudget(receiptInput)
+    const [storedReceipt] = await isolated.application
+      .select()
+      .from(usageOperationReceipts)
+      .where(eq(usageOperationReceipts.idempotencyKey, receiptInput.source.idempotencyKey))
+    await isolated.application
+      .update(usageOperationReceipts)
+      .set({
+        receipt: {
+          ...storedReceipt.receipt,
+          fingerprint: `sha256:${'b'.repeat(64)}`,
+        },
+      })
+      .where(
+        and(
+          eq(usageOperationReceipts.workspaceId, workspaceId),
+          eq(usageOperationReceipts.idempotencyKey, receiptInput.source.idempotencyKey)
+        )
+      )
+    await expect(service.openBudget(receiptInput)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+
+    const attemptOwner = await createOwner(isolated.application, { workspaceId })
+    const foreignAttemptOwner = await createOwner(isolated.application, { workspaceId })
+    await service.openBudget({
+      workspaceId,
+      executionId: attemptOwner.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('corruption-attempt-open'),
+    })
+    await service.reserve({
+      workspaceId,
+      executionId: attemptOwner.execution.executionId,
+      reservationKey: 'unbound-reservation',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('corruption-attempt-reserve'),
+    })
+    await service.charge({
+      workspaceId,
+      executionId: attemptOwner.execution.executionId,
+      attemptId: attemptOwner.attempt.attemptId,
+      reservationKey: 'unbound-reservation',
+      kind: 'model_usage',
+      quantity: { unit: 'tokens', value: 1 },
+      costMicrounits: 1,
+      fundingSource: 'hq_managed',
+      source: source('corruption-attempt-charge'),
+    })
+    await isolated.application
+      .update(usageLedgerEntries)
+      .set({ attemptId: foreignAttemptOwner.attempt.attemptId })
+      .where(
+        and(
+          eq(usageLedgerEntries.executionId, attemptOwner.execution.executionId),
+          eq(usageLedgerEntries.kind, 'model_usage')
+        )
+      )
+    await expect(
+      service.summary(workspaceId, attemptOwner.execution.executionId)
+    ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+  })
+
+  test('rejects raw immutable-entry deletion when the budget sequence high-water mark remains', async () => {
+    const { isolated } = await createDatabase()
+    const owner = await createOwner(isolated.application)
+    const workspaceId = owner.execution.correlation.workspaceId
+    const service = ledger(isolated.application)
+    await service.openBudget({
+      workspaceId,
+      executionId: owner.execution.executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      source: source('raw-delete-open'),
+    })
+    await isolated.application
+      .delete(usageLedgerEntries)
+      .where(
+        and(
+          eq(usageLedgerEntries.executionId, owner.execution.executionId),
+          eq(usageLedgerEntries.sequence, 1)
+        )
+      )
+    await expect(service.summary(workspaceId, owner.execution.executionId)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+  })
+
+  test('linearizes execution deletion and usage admission in both lock orders without deadlock', async () => {
+    const { isolated } = await createDatabase()
+    const database = isolated.application
+    const firstOwner = await createOwner(database, { withAttempt: false })
+    const lifecycle = new ExecutionLifecycleService(new PostgresExecutionRepository(database))
+    const firstTerminal = await lifecycle.transitionExecution({
+      executionId: firstOwner.execution.executionId,
+      expectedVersion: firstOwner.execution.version,
+      to: 'cancelled',
+      transitionedAt: '2026-09-20T10:02:00.000Z',
+    })
+    const firstWorkspaceId = firstTerminal.correlation.workspaceId
+    const firstStore = new PostgresDurableUsageStore(database)
+    const writerEntered = deferred()
+    const allowWriter = deferred()
+    const gatedStore = {
+      transaction(workspaceId, operation) {
+        return firstStore.transaction(workspaceId, async (transaction) => {
+          writerEntered.resolve()
+          await allowWriter.promise
+          return operation(transaction)
+        })
+      },
+    }
+    const blockedWriter = new DurableUsageLedger({ store: gatedStore }).openBudget({
+      workspaceId: firstWorkspaceId,
+      executionId: firstTerminal.executionId,
+      currency: 'USD',
+      maximumMicrounits: 500,
+      maximumTokens: 5,
+      source: source('retention-writer-first'),
+    })
+    const retention = new PostgresExecutionRepository(database)
+    let waitingDelete
+    let firstOutcomes
+    try {
+      await withinBound(writerEntered.promise, 'writer-has-retention-class-lock')
+      waitingDelete = retention.deleteEligibleExecutions(new Date('2026-09-21T10:00:00.000Z'), {
+        policyRetainMs: 0,
+        bound: 8,
+        dryRun: false,
+      })
+      await waitForAdvisoryLockWait(database)
+    } finally {
+      allowWriter.resolve()
+      const started = [blockedWriter, ...(waitingDelete ? [waitingDelete] : [])]
+      firstOutcomes = await withinBound(Promise.allSettled(started), 'writer-retention-drain')
+    }
+    const writerOutcome = firstOutcomes[0]
+    const deleteOutcome = waitingDelete ? firstOutcomes[1] : undefined
+    expect(writerOutcome.status).toBe('fulfilled')
+    expect(deleteOutcome?.status).toBe('fulfilled')
+    const writerFirstResult = writerOutcome.value
+    expect(writerFirstResult.maximumMicrounits).toBe(500)
+    const [firstStillOwned] = await database
+      .select({ executionId: executions.executionId })
+      .from(executions)
+      .where(eq(executions.executionId, firstTerminal.executionId))
+    expect(firstStillOwned).toBeDefined()
+
+    const secondOwner = await createOwner(database, { withAttempt: false })
+    const secondLifecycle = new ExecutionLifecycleService(new PostgresExecutionRepository(database))
+    const secondTerminal = await secondLifecycle.transitionExecution({
+      executionId: secondOwner.execution.executionId,
+      expectedVersion: secondOwner.execution.version,
+      to: 'cancelled',
+      transitionedAt: '2026-09-20T10:03:00.000Z',
+    })
+    const journalEntered = deferred()
+    const allowRetention = deferred()
+    const deleting = retention.deleteEligibleExecutions(new Date('2026-09-21T10:00:00.000Z'), {
+      policyRetainMs: 0,
+      bound: 8,
+      dryRun: false,
+      journal: async () => {
+        journalEntered.resolve()
+        await allowRetention.promise
+      },
+    })
+    let writerAfterDelete
+    let secondOutcomes
+    try {
+      await withinBound(journalEntered.promise, 'retention-holds-owner-and-class-lock')
+      writerAfterDelete = ledger(database)
+        .openBudget({
+          workspaceId: secondTerminal.correlation.workspaceId,
+          executionId: secondTerminal.executionId,
+          currency: 'USD',
+          maximumMicrounits: 500,
+          maximumTokens: 5,
+          source: source('retention-delete-first'),
+        })
+        .then(
+          (value) => ({ status: 'fulfilled', value }),
+          (error) => ({ status: 'rejected', error })
+        )
+      await waitForAdvisoryLockWait(database)
+    } finally {
+      allowRetention.resolve()
+      const started = [deleting, ...(writerAfterDelete ? [writerAfterDelete] : [])]
+      secondOutcomes = await withinBound(Promise.allSettled(started), 'retention-writer-drain')
+    }
+    const deleteAfterWriterOutcome = secondOutcomes[0]
+    expect(deleteAfterWriterOutcome.status).toBe('fulfilled')
+    const deleteResult = deleteAfterWriterOutcome.value
+    expect(deleteResult.deleted).toBe(1)
+    expect(writerAfterDelete).toBeDefined()
+    const writerAfterDeleteOutcome = secondOutcomes[1]
+    expect(writerAfterDeleteOutcome.status).toBe('fulfilled')
+    expect(writerAfterDeleteOutcome.value.status).toBe('rejected')
+    expect(writerAfterDeleteOutcome.value.error).toMatchObject({
+      code: 'USAGE_LEDGER_SCOPE_MISMATCH',
+    })
+    const [secondStillOwned] = await database
+      .select({ executionId: executions.executionId })
+      .from(executions)
+      .where(eq(executions.executionId, secondTerminal.executionId))
+    expect(secondStillOwned).toBeUndefined()
   })
 })
