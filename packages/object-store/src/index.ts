@@ -312,9 +312,9 @@ async function readBody(
   let iterator: AsyncByteIterator | undefined
   let reader: ByteStreamReader | undefined
   let readerReleased = false
-  const body = new Uint8Array(expectedBytes)
   let totalBytes = 0
   try {
+    const body = new Uint8Array(expectedBytes)
     if (isObject(value) && typeof Reflect.get(value, 'getReader') === 'function') {
       reader = Reflect.apply(Reflect.get(value, 'getReader'), value, []) as ByteStreamReader
       while (true) {

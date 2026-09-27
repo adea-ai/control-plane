@@ -41,6 +41,24 @@ function addBulkTransformTrap(body, calls, transformed = new Uint8Array()) {
 }
 
 describe('R2ObjectStore bounded GET body reads', () => {
+  test('destroys an unread stream when the bounded buffer allocation fails', async () => {
+    let reads = 0
+    const body = new Readable({
+      read() {
+        reads += 1
+      },
+    })
+    const output = providerOutput(body)
+    output.ContentLength = Number.MAX_SAFE_INTEGER
+    const result = storeFor(output, Number.MAX_SAFE_INTEGER)
+
+    await expect(result.store.get('allocation-failure/key')).rejects.toMatchObject({
+      code: 'OBJECT_STORE_PROVIDER_FAILURE',
+    })
+    expect(reads).toBe(0)
+    expect(body.destroyed).toBe(true)
+  })
+
   test('rejects an over-limit declared length before reading and destroys the Node stream', async () => {
     let reads = 0
     let transforms = { count: 0 }
