@@ -60,6 +60,23 @@ implement raw usage retention.
   changing entries; restoring the original receipt restores exact replay. Focused native
   store/retention verification passed 19 tests, zero failures, 128 assertions in 6.69s.
   These are additional native regressions, not a new full workspace run.
+- Complete native SQLite package after those regressions passed 169 tests, zero failures,
+  zero skips, 1,088 assertions across 27 files in 17.07s at `660d1c8`. This includes actual
+  CLI subprocesses, crash recovery, hold contention, and the native accounting cases.
+- Summary receipt correction `be870cd5` followed additional RED tests demonstrating
+  altered schema-valid opening and child/parent finalization summaries. Its isolated
+  package passed 23 tests, 96 assertions, build, lint, format, and aggregate import. Opening
+  expectations use the original operation-bound credit plus zero-use snapshot; finalization
+  uses the operation-bound settlement and validated settled rollups. Tests preserve child
+  replay after later parent activity and finalization. Future extensions require retained
+  opening money/token provenance rather than comparing historical receipts to extended maxima.
+- Root reproduced the opening-summary defect in an actual SQLite file after close/reopen
+  before integrating that correction. Final actual usage/SQLite TypeScript builds and all
+  four focused files passed 42 tests, zero failures, 234 assertions in 2.90s. Native coverage
+  now includes all four receipt types (opening, charge, settlement, finalization), corruption
+  surviving physical reopen, rejection without new entries, and exact replay after restoring
+  the original receipt. The broad workspace run predates these final corrections; no new
+  full-workspace or deployed-profile acceptance is claimed from this focused result.
 
 - Initial native tests: four usage-store tests passed after correcting a fixture's missing
   expected revision. The native optimistic-concurrency guard was preserved.
@@ -89,7 +106,7 @@ admission, provider-metering, cross-process capacity, or deployed profile accept
 
 ## Required continuation
 
-Finish historical budget-summary receipt integrity and policy-authorized extensions,
+Implement policy-authorized extensions with retained opening-history provenance,
 implement and independently validate the PostgreSQL store, then activate the service at
 supported composition boundaries. Preserve both money and token
 funding through child finalization; reserve before external work; reconcile real terminal

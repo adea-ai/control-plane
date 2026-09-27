@@ -51,4 +51,8 @@ charges. Neither summary includes provider credentials or source/idempotency ide
 The service and native adapter remain component implementations: application admission,
 terminal reconciliation, PostgreSQL budget persistence and production activation are
 still required. Policy-authorized budget extensions are not yet implemented by the
-durable service. Historical budget-summary receipt integrity is under additional review.
+durable service. Opening-summary replay verifies the original zero-use allocation rather
+than comparing it with later reservations or current parent availability. Finalization
+replay verifies the operation-bound terminal settlement and validated settled rollups.
+Future budget extensions must retain original opening authority so those historical
+receipts remain verifiable; extensions must not reuse the current maxima as that history.

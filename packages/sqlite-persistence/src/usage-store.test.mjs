@@ -382,14 +382,15 @@ describe('SQLite durable usage transactions', () => {
     await withStore(async (provider, store) => {
       const ledger = new DurableUsageLedger({ store })
       const source = (idempotencyKey) => ({ sourceId: 'receipt-integrity', idempotencyKey })
-      await ledger.openBudget({
+      const openInput = {
         workspaceId,
         executionId,
         currency: 'USD',
         maximumMicrounits: 1000,
         maximumTokens: 100,
         source: source('open'),
-      })
+      }
+      const opening = await ledger.openBudget(openInput)
       await ledger.reserve({
         workspaceId,
         executionId,
@@ -419,14 +420,28 @@ describe('SQLite durable usage transactions', () => {
         source: source('settle'),
       }
       const settlement = await ledger.settle(settleInput)
+      const finalizeInput = { workspaceId, executionId, source: source('finalize') }
+      const finalized = await ledger.finalizeBudget(finalizeInput)
       const before = await ledger.entries(workspaceId, executionId)
       for (const [key, corruptedResult, replay, expected] of [
+        [
+          'open',
+          { ...opening, spentTokens: 1, availableTokens: opening.availableTokens - 1 },
+          (reopened) => reopened.openBudget(openInput),
+          opening,
+        ],
         ['charge-one', otherCharge, (reopened) => reopened.charge(chargeInput), charge],
         [
           'settle',
           { ...settlement, releasedMicrounits: settlement.releasedMicrounits + 1 },
           (reopened) => reopened.settle(settleInput),
           settlement,
+        ],
+        [
+          'finalize',
+          { ...finalized, spentTokens: finalized.spentTokens + 1 },
+          (reopened) => reopened.finalizeBudget(finalizeInput),
+          finalized,
         ],
       ]) {
         const original = await provider.transaction(async (tx) => {
