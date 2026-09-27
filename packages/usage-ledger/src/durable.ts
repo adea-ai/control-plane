@@ -304,7 +304,11 @@ export class DurableUsageLedger {
       const loaded = await this.#loadValidatedTree(transaction, data.workspaceId, data.executionId)
       const budget = mutableBudget(loaded.budget)
       if (budget.status === 'settled') throw usageError('BUDGET_SETTLED')
-      if (budget.reservations.some((reservation) => reservation.reservationKey === data.reservationKey)) {
+      if (
+        budget.reservations.some(
+          (reservation) => reservation.reservationKey === data.reservationKey
+        )
+      ) {
         throw usageError('IDEMPOTENCY_CONFLICT')
       }
       const totals = calculateTotals(budget)
@@ -519,17 +523,24 @@ export class DurableUsageLedger {
           })
         )
         entries.push(
-          this.#makeEntry(parent, data.source, 'finalizeBudget', 'settlement', {
-            ...(parent.parentExecutionId === undefined
-              ? {}
-              : { parentExecutionId: parent.parentExecutionId }),
-            reservationKey: fundingKey,
-            fundingSource: 'hq_managed',
-            quantity: { unit: 'microunits', value: totals.spentMicrounits },
-            currency: parent.currency,
-            costMicrounits: 0,
-            costExact: true,
-          }, 1)
+          this.#makeEntry(
+            parent,
+            data.source,
+            'finalizeBudget',
+            'settlement',
+            {
+              ...(parent.parentExecutionId === undefined
+                ? {}
+                : { parentExecutionId: parent.parentExecutionId }),
+              reservationKey: fundingKey,
+              fundingSource: 'hq_managed',
+              quantity: { unit: 'microunits', value: totals.spentMicrounits },
+              currency: parent.currency,
+              costMicrounits: 0,
+              costExact: true,
+            },
+            1
+          )
         )
         budgetWrites.push(parent)
       }
@@ -590,7 +601,10 @@ export class DurableUsageLedger {
     })
   }
 
-  async publicSummary(workspaceId: string, executionId: string): Promise<DurableUsagePublicSummary> {
+  async publicSummary(
+    workspaceId: string,
+    executionId: string
+  ): Promise<DurableUsagePublicSummary> {
     const parsed = z
       .object({
         workspaceId: IdentifierSchemas.workspaceId,
@@ -640,7 +654,10 @@ export class DurableUsageLedger {
     })
   }
 
-  async #mutate<Input extends { workspaceId: string; executionId: string; source: DurableUsageSource }, Result>(
+  async #mutate<
+    Input extends { workspaceId: string; executionId: string; source: DurableUsageSource },
+    Result,
+  >(
     input: Input,
     method: string,
     resultSchema: z.ZodType<Result>,
@@ -669,7 +686,17 @@ export class DurableUsageLedger {
         const replay = resultSchema.safeParse(prior.data.result)
         if (!replay.success) throw usageError('STORE_STATE_INVALID')
         assertResultExecution(replay.data, input.executionId)
-        assertReplayEntries(replay.data, replayBudget.entries)
+        const replayInput = input as Input & { reservationKey?: string; kind?: string }
+        assertReplayEntries(replay.data, replayBudget.entries, {
+          operationKey: input.source.idempotencyKey,
+          sourceId: input.source.sourceId,
+          executionId: input.executionId,
+          operation: method,
+          ...(replayInput.reservationKey === undefined
+            ? {}
+            : { reservationKey: replayInput.reservationKey }),
+          ...(replayInput.kind === undefined ? {} : { kind: replayInput.kind }),
+        })
         return deepFreeze(replay.data)
       }
 
@@ -789,11 +816,7 @@ export class DurableUsageLedger {
     const validated = new Set<string>()
     for (const budget of budgets) {
       if (validated.has(budget.executionId)) continue
-      await this.#loadValidatedTree(
-        transaction,
-        budget.workspaceId,
-        budget.executionId
-      )
+      await this.#loadValidatedTree(transaction, budget.workspaceId, budget.executionId)
       validated.add(budget.executionId)
     }
   }
@@ -803,7 +826,10 @@ export class DurableUsageLedger {
     operationSource: DurableUsageSource,
     operation: string,
     kind: UsageLedgerEntry['kind'],
-    fields: Omit<UsageLedgerEntry, 'entryId' | 'sequence' | 'workspaceId' | 'executionId' | 'kind' | 'source' | 'recordedAt'>,
+    fields: Omit<
+      UsageLedgerEntry,
+      'entryId' | 'sequence' | 'workspaceId' | 'executionId' | 'kind' | 'source' | 'recordedAt'
+    >,
     ordinal = 0
   ): UsageLedgerEntry {
     if (budget.nextSequence >= Number.MAX_SAFE_INTEGER) throw usageError('STORE_STATE_INVALID')
@@ -927,11 +953,7 @@ function validateLocalLedger(
       'STORE_STATE_INVALID'
     )
     if (entry.quantity.unit === 'tokens') {
-      current.tokens = safeAddOrThrow(
-        current.tokens,
-        entry.quantity.value,
-        'STORE_STATE_INVALID'
-      )
+      current.tokens = safeAddOrThrow(current.tokens, entry.quantity.value, 'STORE_STATE_INVALID')
     }
     chargeTotals.set(entry.reservationKey, current)
   }
@@ -1106,7 +1128,11 @@ function mutableBudget(budget: DurableUsageBudget): DurableUsageBudget {
   }
 }
 
-function safeAddOrThrow(left: number, right: number, code: 'BUDGET_EXHAUSTED' | 'STORE_STATE_INVALID'): number {
+function safeAddOrThrow(
+  left: number,
+  right: number,
+  code: 'BUDGET_EXHAUSTED' | 'STORE_STATE_INVALID'
+): number {
   const result = left + right
   if (!Number.isSafeInteger(result) || result < 0) throw usageError(code)
   return result
@@ -1193,18 +1219,78 @@ function assertResultExecution(result: unknown, executionId: string): void {
 
 function assertReplayEntries(
   result: unknown,
-  immutableEntries: readonly UsageLedgerEntry[]
+  immutableEntries: readonly UsageLedgerEntry[],
+  identity: {
+    operationKey: string
+    sourceId: string
+    executionId: string
+    operation: string
+    reservationKey?: string
+    kind?: string
+  }
 ): void {
   if (result === null || typeof result !== 'object') throw usageError('STORE_STATE_INVALID')
   const record = result as Record<string, unknown>
-  const candidates: unknown[] = []
-  if (record['entryId'] !== undefined) candidates.push(result)
-  if (record['settlement'] !== undefined) candidates.push(record['settlement'])
-  for (const candidate of candidates) {
+  const candidates: Array<{ candidate: unknown; kind: string; ordinal: number }> = []
+  if (record['entryId'] !== undefined) {
+    if (identity.operation === 'reserve') {
+      candidates.push({ candidate: result, kind: 'reservation', ordinal: 0 })
+    } else if (identity.operation === 'charge' && identity.kind !== undefined) {
+      candidates.push({ candidate: result, kind: identity.kind, ordinal: 0 })
+    } else {
+      throw usageError('STORE_STATE_INVALID')
+    }
+  }
+  if (record['settlement'] !== undefined) {
+    if (identity.operation !== 'settle') throw usageError('STORE_STATE_INVALID')
+    candidates.push({ candidate: record['settlement'], kind: 'settlement', ordinal: 1 })
+  }
+  for (const { candidate, kind, ordinal } of candidates) {
     const parsed = UsageLedgerEntrySchema.safeParse(candidate)
     if (!parsed.success) throw usageError('STORE_STATE_INVALID')
-    const stored = immutableEntries.find((entry) => entry.entryId === parsed.data.entryId)
-    if (!stored || stableStringify(stored) !== stableStringify(parsed.data)) {
+    const expectedKey = entryIdempotencyKey(
+      identity.operationKey,
+      identity.executionId,
+      identity.operation,
+      kind,
+      ordinal
+    )
+    const stored = immutableEntries.filter((entry) => entry.source.idempotencyKey === expectedKey)
+    if (
+      stored.length !== 1 ||
+      parsed.data.source.idempotencyKey !== expectedKey ||
+      parsed.data.source.sourceId !== identity.sourceId ||
+      parsed.data.kind !== kind ||
+      (identity.reservationKey !== undefined &&
+        parsed.data.reservationKey !== identity.reservationKey) ||
+      stableStringify(stored[0]) !== stableStringify(parsed.data)
+    ) {
+      throw usageError('STORE_STATE_INVALID')
+    }
+  }
+
+  if (identity.operation === 'settle') {
+    const releaseKey = entryIdempotencyKey(
+      identity.operationKey,
+      identity.executionId,
+      identity.operation,
+      'release',
+      0
+    )
+    const releases = immutableEntries.filter((entry) => entry.source.idempotencyKey === releaseKey)
+    const release = releases[0]
+    const settlement = record['settlement']
+    if (
+      releases.length !== 1 ||
+      identity.reservationKey === undefined ||
+      settlement === null ||
+      typeof settlement !== 'object' ||
+      release?.kind !== 'release' ||
+      release.source.sourceId !== identity.sourceId ||
+      release.reservationKey !== identity.reservationKey ||
+      release.quantity.unit !== 'microunits' ||
+      release.quantity.value !== record['releasedMicrounits']
+    ) {
       throw usageError('STORE_STATE_INVALID')
     }
   }
@@ -1222,6 +1308,9 @@ function usageError(code: ConstructorParameters<typeof DurableUsageError>[0]): D
   return new DurableUsageError(code)
 }
 
-function isUsageError(error: unknown, code: ConstructorParameters<typeof DurableUsageError>[0]): boolean {
+function isUsageError(
+  error: unknown,
+  code: ConstructorParameters<typeof DurableUsageError>[0]
+): boolean {
   return error instanceof DurableUsageError && error.code === code
 }

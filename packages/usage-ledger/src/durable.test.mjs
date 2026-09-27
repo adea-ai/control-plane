@@ -511,17 +511,96 @@ describe('durable usage ledger', () => {
     })
   })
 
+  test('binds replayed entry receipts to the original operation identity', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget())
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'receipt-binding',
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+      source: source('receipt-binding-reserve'),
+    })
+
+    const firstCharge = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: 'receipt-binding',
+      kind: 'tool_charge',
+      quantity: { unit: 'calls', value: 1 },
+      costMicrounits: 5,
+      fundingSource: 'hq_managed',
+      source: source('receipt-binding-first'),
+    }
+    const firstEntry = await ledger.charge(firstCharge)
+    const secondEntry = await ledger.charge({
+      ...firstCharge,
+      costMicrounits: 6,
+      source: source('receipt-binding-second'),
+    })
+    expect(firstEntry.entryId).not.toBe(secondEntry.entryId)
+
+    await store.corruptEffect(ids.workspaceId, 'receipt-binding-first', (effect) => {
+      effect.result = clone(secondEntry)
+    })
+    await expect(ledger.charge(firstCharge)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+  })
+
+  test('binds replayed settlement release totals to the immutable release entry', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget())
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'release-binding',
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+      source: source('release-binding-reserve'),
+    })
+    await ledger.charge({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: 'release-binding',
+      kind: 'tool_charge',
+      quantity: { unit: 'calls', value: 1 },
+      costMicrounits: 5,
+      fundingSource: 'hq_managed',
+      source: source('release-binding-charge'),
+    })
+    const settlement = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'release-binding',
+      source: source('release-binding-settle'),
+    }
+    await ledger.settle(settlement)
+
+    await store.corruptEffect(ids.workspaceId, 'release-binding-settle', (effect) => {
+      effect.result.releasedMicrounits += 1
+    })
+    await expect(ledger.settle(settlement)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+  })
+
   test('rejects invalid and unsafe monetary or token values and external priced costs', async () => {
     const ledger = makeLedger(new TransactionalMemoryStore())
-    await expect(
-      ledger.openBudget(rootBudget({ currency: 'usd' }))
-    ).rejects.toMatchObject({ code: 'INVALID_ENTRY' })
+    await expect(ledger.openBudget(rootBudget({ currency: 'usd' }))).rejects.toMatchObject({
+      code: 'INVALID_ENTRY',
+    })
     await expect(
       ledger.openBudget(rootBudget({ maximumTokens: Number.MAX_SAFE_INTEGER + 1 }))
     ).rejects.toMatchObject({ code: 'INVALID_ENTRY' })
-    await expect(
-      ledger.openBudget({ ...rootBudget(), unexpected: true })
-    ).rejects.toMatchObject({ code: 'INVALID_ENTRY' })
+    await expect(ledger.openBudget({ ...rootBudget(), unexpected: true })).rejects.toMatchObject({
+      code: 'INVALID_ENTRY',
+    })
     await ledger.openBudget(rootBudget())
     await ledger.reserve({
       workspaceId: ids.workspaceId,
