@@ -33,6 +33,10 @@ assessment callers retain the combined `add(verdict)` operation.
   passed to the full integrity decoder and raw IDs assigned to a branded
   receipt scope. Both were traced and corrected without casts or weaker
   validation; subsequent database builds passed.
+- After integration with the draft's SQLite guards, fresh domain, database and
+  SQLite package builds all passed. The sixteen PostgreSQL/domain source,
+  fixture and checkpoint files were verified byte-identical to the tested
+  implementation commit `21fbe4b8f6606e0603df1e0cd4133c0b4fdc64e5`.
 - Domain hold/reference/eligibility tests: **35 passed, 90 assertions**. Two new
   candidate-accounting tests failed before the new counter API was implemented.
 - Canonical-migration PostgreSQL hold foundation, reference-window and ancestry
@@ -46,6 +50,9 @@ assessment callers retain the combined `add(verdict)` operation.
   PostgreSQL `55P03` while retirement held a command and waited for its owner;
   a second outbox deletion after a raced first candidate despite bound one;
   and two class-mutex queries with bound zero. All three pass after the fixes.
+  Both contention cases passed again after cleanup was changed to await every
+  transaction and preserve assertion and cleanup failures together (two tests,
+  ten assertions). No deadline or assertion was relaxed.
 - Physical hold coverage includes plans, context packages, evaluations, release
   audit records and messaging, exact journal operations after release,
   cross-project isolation and missing-policy/malformed-record fail-closed checks.

@@ -54,9 +54,12 @@ preserving schema-validated identifiers without casts or weakened validation.
 
 ## Remaining gates
 
-PostgreSQL's 13 hold facts still require transactional activation, canonical
-owner joins and actual physical-deletion contention tests. Owner authorization
-must be composed, not inferred from role labels or OS/database attribution
+The subsequent [PostgreSQL activation checkpoint](m11-postgres-hold-activation-2026-09-27.md)
+wires all thirteen hold facts, corrects two independently reviewed claim defects
+and records actual physical hold tests for five classes. Physical hold activation
+tests for the other five classes and complete current-candidate validation are
+still required; the PostgreSQL results do not supersede the SQLite failures above.
+Owner authorization must be composed, not inferred from role labels or OS/database attribution
 alone. Operator policy wiring, released-hold disposition, independently durable
 hold/deletion-outcome reconciliation before restore exposure, remaining durable
 classes and external provider deletion/hold coordination are incomplete.
