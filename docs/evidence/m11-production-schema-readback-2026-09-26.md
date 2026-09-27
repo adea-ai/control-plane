@@ -120,16 +120,26 @@ stayed in memory and were never printed or stored.
 
 Independent review found that the proposed gate omitted these authority checks,
 and the actual runtime probe exposed the same driver-initialization gap in its
-session factory. Both proposed-gate defects remain assigned for regression
-repair before integration. This live readback is not execution of the new gate,
-deployment of PR #740, service runtime TLS hardening, or full profile acceptance.
+session factory. The corrections are now integrated in PR #740. Regressions
+first failed on the installed-driver case and four unsafe authority flags;
+the corrected promotion file passed 22 tests. A further red/green check corrected
+the `MAINTAIN` version guard to PostgreSQL 17 and later. Scoped formatting, lint,
+and diff checks passed; the original database dependency build passed 35 tasks.
+Fresh bounded independent source review closed the privilege finding without
+another actionable issue. Missing capability fields fail closed in source;
+the tests do not separately exercise missing fields, and the PostgreSQL 17 guard
+test checks SQL text rather than a PostgreSQL 16/17 deployment.
+
+This live readback is not execution of the new gate, deployment of PR #740,
+service runtime TLS hardening, or full profile acceptance. The gate's Railway
+project-token lookup has mock coverage but still needs actual workflow proof.
 
 ## Remaining gates
 
-- Add and independently review a fail-closed tagged-source migration step before
-  any Railway deployment mutation; use dedicated production-scoped migrator
-  credentials, runtime target binding checks, serialization, and full journal
-  readback. Do not reuse CI staging/admin credentials.
+- Execute the integrated fail-closed tagged-source migration step before any
+  Railway deployment mutation; verify its dedicated production-scoped migrator
+  credential, runtime target bindings, serialization, and full journal readback
+  on the released candidate. Do not reuse CI staging/admin credentials.
 - Validate the integrated candidate locally and through required current-head
   checks, then promote its exact released image digests and schema.
 - Complete the original M11 profile, retention, security, documentation,

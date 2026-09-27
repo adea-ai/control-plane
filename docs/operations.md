@@ -151,6 +151,39 @@ production release candidate.
 
 A database migration failure blocks rollout. Never hide a broken revision behind a green process health check. Applied schema changes are repaired forward unless a reviewed restore operation is explicitly required.
 
+### Production schema promotion gate
+
+The production deployment job serializes promotions across release tags and runs
+`bun scripts/migrate-production-schema.mjs` before changing either Railway image
+source. It installs frozen workspace dependencies and builds the database
+migration dependency closure from the checked-out release candidate. The gate
+uses the existing `RAILWAY_PRODUCTION_TOKEN` plus the separate environment-scoped
+`NEON_PRODUCTION_MIGRATION_URL` secret in `control-plane / production`. The latter
+must use the direct production endpoint, `control_plane_migrator`, `neondb`, and
+`sslmode=verify-full`; never substitute a pooled runtime, staging, or administrator
+credential. Do not print either secret or the rendered service variables.
+
+Before applying schema changes, the gate checks both production services' exact
+database bindings, verifies the connected migration identity, and requires the
+database journal to be an exact hash/timestamp prefix of the tagged migration
+source. It acquires the shared session advisory lock `(1295070001, 11)`, then
+rechecks that prefix before calling the canonical repository migrator with
+bounded connection, statement, and lock timeouts. Foreign, gapped, or ahead
+history, concurrent migration ownership, unsafe URL options, or missing secrets
+block promotion. After migration it verifies the complete journal and connects
+with each service's actual application credential using certificate verification
+to check runtime grants, role restrictions, and the retention-clock columns.
+
+On failure, inspect sanitized workflow status and perform a separately scoped
+readback of the exact target and journal. Do not bypass the gate, change history
+hashes, or roll back DDL to make an older image promotable. A migration can have
+committed before a later privilege or rollout check fails; verify state and
+repair forward, then rerun the intended release. An older tag whose history is
+behind the database is deliberately rejected and requires an explicit reviewed
+schema-compatible rollback procedure. This gate does not establish service
+runtime TLS configuration, representative execution, RPO/RTO, or full profile
+acceptance merely because process readiness is green.
+
 For M9 staging certification, verify the retained `m9/certification/` result with `get` and `head`,
 match its digest to the terminal execution/command state, and replay the same accepted command to
 confirm that no second logical artifact is created. Do not report this as managed Pi certification.

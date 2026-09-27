@@ -150,8 +150,12 @@ both Railway services' exact database bindings were verified, then released
 `0047` and `0048` were rehearsed on an isolated Neon child and applied through
 the canonical immutable released-source migrator. Full journal readback,
 idempotent replay, individual runtime grants and least-privilege checks passed.
-Unmerged `0049` remains off production. A fail-closed pre-deploy migration gate
-is in preparation; the full rollout/profile acceptance remains open. See
+Unmerged `0049` remains off production. The fail-closed pre-deploy migration gate
+is now integrated after 22 focused promotion tests, scoped static checks and
+fresh independent source review. The earlier missing authority checks and
+installed-driver constructor defect reproduced before their corrections;
+current-head combined validation and actual released workflow execution remain
+open. The full rollout/profile acceptance remains open. See
 [production schema readback](m11-production-schema-readback-2026-09-26.md).
 
 Durable-hold storage and owner/session administration are reviewed and retained
