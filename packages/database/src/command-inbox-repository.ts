@@ -598,7 +598,15 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     const suppliedSource = executionBudgetAdmissionSource(commandInput, executionInput)
     const storedSource = executionBudgetAdmissionSource(storedCommand, storedExecution)
     if (!isDeepStrictEqual(suppliedSource, storedSource)) throw invalidPersistedAdmission()
-
+    if (
+      commandInput.status === storedCommand.status &&
+      executionInput.state === storedExecution.state &&
+      ((commandInput.status === 'completed' && executionInput.state === 'completed') ||
+        (commandInput.status === 'failed' &&
+          ['failed', 'cancelled', 'timed_out'].includes(executionInput.state)))
+    ) {
+      return
+    }
     const verified = await PostgresDurableUsageStore.withTransaction(
       transaction,
       storedCommand.workspaceId,

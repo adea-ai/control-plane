@@ -3,17 +3,19 @@ import process from 'node:process'
 import { eq } from 'drizzle-orm'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { CommandInboxService } from '@control-plane/domain'
+import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
 import { deriveExecutionPlan, executionBudgetAdmissionSource } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DurableUsageLedger, budgetOpeningEntryIdempotencyKey } from '@control-plane/usage-ledger'
 import { createPostgresConnection } from './connection.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
+import { PostgresExecutionRepository } from './execution-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { commandInbox } from './schema/commands.ts'
 import { executions } from './schema/executions.ts'
-import { usageBudgetStates } from './schema/usage-budget-state.ts'
+import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.ts'
+import { usageLedgerEntries } from './schema/usage-ledger.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 
@@ -63,7 +65,7 @@ function commandInput(executionPlan, options = {}) {
 
 function acceptanceService(database, options = {}) {
   const repository = new PostgresCommandAcceptanceRepository(database, {
-    budgetAdmission: true,
+    budgetAdmission: options.budgetAdmission ?? true,
   })
   return {
     repository,
@@ -73,6 +75,88 @@ function acceptanceService(database, options = {}) {
       executionPlanValidator: { validate: async () => true },
       now: () => acceptedAt,
     }),
+  }
+}
+
+async function persistLegacyOutcome(database, service, accepted, executionState, commandStatus) {
+  const lifecycle = new ExecutionLifecycleService(new PostgresExecutionRepository(database))
+  let execution = accepted.execution
+  let sequence = 0
+  const transition = async (to, metadata = {}) => {
+    sequence++
+    execution = await lifecycle.transitionExecution({
+      executionId: execution.executionId,
+      expectedVersion: execution.version,
+      to,
+      transitionedAt: `2026-09-20T10:00:0${sequence}.000Z`,
+      ...metadata,
+    })
+  }
+
+  if (executionState === 'completed') {
+    await transition('queued')
+    await transition('running')
+    await transition('completed', { terminalResultRef: nextId('art') })
+  } else if (executionState === 'failed') {
+    await transition('queued')
+    await transition('failed', {
+      failure: { classification: 'runtime_error', code: 'RUNTIME_EXITED' },
+    })
+  } else if (executionState === 'cancelled') {
+    await transition('queued')
+    await transition('cancelling')
+    await transition('cancelled')
+  } else if (executionState === 'timed_out') {
+    await transition('queued')
+    await transition('timed_out', { failure: { classification: 'timeout', code: 'DEADLINE' } })
+  } else if (executionState === 'running') {
+    await transition('queued')
+    await transition('running')
+  } else if (executionState === 'reconciliation_required') {
+    await transition('reconciliation_required', {
+      failure: { classification: 'infrastructure', code: 'DELIVERY_UNCONFIRMED' },
+    })
+  }
+
+  const transitionedAt = `2026-09-20T10:00:0${sequence + 1}.000Z`
+  await service.transitionCommand({
+    callerPrincipalId: accepted.command.callerPrincipalId,
+    operation: accepted.command.operation,
+    workspaceId: accepted.command.workspaceId,
+    projectId: accepted.command.projectId,
+    idempotencyKey: accepted.command.idempotencyKey,
+    expectedVersion: accepted.command.version,
+    to: commandStatus,
+    transitionedAt,
+    ...(commandStatus === 'completed' ? { resultReference: nextId('art') } : {}),
+    ...(['failed', 'reconciliation_required'].includes(commandStatus)
+      ? { errorReference: 'https://example.test/legacy-terminal' }
+      : {}),
+  })
+}
+
+async function executionSnapshot(database, executionId) {
+  return {
+    commands: await database
+      .select()
+      .from(commandInbox)
+      .where(eq(commandInbox.executionId, executionId)),
+    executions: await database
+      .select()
+      .from(executions)
+      .where(eq(executions.executionId, executionId)),
+    budgets: await database
+      .select()
+      .from(usageBudgetStates)
+      .where(eq(usageBudgetStates.executionId, executionId)),
+    entries: await database
+      .select()
+      .from(usageLedgerEntries)
+      .where(eq(usageLedgerEntries.executionId, executionId)),
+    receipts: await database
+      .select()
+      .from(usageOperationReceipts)
+      .where(eq(usageOperationReceipts.executionId, executionId)),
   }
 }
 
@@ -191,6 +275,120 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
     } finally {
       await reconnected.close()
     }
+  })
+
+  test('replays only canonical legacy terminal outcomes without accounting writes', async () => {
+    const { isolated } = await createDatabase()
+    const scenarios = [
+      ['completed', 'completed'],
+      ['failed', 'failed'],
+      ['cancelled', 'failed'],
+      ['timed_out', 'failed'],
+    ]
+
+    for (const [executionState, commandStatus] of scenarios) {
+      const request = commandInput(plan)
+      const legacy = acceptanceService(isolated.application, { budgetAdmission: false })
+      const accepted = await legacy.service.acceptExecution(request)
+      await persistLegacyOutcome(
+        isolated.application,
+        legacy.service,
+        accepted,
+        executionState,
+        commandStatus
+      )
+
+      const repository = new PostgresCommandAcceptanceRepository(isolated.application, {
+        budgetAdmission: true,
+      })
+      const storedCommand = await repository.getByExecutionId(accepted.execution.executionId)
+      const storedExecution = await repository.getExecution(accepted.execution.executionId)
+      const before = await executionSnapshot(isolated.application, accepted.execution.executionId)
+      let idFactoryCalls = 0
+      let validatorCalls = 0
+      const replayService = new CommandInboxService({
+        repository,
+        executionIdFactory: () => {
+          idFactoryCalls++
+          return nextId('exe')
+        },
+        executionPlanValidator: {
+          validate: async () => {
+            validatorCalls++
+            return true
+          },
+        },
+        now: () => acceptedAt,
+      })
+
+      const replay = await replayService.acceptExecution(request)
+      const duplicate = await repository.accept(accepted.command, accepted.execution)
+      expect(replay).toMatchObject({ replayed: true })
+      expect(replay.command).toEqual(storedCommand)
+      expect(replay.execution).toEqual(storedExecution)
+      expect(duplicate).toMatchObject({ outcome: 'duplicate' })
+      expect(duplicate.command).toEqual(storedCommand)
+      expect(duplicate.execution).toEqual(storedExecution)
+      await expect(
+        repository.verifyAdmission(accepted.command, accepted.execution)
+      ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+      expect(idFactoryCalls).toBe(0)
+      expect(validatorCalls).toBe(0)
+      expect(await executionSnapshot(isolated.application, accepted.execution.executionId)).toEqual(
+        before
+      )
+      expect(before).toMatchObject({ budgets: [], entries: [], receipts: [] })
+    }
+  })
+
+  test('rejects one-sided, mismatched, forged, and reconciliation legacy terminal snapshots', async () => {
+    const { isolated } = await createDatabase()
+    const scenarios = [
+      ['running', 'completed'],
+      ['completed', 'failed'],
+      ['reconciliation_required', 'reconciliation_required'],
+    ]
+
+    for (const [executionState, commandStatus] of scenarios) {
+      const request = commandInput(plan)
+      const legacy = acceptanceService(isolated.application, { budgetAdmission: false })
+      const accepted = await legacy.service.acceptExecution(request)
+      await persistLegacyOutcome(
+        isolated.application,
+        legacy.service,
+        accepted,
+        executionState,
+        commandStatus
+      )
+      const before = await executionSnapshot(isolated.application, accepted.execution.executionId)
+      await expect(
+        acceptanceService(isolated.application).service.acceptExecution(request)
+      ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+      expect(await executionSnapshot(isolated.application, accepted.execution.executionId)).toEqual(
+        before
+      )
+    }
+
+    const request = commandInput(plan)
+    const legacy = acceptanceService(isolated.application, { budgetAdmission: false })
+    const accepted = await legacy.service.acceptExecution(request)
+    const forgedCommand = {
+      ...accepted.command,
+      status: 'completed',
+      version: accepted.command.version + 1,
+      lastSeenAt: acceptedAt,
+      terminalAt: acceptedAt,
+      resultReference: nextId('art'),
+    }
+    const before = await executionSnapshot(isolated.application, accepted.execution.executionId)
+    await expect(
+      new PostgresCommandAcceptanceRepository(isolated.application, {
+        budgetAdmission: true,
+      }).verifyAdmission(forgedCommand, accepted.execution)
+    ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+    expect(await executionSnapshot(isolated.application, accepted.execution.executionId)).toEqual(
+      before
+    )
   })
 
   test('serializes concurrent acceptance across separate connections without duplicate allocation', async () => {

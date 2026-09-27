@@ -659,7 +659,15 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     const suppliedSource = executionBudgetAdmissionSource(commandInput, executionInput)
     const storedSource = executionBudgetAdmissionSource(storedCommand, storedExecution)
     if (!isDeepStrictEqual(suppliedSource, storedSource)) throw invalidPersistedAdmission()
-
+    if (
+      commandInput.status === storedCommand.status &&
+      executionInput.state === storedExecution.state &&
+      ((commandInput.status === 'completed' && executionInput.state === 'completed') ||
+        (commandInput.status === 'failed' &&
+          ['failed', 'cancelled', 'timed_out'].includes(executionInput.state)))
+    ) {
+      return
+    }
     const verified = await SqliteDurableUsageStore.withTransaction(
       transaction,
       storedCommand.workspaceId,

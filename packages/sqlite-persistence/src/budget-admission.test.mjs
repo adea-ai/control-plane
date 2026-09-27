@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { CommandInboxService } from '@control-plane/domain'
+import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { deriveExecutionPlan } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
@@ -13,6 +13,7 @@ import {
   SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
   SqliteDurableUsageStore,
+  SqliteExecutionRepository,
   SQLITE_USAGE_NAMESPACES,
 } from './index.ts'
 
@@ -87,6 +88,63 @@ async function records(provider) {
       )
     )
   )
+}
+
+async function persistLegacyOutcome(provider, service, accepted, executionState, commandStatus) {
+  const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(provider))
+  let execution = accepted.execution
+  let sequence = 0
+  const transition = async (to, metadata = {}) => {
+    sequence++
+    execution = await lifecycle.transitionExecution({
+      executionId: execution.executionId,
+      expectedVersion: execution.version,
+      to,
+      transitionedAt: `2026-08-24T10:00:0${sequence}.000Z`,
+      ...metadata,
+    })
+  }
+
+  if (executionState === 'completed') {
+    await transition('queued')
+    await transition('running')
+    await transition('completed', { terminalResultRef: id('art', 'G') })
+  } else if (executionState === 'failed') {
+    await transition('queued')
+    await transition('failed', {
+      failure: { classification: 'runtime_error', code: 'RUNTIME_EXITED' },
+    })
+  } else if (executionState === 'cancelled') {
+    await transition('queued')
+    await transition('cancelling')
+    await transition('cancelled')
+  } else if (executionState === 'timed_out') {
+    await transition('queued')
+    await transition('timed_out', { failure: { classification: 'timeout', code: 'DEADLINE' } })
+  } else if (executionState === 'running') {
+    await transition('queued')
+    await transition('running')
+  } else if (executionState === 'reconciliation_required') {
+    await transition('reconciliation_required', {
+      failure: { classification: 'infrastructure', code: 'DELIVERY_UNCONFIRMED' },
+    })
+  }
+
+  const transitionedAt = `2026-08-24T10:00:0${sequence + 1}.000Z`
+  await service.transitionCommand({
+    callerPrincipalId: accepted.command.callerPrincipalId,
+    operation: accepted.command.operation,
+    workspaceId: accepted.command.workspaceId,
+    projectId: accepted.command.projectId,
+    idempotencyKey: accepted.command.idempotencyKey,
+    expectedVersion: accepted.command.version,
+    to: commandStatus,
+    transitionedAt,
+    ...(commandStatus === 'completed' ? { resultReference: id('art', 'G') } : {}),
+    ...(['failed', 'reconciliation_required'].includes(commandStatus)
+      ? { errorReference: 'https://example.test/legacy-terminal' }
+      : {}),
+  })
 }
 
 function childPlan() {
@@ -191,6 +249,168 @@ test('native legacy owners without accounting are not automatically allocated on
     ).rejects.toMatchObject({
       code: 'STORE_STATE_INVALID',
     })
+    expect(await records(provider)).toEqual(before)
+  })
+})
+
+test('native legacy terminal replay returns only the persisted canonical outcome without accounting', async () => {
+  await fixture(async ({ provider, open }) => {
+    const legacy = commands(provider, 'G', false)
+    const accepted = await legacy.acceptExecution(input())
+    const terminalAt = '2026-08-24T10:00:03.000Z'
+    const resultReference = id('art', 'G')
+    const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(provider))
+    await lifecycle.transitionExecution({
+      executionId: accepted.execution.executionId,
+      expectedVersion: 1,
+      to: 'queued',
+      transitionedAt: '2026-08-24T10:00:01.000Z',
+    })
+    await lifecycle.transitionExecution({
+      executionId: accepted.execution.executionId,
+      expectedVersion: 2,
+      to: 'running',
+      transitionedAt: '2026-08-24T10:00:02.000Z',
+    })
+    await lifecycle.transitionExecution({
+      executionId: accepted.execution.executionId,
+      expectedVersion: 3,
+      to: 'completed',
+      transitionedAt: terminalAt,
+      terminalResultRef: resultReference,
+    })
+    await legacy.transitionExecutionCommand({
+      executionId: accepted.execution.executionId,
+      to: 'completed',
+      transitionedAt: terminalAt,
+      resultReference,
+    })
+
+    const before = await records(provider)
+    await provider.close()
+    const reopened = await open()
+    const repository = new SqliteCommandAcceptanceRepository(reopened, { budgetAdmission: true })
+    const storedCommand = await repository.getByExecutionId(accepted.execution.executionId)
+    const storedExecution = await repository.getExecution(accepted.execution.executionId)
+    expect(storedCommand?.status).toBe('completed')
+    expect(storedExecution?.state).toBe('completed')
+    let idFactoryCalls = 0
+    let validatorCalls = 0
+    const replayService = new CommandInboxService({
+      repository,
+      executionIdFactory: () => {
+        idFactoryCalls++
+        return id('exe', 'H')
+      },
+      executionPlanValidator: {
+        validate: async () => {
+          validatorCalls++
+          return true
+        },
+      },
+      now: () => at,
+    })
+
+    const replay = await replayService.acceptExecution(input())
+    expect(replay).toMatchObject({
+      replayed: true,
+    })
+    expect(replay.command).toEqual(storedCommand)
+    expect(replay.execution).toEqual(storedExecution)
+    const duplicate = await repository.accept(accepted.command, accepted.execution)
+    expect(duplicate).toMatchObject({ outcome: 'duplicate' })
+    expect(duplicate.command).toEqual(storedCommand)
+    expect(duplicate.execution).toEqual(storedExecution)
+    expect(idFactoryCalls).toBe(0)
+    expect(validatorCalls).toBe(0)
+    expect(await records(reopened)).toEqual(before)
+    expect(
+      Object.values(SQLITE_USAGE_NAMESPACES).flatMap((namespace) => before[namespace])
+    ).toHaveLength(0)
+  })
+})
+
+test.each([
+  ['completed', 'completed'],
+  ['failed', 'failed'],
+  ['cancelled', 'failed'],
+  ['timed_out', 'failed'],
+])(
+  'native legacy terminal replay returns the exact persisted %s owner / %s command outcome',
+  async (executionState, commandStatus) => {
+    await fixture(async ({ provider }) => {
+      const accepted = await commands(provider, 'H', false).acceptExecution(input(plan, 'H'))
+      const legacy = commands(provider, 'H', false)
+      await persistLegacyOutcome(provider, legacy, accepted, executionState, commandStatus)
+      const repository = new SqliteCommandAcceptanceRepository(provider, {
+        budgetAdmission: true,
+      })
+      const storedCommand = await repository.getByExecutionId(accepted.execution.executionId)
+      const storedExecution = await repository.getExecution(accepted.execution.executionId)
+      const before = await records(provider)
+      const replay = await commands(provider, 'H').acceptExecution(input(plan, 'H'))
+      const duplicate = await repository.accept(accepted.command, accepted.execution)
+
+      expect(replay).toMatchObject({ replayed: true })
+      expect(replay.command).toEqual(storedCommand)
+      expect(replay.execution).toEqual(storedExecution)
+      expect(duplicate).toMatchObject({ outcome: 'duplicate' })
+      expect(duplicate.command).toEqual(storedCommand)
+      expect(duplicate.execution).toEqual(storedExecution)
+      expect(await records(provider)).toEqual(before)
+      expect(
+        Object.values(SQLITE_USAGE_NAMESPACES).flatMap((namespace) => before[namespace])
+      ).toEqual([])
+    })
+  }
+)
+
+test('native legacy one-sided, mismatched, forged, and reconciliation outcomes fail closed', async () => {
+  await fixture(async ({ provider }) => {
+    const scenarios = [
+      { tail: 'P', executionState: 'running', commandStatus: 'completed' },
+      { tail: 'Q', executionState: 'completed', commandStatus: 'failed' },
+      {
+        tail: 'S',
+        executionState: 'reconciliation_required',
+        commandStatus: 'reconciliation_required',
+      },
+    ]
+    for (const scenario of scenarios) {
+      const accepted = await commands(provider, scenario.tail, false).acceptExecution(
+        input(plan, scenario.tail)
+      )
+      const legacy = commands(provider, scenario.tail, false)
+      await persistLegacyOutcome(
+        provider,
+        legacy,
+        accepted,
+        scenario.executionState,
+        scenario.commandStatus
+      )
+      const before = await records(provider)
+      await expect(
+        commands(provider, scenario.tail).acceptExecution(input(plan, scenario.tail))
+      ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+      expect(await records(provider)).toEqual(before)
+    }
+
+    const accepted = await commands(provider, 'T', false).acceptExecution(input(plan, 'T'))
+    const forgedCommand = {
+      ...accepted.command,
+      status: 'completed',
+      version: accepted.command.version + 1,
+      lastSeenAt: at,
+      terminalAt: at,
+      resultReference: id('art', 'T'),
+    }
+    const before = await records(provider)
+    await expect(
+      new SqliteCommandAcceptanceRepository(provider, { budgetAdmission: true }).verifyAdmission(
+        forgedCommand,
+        accepted.execution
+      )
+    ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
     expect(await records(provider)).toEqual(before)
   })
 })
