@@ -78,5 +78,10 @@ bound for the existing R2 adapter: its GET currently transforms the complete SDK
 body before enforcing `maxObjectBytes`. A bounded provider reader and live
 provider acceptance remain required for the full operations gate.
 
+Follow-up: the adapter's bulk-read gap at this historical checkpoint is corrected
+by the [bounded ObjectStore read checkpoint](m11-bounded-object-read-2026-09-27.md).
+Live provider, deadline, concurrency and complete operations acceptance remain
+unproven; the follow-up does not expand this checkpoint's profile claims.
+
 No M11 issue is closed by these component checks. Original #188, #190, #191 and
 #194–#197 acceptance requirements remain intact.
