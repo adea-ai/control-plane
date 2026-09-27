@@ -38,6 +38,14 @@ worker connector, a sandbox host, or scoped Artifact upload credentials.
 
 Runtime-command composition is opt-in. A host must explicitly provide execution/event effects, reconnect validation and retained-outcome application, execution reconciliation, quarantine, and a scoped Artifact verifier. The verifier must establish that the authenticated command is allowed to reference the supplied Artifact; schema validity alone is not artifact ownership. Missing or malformed host ports fail before the gateway opens its store. Context-only composition keeps runtime frames fail-closed. This option does not supply node enrollment, production identity validation, or a complete executable-host deployment.
 
+For successful runtime-result Artifacts, composition also verifies the configured
+ObjectStore independently of the host authorization hook. The trusted command's
+attempt determines the stable Artifact ID and `runtime-results` key; peer-supplied
+locators and arbitrary storage paths are not used. HEAD and GET metadata, bounded
+size, media type, reference digest and actual body digest must agree. A permissive
+host hook cannot bypass these storage checks. This is not upload credential
+issuance or authorization for a node to write an arbitrary attempt's key.
+
 When enabled, the gateway writes every runtime command to the configured SQLite or PostgreSQL `runtime_commands` ledger before sending it. The record retains the semantic command, execution, attempt, node, connection, scope, payload hash, expiry, delivery generations and sequences, ACK, result reference, and compare-and-set version. Reconnect and gateway restart query this ledger and redeliver the same command ID; a new ID denotes a new semantic attempt. Queue age, ACK latency, redelivery, and expiry are recorded as gateway metrics.
 
 ACKs must match the latest dispatched channel generation and sequence. Previously recorded RuntimeNode results may come from an earlier generation after a lost connection, but they must match the command node, workspace, and payload hash. Duplicate ACKs or results return the persisted outcome only when their references and dispositions match; ambiguity and command-ID hash reuse fail closed. Commands are marked expired before send and are never revived on reconnect.
@@ -47,6 +55,15 @@ The RuntimeNode owns a separate bounded local result ledger for duplicate-effect
 ## Normalized event ingestion
 
 Authenticated progress, result, and command-bound error frames are correlated through the durable command to the exact execution, attempt, node, workspace, and RuntimeConnection. The gateway separately verifies the active source channel, frame generation and sequence, payload hash, inline payload bound, and Artifact reference. Rejected frames are quarantined by normalized reason and digest without retaining their raw payload.
+
+After asynchronous normalization or Artifact/policy verification, ingestion reads
+the command/execution/attempt binding and channel authority again before applying
+effects. Local channel authority checks the live authenticated connection,
+credential expiry and durable revocation, then rechecks coordinated ownership;
+it does not wait for the next sweep or treat ownership metadata as credential
+authority. Registry or coordination outages fail closed. These checks do not
+make independently administered credential revocation and effect persistence
+one distributed transaction.
 
 ## Runtime inventory synchronization
 
