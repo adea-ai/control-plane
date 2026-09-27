@@ -292,7 +292,7 @@ export class RuntimeInventoryIngestionService {
     prepared?: PreparedInventory
   ): Promise<RuntimeInventoryIngestionResult> {
     this.#assertSource(inventory, source)
-    const { digest: inventoryDigest, legacyDigest: legacyInventoryDigest } =
+    const { digest: inventoryDigest, legacyDigest: legacyDigestCandidate } =
       inventoryHashes(inventory)
     const current = await this.#checkpoints.get(inventory.nodeId)
     if (current?.workspaceId !== undefined && current.workspaceId !== inventory.workspaceId) {
@@ -304,7 +304,7 @@ export class RuntimeInventoryIngestionService {
     if (current && inventory.snapshotVersion === current.snapshotVersion) {
       if (
         current.snapshotDigest !== inventoryDigest &&
-        current.snapshotDigest !== legacyInventoryDigest
+        current.snapshotDigest !== legacyDigestCandidate
       )
         fail('INVENTORY_VERSION_CONFLICT')
       return this.#ignored('duplicate', inventory.snapshotVersion)
@@ -376,7 +376,7 @@ export class RuntimeInventoryIngestionService {
       if (
         winner?.snapshotVersion === inventory.snapshotVersion &&
         (winner.snapshotDigest === inventoryDigest ||
-          winner.snapshotDigest === legacyInventoryDigest)
+          winner.snapshotDigest === legacyDigestCandidate)
       ) {
         return this.#ignored('duplicate', inventory.snapshotVersion)
       }

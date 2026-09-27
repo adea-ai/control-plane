@@ -14,6 +14,28 @@ const source = {
 }
 
 describe('Runtime Gateway production message routing', () => {
+  test.each(['terminal_conflict', 'out_of_order', 'conflict'])(
+    'does not settle the command ledger for %s terminal effects',
+    async (outcome) => {
+      const calls = []
+      const router = new RuntimeGatewayMessageRouter({
+        inventory: { handle: async () => undefined },
+        delivery: {
+          acknowledge: async () => undefined,
+          recordResult: async () => calls.push('result'),
+          recordError: async () => calls.push('error'),
+        },
+        events: {
+          ingestProgress: async () => ({ outcome }),
+          ingestResult: async () => ({ outcome }),
+          ingestError: async () => ({ outcome }),
+        },
+      })
+      await router.handle(source, golden.result)
+      await router.handle(source, golden.error)
+      expect(calls).toEqual([])
+    }
+  )
   test('routes inventory, acknowledgement, progress, result, and error frames in durable order', async () => {
     const calls = []
     const router = new RuntimeGatewayMessageRouter({

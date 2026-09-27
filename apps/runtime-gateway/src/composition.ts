@@ -241,10 +241,8 @@ export async function composeRuntimeGateway(
       try {
         await provider.close()
       } catch (closeError) {
-        // Retain both the migration error and its failed-close cleanup error.
-        // oxlint-disable-next-line preserve-caught-error
-        throw new Error('RUNTIME_GATEWAY_STORE_OPEN_FAILED', {
-          cause: new AggregateError([error, closeError]),
+        throw new AggregateError([error, closeError], 'RUNTIME_GATEWAY_STORE_OPEN_FAILED', {
+          cause: closeError,
         })
       }
       throw error
@@ -550,10 +548,8 @@ export async function composeRuntimeGateway(
     try {
       await closeOwnedStore()
     } catch (closeError) {
-      // Retain both the composition error and its failed-close cleanup error.
-      // oxlint-disable-next-line preserve-caught-error
-      throw new Error('RUNTIME_GATEWAY_COMPOSITION_FAILED', {
-        cause: new AggregateError([error, closeError]),
+      throw new AggregateError([error, closeError], 'RUNTIME_GATEWAY_COMPOSITION_FAILED', {
+        cause: closeError,
       })
     }
     throw error
@@ -561,6 +557,8 @@ export async function composeRuntimeGateway(
 }
 
 function assertRuntimePorts(options: RuntimeGatewayRuntimeOptions): void {
+  if (typeof options !== 'object' || options === null)
+    throw new Error('RUNTIME_GATEWAY_RUNTIME_PORT_INVALID')
   const methods: readonly [unknown, string][] = [
     [options.executions?.getExecution, 'executions.getExecution'],
     [options.executions?.getAttempt, 'executions.getAttempt'],
@@ -580,6 +578,8 @@ function assertRuntimePorts(options: RuntimeGatewayRuntimeOptions): void {
     throw new Error('RUNTIME_GATEWAY_RUNTIME_PORT_INVALID')
   if (options.inventory !== undefined && typeof options.inventory.handle !== 'function')
     throw new Error('RUNTIME_GATEWAY_RUNTIME_PORT_INVALID')
+  if (options.now !== undefined && typeof options.now !== 'function')
+    throw new Error('RUNTIME_GATEWAY_RUNTIME_PORT_INVALID')
 }
 
 function assertLifecycleLimits(limits: RuntimeGatewayWebSocketLimits): void {
@@ -595,7 +595,8 @@ function assertLifecycleLimits(limits: RuntimeGatewayWebSocketLimits): void {
     !Number.isSafeInteger(limits.heartbeatTimeoutMs) ||
     limits.heartbeatTimeoutMs < 1 ||
     !Number.isSafeInteger(limits.idleTimeoutMs) ||
-    limits.idleTimeoutMs < 1
+    limits.idleTimeoutMs < 1000 ||
+    limits.heartbeatTimeoutMs >= limits.idleTimeoutMs
   )
     throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
 }

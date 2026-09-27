@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExecutionLifecycleService, InMemoryExecutionRepository } from '@control-plane/domain'
@@ -24,6 +24,50 @@ afterEach(async () => {
   for (const directory of ownedDirectories) {
     await rm(directory, { recursive: true, force: true })
     ownedDirectories.delete(directory)
+  }
+})
+
+test.each([
+  ['missing runtime ports', { runtime: {} }, 'RUNTIME_GATEWAY_RUNTIME_PORT_INVALID'],
+  ['null runtime ports', { runtime: null }, 'RUNTIME_GATEWAY_RUNTIME_PORT_INVALID'],
+  [
+    'subsecond native idle timeout',
+    {
+      limits: {
+        maxConnections: 1,
+        maxConnectionsPerWorkspace: 1,
+        maxFrameBytes: 1024,
+        maxBufferedBytes: 1024,
+        heartbeatTimeoutMs: 1,
+        idleTimeoutMs: 999,
+      },
+    },
+    'RUNTIME_GATEWAY_COMPOSITION_INVALID',
+  ],
+  [
+    'heartbeat beyond idle timeout',
+    {
+      limits: {
+        maxConnections: 1,
+        maxConnectionsPerWorkspace: 1,
+        maxFrameBytes: 1024,
+        maxBufferedBytes: 1024,
+        heartbeatTimeoutMs: 2000,
+        idleTimeoutMs: 1000,
+      },
+    },
+    'RUNTIME_GATEWAY_COMPOSITION_INVALID',
+  ],
+])('refuses %s before opening its owned store', async (_label, overrides, code) => {
+  const fixture = await createFixture({ runtime: false })
+  const path = join(fixture.directory, 'never-opened.sqlite')
+  try {
+    await expect(
+      fixture.compose({ ...overrides, store: { backend: 'sqlite', path } })
+    ).rejects.toThrow(code)
+    await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await fixture.close()
   }
 })
 
@@ -134,7 +178,7 @@ test('reopened SQLite composition reconciles a retained running outcome without 
     try {
       const hello = await fixture.waitForFrame(reconnected, (frame) => frame.type === 'hello')
       expect(hello).toMatchObject({ channelGeneration: 2 })
-      await fixture.pause(50)
+      await fixture.until(() => fixture.reconciled.length === 1)
       expect(fixture.framesFor(reconnected).filter((frame) => frame.type === 'command')).toEqual([])
       expect(fixture.reconciled).toEqual([golden.command.executionId])
       expect(
@@ -188,7 +232,7 @@ test('composed terminal artifact requires the host verifier before execution eff
           },
         })
       )
-      await fixture.pause(100)
+      await fixture.until(() => fixture.quarantine.records.length === 1)
       expect(fixture.artifactVerifications).toHaveLength(1)
       expect(
         await fixture.composition.runtime.delivery.get(golden.command.commandId)
@@ -222,7 +266,9 @@ test('production composition rechecks revoked authority at the socket send bound
     fixture.composition.webSocketServer.start()
     const socket = await fixture.connect(1)
     try {
-      await fixture.pause(100)
+      await fixture.until(
+        () => fixture.validationCalls >= 4 && socket.readyState === WebSocket.CLOSED
+      )
       expect(fixture.framesFor(socket).filter((frame) => frame.type === 'command')).toEqual([])
       expect(
         await fixture.composition.runtime.delivery.get(golden.command.commandId)
@@ -245,7 +291,7 @@ test('a queued command above the negotiated protocol version remains unsent and 
     fixture.composition.webSocketServer.start()
     const socket = await fixture.connect(1, [], 6)
     try {
-      await fixture.pause(100)
+      await fixture.until(() => socket.readyState === WebSocket.CLOSED)
       expect(fixture.framesFor(socket).filter((frame) => frame.type === 'command')).toEqual([])
       expect(
         await fixture.composition.runtime.delivery.get(golden.command.commandId)
@@ -345,7 +391,7 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
   let native
   let generation = 0
 
-  async function compose() {
+  async function compose(overrides = {}) {
     const result = await composeRuntimeGateway({
       store: { backend: 'sqlite', path },
       objectStore: {
@@ -410,6 +456,7 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
         native = Bun.serve(options)
         return native
       },
+      ...overrides,
     })
     return result
   }
@@ -417,6 +464,10 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
   let composition = await compose()
 
   return {
+    directory,
+    get validationCalls() {
+      return validationCalls
+    },
     get composition() {
       return composition
     },
@@ -429,9 +480,6 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
     reconciled,
     framesFor(socket) {
       return allFrames.get(socket) ?? []
-    },
-    pause(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms))
     },
     async until(predicate) {
       const deadline = Date.now() + 3_000
@@ -474,8 +522,8 @@ async function createFixture({ runtime = true, artifactDenied = false, denyAtVal
       await rm(directory, { recursive: true, force: true })
       ownedDirectories.delete(directory)
     },
-    async compose() {
-      return compose()
+    async compose(overrides) {
+      return compose(overrides)
     },
   }
 }
