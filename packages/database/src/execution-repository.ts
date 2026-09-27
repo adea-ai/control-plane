@@ -24,6 +24,7 @@ import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
 import { lockExecutionPlanReference } from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
+import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.js'
 import {
   acquirePostgresRetentionHoldClassMutex,
   countPostgresMatchingActiveRetentionHolds,
@@ -292,6 +293,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       interactionRequestRefs,
       directInteractionRequests,
       usageLedgerRefs,
+      usageStateRefs,
       delegationRefs,
     ] = await Promise.all([
       database
@@ -358,9 +360,51 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         .from(interactionRequests)
         .where(inArray(interactionRequests.executionId, ids)),
       database
-        .select({ executionId: usageLedgerEntries.executionId })
+        .select({
+          executionId: usageLedgerEntries.executionId,
+          parentExecutionId: usageLedgerEntries.parentExecutionId,
+        })
         .from(usageLedgerEntries)
-        .where(inArray(usageLedgerEntries.executionId, ids)),
+        .where(
+          or(
+            inArray(usageLedgerEntries.executionId, ids),
+            inArray(usageLedgerEntries.parentExecutionId, ids)
+          )
+        ),
+      // Scalar and JSON identities both pin an owner: damaged indexed fields
+      // must not hide a positively identified funding reference. An unreadable
+      // reservation collection could conceal any child, so fail closed for the
+      // entire candidate set rather than guess that no funding references exist.
+      database
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(
+          and(
+            inArray(executions.executionId, ids),
+            sql`(
+              exists (
+                select 1 from ${usageBudgetStates}
+                where ${usageBudgetStates.executionId} = ${executions.executionId}
+                  or ${usageBudgetStates.parentExecutionId} = ${executions.executionId}
+                  or ${usageBudgetStates.state}->>'executionId' = ${executions.executionId}
+                  or ${usageBudgetStates.state}->>'parentExecutionId' = ${executions.executionId}
+                  or jsonb_typeof(${usageBudgetStates.state}->'reservations') is distinct from 'array'
+                  or exists (
+                    select 1 from jsonb_array_elements(
+                      case when jsonb_typeof(${usageBudgetStates.state}->'reservations') = 'array'
+                        then ${usageBudgetStates.state}->'reservations' else '[]'::jsonb end
+                    ) as reservation(value)
+                    where reservation.value->>'childExecutionId' = ${executions.executionId}
+                  )
+              )
+              or exists (
+                select 1 from ${usageOperationReceipts}
+                where ${usageOperationReceipts.executionId} = ${executions.executionId}
+                  or ${usageOperationReceipts.receipt}->>'executionId' = ${executions.executionId}
+              )
+            )`
+          )
+        ),
       database
         .select({
           parentExecutionId: delegations.parentExecutionId,
@@ -386,7 +430,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         ...interactionRequestRefs.map((row) => row.executionId),
       ]),
       interactionRequests: new Set(directInteractionRequests.map((row) => row.executionId)),
-      usageLedger: new Set(usageLedgerRefs.map((row) => row.executionId)),
+      usageLedger: new Set([
+        ...usageLedgerRefs.flatMap((row) =>
+          row.parentExecutionId === null
+            ? [row.executionId]
+            : [row.executionId, row.parentExecutionId]
+        ),
+        ...usageStateRefs.map((row) => row.executionId),
+      ]),
       delegations: new Set(
         delegationRefs.flatMap((row) => [row.parentExecutionId, row.childExecutionId])
       ),

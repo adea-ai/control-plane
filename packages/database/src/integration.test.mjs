@@ -67,6 +67,8 @@ import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresExecutionEventRepository } from './execution-event-repository.ts'
 import { PostgresExternalSessionRepository } from './external-session-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
+import { PostgresDurableUsageStore } from './usage-store.ts'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   PostgresExecutionPlanRepository,
   lockExecutionPlanReference,
@@ -123,6 +125,8 @@ import {
   runtimeDiscoveryProjections,
   statePromotionProposals,
   usageLedgerEntries,
+  usageBudgetStates,
+  usageOperationReceipts,
 } from './schema/index.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresRetentionReapplication } from './retention-reapplication.ts'
@@ -5377,6 +5381,184 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await isolated.application.execute(
         sql`delete from executions where execution_id in (${parentId}, ${childId}, ${usageId})`
       )
+    }
+  }, 60_000)
+
+  test('public durable usage service records and replays a real PostgreSQL lifecycle', async () => {
+    const database = await createMigratedIsolatedDatabase()
+    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+    const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+    const request = ControlApiFixtures.executionAcceptance.request
+    const workspaceId = request.workspaceId
+    const source = (idempotencyKey) => ({ sourceId: 'postgres-lifecycle', idempotencyKey })
+    const createLedger = () =>
+      new DurableUsageLedger({
+        store: new PostgresDurableUsageStore(database.application),
+      })
+    try {
+      await createExecutionOwner(database.application, request, executionId, attemptId)
+      const ledger = createLedger()
+      const opening = {
+        workspaceId,
+        executionId,
+        currency: 'USD',
+        maximumMicrounits: 1000,
+        maximumTokens: 100,
+        source: source('open'),
+      }
+      const opened = await ledger.openBudget(opening)
+      await ledger.reserve({
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'model',
+        maximumMicrounits: 800,
+        maximumTokens: 80,
+        source: source('reserve'),
+      })
+      const chargeInput = {
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'model',
+        kind: 'model_usage',
+        quantity: { unit: 'tokens', value: 30 },
+        costMicrounits: 250,
+        fundingSource: 'hq_managed',
+        source: source('charge'),
+      }
+      const charged = await ledger.charge(chargeInput)
+      const settleInput = {
+        workspaceId,
+        executionId,
+        reservationKey: 'model',
+        source: source('settle'),
+      }
+      const settled = await ledger.settle(settleInput)
+      const finalizeInput = { workspaceId, executionId, source: source('finalize') }
+      const finalized = await ledger.finalizeBudget(finalizeInput)
+      const entries = await ledger.entries(workspaceId, executionId)
+      const recreated = createLedger()
+      expect(await recreated.openBudget(opening)).toEqual(opened)
+      expect(await recreated.charge(chargeInput)).toEqual(charged)
+      expect(await recreated.settle(settleInput)).toEqual(settled)
+      expect(await recreated.finalizeBudget(finalizeInput)).toEqual(finalized)
+      expect(await recreated.entries(workspaceId, executionId)).toEqual(entries)
+      expect(await recreated.summary(workspaceId, executionId)).toMatchObject({
+        spentMicrounits: 250,
+        spentTokens: 30,
+        reservedMicrounits: 0,
+        reservedTokens: 0,
+        settled: true,
+      })
+      await expect(recreated.charge({ ...chargeInput, costMicrounits: 251 })).rejects.toThrow(
+        'IDEMPOTENCY_CONFLICT'
+      )
+    } finally {
+      await database.dispose()
+    }
+  }, 60_000)
+
+  test('execution retention pins durable usage scalar and payload funding references', async () => {
+    const database = await createMigratedIsolatedDatabase()
+    const ids = Array.from({ length: 8 }, (_, index) => `exe_01CRZ3NDEKTSV4RRFFQ69G5FE${index}`)
+    const [owner, parent, payloadOwner, payloadParent, child, receiptOwner, rawParent, clean] = ids
+    const terminalAt = '2020-01-01T00:00:00.000Z'
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      issuedAt: '2019-12-31T00:00:00.000Z',
+    }
+    try {
+      for (const id of ids) {
+        await createExecutionOwner(database.application, request, id)
+        await database.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
+        )
+      }
+      const state = {
+        schemaVersion: 1,
+        workspaceId: request.workspaceId,
+        executionId: payloadOwner,
+        parentExecutionId: payloadParent,
+        currency: 'USD',
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        status: 'open',
+        nextSequence: 1,
+        reservations: [
+          {
+            reservationKey: 'child-funding',
+            childExecutionId: child,
+            maximumMicrounits: 10,
+            maximumTokens: 10,
+            chargedMicrounits: 0,
+            chargedTokens: 0,
+            status: 'open',
+          },
+        ],
+      }
+      // Valid JSON identities deliberately disagree with indexes: either side
+      // must pin its positively identified owner, even when recovery rejects it.
+      await database.application.insert(usageBudgetStates).values({
+        executionId: owner,
+        workspaceId: request.workspaceId,
+        parentExecutionId: parent,
+        schemaVersion: 1,
+        state,
+      })
+      await database.application.insert(usageOperationReceipts).values({
+        executionId: owner,
+        workspaceId: request.workspaceId,
+        idempotencyKey: 'retention-receipt-pin',
+        fingerprint: `sha256:${'a'.repeat(64)}`,
+        schemaVersion: 1,
+        receipt: {
+          schemaVersion: 1,
+          workspaceId: request.workspaceId,
+          executionId: receiptOwner,
+          idempotencyKey: 'retention-receipt-pin',
+          fingerprint: `sha256:${'a'.repeat(64)}`,
+          result: {},
+        },
+      })
+      await new PostgresUsageLedgerRepository(database.application).append({
+        entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
+        executionId: owner,
+        parentExecutionId: rawParent,
+        workspaceId: request.workspaceId,
+        sequence: 1,
+        kind: 'settlement',
+        source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
+        fundingSource: 'hq_managed',
+        quantity: { unit: 'tokens', value: 0 },
+        currency: 'USD',
+        costMicrounits: 0,
+        costExact: true,
+        recordedAt: terminalAt,
+      })
+      const repository = new PostgresExecutionRepository(database.application)
+      const now = new Date('2020-01-03T00:00:00.000Z')
+      const journal = []
+      const options = {
+        policyRetainMs: 1,
+        bound: 64,
+        dryRun: false,
+        journal: async (operations) => journal.push(...operations),
+      }
+      await database.application.update(usageBudgetStates).set({
+        state: { ...state, reservations: { damaged: true } },
+      })
+      const damaged = await repository.deleteEligibleExecutions(now, options)
+      expect(damaged).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 8 } })
+      expect(journal).toEqual([])
+      await database.application.update(usageBudgetStates).set({ state })
+      const valid = await repository.deleteEligibleExecutions(now, options)
+      expect(valid).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 7 } })
+      expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId: clean }])
+      for (const id of ids.slice(0, 7)) expect(await repository.getExecution(id)).toBeDefined()
+      expect(await repository.getExecution(clean)).toBeUndefined()
+    } finally {
+      await database.dispose()
     }
   }, 60_000)
 
