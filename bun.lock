@@ -454,6 +454,7 @@
       "name": "@control-plane/runtime-gateway-protocol",
       "version": "1.5.0",
       "dependencies": {
+        "@control-plane/runtime-sdk": "workspace:*",
         "zod": "4.6.5",
       },
     },

@@ -61,6 +61,9 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     readonly attemptId: string
   }): Promise<WorkflowRuntimeOutcome> {
     const envelope = GatewayCommandEnvelopeSchema.parse(input.command.commandEnvelope)
+    if (envelope.executionId !== input.executionId || envelope.attemptId !== input.attemptId) {
+      throw new Error('REMOTE_RUNTIME_COMMAND_SCOPE_INVALID')
+    }
     const operation = envelope.operation
     const parameters = 'parameters' in envelope.payload ? envelope.payload.parameters : undefined
     const respondedInteractionId =
@@ -132,10 +135,8 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
       event.executionId !== execution.executionId ||
       event.attemptId !== attemptId ||
       event.payloadHash !== hashExecutionEventPayloadV2(event.payload) ||
-      ['workspaceId', 'projectId', 'taskId', 'agentId'].some(
-        (key) =>
-          event.correlation[key as keyof typeof event.correlation] !==
-          execution.correlation[key as keyof typeof execution.correlation]
+      (['workspaceId', 'projectId', 'taskId', 'agentId'] as const).some(
+        (key) => event.correlation[key] !== execution.correlation[key]
       ) ||
       typeof source !== 'object' ||
       source === null ||

@@ -6,14 +6,20 @@ export function contextCommandCompletionDigest(input: unknown): string {
 }
 
 export function contextCommandResultDigest(input: unknown): string {
-  const result = GatewayResultEnvelopeSchema.pick({
-    payloadHash: true,
-    status: true,
-    completedAt: true,
-    result: true,
-  })
-    .strip()
-    .parse(input)
+  // Hash only the original semantic fields, including for reconstructed
+  // Artifact frames without transport headers. Full wire validation occurs
+  // at ingestion; picking from its refined schema is not supported by Zod.
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('CONTEXT_COMMAND_RESULT_INVALID')
+  }
+  const fields = GatewayResultEnvelopeSchema.shape
+  const candidate = input as Record<string, unknown>
+  const result = {
+    payloadHash: fields.payloadHash.parse(candidate['payloadHash']),
+    status: fields.status.parse(candidate['status']),
+    completedAt: fields.completedAt.parse(candidate['completedAt']),
+    result: fields.result.parse(candidate['result']),
+  }
   return contextCommandCompletionDigest({
     type: 'result',
     payloadHash: result.payloadHash,

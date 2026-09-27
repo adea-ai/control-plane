@@ -564,7 +564,7 @@
       "private": false,
       "browser": false,
       "exports": [".", "./fixtures", "./schema/gateway-envelope.v1.json"],
-      "workspaceDependencies": [],
+      "workspaceDependencies": ["@control-plane/runtime-sdk"],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],

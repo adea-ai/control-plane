@@ -15,6 +15,11 @@ const input = {
 }
 
 describe('remote runtime durable outcome waiter', () => {
+  test('rejects a waiter identity that differs from its durable command envelope', async () => {
+    await expect(
+      fixture().wait({ ...input, attemptId: 'att_01JABCDEF0123456789ABCDEFH' })
+    ).rejects.toThrow('REMOTE_RUNTIME_COMMAND_SCOPE_INVALID')
+  })
   test.each(['completed', 'failed', 'cancelled'])(
     'recovers attributed %s terminal usage from durable events',
     async (state) => {

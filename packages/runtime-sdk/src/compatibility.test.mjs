@@ -34,7 +34,7 @@ describe('runtime compatibility certification', () => {
       parsed.certifications
         .map(({ runtimeFamily, versions }) => `${runtimeFamily}:${versions.protocol}`)
         .toSorted()
-    ).toEqual(['acp:1.5.0', 'acp:1.6.0', 'pi:1.5.0', 'pi:1.6.0'])
+    ).toEqual(['acp:1.5.0', 'acp:1.6.0', 'acp:1.7.0', 'pi:1.5.0', 'pi:1.6.0', 'pi:1.7.0'])
     for (const certification of parsed.certifications) {
       expect(certification.classification).toBe('supported')
       expect(certification.verifiedCapabilities.length).toBeGreaterThan(0)

@@ -8,7 +8,7 @@ Every envelope identifies its schema and negotiated protocol version, node, work
 
 Payloads are either bounded adapter-owned JSON or a content-addressed Artifact reference. Core validation rejects native provider command types and selectors for arbitrary endpoints, local paths, executables, databases, projects, source scopes, or reusable credentials. Context-provider status/read operations are optional; writes require a separate authorization reference. Inventory may advertise zero providers without affecting runtime negotiation.
 
-The checked-in JSON Schema and golden/malformed JSON fixtures under `packages/runtime-gateway-protocol` are language-neutral. The TypeScript package depends only on Zod and includes a deterministic reference RuntimeNode plus a reusable conformance runner; consumers do not need Control Plane server, domain, or database packages.
+The checked-in JSON Schema and golden/malformed JSON fixtures under `packages/runtime-gateway-protocol` are language-neutral. The TypeScript package depends on Zod and the provider-neutral Runtime SDK usage contract, and includes a deterministic reference RuntimeNode plus a reusable conformance runner; consumers do not need Control Plane server, domain, or database packages.
 
 ## Channel authentication
 
@@ -80,6 +80,23 @@ Concrete runtime adapters implement `RuntimeAdapterEventNormalizer`; provider or
 Terminal state, result reference or normalized failure, the required execution event, and its ingestion receipt commit through one effect sink. The first committed terminal outcome wins, so completion before cancellation remains complete and cancellation before a late result remains cancelled. Runtime cancellation, input, and approval use ordinary durable runtime commands; the gateway does not dispatch a new control command after the execution or attempt is already terminal.
 
 ## Compatibility and deprecation
+
+Protocol v1.7 adds optional `terminalUsage` to result envelopes for succeeded,
+failed and cancelled executions. It uses the Runtime SDK's validated token,
+duration and optional reported cost/accounting contract. Senders must negotiate
+v1.7 before emitting the field; older strict parsers cannot read it. The Hosted
+terminal bridge rejects known measured usage on an older protocol rather than
+silently dropping it. Upgrade both sides before activating this path. Legacy
+results without measurements remain valid and mean unknown usage, not zero.
+
+The gateway writes reported usage with command/node/connection/channel
+attribution into the winning terminal event; the Cloud/Hosted waiter verifies
+that durable binding before returning it. Adapter-normalized payloads cannot
+override those reserved fields. Neither an authenticated channel nor reported
+`accounting.sourceId` authorizes a charge. Funding authority, per-attempt
+reservations and financial settlement are separate requirements. The current
+Hosted terminal bridge still requires production startup/channel wiring; a
+fixture-tested bridge is not a live deployment certification.
 
 Peers negotiate the highest common major version and the lower supported minor within that major. No common major fails negotiation. Additive fields and envelope variants require a minor version; changed meanings, required-field removal, or incompatible validation require a new major. Deprecation must name the affected version and timestamp; an optional sunset must be later than deprecation and should name a supported replacement. A command already past expiry is never made valid by protocol negotiation or reconnect.
 
