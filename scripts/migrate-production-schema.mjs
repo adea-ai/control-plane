@@ -338,7 +338,10 @@ export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'SELECT') AS can_select,
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'INSERT') AS can_insert,
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'UPDATE') AS can_update,
-          has_table_privilege(current_user, format('public.%I', requested.table_name), 'DELETE') AS can_delete
+          has_table_privilege(current_user, format('public.%I', requested.table_name), 'DELETE') AS can_delete,
+          has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'INSERT') AS has_column_insert,
+          has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'UPDATE') AS has_column_update,
+          has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'REFERENCES') AS has_column_references
         FROM (VALUES ('catalog_approvals'), ('retired_execution_event_ids'), ('admission_rollout_gate')) AS requested(table_name)
         LEFT JOIN pg_class AS c ON c.relname = requested.table_name
         LEFT JOIN pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = 'public'
@@ -414,7 +417,10 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
       privilege.can_select !== true ||
       privilege.can_insert !== false ||
       privilege.can_update !== false ||
-      privilege.can_delete !== false
+      privilege.can_delete !== false ||
+      privilege.has_column_insert !== false ||
+      privilege.has_column_update !== false ||
+      privilege.has_column_references !== false
     ) {
       throw gateError('runtime database table grants are unsafe')
     }

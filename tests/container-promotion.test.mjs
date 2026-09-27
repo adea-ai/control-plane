@@ -86,6 +86,9 @@ function runtimeTablePrivileges() {
       can_insert: false,
       can_update: false,
       can_delete: false,
+      has_column_insert: false,
+      has_column_update: false,
+      has_column_references: false,
     },
   ]
 }
@@ -739,6 +742,24 @@ describe('production schema migration gate', () => {
       /table grants are unsafe/
     )
     for (const privilegeName of ['can_insert', 'can_update', 'can_delete']) {
+      assert.throws(
+        () =>
+          assertRuntimeCapabilities(
+            capabilities,
+            privileges.map((privilege) =>
+              privilege.table_name === 'admission_rollout_gate'
+                ? { ...privilege, [privilegeName]: true }
+                : privilege
+            )
+          ),
+        /table grants are unsafe/
+      )
+    }
+    for (const privilegeName of [
+      'has_column_insert',
+      'has_column_update',
+      'has_column_references',
+    ]) {
       assert.throws(
         () =>
           assertRuntimeCapabilities(
