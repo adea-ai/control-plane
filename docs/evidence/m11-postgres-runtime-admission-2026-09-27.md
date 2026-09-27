@@ -181,7 +181,8 @@ aggregate failures.
 
 The final canonical enabled PostgreSQL lane at `e4aaa4f2` passed **144 tests /
 0 failed / 1,235 Bun assertions / 21 files / 163.54s**, randomized seed 1104,
-original 30-second case timeout, no skips/filters/retries. This includes all six
+30-second runner fallback (existing explicit case deadlines unchanged), no
+skips/filters/retries. This includes all six
 Hosted HTTP cases and the earlier actual Cloud admission case. Final database
 inventory contained only the fixture database and PostgreSQL administration
 database, with no generated test database. The explicitly owned local container
@@ -211,6 +212,56 @@ bun scripts/check-budgets.mjs lane --group e2e --seconds 44.9
 # Supply the three separately scoped local PostgreSQL role URLs.
 RUN_M10_POSTGRES_CONFORMANCE=true bun test ./tests/cp1-embedded-durable-execution.test.mjs ./tests/m10-portability-conformance.test.mjs --randomize --seed 1104 --timeout 30000
 ```
+
+## Integrated legacy terminal replay checkpoint
+
+Candidate `6f94e69712342ef8ec231c9b3a1d05624cae7826` integrates Luna commit
+`73721a72466059450583991ff7677b065388ed3e`. Both concrete acceptance repositories
+allow retained outcome lookup only after immutable source identity matches and
+supplied/persisted status and state match: completed/completed, or failed with
+failed, cancelled or timed_out. The shared acceptance wrapper does not submit
+these terminal commands. No allowance, receipt or ledger is created or repaired.
+This is not ledger-health certification, funding, reservation or settlement.
+Active, one-sided, mismatched, forged and reconciliation snapshots retain the
+existing fail-closed admission verification.
+
+The actual SQLite regression closes/reopens the database and returns the exact
+stored command and owner; both backends cover all four terminal pairs and deny
+unsafe snapshots without changing stored accounting. A fresh-domain behavioral
+RED failed with `STORE_STATE_INVALID` when only the two terminal predicates were
+removed. Earlier invalid lifecycle test setup and stale Domain build artifacts
+were separately corrected; they are not behavioral RED evidence. Bounded
+independent Luna source review found no actionable issue and ran no tests.
+
+Root verification on this frozen candidate:
+
+- Canonical `bun run test` completed with exit 0 after rebuilding the workspace:
+  **1,852 unit tests / 8,054 assertions / 219 files / 89.64s**, **177 E2E tests /
+  1,068 assertions / 18 files / 67.27s**, and **208 smoke tests / 2,154 assertions /
+  24 files / 39.08s**, all with zero failures. PostgreSQL profile cases were
+  enabled rather than skipped. Coverage: 82.55% lines / 84.20% functions,
+  unchanged 80% minimum.
+- Full enabled PostgreSQL integration lane completed with exit 0:
+  **146 tests / zero failures / 1,287 assertions / 21 files / 194.69s**. Seed
+  1104, no filters, retries or raised deadlines. This is a measured duration,
+  not an integration-budget pass; no such budget is configured.
+- Full type-check, lint, formatting, canonical credential scan and whitespace
+  checks passed. Existing nonfatal lint warnings remain. A mistaken nonexistent
+  secret-scan command failed to start; the canonical `bun run security:scan`
+  then passed across 1,291 repository files.
+- Configured distribution, dependency, unit, E2E and smoke budgets passed.
+  No Railway/Neon deployment, PR readiness transition or issue closure occurred.
+
+All test sessions completed; final PostgreSQL inventory contained only the
+fixture and administration databases. The owned local container was stopped
+and its listener verified closed. Luna lanes completed with no owned process;
+worktrees and the database volume are retained for unfinished M11 work.
+
+Active pre-upgrade owners without valid opening authority remain a rollout
+blocker. Migration 0051 does not backfill authority. A paginated read-only
+inventory plus verified intake quiescence, drain and explicit reconciliation is
+still required; a clean snapshot alone cannot prove rollout safety. Historical
+usage is not funding authority, and an unknown effect cost must not become zero.
 
 ## Remaining full-scope gates (unchanged)
 
