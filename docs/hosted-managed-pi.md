@@ -17,6 +17,28 @@ Launch is idempotent by the adapter command key and normalized request fingerpri
 
 Progress, usage, interactions, errors, and results flow through the ordinary `ManagedPiAdapter` normalization path. Persistent outputs are written through `HostedArtifactStore` and returned as Control Plane Artifact references rather than depending on worker-local disk.
 
+`ObjectStoreHostedArtifactStore` verifies the attempt-bound key and metadata,
+media type, size and SHA-256, then reads and hashes the actual bytes before
+returning an Artifact reference. This applies to initial writes and warm/cold
+replays; an acknowledged PUT or cached promise is not durability evidence.
+Identical concurrent writes are coalesced only while in flight. A lost PUT
+acknowledgement is recovered by verifying existing bytes, without another PUT.
+Results default to a 256 KiB bound; an operator may explicitly configure
+`maxResultBytes` between 1 byte and 64 MiB, also subject to the ObjectStore's
+own limit. Conflicting retained content fails closed.
+
+Concurrent-write coalescing is instance-local. The ObjectStore port does not
+provide conditional creation: two independent first writers are not fenced by
+this store. The host must preserve single-writer admitted-attempt ownership;
+cross-process conflict fencing still requires a conditional-create or durable
+serialization boundary before this can certify production duplicate-effect
+safety.
+
+The current ObjectStore path is attempt-bound, not a production RuntimeNode
+upload authority. Workspace/node/command-scoped upload credentials, gateway-side
+Artifact authorization and the real Hosted provider/channel startup remain
+separate requirements; this integrity check does not establish those controls.
+
 ## Registration, readiness, and scaling
 
 Host inspection produces a normal `managed_cloud` RuntimeConnection at `agent_hq_cloud`, including verified capabilities, versions, health, freshness, and compatibility. Eligibility and routing therefore use the same Runtime SDK evaluation as every other runtime.
