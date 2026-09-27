@@ -6569,27 +6569,27 @@
       "evidence": [
         {
           "kind": "test",
-          "path": "packages/database/src/usage-ledger-repository.test.mjs"
+          "path": "packages/sqlite-persistence/src/budget-admission.test.mjs"
         },
         {
           "kind": "test",
-          "path": "packages/database/src/integration.test.mjs"
+          "path": "packages/database/src/budget-admission.integration.test.mjs"
         },
         {
           "kind": "source",
-          "path": "packages/usage-ledger/src/index.ts"
+          "path": "packages/usage-ledger/src/durable.ts"
         },
         {
           "kind": "source",
-          "path": "packages/database/src/usage-ledger-repository.ts"
+          "path": "docs/evidence/m11-plan-budget-admission-2026-09-27.md"
         }
       ],
-      "assessment": "Corrected 2026-09-27: the cited unit test only round-trips row attribution. PostgreSQL integration exercises workspace-scoped append/list and idempotency, while reservation, budget limits and settlement projections remain in InMemoryUsageLedger. No production construction of PostgresUsageLedgerRepository or durable budget hydration was identified; these tests do not establish restart-safe authoritative budget enforcement.",
+      "assessment": "Corrected 2026-09-27: DurableUsageLedger and real SQLite/PostgreSQL transactional stores persist allowance state, entries, parent funding and replay receipts. Supported acceptance roots atomically open verified-plan allowances with command/execution ownership. This is allocation authority, not payment received. Runtime reservations, trusted provider charge provenance and terminal settlement remain separate incomplete integration gates; row attribution or admission tests alone do not establish end-to-end spend enforcement.",
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "usage-ledger",
-        "disposition": "Persist and wire budget opening, token/money limits, reservations and settlement transactionally with usage accounting across supported profiles; prove concurrency, restart, provider redelivery and aggregate reconciliation. Before applying the decided 400-day usage retention, preserve durable summaries/high-water marks and identity-only duplicate/conflict fences, require settled reservations and canonical owner/reference/hold checks, and certify restore-time reconciliation. Do not delete raw accounting rows based on age alone."
+        "disposition": "Wire runtime token/money reservations and trusted settlement transactionally with usage accounting across supported profiles; prove concurrency, restart, provider redelivery and aggregate reconciliation. Preserve parent/child allocation capacity; do not infer HQ charges or zero-cost settlement from reported usage metadata. Before applying the decided 400-day usage retention, preserve durable summaries/high-water marks and identity-only duplicate/conflict fences, require settled reservations and canonical owner/reference/hold checks, and certify restore-time reconciliation. Do not delete raw accounting rows based on age alone."
       }
     },
     {

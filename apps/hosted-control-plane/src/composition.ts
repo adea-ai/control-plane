@@ -20,6 +20,7 @@ import {
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
+  PostgresDurableUsageStore,
   PostgresContextPackageRepository,
   PostgresContextAuthoringCommandRepository,
   PostgresContextCommandGrantRepository,
@@ -87,6 +88,7 @@ import { ReconciliationScheduler, RetentionSweep } from '@control-plane/deployme
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
+  DurableRuntimeBudgetAdmission,
   DurableRemoteWorkflowRuntime,
   ManagedPiRemoteCommandFactory,
   PollingRemoteRuntimeOutcomeWaiter,
@@ -422,6 +424,12 @@ export class HostedServerControlPlaneComposition {
       runtime: this.runtimeActivityPort,
       graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
       runtimeRouter: this.runtimeAttemptRouter,
+      budgetAdmission: new DurableRuntimeBudgetAdmission({
+        store: new PostgresDurableUsageStore(this.connection.database),
+        commands: new PostgresCommandAcceptanceRepository(this.connection.database, {
+          budgetAdmission: true,
+        }),
+      }),
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database, {
           budgetAdmission: true,
