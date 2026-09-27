@@ -28,6 +28,14 @@ Heartbeats refresh shared ownership and publish normalized online/degraded/offli
 
 ## Durable command delivery
 
+`composeRuntimeGateway` constructs the runtime command stack only when its
+explicit `runtime` options are supplied; `start` forwards those options. The
+composition owns its command store but does not own the injected host ports.
+Inventory remains a separate optional host handler and fails closed when absent.
+SQLite coordination is single-instance; the PostgreSQL mode uses durable channel
+ownership. Neither mode provisions node enrollment, credentials, an outbound
+worker connector, a sandbox host, or scoped Artifact upload credentials.
+
 Runtime-command composition is opt-in. A host must explicitly provide execution/event effects, reconnect validation and retained-outcome application, execution reconciliation, quarantine, and a scoped Artifact verifier. The verifier must establish that the authenticated command is allowed to reference the supplied Artifact; schema validity alone is not artifact ownership. Missing or malformed host ports fail before the gateway opens its store. Context-only composition keeps runtime frames fail-closed. This option does not supply node enrollment, production identity validation, or a complete executable-host deployment.
 
 When enabled, the gateway writes every runtime command to the configured SQLite or PostgreSQL `runtime_commands` ledger before sending it. The record retains the semantic command, execution, attempt, node, connection, scope, payload hash, expiry, delivery generations and sequences, ACK, result reference, and compare-and-set version. Reconnect and gateway restart query this ledger and redeliver the same command ID; a new ID denotes a new semantic attempt. Queue age, ACK latency, redelivery, and expiry are recorded as gateway metrics.
