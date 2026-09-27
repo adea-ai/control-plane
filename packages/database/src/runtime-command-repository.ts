@@ -8,11 +8,18 @@ import {
   type RuntimeCommandCreateResult,
   type RuntimeCommandRecord,
   type RuntimeCommandRepository,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { executionAttempts, executions } from './schema/executions.js'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 export class PostgresRuntimeCommandRepository implements RuntimeCommandRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
@@ -39,6 +46,7 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('RUNTIME_LEDGER_RETENTION_INVALID_TIMESTAMP')
@@ -54,6 +62,9 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
     const candidates = await this.database
       .select({
         commandId: runtimeCommands.commandId,
+        executionId: runtimeCommands.executionId,
+        attemptId: runtimeCommands.attemptId,
+        workspaceId: runtimeCommands.workspaceId,
         version: runtimeCommands.version,
         resultRecordedAt: runtimeCommands.resultRecordedAt,
       })
@@ -74,44 +85,106 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
       )
       .orderBy(asc(runtimeCommands.resultRecordedAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      if (!counter.admitCandidate()) break
       if (candidate.resultRecordedAt === null) continue
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.resultRecordedAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          { kind: 'postgres.deleteRuntimeCommand', commandId: candidate.commandId },
-        ])
-      }
-      const removed = await this.database.transaction(async (transaction) => {
+      const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'runtime-ledgers')
+        const [owner] = await transaction
+          .select({ workspaceId: executions.workspaceId, projectId: executions.projectId })
+          .from(executions)
+          .where(eq(executions.executionId, candidate.executionId))
+          .limit(1)
+          .for('update')
+        const [attempt] = await transaction
+          .select({ executionId: executionAttempts.executionId })
+          .from(executionAttempts)
+          .where(eq(executionAttempts.attemptId, candidate.attemptId))
+          .limit(1)
+          .for('update')
+        const [stored] = await transaction
+          .select({
+            executionId: runtimeCommands.executionId,
+            attemptId: runtimeCommands.attemptId,
+            workspaceId: runtimeCommands.workspaceId,
+            version: runtimeCommands.version,
+            resultRecordedAt: runtimeCommands.resultRecordedAt,
+            resultStatus: runtimeCommands.resultStatus,
+          })
+          .from(runtimeCommands)
+          .where(eq(runtimeCommands.commandId, candidate.commandId))
+          .limit(1)
+          .for('update')
+        if (
+          owner === undefined ||
+          attempt === undefined ||
+          stored === undefined ||
+          stored.resultRecordedAt === null ||
+          stored.resultStatus === null
+        ) {
+          return { bound: false, deleted: false, raced: true }
+        }
+        if (
+          stored.executionId !== candidate.executionId ||
+          stored.attemptId !== candidate.attemptId ||
+          attempt.executionId !== candidate.executionId ||
+          stored.workspaceId !== owner.workspaceId
+        ) {
+          return { bound: false, deleted: false, raced: true }
+        }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'runtime-ledgers',
+            scope: {
+              kind: 'project',
+              workspaceId: owner.workspaceId,
+              projectId: owner.projectId,
+            },
+          },
+          options.retentionHoldPolicy
+        )
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.resultRecordedAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(verdict)
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { bound: false, deleted: false, raced: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            { kind: 'postgres.deleteRuntimeCommand', commandId: candidate.commandId },
+          ])
+        }
         await transaction
           .delete(runtimeEventReceipts)
           .where(eq(runtimeEventReceipts.commandId, candidate.commandId))
-        return transaction
+        const removed = await transaction
           .delete(runtimeCommands)
           .where(
             and(
               eq(runtimeCommands.commandId, candidate.commandId),
-              eq(runtimeCommands.version, candidate.version)
+              eq(runtimeCommands.version, stored.version)
             )
           )
           .returning({ commandId: runtimeCommands.commandId })
+        return { bound: false, deleted: removed.length === 1, raced: removed.length !== 1 }
       })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+      if (outcome.bound) break
+      if (outcome.deleted) deleted += 1
+      if (outcome.raced) raced += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }

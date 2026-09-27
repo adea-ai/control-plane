@@ -2,6 +2,8 @@ import {
   ExecutionCancellationReceiptSchema,
   InteractionCommandReceiptSchema,
   RetentionAssessmentCounter,
+  type RetentionHoldPolicy,
+  type RetentionHoldScope,
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
@@ -15,6 +17,11 @@ import { executionCancellations } from './schema/execution-cancellations.js'
 import { interactionRequests } from './schema/interactions.js'
 import { interactionCommands } from './schema/interaction-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 const terminalStates = new Set(['completed', 'failed', 'cancelled', 'timed_out'])
 const completedCheckpointStates = new Set(['remediated', 'resolved'])
@@ -60,6 +67,7 @@ export class PostgresReceiptRetention {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('RECEIPT_RETENTION_INVALID_TIMESTAMP')
@@ -88,6 +96,7 @@ export class PostgresReceiptRetention {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     },
     counter: RetentionAssessmentCounter
   ): Promise<RetentionDeletionResult> {
@@ -109,9 +118,14 @@ export class PostgresReceiptRetention {
           : lt(table.createdAt, new Date(now.getTime() - options.policyRetainMs))
       )
       .orderBy(asc(table.createdAt))
-      .limit(counter.bound + 1)
+      .limit(counter.remaining + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      if (!counter.admitCandidate()) break
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'interaction-receipts')
         // Discover the owner without a lock first, then lock it before the
         // receipt. This keeps the lock order consistent with execution
         // retention and avoids deleting from stale pre-scan facts.
@@ -140,6 +154,7 @@ export class PostgresReceiptRetention {
         let ownerExecutionId: string | undefined
         let ownerWorkspaceId: string | undefined
         let ownerProjectId: string | undefined
+        let holdScope: RetentionHoldScope | undefined
         let interactionId: string | undefined
         if (
           observedReceipt !== undefined &&
@@ -199,6 +214,11 @@ export class PostgresReceiptRetention {
               owner.workspaceId === ownerWorkspaceId &&
               owner.projectId === ownerProjectId
             ) {
+              holdScope = {
+                kind: 'project',
+                workspaceId: request.workspaceId,
+                projectId: request.projectId,
+              }
               ownerTerminal = terminalStates.has(owner.state) && owner.terminalAt !== null
               const settlementInstants: string[] = []
               if (owner.terminalAt !== null) settlementInstants.push(owner.terminalAt.toISOString())
@@ -318,6 +338,14 @@ export class PostgresReceiptRetention {
             changed: true,
             overflow: false,
           }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'interaction-receipts',
+            ...(holdScope === undefined ? {} : { scope: holdScope }),
+          },
+          options.retentionHoldPolicy
+        )
         const receipt = parsedReceipt.success ? parsedReceipt.data : undefined
         const acceptedAt = receipt?.acceptedAt
         const verdict = evaluateRetentionEligibility({
@@ -329,17 +357,9 @@ export class PostgresReceiptRetention {
           publicationSettled: ownerSettled,
           rejectionKeyReserved: true,
           pendingReferences: 0,
-          holds: 0,
+          holds,
         })
-        if (!counter.add(verdict))
-          return {
-            admitted: false,
-            attemptedDelete: false,
-            removed: false,
-            vanished: false,
-            changed: false,
-            overflow: true,
-          }
+        counter.recordVerdict(verdict)
         if (verdict.verdict !== 'eligible' || dryRun)
           return {
             admitted: true,

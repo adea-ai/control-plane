@@ -9,6 +9,7 @@ import {
   type ExecutionRepository,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -23,6 +24,11 @@ import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
 import { lockExecutionPlanReference } from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 const MAXIMUM_SCAN_LIMIT = 1_000
 type ExecutionReferenceReader = Pick<ControlPlaneDatabase, 'select'>
@@ -91,6 +97,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_RETENTION_INVALID_TIMESTAMP')
@@ -115,14 +122,21 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       )
       .orderBy(asc(executions.terminalAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      if (!counter.admitCandidate()) break
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'executions')
         const [owner] = await transaction
           .select({
             executionId: executions.executionId,
             state: executions.state,
             version: executions.version,
             terminalAt: executions.terminalAt,
+            workspaceId: executions.workspaceId,
+            projectId: executions.projectId,
             attemptCount: executions.attemptCount,
             latestAttemptId: executions.latestAttemptId,
           })
@@ -130,7 +144,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           .where(eq(executions.executionId, candidate.executionId))
           .for('update')
           .limit(1)
-        if (owner === undefined) return { kind: 'missing' as const }
+        if (owner === undefined) {
+          await countPostgresMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'executions' },
+            options.retentionHoldPolicy
+          )
+          return { kind: 'missing' as const }
+        }
 
         // The owner lock serializes new FK-backed rows and reserve writers. Lock
         // attempts next, then take every reference snapshot inside this claim.
@@ -149,6 +170,18 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           attempts
         )
         const references = await this.#referenceSets([owner.executionId], transaction)
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'executions',
+            scope: {
+              kind: 'project',
+              workspaceId: owner.workspaceId,
+              projectId: owner.projectId,
+            },
+          },
+          options.retentionHoldPolicy
+        )
         const verdict = evaluateRetentionEligibility({
           retentionExpiresAt: effectiveDeadline(owner.terminalAt, options.policyRetainMs),
           now: assessedAt,
@@ -172,9 +205,9 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             !attemptsComplete
               ? 1
               : 0,
-          holds: 0,
+          holds,
         })
-        if (!counter.add(verdict)) return { kind: 'bound' as const }
+        counter.recordVerdict(verdict)
         if (verdict.verdict !== 'eligible' || dryRun) return { kind: 'assessed' as const }
 
         if (options.journal !== undefined) {
@@ -206,9 +239,6 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           .returning({ executionId: executions.executionId })
         return { kind: removed.length === 1 ? ('deleted' as const) : ('raced' as const) }
       })
-      if (outcome.kind === 'bound') {
-        break
-      }
       if (outcome.kind === 'missing' || outcome.kind === 'raced') raced += 1
       if (outcome.kind === 'deleted') deleted += 1
     }

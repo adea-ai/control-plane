@@ -3,6 +3,7 @@ import {
   RetentionHoldError,
   RetentionHoldIdSchema,
   RetentionHoldReleaseSchema,
+  RetentionHoldScopeSchema,
   RetentionHoldSchema,
   countMatchingActiveRetentionHolds,
   parseRetentionHoldPolicy,
@@ -18,6 +19,14 @@ import {
 import type { ControlPlaneDatabase } from './connection.js'
 import type { DomainTransaction } from './transaction.js'
 import { retentionHolds } from './schema/retention-holds.js'
+
+type PostgresRetentionHoldTarget = {
+  readonly classId: string
+  readonly scope?:
+    | { readonly kind: 'class' }
+    | { readonly kind: 'workspace'; readonly workspaceId: string }
+    | { readonly kind: 'project'; readonly workspaceId: string; readonly projectId: string }
+}
 
 export class PostgresRetentionHoldRepository implements RetentionHoldRepository {
   readonly #policy: RetentionHoldPolicy
@@ -145,18 +154,45 @@ export async function acquirePostgresRetentionHoldClassMutex(
 /** Read using the caller's transaction; deletion callers must already hold the class mutex. */
 export async function countPostgresMatchingActiveRetentionHolds(
   transaction: DomainTransaction,
-  target: RetentionHoldTarget,
-  policyInput: RetentionHoldPolicy
+  target: PostgresRetentionHoldTarget,
+  policyInput?: RetentionHoldPolicy
 ): Promise<number> {
+  const holds = await readPostgresRetentionHolds(transaction, policyInput)
+  let canonicalTarget: RetentionHoldTarget = { classId: target.classId }
+  if (target.scope !== undefined) {
+    const parsedScope = RetentionHoldScopeSchema.safeParse(target.scope)
+    if (!parsedScope.success) throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+    canonicalTarget = { classId: target.classId, scope: parsedScope.data }
+  }
+  if (policyInput === undefined) return 0
   const policy = parseRetentionHoldPolicy(policyInput)
-  const rows = await transaction.select().from(retentionHolds)
-  const holds = rows.map((row) => parseRow(row, policy))
   return countMatchingActiveRetentionHolds({
     holds,
-    target,
+    target: canonicalTarget,
     policy,
-    recordIds: rows.map((row) => row.holdId),
+    recordIds: holds.map((hold) => hold.holdId),
   })
+}
+
+/** Validate the host policy and every stored record even when a sweep has no candidates. */
+export async function validatePostgresRetentionHoldPolicy(
+  transaction: DomainTransaction,
+  policyInput?: RetentionHoldPolicy
+): Promise<void> {
+  await readPostgresRetentionHolds(transaction, policyInput)
+}
+
+async function readPostgresRetentionHolds(
+  transaction: DomainTransaction,
+  policyInput?: RetentionHoldPolicy
+): Promise<RetentionHold[]> {
+  const rows = await transaction.select().from(retentionHolds)
+  if (policyInput === undefined) {
+    if (rows.length !== 0) throw new RetentionHoldError('RETENTION_HOLD_POLICY_INVALID')
+    return []
+  }
+  const policy = parseRetentionHoldPolicy(policyInput)
+  return rows.map((row) => parseRow(row, policy))
 }
 
 function parseCreate(input: unknown, policy: RetentionHoldPolicy): RetentionHold {

@@ -188,6 +188,7 @@ export class RetentionAssessmentCounter {
   #scanned = 0
   #eligible = 0
   #truncated = false
+  #verdictPending = false
   readonly #retained = new Map<RetentionEligibilityReason, number>()
 
   constructor(classId: string, assessedAt: string, bound: number) {
@@ -198,15 +199,35 @@ export class RetentionAssessmentCounter {
     this.bound = bound
   }
 
-  /** Admits one candidate; returns false once the bound is reached. */
-  add(verdict: RetentionEligibilityVerdict): boolean {
+  /** Remaining candidate claims, shared across all tables in one class sweep. */
+  get remaining(): number {
+    return this.bound - this.#scanned
+  }
+
+  /** Reserve before claiming a target. A vanished target still consumes this budget. */
+  admitCandidate(): boolean {
+    this.#verdictPending = false
     if (this.#scanned >= this.bound) {
       this.#truncated = true
       return false
     }
     this.#scanned += 1
+    this.#verdictPending = true
+    return true
+  }
+
+  /** Record fresh facts for the current candidate; races need no invented verdict. */
+  recordVerdict(verdict: RetentionEligibilityVerdict): void {
+    if (!this.#verdictPending) throw new Error('RETENTION_ASSESSMENT_CANDIDATE_REQUIRED')
+    this.#verdictPending = false
     if (verdict.verdict === 'eligible') this.#eligible += 1
     else this.#retained.set(verdict.reason, (this.#retained.get(verdict.reason) ?? 0) + 1)
+  }
+
+  /** Admit and record together for callers that already have an assessment. */
+  add(verdict: RetentionEligibilityVerdict): boolean {
+    if (!this.admitCandidate()) return false
+    this.recordVerdict(verdict)
     return true
   }
 

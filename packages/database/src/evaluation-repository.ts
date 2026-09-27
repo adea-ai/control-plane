@@ -4,6 +4,7 @@ import {
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import {
   EvalRunSchema,
@@ -13,6 +14,11 @@ import {
 import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { evaluationRuns, releaseAuditRecords } from './schema/evaluations.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 export class PostgresEvaluationRepository implements EvaluationRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
@@ -31,6 +37,7 @@ export class PostgresEvaluationRepository implements EvaluationRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVALUATION_RETENTION_INVALID_TIMESTAMP')
@@ -53,38 +60,65 @@ export class PostgresEvaluationRepository implements EvaluationRepository {
       )
       .orderBy(asc(evaluationRuns.completedAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.completedAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          { kind: 'postgres.deleteEvaluationRun', evalRunId: candidate.evalRunId },
-        ])
-      }
-      const removed = await this.database
-        .delete(evaluationRuns)
-        .where(
-          and(
-            eq(evaluationRuns.evalRunId, candidate.evalRunId),
-            lt(evaluationRuns.completedAt, now)
-          )
+      if (!counter.admitCandidate()) break
+      const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'evaluation-runs')
+        const [stored] = await transaction
+          .select({ completedAt: evaluationRuns.completedAt })
+          .from(evaluationRuns)
+          .where(eq(evaluationRuns.evalRunId, candidate.evalRunId))
+          .limit(1)
+          .for('update')
+        if (stored === undefined) return { verdict: undefined, removed: false, raced: true }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          { classId: 'evaluation-runs', scope: { kind: 'class' } },
+          options.retentionHoldPolicy
         )
-        .returning({ evalRunId: evaluationRuns.evalRunId })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+        const freshVerdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.completedAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(freshVerdict)
+        if (freshVerdict.verdict !== 'eligible' || dryRun)
+          return { verdict: freshVerdict, removed: false, raced: false, bound: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            { kind: 'postgres.deleteEvaluationRun', evalRunId: candidate.evalRunId },
+          ])
+        }
+        const removed = await transaction
+          .delete(evaluationRuns)
+          .where(
+            and(
+              eq(evaluationRuns.evalRunId, candidate.evalRunId),
+              lt(evaluationRuns.completedAt, now)
+            )
+          )
+          .returning({ evalRunId: evaluationRuns.evalRunId })
+        return {
+          verdict: freshVerdict,
+          removed: removed.length === 1,
+          raced: removed.length !== 1,
+          bound: false,
+        }
+      })
+      if (outcome.bound) break
+      if (outcome.raced) raced += 1
+      if (outcome.removed) deleted += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }
@@ -102,6 +136,7 @@ export class PostgresEvaluationRepository implements EvaluationRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('AUDIT_RETENTION_INVALID_TIMESTAMP')
@@ -123,33 +158,60 @@ export class PostgresEvaluationRepository implements EvaluationRepository {
       )
       .orderBy(asc(releaseAuditRecords.createdAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.createdAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
+      if (!counter.admitCandidate()) break
+      const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'audit-records')
+        const [stored] = await transaction
+          .select({ createdAt: releaseAuditRecords.createdAt })
+          .from(releaseAuditRecords)
+          .where(eq(releaseAuditRecords.releaseAuditId, candidate.releaseAuditId))
+          .limit(1)
+          .for('update')
+        if (stored === undefined) return { verdict: undefined, removed: false, raced: true }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          { classId: 'audit-records', scope: { kind: 'class' } },
+          options.retentionHoldPolicy
+        )
+        const freshVerdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.createdAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(freshVerdict)
+        if (freshVerdict.verdict !== 'eligible' || dryRun)
+          return { verdict: freshVerdict, removed: false, raced: false, bound: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            { kind: 'postgres.deleteReleaseAuditRecord', releaseAuditId: candidate.releaseAuditId },
+          ])
+        }
+        const removed = await transaction
+          .delete(releaseAuditRecords)
+          .where(eq(releaseAuditRecords.releaseAuditId, candidate.releaseAuditId))
+          .returning({ releaseAuditId: releaseAuditRecords.releaseAuditId })
+        return {
+          verdict: freshVerdict,
+          removed: removed.length === 1,
+          raced: removed.length !== 1,
+          bound: false,
+        }
       })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          { kind: 'postgres.deleteReleaseAuditRecord', releaseAuditId: candidate.releaseAuditId },
-        ])
-      }
-      const removed = await this.database
-        .delete(releaseAuditRecords)
-        .where(eq(releaseAuditRecords.releaseAuditId, candidate.releaseAuditId))
-        .returning({ releaseAuditId: releaseAuditRecords.releaseAuditId })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+      if (outcome.bound) break
+      if (outcome.raced) raced += 1
+      if (outcome.removed) deleted += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }

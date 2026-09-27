@@ -3,16 +3,23 @@ import {
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, eq, isNotNull, isNull, lt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { inboxMessages, outboxEvents } from './schema/messaging.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 interface MessagingRetentionOptions {
   readonly policyRetainMs: number | null
   readonly bound?: number
   readonly dryRun?: boolean
   readonly journal?: RetentionJournalSink
+  readonly retentionHoldPolicy?: RetentionHoldPolicy
 }
 
 function createCounter(now: Date, options: MessagingRetentionOptions): RetentionAssessmentCounter {
@@ -99,46 +106,68 @@ export class PostgresMessagingRetention {
         )
       )
       .orderBy(asc(inboxMessages.createdAt))
-      .limit(counter.bound + 1)
+      .limit(counter.remaining + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.createdAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          { kind: 'postgres.compactInboxMessage', id: candidate.id, compactedAt: assessedAt },
-        ])
-      }
-      const updated = await this.database
-        .update(inboxMessages)
-        .set({
-          payload: { compacted: true, version: 1 },
-          deletedAt: now,
-          revision: candidate.revision + 1n,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(inboxMessages.id, candidate.id),
-            eq(inboxMessages.revision, candidate.revision),
-            isNull(inboxMessages.deletedAt)
-          )
+      if (!counter.admitCandidate()) break
+      const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'messaging')
+        const [stored] = await transaction
+          .select({ revision: inboxMessages.revision, createdAt: inboxMessages.createdAt })
+          .from(inboxMessages)
+          .where(and(eq(inboxMessages.id, candidate.id), isNull(inboxMessages.deletedAt)))
+          .limit(1)
+          .for('update')
+        if (stored === undefined) return { bound: false, compacted: false, raced: true }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          { classId: 'messaging', scope: { kind: 'class' } },
+          options.retentionHoldPolicy
         )
-        .returning({ id: inboxMessages.id })
-      if (updated.length === 1) compacted += 1
-      else raced += 1
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.createdAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(verdict)
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { bound: false, compacted: false, raced: false }
+        if (options.journal !== undefined) {
+          await options.journal([
+            { kind: 'postgres.compactInboxMessage', id: candidate.id, compactedAt: assessedAt },
+          ])
+        }
+        const updated = await transaction
+          .update(inboxMessages)
+          .set({
+            payload: { compacted: true, version: 1 },
+            deletedAt: now,
+            revision: stored.revision + 1n,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(inboxMessages.id, candidate.id),
+              eq(inboxMessages.revision, stored.revision),
+              isNull(inboxMessages.deletedAt)
+            )
+          )
+          .returning({ id: inboxMessages.id })
+        return { bound: false, compacted: updated.length === 1, raced: updated.length !== 1 }
+      })
+      if (outcome.bound) break
+      if (outcome.compacted) compacted += 1
+      if (outcome.raced) raced += 1
     }
     return { dryRun, deleted: 0, compacted, raced, ...counter.result() }
   }
@@ -180,39 +209,67 @@ export class PostgresMessagingRetention {
         )
       )
       .orderBy(asc(outboxEvents.publishedAt))
-      .limit(counter.bound + 1)
+      .limit(counter.remaining + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      if (!counter.admitCandidate()) break
       if (candidate.publishedAt === null) continue
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt:
-          options.policyRetainMs === null
-            ? undefined
-            : new Date(candidate.publishedAt.getTime() + options.policyRetainMs).toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: candidate.status === 'published' && candidate.quarantinedAt === null,
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([{ kind: 'postgres.deleteOutboxEvent', id: candidate.id }])
-      }
-      const removed = await this.database
-        .delete(outboxEvents)
-        .where(
-          and(
-            eq(outboxEvents.id, candidate.id),
-            eq(outboxEvents.status, 'published'),
-            eq(outboxEvents.revision, candidate.revision)
-          )
+      const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'messaging')
+        const [stored] = await transaction
+          .select({
+            status: outboxEvents.status,
+            revision: outboxEvents.revision,
+            publishedAt: outboxEvents.publishedAt,
+            quarantinedAt: outboxEvents.quarantinedAt,
+          })
+          .from(outboxEvents)
+          .where(eq(outboxEvents.id, candidate.id))
+          .limit(1)
+          .for('update')
+        if (stored === undefined || stored.publishedAt === null)
+          return { bound: false, deleted: false, raced: true }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          { classId: 'messaging', scope: { kind: 'class' } },
+          options.retentionHoldPolicy
         )
-        .returning({ id: outboxEvents.id })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt:
+            options.policyRetainMs === null
+              ? undefined
+              : new Date(stored.publishedAt.getTime() + options.policyRetainMs).toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: true,
+          publicationSettled: stored.status === 'published' && stored.quarantinedAt === null,
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(verdict)
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { bound: false, deleted: false, raced: false }
+        if (options.journal !== undefined) {
+          await options.journal([{ kind: 'postgres.deleteOutboxEvent', id: candidate.id }])
+        }
+        const removed = await transaction
+          .delete(outboxEvents)
+          .where(
+            and(
+              eq(outboxEvents.id, candidate.id),
+              eq(outboxEvents.status, 'published'),
+              eq(outboxEvents.revision, stored.revision)
+            )
+          )
+          .returning({ id: outboxEvents.id })
+        return { bound: false, deleted: removed.length === 1, raced: removed.length !== 1 }
+      })
+      if (outcome.bound) break
+      if (outcome.deleted) deleted += 1
+      if (outcome.raced) raced += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }

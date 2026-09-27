@@ -20,6 +20,7 @@ import {
   observeReferenceRetentionWindow,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, eq, gt, isNotNull, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -27,6 +28,11 @@ import { contextAuthoringCommands } from './schema/context-authoring-commands.js
 import { contextPackages } from './schema/context-packages.js'
 import { delegations } from './schema/delegations.js'
 import { executionPlans } from './schema/execution-plans.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 export class PostgresContextPackageRepository implements ContextPackageRepository {
   constructor(readonly database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>) {}
@@ -403,6 +409,7 @@ export class PostgresContextPackageRetention {
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
       readonly afterId?: string
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('CONTEXT_PACKAGE_RETENTION_INVALID_TIMESTAMP')
@@ -434,18 +441,19 @@ export class PostgresContextPackageRetention {
       .orderBy(asc(contextPackages.contextPackageId))
       .limit(counter.bound + 1)
     const page = candidates.slice(0, counter.bound)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     const truncated = candidates.length > page.length
     let scanned = 0
     for (const candidate of page) {
       scanned += 1
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'context-packages')
         // New-reference writers take the same FOR UPDATE lifetime claim before
         // inserting a reference or clearing its observation clock.
         const [stored] = await transaction
-          .select({
-            contentDigest: contextPackages.contentDigest,
-            unreferencedSince: contextPackages.unreferencedSince,
-          })
+          .select()
           .from(contextPackages)
           .where(
             and(
@@ -456,6 +464,15 @@ export class PostgresContextPackageRetention {
           .limit(1)
           .for('update')
         if (!stored) return { verdict: undefined, removed: false, raced: true }
+        const canonicalPackage = fromRow(stored)
+        if (
+          canonicalPackage.contextPackageId !== candidate.contextPackageId ||
+          canonicalPackage.contentDigest !== stored.contentDigest ||
+          canonicalPackage.projectState.workspaceId !== stored.workspaceId ||
+          canonicalPackage.projectState.projectId !== stored.projectId
+        ) {
+          return { verdict: undefined, removed: false, raced: true }
+        }
 
         const [planPin] = await transaction
           .select({ contextPackageId: sql<string>`plan->'contextPackage'->>'contextPackageId'` })
@@ -486,6 +503,18 @@ export class PostgresContextPackageRetention {
           delegation !== undefined
             ? 1
             : 0
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'context-packages',
+            scope: {
+              kind: 'project',
+              workspaceId: canonicalPackage.projectState.workspaceId,
+              projectId: canonicalPackage.projectState.projectId,
+            },
+          },
+          options.retentionHoldPolicy
+        )
         const observation = observeReferenceRetentionWindow({
           now: assessedAt,
           unreferencedSince: stored.unreferencedSince?.toISOString() ?? null,
@@ -503,7 +532,7 @@ export class PostgresContextPackageRetention {
                 publicationSettled: true,
                 rejectionKeyReserved: true,
                 pendingReferences,
-                holds: 0,
+                holds,
               })
         if (
           !dryRun &&
