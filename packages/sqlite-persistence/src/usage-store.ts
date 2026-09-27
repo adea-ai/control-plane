@@ -201,6 +201,19 @@ class SqliteUsageTransaction implements DurableUsageTransaction {
         entryIds.has(entry.entryId)
       )
         throw new DurableUsageError('STORE_STATE_INVALID')
+      if (entry.attemptId !== undefined) {
+        const storedAttempt = await this.transaction.get(
+          'execution-attempts',
+          recordId(entry.attemptId)
+        )
+        const attempt = ExecutionAttemptSchema.safeParse(storedAttempt?.value)
+        if (
+          !attempt.success ||
+          attempt.data.attemptId !== entry.attemptId ||
+          attempt.data.executionId !== executionId
+        )
+          throw new DurableUsageError('STORE_STATE_INVALID')
+      }
       entryIds.add(entry.entryId)
       entries.push(entry)
     }

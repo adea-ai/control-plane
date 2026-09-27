@@ -106,6 +106,21 @@ admission, provider-metering, cross-process capacity, or deployed profile accept
 
 ## Required continuation
 
+### Read-time attempt ownership correction
+
+A schema-valid execution-attempt record reassigned to another execution was accepted by
+ordered usage reads after native close/reopen. The regression failed for the intended
+reason (`3a445e`); an earlier fixture-only failure used a nonexistent initialization API
+and was corrected to the provider's canonical `migrate()` reopen path. Recovery now checks
+the persisted attempt schema, exact attempt ID, and execution owner for every attributed
+entry, rejecting damaged references with `STORE_STATE_INVALID`.
+
+Actual SQLite TypeScript build and all 12 focused store tests passed (81 assertions).
+The complete SQLite package subsequently passed 170 tests with zero failures and 1,099
+assertions across 27 files in 26.90 seconds. Changed-file lint with warnings denied,
+formatting, and whitespace checks passed. This proves the native recovery guard, not
+production accounting activation or whole-milestone acceptance.
+
 Implement policy-authorized extensions with retained opening-history provenance,
 implement and independently validate the PostgreSQL store, then activate the service at
 supported composition boundaries. Preserve both money and token

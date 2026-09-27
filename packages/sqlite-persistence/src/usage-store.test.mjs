@@ -332,6 +332,32 @@ describe('SQLite durable usage transactions', () => {
     }
   })
 
+  test('native reopen rejects persisted attempts reassigned to another execution', async () => {
+    await withStore(async (provider) => {
+      const store = new SqliteDurableUsageStore(provider)
+      await store.transaction(workspaceId, async (tx) => {
+        await tx.putBudget(budget())
+        await tx.appendEntry(entry())
+      })
+      await provider.transaction(async (tx) => {
+        const id = recordId(attemptId)
+        const record = await tx.get('execution-attempts', id)
+        await tx.put({
+          namespace: 'execution-attempts',
+          id,
+          expectedRevision: record.revision,
+          value: { ...record.value, executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        })
+      })
+      await provider.close()
+      await provider.migrate()
+      const reopened = new SqliteDurableUsageStore(provider)
+      await expect(
+        reopened.transaction(workspaceId, (tx) => tx.listEntries(executionId))
+      ).rejects.toThrow('STORE_STATE_INVALID')
+    })
+  })
+
   test('ordered reads preserve valid foreign-workspace entry pairs without exposing them', async () => {
     await withStore(async (provider, store) => {
       await store.transaction(workspaceId, async (tx) => {
