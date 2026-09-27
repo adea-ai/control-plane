@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -48,6 +48,86 @@ const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
 const postgresConfigured = process.env.RUN_M10_POSTGRES_CONFORMANCE === 'true'
 
 const plan = createExecutionPlanTestFixture()
+
+async function withConformanceResources(operation) {
+  const cleanups = []
+  const own = (resource, dispose) => {
+    cleanups.push(() => dispose(resource))
+    return resource
+  }
+  const errors = []
+  let result
+  try {
+    result = await operation(own)
+  } catch (error) {
+    errors.push(error)
+  }
+  // Reverse acquisition order drains the runtime before closing its provider,
+  // and attempts every release even when setup, assertions, or cleanup fail.
+  for (const cleanup of cleanups.toReversed()) {
+    try {
+      await cleanup()
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1) throw new AggregateError(errors, 'CP1 conformance cleanup failed')
+  return result
+}
+
+describe('CP1 conformance resource ownership', () => {
+  test('releases partial acquisition after setup fails', async () => {
+    const failure = new Error('SETUP_FAILED')
+    const released = []
+    await expect(
+      withConformanceResources(async (own) => {
+        own('directory', (resource) => released.push(resource))
+        own('provider', (resource) => released.push(resource))
+        throw failure
+      })
+    ).rejects.toBe(failure)
+    expect(released).toEqual(['provider', 'directory'])
+  })
+
+  test('preserves the scenario failure and releases every resource despite close failures', async () => {
+    const scenarioFailure = new Error('SCENARIO_FAILED')
+    const closeFailure = new Error('CLOSE_FAILED')
+    const released = []
+    let failure
+    try {
+      await withConformanceResources(async (own) => {
+        own('directory', (resource) => released.push(resource))
+        own('provider', (resource) => released.push(resource))
+        own('runtime', (resource) => {
+          released.push(resource)
+          throw closeFailure
+        })
+        throw scenarioFailure
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(released).toEqual(['runtime', 'provider', 'directory'])
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors).toEqual([scenarioFailure, closeFailure])
+  })
+
+  test('does not turn a close failure into a successful scenario', async () => {
+    const closeFailure = new Error('CLOSE_FAILED')
+    const released = []
+    await expect(
+      withConformanceResources(async (own) => {
+        own('directory', (resource) => released.push(resource))
+        own('provider', () => {
+          throw closeFailure
+        })
+        return 'passed'
+      })
+    ).rejects.toBe(closeFailure)
+    expect(released).toEqual(['directory'])
+  })
+})
 
 async function seedLocalPlan(composition) {
   const inputs = createExecutionPlanTestFixtureInputs()
@@ -431,12 +511,17 @@ describe('CP1 persistence-profile conformance', () => {
     }
   }
 
-  async function openSqliteWorld(profile, caseName) {
-    const directory = await mkdtemp(join(tmpdir(), `cp1-${profile}-${caseName}-`))
-    const provider = new SqlitePersistenceProvider({
-      path: join(directory, 'state.sqlite'),
-      profile,
-    })
+  async function openSqliteWorld(profile, caseName, own) {
+    const directory = own(await mkdtemp(join(tmpdir(), `cp1-${profile}-${caseName}-`)), (path) =>
+      rm(path, { recursive: true, force: true })
+    )
+    const provider = own(
+      new SqlitePersistenceProvider({
+        path: join(directory, 'state.sqlite'),
+        profile,
+      }),
+      (value) => value.close()
+    )
     await provider.migrate()
     const plans = new SqliteExecutionPlanRepository(provider)
     await new SqliteContextPackageRepository(provider).put(
@@ -451,16 +536,19 @@ describe('CP1 persistence-profile conformance', () => {
     const executions = new SqliteExecutionRepository(provider)
     const caseDefinition = conformanceCases[caseName]
     const store = new WorkflowJobStore(provider)
-    const runtime = new EmbeddedWorkflowRuntime({
-      provider,
-      activities: durableActivities({
-        plans,
-        executions,
-        commands,
-        port: scriptedPort(caseDefinition.port),
+    const runtime = own(
+      new EmbeddedWorkflowRuntime({
+        provider,
+        activities: durableActivities({
+          plans,
+          executions,
+          commands,
+          port: scriptedPort(caseDefinition.port),
+        }),
+        pollIntervalMs: 10,
       }),
-      pollIntervalMs: 10,
-    })
+      (value) => value.stop()
+    )
     const dispatcher = new EmbeddedExecutionWorkflowDispatcher({ store })
     await runtime.start()
     return {
@@ -472,16 +560,11 @@ describe('CP1 persistence-profile conformance', () => {
       executions,
       store,
       dispatcher,
-      close: async () => {
-        await runtime.stop()
-        provider.close()
-        await rm(directory, { recursive: true, force: true })
-      },
     }
   }
 
-  async function openPostgresWorld(profile, credentials, caseName) {
-    const database = await createIsolatedTestDatabase(credentials)
+  async function openPostgresWorld(profile, credentials, caseName, own) {
+    const database = own(await createIsolatedTestDatabase(credentials), (value) => value.dispose())
     await database.migrate()
     const plans = new PostgresExecutionPlanRepository(database.application)
     await new PostgresContextPackageRepository(database.application).put(
@@ -508,7 +591,6 @@ describe('CP1 persistence-profile conformance', () => {
       executions,
       activities,
       control: caseDefinition.control,
-      close: () => database.dispose(),
     }
   }
 
@@ -592,11 +674,39 @@ describe('CP1 persistence-profile conformance', () => {
     }
   }
 
+  test('disposes a partially seeded SQLite world when setup fails', async () => {
+    const resources = []
+    await expect(
+      withConformanceResources(async (own) => {
+        await openSqliteWorld('local', 'missing-case', (resource, dispose) => {
+          resources.push(resource)
+          return own(resource, dispose)
+        })
+      })
+    ).rejects.toBeInstanceOf(TypeError)
+    expect(resources).toHaveLength(2)
+    await expect(access(resources[0])).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(resources[1].health()).rejects.toMatchObject({ code: 'SQLITE_CLOSED' })
+  })
+
+  test('disposes a running SQLite world when the scenario fails', async () => {
+    let world
+    const failure = new Error('SCENARIO_FAILED')
+    await expect(
+      withConformanceResources(async (own) => {
+        world = await openSqliteWorld('local', 'workflow-accept-complete-v1', own)
+        throw failure
+      })
+    ).rejects.toBe(failure)
+    await expect(access(world.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(world.provider.health()).rejects.toMatchObject({ code: 'SQLITE_CLOSED' })
+  })
+
   test('SQLite profiles run the workflow contract cases identically', async () => {
     for (const caseName of Object.keys(conformanceCases)) {
-      const local = await openSqliteWorld('local', caseName)
-      const hostedSimple = await openSqliteWorld('hosted-simple', caseName)
-      try {
+      await withConformanceResources(async (own) => {
+        const local = await openSqliteWorld('local', caseName, own)
+        const hostedSimple = await openSqliteWorld('hosted-simple', caseName, own)
         const localOutcome = await runEmbeddedCase(local, caseName)
         const hostedOutcome = await runEmbeddedCase(hostedSimple, caseName)
         expect(localOutcome).toEqual(hostedOutcome)
@@ -610,10 +720,7 @@ describe('CP1 persistence-profile conformance', () => {
         if (caseName === 'workflow-cancel-before-run-v1') {
           expect(localOutcome).toEqual({ executionState: 'cancelled', workflowStatus: 'cancelled' })
         }
-      } finally {
-        await local.close()
-        await hostedSimple.close()
-      }
+      })
     }
   }, 60_000)
 
@@ -625,49 +732,72 @@ describe('CP1 persistence-profile conformance', () => {
   // against the ephemeral preview Postgres.
   const conformanceMatrix = postgresConfigured ? test : test.skip
   conformanceMatrix(
-    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in the Migrate Neon Branch lane)',
+    'disposes a partially seeded PostgreSQL world when setup fails',
     async () => {
+      let database
       const credentials = {
         administration: loadDatabaseCredentials(process.env, 'administration'),
         application: loadDatabaseCredentials(process.env, 'application'),
         migration: loadDatabaseCredentials(process.env, 'migration'),
       }
-      const worlds = new Map()
-      const openWorld = async (profile, caseName) => {
-        const key = `${profile}:${caseName}`
-        if (!worlds.has(key)) {
-          worlds.set(
-            key,
-            profile === 'cloud' || profile === 'hosted-server'
-              ? await openPostgresWorld(profile, credentials, caseName)
-              : await openSqliteWorld(profile, caseName)
-          )
-        }
-        return worlds.get(key)
-      }
-      const adapters = ['cloud', 'hosted-server', 'local', 'hosted-simple'].map((profile) => ({
-        profile,
-        ports: new Proxy({}, { get: (_target, port) => `${profile}-${String(port)}` }),
-        run: async (caseId) => {
-          const world = await openWorld(profile, caseId)
-          return world.kind === 'embedded'
-            ? runEmbeddedCase(world, caseId)
-            : runDirectCase(world, caseId)
-        },
-      }))
-      const result = await runProfileConformance(
-        adapters,
-        Object.keys(conformanceCases).map((caseName) => ({
-          caseId: caseName,
-          owner: 'workflow-runtime',
-          input: {},
-        }))
-      )
-      expect(result.conforms).toBe(true)
-      for (const world of worlds.values()) await world.close()
+      await expect(
+        withConformanceResources(async (own) => {
+          await openPostgresWorld('cloud', credentials, 'missing-case', (resource, dispose) => {
+            database = resource
+            return own(resource, dispose)
+          })
+        })
+      ).rejects.toBeInstanceOf(TypeError)
+      expect(database.name).toMatch(/^control_plane_test_/)
+      await expect(database.transaction(async () => true)).rejects.toThrow()
     },
+    60_000
+  )
+
+  conformanceMatrix(
+    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in the Migrate Neon Branch lane)',
+    async () =>
+      withConformanceResources(async (own) => {
+        const credentials = {
+          administration: loadDatabaseCredentials(process.env, 'administration'),
+          application: loadDatabaseCredentials(process.env, 'application'),
+          migration: loadDatabaseCredentials(process.env, 'migration'),
+        }
+        const worlds = new Map()
+        const openWorld = async (profile, caseName) => {
+          const key = `${profile}:${caseName}`
+          if (!worlds.has(key)) {
+            worlds.set(
+              key,
+              profile === 'cloud' || profile === 'hosted-server'
+                ? await openPostgresWorld(profile, credentials, caseName, own)
+                : await openSqliteWorld(profile, caseName, own)
+            )
+          }
+          return worlds.get(key)
+        }
+        const adapters = ['cloud', 'hosted-server', 'local', 'hosted-simple'].map((profile) => ({
+          profile,
+          ports: new Proxy({}, { get: (_target, port) => `${profile}-${String(port)}` }),
+          run: async (caseId) => {
+            const world = await openWorld(profile, caseId)
+            return world.kind === 'embedded'
+              ? runEmbeddedCase(world, caseId)
+              : runDirectCase(world, caseId)
+          },
+        }))
+        const result = await runProfileConformance(
+          adapters,
+          Object.keys(conformanceCases).map((caseName) => ({
+            caseId: caseName,
+            owner: 'workflow-runtime',
+            input: {},
+          }))
+        )
+        expect(result.conforms).toBe(true)
+      }),
     // Remote Postgres (Neon preview branches) adds per-database migration
-    // latency; the matrix opens three isolated worlds, so allow ten minutes.
+    // latency; three cases open six PostgreSQL worlds, so allow ten minutes.
     600_000
   )
 
