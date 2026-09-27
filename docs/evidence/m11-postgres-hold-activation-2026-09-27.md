@@ -69,11 +69,53 @@ Tests use isolated databases migrated through the canonical chain and the
 application role. No production or staging mutation is part of this checkpoint.
 Local tests do not prove deployment or host/operator authorization.
 
+## Additional owner-scoped fixture checkpoint
+
+The additional `retention-hold-owner-activation.integration.test.mjs` exercises
+events, command inbox, runtime ledgers, executions, and both interaction and
+cancellation receipts against actual canonical migrated tables. Matching holds
+prevent physical deletion and journal writes; explicit release permits deletion
+of already-expired records. The event case also deletes a different tenant's
+event despite the held project's hold and checks the retired event identity.
+Inbox deletion retains its retired command-key fence. Receipt cases preserve
+rows with a missing owner or mismatched canonical owner scope.
+
+The first run was **one passed, two failed, 21 assertions**. Event/inbox passed
+in 42.69 seconds. Two fixture assumptions were wrong: the other execution was
+retained by a runtime-command reference, not an execution hold; and receipt
+reservation used today's creation timestamp, so historical acceptance alone did
+not make those rows deletion candidates. The fixture now asserts the exact
+hold/reference reason map and models historical receipt creation as well as
+acceptance. Production guards and deadlines were not changed.
+
+The corrected combined run was **two passed, one failed, one error, 26
+assertions**, not green. Execution/runtime-ledger passed in 46.34 seconds and
+interaction/cancellation receipts passed in 32.12 seconds. The unchanged
+event/inbox case exceeded its 60-second deadline; cleanup then reported
+`CONNECTION_ENDED`. During that run the host load averages were
+145.70/85.76/58.51, PostgreSQL remained healthy, and an observed query waited on
+`IO/WalSync`. These observations establish contention, not a proven explanation
+for every timeout. A clean complete fixture run remains required.
+
+Independent read-only review found a fixture chronology issue: release was
+recorded at 13:00Z but follow-up deletion was assessed at 12:00Z. The five
+post-release sweeps now assess at 14:00Z, while initial held observations retain
+12:00Z. The final complete owner-scoped fixture run then **passed all three
+tests, 43 assertions, zero failures**, in 96.48 seconds: event/inbox 26.67
+seconds, execution/runtime 37.63 seconds, receipts 29.46 seconds. Formatting,
+lint and diff checks also passed. This clears this fixture's rerun requirement,
+not whole-package, deployment, authorization or milestone acceptance. Both
+earlier failed runs remain part of the evidence.
+
+Separate SQLite CLI investigation reproduced the existing catalog CLI's
+five-second timeout. Deferring unused backend imports let its first operation
+finish, but replay still exceeded that deadline; the context CLI also exceeded
+its unchanged 30-second deadline. This experiment does not supersede the
+historical failed SQLite suite or establish a complete fix.
+
 ## Remaining gates
 
-Physical hold activation tests for events, command inbox, runtime ledgers,
-executions and interaction/cancellation receipts remain required. Current-head
-whole-package/workspace validation, CI and released activation remain required;
+Current-head whole-package/workspace validation, CI and released activation remain required;
 the prior full SQLite package failures are not superseded by these PostgreSQL
 results. Host owner/session authorization and operator policy composition,
 released-hold disposition, independently durable hold/delete-outcome restore
