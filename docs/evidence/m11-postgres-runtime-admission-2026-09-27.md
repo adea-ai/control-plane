@@ -372,6 +372,44 @@ used an unsupported runner flag; direct `discoverTestInventory()` readback
 corrected that check. No broader suite, safe resume, concurrent cutover, cloud
 activation or milestone completion is claimed by this checkpoint.
 
+## Context-node failed-start ownership repair
+
+The follow-on runtime audit found that `composeContextNode()` opened its owned
+SQLite store before recording a cleanup callback, and had no failure guard for
+migration or later composition. PostgreSQL allocation also preceded the required
+inbox check without a failure cleanup path.
+
+The regression opened and migrated a real SQLite handle, injected a migration
+failure, and observed **zero close calls instead of one** (RED: 0 pass, 1 fail,
+3 assertions). Its own `finally` closed the leaked test handle. The fix records
+ownership immediately after allocation and guards all remaining setup. Successful
+composition transfers the callback to its caller; failed setup closes the owned
+store. A simultaneous cleanup failure retains both errors in `AggregateError`,
+with the immediate cleanup failure as `cause`. Grant/channel behavior is unchanged.
+
+Executed checks:
+
+- Final focused failure/ownership tests: **3 pass, 0 fail, 16 assertions**. They
+  verify actual `SQLITE_CLOSED` after migration and post-migration setup failures,
+  successful ownership transfer, and preservation of both failure objects.
+- Final runtime-worker build: exit 0. Package tests: **60 pass, 0 fail,
+  196 assertions**, five files; log
+  `/tmp/m11-context-node-cleanup-package-2026-09-27.log` (ephemeral local evidence,
+  not a repository artifact).
+- Context gateway/node composition E2E: **5 pass, 0 fail, 40 assertions**, 2.11s.
+  This ran before the final cause-only lint correction; no channel/grant logic
+  changed afterwards. Fixture-owned HTTP/WebSocket servers and stores closed.
+- Final scoped lint with warnings denied, formatting, diff and test inventory
+  checks passed; the new test is unit-lane owned. The initial lint warning was
+  resolved by preserving the immediately caught cleanup error as `cause` while
+  retaining the original startup error in `AggregateError.errors`.
+- Independent read-only review found no actionable defect in the guarded setup
+  or regression tests; it ran no additional checks.
+
+This repairs startup cleanup only. It does not implement operator RuntimeNode
+socket/host activation, trusted capacity/funding, safe intake resume, deployed
+profile acceptance or the independent final milestone gate.
+
 ## Remaining full-scope gates (unchanged)
 
 Allowance preflight remains read-only, not capacity reserved across an effect.
