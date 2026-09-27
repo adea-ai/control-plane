@@ -1,4 +1,5 @@
 export { commandInbox, commandInboxStatus } from './commands.js'
+export { admissionRolloutGate, admissionRolloutState } from './admission-rollout.js'
 export {
   agentProfileVersions,
   agentProfiles,

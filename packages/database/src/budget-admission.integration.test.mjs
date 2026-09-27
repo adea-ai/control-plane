@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test as runTest } from 'bun:test'
 import process from 'node:process'
-import { eq } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import { eq, sql } from 'drizzle-orm'
+import postgres from 'postgres'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
 import { deriveExecutionPlan, executionBudgetAdmissionSource } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DurableUsageLedger, budgetOpeningEntryIdempotencyKey } from '@control-plane/usage-ledger'
+import { PostgresAdmissionRolloutService } from './admission-rollout.ts'
 import { createPostgresConnection } from './connection.ts'
 import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
@@ -18,8 +21,9 @@ import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget
 import { usageLedgerEntries } from './schema/usage-ledger.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
+import * as schema from './schema/index.ts'
 
-const test = (name, operation) => runTest(name, operation, 60_000)
+const test = (name, operation, timeoutMs = 60_000) => runTest(name, operation, timeoutMs)
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
 const plan = createExecutionPlanTestFixture()
@@ -276,6 +280,83 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
       await reconnected.close()
     }
   })
+
+  test('pauses all new owner inserts while retaining exact replay access', async () => {
+    const { isolated, credentials } = await createDatabase()
+    const legacy = acceptanceService(isolated.application, {
+      budgetAdmission: false,
+    })
+    const accepted = await legacy.service.acceptExecution(commandInput(plan))
+    await persistLegacyOutcome(
+      isolated.application,
+      legacy.service,
+      accepted,
+      'completed',
+      'completed'
+    )
+    const operatorUrl = new URL(credentials.administration.url)
+    operatorUrl.pathname = `/${isolated.name}`
+    const operatorClient = postgres(operatorUrl.toString(), { max: 1, prepare: false })
+    const operatorDatabase = drizzle(operatorClient, { schema })
+    try {
+      const gate = new PostgresAdmissionRolloutService(operatorDatabase)
+      await expect(gate.getStatus()).resolves.toMatchObject({ state: 'open', revision: 0 })
+      await expect(gate.pause()).resolves.toMatchObject({ state: 'paused', revision: 1 })
+      await expect(gate.pause()).resolves.toMatchObject({ state: 'paused', revision: 1 })
+      await expect(
+        new PostgresAdmissionRolloutService(isolated.application).pause()
+      ).rejects.toMatchObject({
+        code: 'ADMISSION_ROLLOUT_AUTHORITY_DENIED',
+      })
+
+      const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+      await expect(repository.accept(accepted.command, accepted.execution)).resolves.toMatchObject({
+        outcome: 'duplicate',
+      })
+      const freshInput = commandInput(plan)
+      await expect(
+        acceptanceService(isolated.application, { budgetAdmission: false }).service.acceptExecution(
+          freshInput
+        )
+      ).rejects.toMatchObject({ code: 'ADMISSION_ROLLOUT_PAUSED' })
+
+      const bareExecution = {
+        ...accepted.execution,
+        executionId: nextId('exe'),
+        correlation: { ...accepted.execution.correlation, requestId: nextId('req') },
+      }
+      const executionRepository = new PostgresExecutionRepository(isolated.application)
+      await expect(executionRepository.insertExecution(bareExecution)).rejects.toMatchObject({
+        code: 'ADMISSION_ROLLOUT_PAUSED',
+      })
+      await expect(executionRepository.insertExecution(accepted.execution)).resolves.toBe(false)
+      await expect(
+        (async () =>
+          await isolated.application.execute(
+            sql`update admission_rollout_gate set state = 'open' where gate_key = 'intake'`
+          ))()
+      ).rejects.toThrow()
+
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, freshInput.commandId))
+      ).toHaveLength(0)
+      expect(await executionSnapshot(isolated.application, bareExecution.executionId)).toEqual({
+        commands: [],
+        executions: [],
+        budgets: [],
+        entries: [],
+        receipts: [],
+      })
+      expect(
+        await executionSnapshot(isolated.application, accepted.execution.executionId)
+      ).toMatchObject({ budgets: [], entries: [], receipts: [] })
+    } finally {
+      await operatorClient.end({ timeout: 5 })
+    }
+  }, 30_000)
 
   test('replays only canonical legacy terminal outcomes without accounting writes', async () => {
     const { isolated } = await createDatabase()

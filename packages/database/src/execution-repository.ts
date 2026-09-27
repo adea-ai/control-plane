@@ -18,6 +18,10 @@ import { delegations } from './schema/delegations.js'
 import { executionEvents } from './schema/events.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import {
+  acquireAdmissionRolloutSharedLock,
+  assertAdmissionRolloutOpen,
+} from './admission-rollout.js'
 import { interactionCommands } from './schema/interaction-commands.js'
 import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
@@ -494,12 +498,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   async insertExecution(execution: Execution): Promise<boolean> {
     const parsed = ExecutionSchema.parse(execution)
     return this.database.transaction(async (transaction) => {
+      await acquireAdmissionRolloutSharedLock(transaction)
       const [existing] = await transaction
         .select({ executionId: executions.executionId })
         .from(executions)
         .where(eq(executions.executionId, parsed.executionId))
         .limit(1)
       if (existing) return false
+      await assertAdmissionRolloutOpen(transaction)
       if (!(await lockExecutionPlanReference(transaction, parsed.executionPlan))) {
         throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
       }

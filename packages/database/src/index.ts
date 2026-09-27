@@ -6,6 +6,12 @@ export {
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
 export {
+  AdmissionRolloutError,
+  PostgresAdmissionRolloutService,
+  type AdmissionRolloutErrorCode,
+  type AdmissionRolloutStatus,
+} from './admission-rollout.js'
+export {
   lockAndResetReferenceRetentionWindows,
   PostgresContextPackageRepository,
   PostgresContextPackageRetention,
@@ -76,6 +82,8 @@ export type {
 export {
   commandInbox,
   commandInboxStatus,
+  admissionRolloutGate,
+  admissionRolloutState,
   contextPackages,
   contextAuthoringCommands,
   executionValidationCommands,

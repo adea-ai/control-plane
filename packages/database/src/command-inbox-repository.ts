@@ -41,6 +41,10 @@ import {
 } from './execution-plan-repository.js'
 import { PostgresDurableUsageStore } from './usage-store.js'
 import {
+  acquireAdmissionRolloutSharedLock,
+  assertAdmissionRolloutOpen,
+} from './admission-rollout.js'
+import {
   acquirePostgresRetentionHoldClassMutex,
   countPostgresMatchingActiveRetentionHolds,
   validatePostgresRetentionHoldPolicy,
@@ -315,6 +319,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     const parsedExecution = ExecutionSchema.parse(execution)
     return this.database.transaction(
       async (transaction) => {
+        await acquireAdmissionRolloutSharedLock(transaction)
         if (this.#budgetAdmission) {
           await PostgresDurableUsageStore.acquireTransactionLocks(
             transaction,
@@ -332,6 +337,13 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           .limit(1)
         let allowance: ReturnType<typeof executionPlanBudgetAllowance> | undefined
         if (!existingScope) {
+          const [existingCommandId] = await transaction
+            .select({ commandId: commandInbox.commandId })
+            .from(commandInbox)
+            .where(eq(commandInbox.commandId, parsedCommand.commandId))
+            .limit(1)
+          if (existingCommandId) throw new Error('COMMAND_ID_CONFLICT')
+          await assertAdmissionRolloutOpen(transaction)
           if (
             parsedCommand.executionPlan.executionPlanId !==
               parsedExecution.executionPlan.executionPlanId ||
