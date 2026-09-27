@@ -22,7 +22,9 @@ const RUNTIME_TARGET = Object.freeze({
   username: 'control_plane_app',
   database: 'neondb',
 })
-const RUNTIME_TABLES = Object.freeze(['catalog_approvals', 'retired_execution_event_ids'])
+const RUNTIME_CRUD_TABLES = Object.freeze(['catalog_approvals', 'retired_execution_event_ids'])
+const RUNTIME_READ_ONLY_TABLES = Object.freeze(['admission_rollout_gate'])
+const RUNTIME_TABLES = Object.freeze([...RUNTIME_CRUD_TABLES, ...RUNTIME_READ_ONLY_TABLES])
 const ADVISORY_LOCK = Object.freeze([1_295_070_001, 11])
 const MIGRATION_TIMEOUTS = Object.freeze({
   connectTimeoutSeconds: 10,
@@ -337,7 +339,7 @@ export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'INSERT') AS can_insert,
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'UPDATE') AS can_update,
           has_table_privilege(current_user, format('public.%I', requested.table_name), 'DELETE') AS can_delete
-        FROM (VALUES ('catalog_approvals'), ('retired_execution_event_ids')) AS requested(table_name)
+        FROM (VALUES ('catalog_approvals'), ('retired_execution_event_ids'), ('admission_rollout_gate')) AS requested(table_name)
         LEFT JOIN pg_class AS c ON c.relname = requested.table_name
         LEFT JOIN pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = 'public'
         LEFT JOIN pg_roles AS owner ON owner.oid = c.relowner
@@ -380,13 +382,15 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
     capabilities.owns_database !== false ||
     capabilities.owns_public_objects !== false ||
     capabilities.has_non_crud_table_privileges !== false ||
-    !Array.isArray(privileges) ||
-    privileges.length !== RUNTIME_TABLES.length
+    !Array.isArray(privileges)
   ) {
     throw gateError('runtime database role capabilities are unsafe')
   }
+  if (privileges.length !== RUNTIME_TABLES.length) {
+    throw gateError('runtime database table grants are unsafe')
+  }
 
-  for (const table of RUNTIME_TABLES) {
+  for (const table of RUNTIME_CRUD_TABLES) {
     const rows = privileges.filter((privilege) => privilege.table_name === table)
     const privilege = rows[0]
     if (
@@ -396,6 +400,21 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
       privilege.can_insert !== true ||
       privilege.can_update !== true ||
       privilege.can_delete !== true
+    ) {
+      throw gateError('runtime database table grants are unsafe')
+    }
+  }
+
+  for (const table of RUNTIME_READ_ONLY_TABLES) {
+    const rows = privileges.filter((privilege) => privilege.table_name === table)
+    const privilege = rows[0]
+    if (
+      rows.length !== 1 ||
+      privilege.table_owner !== MIGRATION_TARGET.username ||
+      privilege.can_select !== true ||
+      privilege.can_insert !== false ||
+      privilege.can_update !== false ||
+      privilege.can_delete !== false
     ) {
       throw gateError('runtime database table grants are unsafe')
     }

@@ -172,6 +172,10 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO control_plane_migrator;
 GRANT USAGE ON SCHEMA public TO control_plane_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO control_plane_app;
+SELECT 'REVOKE ALL PRIVILEGES ON TABLE public.admission_rollout_gate FROM control_plane_app'
+WHERE to_regclass('public.admission_rollout_gate') IS NOT NULL \gexec
+SELECT 'GRANT SELECT ON TABLE public.admission_rollout_gate TO control_plane_app'
+WHERE to_regclass('public.admission_rollout_gate') IS NOT NULL \gexec
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO control_plane_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE control_plane_migrator IN SCHEMA public
   REVOKE ALL PRIVILEGES ON TABLES FROM control_plane_app;
