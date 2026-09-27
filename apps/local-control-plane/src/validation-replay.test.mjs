@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
-import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
+import {
+  SQLITE_USAGE_NAMESPACES,
+  SqlitePersistenceProvider,
+} from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
 
 test('local composition replays validation after a SQLite reopen without compilation inputs', async () => {
@@ -176,6 +179,7 @@ test('local composition replays validation after a SQLite reopen without compila
     await persistence.transaction(async (transaction) => {
       expect(await transaction.list('command-inbox')).toHaveLength(0)
       expect(await transaction.list('executions')).toHaveLength(0)
+      expect(await transaction.list(SQLITE_USAGE_NAMESPACES.budgets)).toHaveLength(0)
     })
     await composition.executionValidationService.options.approvalGate.approvals.insert({
       versionKind: 'agent_profile',
@@ -188,6 +192,16 @@ test('local composition replays validation after a SQLite reopen without compila
     })
     const accepted = await composition.commands.acceptExecution(acceptance)
     expect(accepted.replayed).toBe(false)
+    await persistence.transaction(async (transaction) => {
+      const budgets = await transaction.list(SQLITE_USAGE_NAMESPACES.budgets)
+      expect(budgets).toHaveLength(1)
+      expect(budgets[0].value).toMatchObject({
+        executionId: accepted.execution.executionId,
+        maximumMicrounits: plan.constraints.limits.budget.maximumMicrounits,
+        maximumTokens: plan.constraints.limits.tokens.maximumTotal,
+      })
+      expect(await transaction.list(SQLITE_USAGE_NAMESPACES.entries)).toHaveLength(1)
+    })
     await removeApproval()
     const acceptedReplay = await composition.commands.acceptExecution(acceptance)
     expect(acceptedReplay.replayed).toBe(true)
@@ -268,6 +282,19 @@ test('local composition replays validation after a SQLite reopen without compila
     const inlinePlan = await reopened.executionPlans.get(inlineReplay.data.executionPlan)
     expect(inlinePlan).toBeDefined()
     expect(authorityCalls).toBe(1)
+    const coldAcceptanceReplay = await reopened.commands.acceptExecution(acceptance)
+    expect(coldAcceptanceReplay.replayed).toBe(true)
+    expect(coldAcceptanceReplay.execution.executionId).toBe(accepted.execution.executionId)
+    await persistence.transaction(async (transaction) => {
+      const budgets = await transaction.list(SQLITE_USAGE_NAMESPACES.budgets)
+      expect(budgets).toHaveLength(1)
+      expect(await transaction.list(SQLITE_USAGE_NAMESPACES.entries)).toHaveLength(1)
+      // A historical owner without its allowance must never be silently funded again.
+      await transaction.delete(SQLITE_USAGE_NAMESPACES.budgets, budgets[0].id)
+    })
+    await expect(reopened.commands.acceptExecution(acceptance)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
     await expect(
       reopened.executionValidationService.validate(
         { ...request, payload: { ...request.payload, outputContractRef: 'contract://changed/v1' } },

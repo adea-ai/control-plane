@@ -65,8 +65,14 @@ Parent capacity and same-workspace, same-project ownership must be enforced by
 the admission repository within the command/owner transaction. Opening credits
 describe allocation, not purchased funds. Actual charges still need explicit
 funding and cost provenance; unknown costs must not become zero-cost settlement.
-These helpers are tested policy primitives; repository and production-composition
-activation remain separate, unverified gates at this checkpoint.
+SQLite command acceptance can now opt into this policy with `budgetAdmission:
+true`. The actual Local API composition enables it: command, owner, budget and
+opening receipt commit together; duplicate/reopened admission validates the
+original allocation and rejects missing accounting without creating new credit.
+The Local composition regression proves allocation, approval-denial rollback,
+cold replay and missing-budget rejection. PostgreSQL admission and Cloud/Hosted
+activation remain unverified; per-attempt reservations and terminal metering are
+still required. See the [native admission checkpoint](evidence/m11-plan-budget-admission-2026-09-27.md).
 
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
