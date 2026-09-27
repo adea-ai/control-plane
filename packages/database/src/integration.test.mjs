@@ -142,6 +142,105 @@ async function seedAcceptancePlan(database) {
   await new PostgresExecutionPlanRepository(database).put(acceptancePlan)
 }
 
+async function createMigratedIsolatedDatabase() {
+  const database = await createIsolatedTestDatabase({
+    administration: loadDatabaseCredentials(process.env, 'administration'),
+    application: loadDatabaseCredentials(process.env, 'application'),
+    migration: loadDatabaseCredentials(process.env, 'migration'),
+  })
+  try {
+    await database.migrate()
+    return database
+  } catch (error) {
+    await database.dispose()
+    throw error
+  }
+}
+
+function instrumentTransactionSelects(database, hooks) {
+  function instrumentBuilder(builder, state) {
+    return new Proxy(builder, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver)
+        if (property === 'then') {
+          return (resolve, reject) => {
+            const pending = Reflect.apply(value, target, [
+              (result) => result,
+              (error) => {
+                throw error
+              },
+            ])
+            if (state.lockMode !== undefined) hooks.onQueryStarted?.(state.lockMode)
+            const instrumented = Promise.resolve(pending).then(async (result) => {
+              if (state.lockMode !== undefined) await hooks.onQueryResolved?.(state.lockMode)
+              return result
+            })
+            return instrumented.then(resolve, reject)
+          }
+        }
+        if (property === 'for') {
+          return (mode, ...args) => {
+            state.lockMode = mode
+            return instrumentBuilder(Reflect.apply(value, target, [mode, ...args]), state)
+          }
+        }
+        if (typeof value !== 'function') return value
+        return (...args) => instrumentBuilder(Reflect.apply(value, target, args), state)
+      },
+    })
+  }
+
+  return new Proxy(database, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver)
+      if (property !== 'transaction')
+        return typeof value === 'function' ? value.bind(target) : value
+      return (operation, ...args) =>
+        value.call(
+          target,
+          (transaction) =>
+            operation(
+              new Proxy(transaction, {
+                get(transactionTarget, transactionProperty, transactionReceiver) {
+                  const transactionValue = Reflect.get(
+                    transactionTarget,
+                    transactionProperty,
+                    transactionReceiver
+                  )
+                  if (transactionProperty === 'select')
+                    return (...selectArgs) =>
+                      instrumentBuilder(
+                        Reflect.apply(transactionValue, transactionTarget, selectArgs),
+                        {}
+                      )
+                  return typeof transactionValue === 'function'
+                    ? transactionValue.bind(transactionTarget)
+                    : transactionValue
+                },
+              })
+            ),
+          ...args
+        )
+    },
+  })
+}
+
+async function waitForBlockedExecutionKeyShare(database) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const rows = await database.execute(sql`
+      select pid
+      from pg_stat_activity
+      where datname = current_database()
+        and wait_event_type = 'Lock'
+        and cardinality(pg_blocking_pids(pid)) > 0
+        and lower(query) like '%for key share%'
+        and lower(query) like '%executions%'
+    `)
+    if (rows.length > 0) return
+  }
+  throw new Error('EXPECTED_BLOCKED_EXECUTION_KEY_SHARE')
+}
+
 function createOldPlanFixture(options, compiledAt = '2020-01-02T00:00:00.000Z') {
   return new ExecutionPlanCompiler('1.0.0').compile({
     ...createExecutionPlanTestFixtureInputs(options),
@@ -1960,18 +2059,30 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   test('deleteEligibleExecutionPlans frees a plan only once nothing pins it', async () => {
     // A derived plan: the compiler stamps compiledAt, so the window is derived
-    // from the fixture rather than the fixture from the window.
-    const plan = createExecutionPlanTestFixture()
+    // from the fixture rather than the fixture from the window. Give it a
+    // distinct content identity so earlier acceptance fixtures cannot pin it.
+    const contextPackage = composeProviderContextPackage(
+      contextPackageSerializationFixtures.futurePi,
+      {
+        callerContextRefs: ['contract://plan-retention-integration/v1'],
+        localProjectGrantRefs: [],
+        contributions: [],
+      }
+    )
+    const plan = createExecutionPlanTestFixture({ contextPackage })
     const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
     const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
-    const options = { policyRetainMs: ninetyDaysMs, bound: 64, dryRun: false }
+    const options = {
+      policyRetainMs: ninetyDaysMs,
+      bound: 1,
+      dryRun: false,
+      afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
+    }
     const reference = {
       executionPlanId: plan.executionPlanId,
       contentDigest: plan.contentDigest,
     }
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
+    await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
     await new PostgresExecutionPlanRepository(isolated.application).put(plan)
     const retention = new PostgresExecutionPlanRetention(isolated.application)
 
@@ -4978,7 +5089,8 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeUndefined()
   }, 60_000)
 
-  test('execution deletion rechecks receipt references after locking the current owner', async () => {
+  test('execution deletion preserves an owner when a cancellation receipt commits before its lock', async () => {
+    const raceDatabase = await createMigratedIsolatedDatabase()
     const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD3'
     const request = {
       ...ControlApiFixtures.executionAcceptance.request,
@@ -4986,11 +5098,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       idempotencyKey: 'execution-delete-receipt-race-01',
       payload: { executionId },
     }
-    await createExecutionOwner(isolated.application, request, executionId)
-    await isolated.application.execute(
-      sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
-    )
-
     let announceClaim
     let releaseClaim
     const claimStarted = new Promise((resolve) => {
@@ -4999,26 +5106,38 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const claimGate = new Promise((resolve) => {
       releaseClaim = resolve
     })
-    let pauseNextTransaction = true
-    const claimDatabase = new Proxy(isolated.application, {
+    // This callback runs inside the opened transaction, before it locks the owner.
+    let pauseBeforeOwnerLock = true
+    const claimDatabase = new Proxy(raceDatabase.application, {
       get(target, property, receiver) {
         const value = Reflect.get(target, property, receiver)
         if (property === 'transaction') {
           return async (operation, ...args) => {
-            if (pauseNextTransaction) {
-              pauseNextTransaction = false
-              announceClaim()
-              await claimGate
-            }
-            return value.call(target, operation, ...args)
+            return value.call(
+              target,
+              async (transaction) => {
+                if (pauseBeforeOwnerLock) {
+                  pauseBeforeOwnerLock = false
+                  announceClaim()
+                  await claimGate
+                }
+                return operation(transaction)
+              },
+              ...args
+            )
           }
         }
         return typeof value === 'function' ? value.bind(target) : value
       },
     })
     const journal = []
+    let deletion
     try {
-      const deletion = new PostgresExecutionRepository(claimDatabase).deleteEligibleExecutions(
+      await createExecutionOwner(raceDatabase.application, request, executionId)
+      await raceDatabase.application.execute(
+        sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
+      )
+      deletion = new PostgresExecutionRepository(claimDatabase).deleteEligibleExecutions(
         new Date('2026-09-26T00:00:00.000Z'),
         {
           policyRetainMs: 1,
@@ -5029,7 +5148,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       )
       await claimStarted
       const reserved = await new PostgresExecutionCancellationRepository(
-        isolated.application
+        raceDatabase.application
       ).reserve({ request })
       expect(reserved.inserted).toBe(true)
       releaseClaim()
@@ -5037,16 +5156,121 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
       expect(journal).toEqual([])
       expect(
-        await new PostgresExecutionRepository(isolated.application).getExecution(executionId)
+        await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
       ).toBeDefined()
     } finally {
       releaseClaim()
-      await isolated.application.execute(
-        sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+      await deletion?.catch(() => undefined)
+      try {
+        await raceDatabase.application.execute(
+          sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+        )
+        await raceDatabase.application.execute(
+          sql`delete from executions where execution_id = ${executionId}`
+        )
+      } finally {
+        await raceDatabase.dispose()
+      }
+    }
+  }, 60_000)
+
+  test('execution deletion wins a cancellation reservation that waits behind its owner lock', async () => {
+    const raceDatabase = await createMigratedIsolatedDatabase()
+    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD5'
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      operation: 'execution.cancel',
+      idempotencyKey: 'execution-delete-before-cancel-reserve-01',
+      payload: { executionId },
+    }
+    let announceOwnerLock
+    let releaseOwnerLock
+    let announceReservationQuery
+    const ownerLockAcquired = new Promise((resolve) => {
+      announceOwnerLock = resolve
+    })
+    const ownerLockGate = new Promise((resolve) => {
+      releaseOwnerLock = resolve
+    })
+    const reservationQueryStarted = new Promise((resolve) => {
+      announceReservationQuery = resolve
+    })
+    let pausedOwnerLock = false
+    let startedKeyShareQuery = false
+    const deletionDatabase = instrumentTransactionSelects(raceDatabase.application, {
+      onQueryResolved: async (mode) => {
+        if (mode === 'update' && !pausedOwnerLock) {
+          pausedOwnerLock = true
+          announceOwnerLock()
+          await ownerLockGate
+        }
+      },
+    })
+    const reservationDatabase = instrumentTransactionSelects(raceDatabase.application, {
+      onQueryStarted: (mode) => {
+        if (mode === 'key share' && !startedKeyShareQuery) {
+          startedKeyShareQuery = true
+          announceReservationQuery()
+        }
+      },
+    })
+    let deletion
+    let reservation
+    const journal = []
+    try {
+      await createExecutionOwner(raceDatabase.application, request, executionId)
+      await raceDatabase.application.execute(
+        sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
       )
-      await isolated.application.execute(
-        sql`delete from executions where execution_id = ${executionId}`
+
+      deletion = new PostgresExecutionRepository(deletionDatabase).deleteEligibleExecutions(
+        new Date('2026-09-26T00:00:00.000Z'),
+        {
+          policyRetainMs: 1,
+          bound: 8,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
       )
+      await ownerLockAcquired
+      reservation = new PostgresExecutionCancellationRepository(reservationDatabase)
+        .reserve({ request })
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+      await reservationQueryStarted
+      await waitForBlockedExecutionKeyShare(raceDatabase.application)
+      releaseOwnerLock()
+
+      const deletionResult = await deletion
+      const reservationResult = await reservation
+      expect(deletionResult).toMatchObject({ deleted: 1, eligible: 1 })
+      expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId }])
+      expect(
+        await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
+      ).toBeUndefined()
+      expect(reservationResult.error).toMatchObject({
+        message: 'EXECUTION_CANCELLATION_EXECUTION_MISSING',
+      })
+      const orphanReceipts = await raceDatabase.application.execute(
+        sql`select command_key from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+      )
+      expect(orphanReceipts).toHaveLength(0)
+    } finally {
+      releaseOwnerLock()
+      await deletion?.catch(() => undefined)
+      await reservation?.catch(() => undefined)
+      try {
+        await raceDatabase.application.execute(
+          sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+        )
+        await raceDatabase.application.execute(
+          sql`delete from executions where execution_id = ${executionId}`
+        )
+      } finally {
+        await raceDatabase.dispose()
+      }
     }
   }, 60_000)
 

@@ -50,15 +50,18 @@ export class PostgresExecutionPlanRepository implements ExecutionPlanRepository 
           const existing = await this.#getById(transaction, plan.executionPlanId)
           if (existing) {
             if (!isDeepStrictEqual(existing, plan)) throw new Error('EXECUTION_PLAN_ID_CONFLICT')
-            if (
-              referenced &&
-              !(
-                await lockAndResetReferenceRetentionWindows(transaction, {
-                  executionPlans: [reference],
-                })
-              ).ok
-            ) {
-              throw new ExecutionPlanError('INVALID_REFERENCE', plan.executionPlanId)
+            if (referenced) {
+              const claim = await lockAndResetReferenceRetentionWindows(transaction, {
+                executionPlans: [reference],
+              })
+              if (!claim.ok) {
+                throw new ExecutionPlanError(
+                  claim.target === 'context-package'
+                    ? 'MISSING_CONTEXT_PACKAGE'
+                    : 'INVALID_REFERENCE',
+                  claim.id
+                )
+              }
             }
             return reference
           }
