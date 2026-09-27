@@ -7,12 +7,14 @@ import {
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import {
   EvalRunSchema,
   type EvalRun,
   type EvaluationRepository,
 } from '@control-plane/production-readiness'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 
 export class SqliteEvaluationRepository implements EvaluationRepository {
   constructor(readonly provider: PersistenceProvider) {}
@@ -61,6 +63,7 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVALUATION_RETENTION_INVALID_TIMESTAMP')
@@ -95,6 +98,11 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
             // Unreadable evidence is never a deletion candidate.
             return { verdict: undefined, admitted: false, removed: false }
           }
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'evaluation-runs', scope: { kind: 'class' } },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -106,7 +114,7 @@ export class SqliteEvaluationRepository implements EvaluationRepository {
             publicationSettled: true,
             rejectionKeyReserved: true,
             pendingReferences: 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
           if (verdict.verdict !== 'eligible' || dryRun)

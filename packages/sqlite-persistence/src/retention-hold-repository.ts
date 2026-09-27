@@ -94,13 +94,18 @@ export class SqliteRetentionHoldRepository implements RetentionHoldRepository {
 export async function countSqliteMatchingActiveRetentionHolds(
   transaction: PersistenceTransaction,
   target: RetentionHoldTarget,
-  policyInput: RetentionHoldPolicy
+  policyInput?: RetentionHoldPolicy
 ): Promise<number> {
+  const policy = policyInput === undefined ? undefined : parseRetentionHoldPolicy(policyInput)
   const records = await transaction.list(namespace)
+  if (policy === undefined) {
+    if (records.length > 0) throw new RetentionHoldError('RETENTION_HOLD_POLICY_INVALID')
+    return 0
+  }
   return countMatchingActiveRetentionHolds({
     holds: records.map((record) => record.value),
     target,
-    policy: parseRetentionHoldPolicy(policyInput),
+    policy,
     recordIds: records.map((record) => record.id),
   })
 }

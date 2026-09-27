@@ -11,9 +11,12 @@ import {
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
+  type RetentionHoldScope,
 } from '@control-plane/domain'
 import type { PersistenceProvider } from '@control-plane/deployment'
 import { ExecutionEventSchema } from '@control-plane/events'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 
 const namespaces = {
   interactions: 'interaction-command-receipts',
@@ -59,6 +62,7 @@ export class SqliteReceiptRetention {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('RECEIPT_RETENTION_INVALID_TIMESTAMP')
@@ -87,6 +91,7 @@ export class SqliteReceiptRetention {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     },
     counter: RetentionAssessmentCounter
   ): Promise<RetentionDeletionResult> {
@@ -120,6 +125,7 @@ export class SqliteReceiptRetention {
           let ownerTerminal = false
           let ownerSettled = false
           let terminalAt: string | undefined
+          let holdScope: RetentionHoldScope | undefined
           if (receipt !== undefined) {
             const request = receipt.request
             const payload = request.payload as {
@@ -158,6 +164,11 @@ export class SqliteReceiptRetention {
                 owner.data.correlation.workspaceId === request.workspaceId &&
                 owner.data.correlation.projectId === request.projectId
               ) {
+                holdScope = {
+                  kind: 'project',
+                  workspaceId: request.workspaceId,
+                  projectId: request.projectId,
+                }
                 terminalAt = owner.data.terminalAt
                 ownerTerminal = terminalStates.has(owner.data.state) && terminalAt !== undefined
                 if (ownerTerminal) {
@@ -269,6 +280,14 @@ export class SqliteReceiptRetention {
               }
             }
           }
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'interaction-receipts',
+              ...(holdScope === undefined ? {} : { scope: holdScope }),
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt: receiptExpiry(accepted, terminalAt, options.policyRetainMs),
             now: assessedAt,
@@ -278,7 +297,7 @@ export class SqliteReceiptRetention {
             publicationSettled: ownerSettled,
             rejectionKeyReserved: true,
             pendingReferences: 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) return { verdict, admitted: false, removed: false }
           if (verdict.verdict !== 'eligible' || dryRun)

@@ -45,12 +45,14 @@ import {
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import {
   clearReferenceRetentionWindow,
   getReferenceRetentionWindow,
   setReferenceRetentionWindow,
 } from './retention-reference-metadata.js'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
 
 const namespaces = {
   profiles: 'agent-profiles',
@@ -419,6 +421,7 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
       readonly afterId?: string
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('CONTEXT_PACKAGE_RETENTION_INVALID_TIMESTAMP')
@@ -490,6 +493,18 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
             childPackagePins.includes(package_.contextPackageId)
               ? 1
               : 0
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'context-packages',
+              scope: {
+                kind: 'project',
+                workspaceId: package_.projectState.workspaceId,
+                projectId: package_.projectState.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const currentWindow = await getReferenceRetentionWindow(
             transaction,
             'contextPackages',
@@ -519,7 +534,7 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
                   publicationSettled: true,
                   rejectionKeyReserved: true,
                   pendingReferences,
-                  holds: 0,
+                  holds,
                 })
           if (verdict.verdict !== 'eligible' || dryRun)
             return { verdict, removed: false, raced: false }
