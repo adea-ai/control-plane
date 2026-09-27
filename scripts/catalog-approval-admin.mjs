@@ -6,19 +6,7 @@ import { userInfo } from 'node:os'
 import {
   CatalogApprovalAdministration,
   CatalogApprovalAdministrationRequestSchema,
-} from '@control-plane/domain'
-import {
-  SqliteCatalogApprovalRepository,
-  SqlitePersistenceProvider,
-  SqliteVersionedCatalogRepository,
-} from '@control-plane/sqlite-persistence'
-import {
-  createPostgresConnection,
-  catalogApprovalDatabaseAuthority,
-  PostgresCatalogApprovalRepository,
-  PostgresCatalogRepository,
-} from '@control-plane/database'
-import { loadDatabaseCredentials } from '@control-plane/config'
+} from '@control-plane/domain/catalog-approval'
 
 // Scoped catalog-approval administration (#188). Authority is OS/database
 // access — never an unauthenticated endpoint — and the process never prints
@@ -62,6 +50,13 @@ try {
     if (values.host || !isAbsolute(values.database)) throw new Error('INVALID_TARGET')
     const stat = await lstat(values.database)
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('INVALID_TARGET')
+    const [
+      { SqlitePersistenceProvider },
+      { SqliteCatalogApprovalRepository, SqliteVersionedCatalogRepository },
+    ] = await Promise.all([
+      import('@control-plane/sqlite-persistence/provider'),
+      import('@control-plane/sqlite-persistence/catalog'),
+    ])
     const provider = new SqlitePersistenceProvider({ path: values.database })
     close = async () => provider.close()
     await provider.migrate()
@@ -73,6 +68,7 @@ try {
       operator,
     })
   } else if (values.backend === 'postgres') {
+    const { loadDatabaseCredentials } = await import('@control-plane/config')
     const credentials = loadDatabaseCredentials(process.env, 'application')
     const target = new URL(credentials.url)
     if (
@@ -81,6 +77,12 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
+    const {
+      createPostgresConnection,
+      catalogApprovalDatabaseAuthority,
+      PostgresCatalogApprovalRepository,
+      PostgresCatalogRepository,
+    } = await import('@control-plane/database')
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
     operator = {

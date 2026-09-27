@@ -80,6 +80,11 @@ production or staging mutation is included.
 
 ## Remaining requirements
 
+The subsequent [operator feature-entrypoint checkpoint](m11-operator-feature-entrypoints-2026-09-27.md)
+records current import-boundary work and a passing PostgreSQL rerun. Final-head
+full SQLite validation still fails the catalog CLI deadline, so the readiness
+gate remains open despite intermediate passing runs.
+
 Current-candidate full package/workspace checks, required CI, security review,
 released activation, and least-privilege credential provisioning remain open.
 The old full SQLite failures are not superseded by focused operator successes;

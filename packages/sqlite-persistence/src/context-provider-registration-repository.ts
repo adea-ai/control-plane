@@ -4,7 +4,7 @@ import {
   contextProviderRegistrationIdentity,
   type ContextProviderRegistration,
   type ContextProviderRegistrationRepository,
-} from '@control-plane/domain'
+} from '@control-plane/domain/context-provider-registration'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
 
 const records = 'context-provider-registrations'

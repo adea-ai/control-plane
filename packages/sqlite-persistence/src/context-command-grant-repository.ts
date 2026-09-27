@@ -4,7 +4,7 @@ import {
   ContextCommandGrantSchema,
   type ContextCommandGrant,
   type ContextCommandGrantRepository,
-} from '@control-plane/domain'
+} from '@control-plane/domain/context-command-grant'
 
 const namespace = 'context-command-grants'
 const key = (workspaceId: string, authorizationRef: string) =>

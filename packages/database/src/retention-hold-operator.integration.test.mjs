@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
@@ -13,7 +13,10 @@ import {
   PostgresContextPackageRepository,
   PostgresContextPackageRetention,
 } from './context-package-repository.ts'
-import { PostgresRetentionHoldRepository } from './retention-hold-repository.ts'
+import {
+  PostgresRetentionHoldRepository,
+  retentionHoldDatabaseAuthority,
+} from './retention-hold-repository.ts'
 import { contextPackages } from './schema/context-packages.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -52,9 +55,10 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
       const isolatedUrl = new URL(credentials.application.url)
       isolatedUrl.pathname = `/${isolated.name}`
       const environment = { ...process.env, DATABASE_URL: isolatedUrl.href }
-      const { readVerifiedRetentionHoldSession } =
-        await import('../../../scripts/retention-hold-operator.mjs')
-      const session = await readVerifiedRetentionHoldSession({ database: isolated.application })
+      const session = {
+        actorPrincipalRef: `operator:os-user:${encodeURIComponent(userInfo().username)}`,
+        authorityRef: await retentionHoldDatabaseAuthority(isolated.application),
+      }
       expect(session.authorityRef).toBe(
         `authority:postgres:role:${encodeURIComponent(baseUrl.username)}`
       )

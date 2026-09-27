@@ -54,6 +54,11 @@ preserving schema-validated identifiers without casts or weakened validation.
 
 ## Remaining gates
 
+The subsequent [operator feature-entrypoint checkpoint](m11-operator-feature-entrypoints-2026-09-27.md)
+records import-boundary improvements, passing actual PostgreSQL operator checks
+and the final SQLite results. The latest full SQLite run still fails the catalog
+CLI deadline; historical failures below are retained, not treated as acceptance.
+
 The subsequent [PostgreSQL activation checkpoint](m11-postgres-hold-activation-2026-09-27.md)
 wires all thirteen hold facts, corrects two independently reviewed claim defects
 and now records actual physical hold tests for all ten existing deletion classes.

@@ -734,12 +734,13 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
       createdBy: provenance,
       revision: 0,
     }
-    const moduleUrl = new URL('./index.ts', import.meta.url).href
+    const providerUrl = new URL('./provider.ts', import.meta.url).href
+    const eventsUrl = new URL('./durability-repositories.ts', import.meta.url).href
     holdWriter = new Worker(
       `
         const { parentPort, workerData } = require('node:worker_threads')
         ;(async () => {
-          const { SqlitePersistenceProvider } = await import(workerData.moduleUrl)
+          const { SqlitePersistenceProvider } = await import(workerData.providerUrl)
           const state = new Int32Array(workerData.workerState)
           const provider = new SqlitePersistenceProvider({ path: workerData.path })
           await provider.migrate()
@@ -767,15 +768,18 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
           parentPort.postMessage({ type: 'error', error: error?.stack ?? String(error) })
         })
       `,
-      { eval: true, workerData: { path, moduleUrl, hold, workerState: workerState.buffer } }
+      { eval: true, workerData: { path, providerUrl, hold, workerState: workerState.buffer } }
     )
     claimWorker = new Worker(
       `
         const { parentPort, workerData } = require('node:worker_threads')
         ;(async () => {
           const { DatabaseSync } = require('node:sqlite')
-          const { SqliteExecutionEventRepository, SqlitePersistenceProvider } =
-            await import(workerData.moduleUrl)
+          const [{ SqlitePersistenceProvider }, { SqliteExecutionEventRepository }] =
+            await Promise.all([
+              import(workerData.providerUrl),
+              import(workerData.eventsUrl),
+            ])
           const state = new Int32Array(workerData.workerState)
           const provider = new SqlitePersistenceProvider({ path: workerData.path })
           await provider.migrate()
@@ -832,7 +836,8 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
         eval: true,
         workerData: {
           path,
-          moduleUrl,
+          providerUrl,
+          eventsUrl,
           now: now.toISOString(),
           policy,
           workerState: workerState.buffer,
