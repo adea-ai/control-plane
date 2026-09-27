@@ -26,6 +26,10 @@ existing conflict-audit path. New-owner admission must still be atomic inside `a
   zero failures.
 - The full domain package suite passed: 166 tests, 559 assertions, zero failures across
   20 files.
+- The actual `DurableExecutionAcceptanceService` passed both duplicate paths with a
+  rejecting verifier: two tests, ten assertions, zero workflow submissions, unchanged
+  command status/version, and one retained owner. These tests use an in-memory repository
+  and a counting dispatcher, not authenticated transport or a live runtime.
 - The domain TypeScript build, changed-file formatting, strict changed-file lint, and
   `git diff --check` passed.
 
