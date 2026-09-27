@@ -777,7 +777,8 @@
         "@control-plane/contracts",
         "@control-plane/deployment",
         "@control-plane/domain",
-        "@control-plane/orchestration"
+        "@control-plane/orchestration",
+        "@control-plane/runtime-sdk"
       ],
       "externalDependencies": ["@restatedev/restate-sdk", "zod"],
       "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],

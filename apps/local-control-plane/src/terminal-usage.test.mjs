@@ -7,6 +7,91 @@ import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.ts'
 
+test.each(['failed', 'timed_out', 'cancelled'])(
+  'Local %s outcome preserves externally funded terminal evidence without erasing provider cost',
+  async (state) => {
+    const directory = await mkdtemp(join(tmpdir(), 'm11-local-reported-usage-'))
+    const persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
+    const handle = {
+      handleId: `native:measured-${state}`,
+      attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+      startedAt: '2026-09-27T00:00:00.000Z',
+    }
+    const usage = {
+      inputTokens: 11,
+      outputTokens: 3,
+      durationMs: 20,
+      cost: { amount: '1.00', currency: 'USD' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'measured-provider:external-terminal',
+        fundingSource: 'external_subscription',
+        currency: 'USD',
+        chargedMicrounits: 0,
+        costExact: true,
+      },
+    }
+    let starts = 0
+    const runtime = {
+      transportKind: 'direct-local',
+      start: async () => {
+        starts += 1
+        return handle
+      },
+      async *progress() {},
+      status: async () => ({
+        handle,
+        state,
+        observedAt: handle.startedAt,
+        terminalUsage: usage,
+        ...(state === 'cancelled'
+          ? {}
+          : {
+              error: {
+                code: 'RUNTIME_FAILED',
+                classification: 'runtime',
+                message: 'Fixture terminal failure',
+                retryable: false,
+              },
+            }),
+      }),
+    }
+    const objectStore = {
+      put: async () => {
+        throw new Error('UNSUCCESSFUL_RESULT_MUST_NOT_PUBLISH')
+      },
+    }
+    const input = {
+      executionId,
+      attemptId: handle.attemptId,
+      effectKey: `measured-${state}:dispatch`,
+      executionPlan: createExecutionPlanTestFixture(),
+    }
+    try {
+      await persistence.migrate()
+      let activities = new DirectRuntimeActivityPort(persistence, objectStore, runtime)
+      const first = await activities.dispatch(input)
+      expect(first).toMatchObject({
+        outcome: state === 'cancelled' ? 'cancelled' : 'failed',
+        terminalUsage: usage,
+      })
+      persistence.close({ checkpoint: true })
+      await persistence.migrate()
+      activities = new DirectRuntimeActivityPort(persistence, objectStore, runtime)
+      expect(await activities.dispatch(input)).toEqual(first)
+      expect(starts).toBe(1)
+      const key = `r-${createHash('sha256').update(`${executionId}:${handle.attemptId}`).digest('hex')}`
+      const receipt = await persistence.transaction((tx) => tx.get('runtime-terminal-usage', key))
+      expect(receipt.value.usage).toEqual(usage)
+      expect(receipt.value.state).toBe(state)
+    } finally {
+      persistence.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
 test.each(['normal', 'lost-result'])(
   'completed usage is durable before artifact publication and replay: %s',
   async (mode) => {
@@ -23,6 +108,14 @@ test.each(['normal', 'lost-result'])(
       outputTokens: 3,
       durationMs: 20,
       cost: { amount: '0.002', currency: 'USD' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'measured-provider:completed-usage',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 2000,
+        costExact: true,
+      },
     }
     const status = () => ({
       handle,
@@ -79,12 +172,18 @@ test.each(['normal', 'lost-result'])(
         expect(publishes).toBe(1)
         usage.inputTokens = 11
       }
-      expect(await activities.dispatch(input)).toMatchObject({ outcome: 'completed' })
+      expect(await activities.dispatch(input)).toMatchObject({
+        outcome: 'completed',
+        terminalUsage: usage,
+      })
       await activities.cleanup({ ...input, effectKey: 'completed-usage:cleanup' })
       persistence.close()
       await persistence.migrate()
       activities = new DirectRuntimeActivityPort(persistence, objectStore, runtime)
-      expect(await activities.dispatch(input)).toMatchObject({ outcome: 'completed' })
+      expect(await activities.dispatch(input)).toMatchObject({
+        outcome: 'completed',
+        terminalUsage: usage,
+      })
       expect(starts).toBe(1)
       expect(publishes).toBe(mode === 'lost-result' ? 2 : 1)
       expect((await receipt()).value).toMatchObject({

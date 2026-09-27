@@ -1,5 +1,6 @@
 import type { ExecutionWorkflowInput } from '@control-plane/orchestration'
 import { managedCloudOperationalPolicy } from '@control-plane/config'
+import { RuntimeUsageSchema, type RuntimeUsage } from '@control-plane/runtime-sdk'
 import type { GraphActivityOutcome, GraphSegmentActivityPort } from './graph-segment-activity.js'
 
 export const workflowPolicies = {
@@ -24,6 +25,8 @@ export interface ExecutionWorkflowResult {
   readonly status: 'completed' | 'failed' | 'cancelled' | 'timed_out'
   readonly resultReference?: string
   readonly graphCheckpointId?: string
+  /** Observed terminal evidence, not a spend authorization or a settlement. */
+  readonly terminalUsage?: RuntimeUsage
 }
 
 export interface ExecutionLifecycleActivities {
@@ -100,12 +103,13 @@ export type WorkflowInteractionValue =
   | readonly WorkflowInteractionValue[]
   | { readonly [key: string]: WorkflowInteractionValue }
 
-export type WorkflowRuntimeOutcome =
+export type WorkflowRuntimeOutcome = (
   | { readonly outcome: 'completed'; readonly resultReference?: string }
   | { readonly outcome: 'failed'; readonly failureCode: string; readonly retryable: boolean }
   | { readonly outcome: 'cancelled' }
   | { readonly outcome: 'awaiting_input'; readonly interactionId: string }
   | GraphActivityOutcome
+) & { readonly terminalUsage?: RuntimeUsage }
 
 export async function runExecutionLifecycle(
   input: ExecutionWorkflowInput,
@@ -262,8 +266,12 @@ export async function runExecutionLifecycle(
   }
   const terminal = await control.checkTerminal?.()
   if (terminal !== undefined) {
-    return finishTerminal(input, activities, terminal, key, attemptId)
+    return finishTerminal(input, activities, terminal, key, attemptId, runtimeOutcome.terminalUsage)
   }
+  const terminalUsage =
+    runtimeOutcome.terminalUsage === undefined
+      ? undefined
+      : RuntimeUsageSchema.parse(runtimeOutcome.terminalUsage)
   const status = runtimeOutcome.outcome
   await activities.persistStatus({
     executionId: input.executionId,
@@ -287,6 +295,7 @@ export async function runExecutionLifecycle(
     executionId: input.executionId,
     attemptId,
     status,
+    ...(terminalUsage === undefined ? {} : { terminalUsage }),
     ...('resultReference' in runtimeOutcome && runtimeOutcome.resultReference
       ? { resultReference: runtimeOutcome.resultReference }
       : {}),
@@ -309,7 +318,8 @@ async function finishTerminal(
   activities: ExecutionLifecycleActivities,
   control: TerminalControl,
   key: (operation: string) => string,
-  attemptId?: string
+  attemptId?: string,
+  reportedUsage?: RuntimeUsage
 ): Promise<ExecutionWorkflowResult> {
   const status = 'cancelled' in control ? 'cancelled' : 'timed_out'
   if (attemptId !== undefined) {
@@ -322,6 +332,10 @@ async function finishTerminal(
       ...(input.graph === undefined ? {} : { graph: input.graph }),
     })
   }
+  // Accounting corruption must not prevent cancellation, but must not be
+  // committed as validated terminal evidence either.
+  const terminalUsage =
+    reportedUsage === undefined ? undefined : RuntimeUsageSchema.parse(reportedUsage)
   await activities.persistStatus({
     executionId: input.executionId,
     ...(attemptId === undefined ? {} : { attemptId }),
@@ -337,6 +351,7 @@ async function finishTerminal(
     executionId: input.executionId,
     ...(attemptId === undefined ? {} : { attemptId }),
     status,
+    ...(terminalUsage === undefined ? {} : { terminalUsage }),
   }
 }
 
