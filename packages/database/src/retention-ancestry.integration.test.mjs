@@ -94,24 +94,57 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
       const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
       const plans = new PostgresExecutionPlanRepository(database)
       await plans.put(parent)
+      const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(
+        parentObservedAt,
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      const [parentClockBeforeChild] = await database
+        .select({ clock: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
+        .limit(1)
+      expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
       await plans.put(child)
+      const [parentClockAfterChild] = await database
+        .select({ clock: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
+        .limit(1)
+      expect(parentClockAfterChild?.clock).toBeNull()
 
-      const now = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
+      const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
       const retention = new PostgresExecutionPlanRetention(database)
-      const first = await retention.deleteEligibleExecutionPlans(now, {
+      const first = await retention.deleteEligibleExecutionPlans(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
-      expect(first.deleted).toBe(1)
-      expect(first.retainedByReason).toEqual({ reference_pending: 1 })
+      expect(first.deleted).toBe(0)
+      expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
       expect(await plans.get(planReference(parent))).toBeDefined()
-      expect(await plans.get(planReference(child))).toBeUndefined()
+      expect(await plans.get(planReference(child))).toBeDefined()
 
-      const second = await retention.deleteEligibleExecutionPlans(now, {
+      const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+      const second = await retention.deleteEligibleExecutionPlans(firstExpiry, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
       expect(second.deleted).toBe(1)
+      expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+      expect(await plans.get(planReference(child))).toBeUndefined()
+
+      const ancestorObserved = await retention.deleteEligibleExecutionPlans(firstExpiry, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      expect(ancestorObserved.deleted).toBe(0)
+      expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+      const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
+      const third = await retention.deleteEligibleExecutionPlans(parentExpiry, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      expect(third.deleted).toBe(1)
       expect(await plans.get(planReference(parent))).toBeUndefined()
     })
   }, 30_000)
@@ -122,24 +155,57 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
       const child = childPackageAt(parent, '2026-09-22T12:00:00.000Z')
       const packages = new PostgresContextPackageRepository(database)
       await packages.put(parent)
+      const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+      await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
+        parentObservedAt,
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      const [parentClockBeforeChild] = await database
+        .select({ clock: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
+        .limit(1)
+      expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
       await packages.put(child)
+      const [parentClockAfterChild] = await database
+        .select({ clock: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
+        .limit(1)
+      expect(parentClockAfterChild?.clock).toBeNull()
 
-      const now = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
+      const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
       const retention = new PostgresContextPackageRetention(database)
-      const first = await retention.deleteEligibleContextPackages(now, {
+      const first = await retention.deleteEligibleContextPackages(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
-      expect(first.deleted).toBe(1)
-      expect(first.retainedByReason).toEqual({ reference_pending: 1 })
+      expect(first.deleted).toBe(0)
+      expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
       expect(await packages.get(packageReference(parent))).toBeDefined()
-      expect(await packages.get(packageReference(child))).toBeUndefined()
+      expect(await packages.get(packageReference(child))).toBeDefined()
 
-      const second = await retention.deleteEligibleContextPackages(now, {
+      const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+      const second = await retention.deleteEligibleContextPackages(firstExpiry, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
       expect(second.deleted).toBe(1)
+      expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+      expect(await packages.get(packageReference(child))).toBeUndefined()
+
+      const ancestorObserved = await retention.deleteEligibleContextPackages(firstExpiry, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      expect(ancestorObserved.deleted).toBe(0)
+      expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+      const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
+      const third = await retention.deleteEligibleContextPackages(parentExpiry, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      expect(third.deleted).toBe(1)
       expect(await packages.get(packageReference(parent))).toBeUndefined()
     })
   }, 30_000)
@@ -222,18 +288,26 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
       const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
       const plans = new PostgresExecutionPlanRepository(database)
       await plans.put(parent)
-      const now = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      let competingPut
-      const result = await new PostgresExecutionPlanRetention(
-        database
-      ).deleteEligibleExecutionPlans(now, {
+      const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+      const retention = new PostgresExecutionPlanRetention(database)
+      const observed = await retention.deleteEligibleExecutionPlans(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
-        journal: async () => {
-          competingPut = plans.put(child)
-          await waitForLockWait(database, 'execution_plans')
-        },
       })
+      expect(observed.deleted).toBe(0)
+      expect(observed.retainedByReason).toEqual({ not_expired: 1 })
+      let competingPut
+      const result = await retention.deleteEligibleExecutionPlans(
+        new Date(observedAt.getTime() + retentionMs + 1),
+        {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+          journal: async () => {
+            competingPut = plans.put(child)
+            await waitForLockWait(database, 'execution_plans')
+          },
+        }
+      )
       expect(result.deleted).toBe(1)
       await expect(competingPut).rejects.toMatchObject({ code: 'INVALID_REFERENCE' })
       expect(await plans.get(planReference(child))).toBeUndefined()
@@ -246,18 +320,26 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
       const child = childPackageAt(parent, '2026-08-22T12:00:00.000Z')
       const packages = new PostgresContextPackageRepository(database)
       await packages.put(parent)
-      const now = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      let competingPut
-      const result = await new PostgresContextPackageRetention(
-        database
-      ).deleteEligibleContextPackages(now, {
+      const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+      const retention = new PostgresContextPackageRetention(database)
+      const observed = await retention.deleteEligibleContextPackages(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
-        journal: async () => {
-          competingPut = packages.put(child)
-          await waitForLockWait(database, 'context_packages')
-        },
       })
+      expect(observed.deleted).toBe(0)
+      expect(observed.retainedByReason).toEqual({ not_expired: 1 })
+      let competingPut
+      const result = await retention.deleteEligibleContextPackages(
+        new Date(observedAt.getTime() + retentionMs + 1),
+        {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+          journal: async () => {
+            competingPut = packages.put(child)
+            await waitForLockWait(database, 'context_packages')
+          },
+        }
+      )
       expect(result.deleted).toBe(1)
       await expect(competingPut).rejects.toMatchObject({
         code: 'CONTRADICTORY_CONTEXT_REFERENCE',

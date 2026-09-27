@@ -135,7 +135,7 @@ async function lockAndVerifyReferences(
       .select()
       .from(contextPackages)
       .where(eq(contextPackages.contextPackageId, reference.contextPackageId))
-      .for('key share')
+      .for('update')
     if (!contextRow) throw new Error(REFERENCE_INTEGRITY_ERROR)
     contextRows.push(contextRow)
     previousContextPackageId = reference.contextPackageId
@@ -150,7 +150,7 @@ async function lockAndVerifyReferences(
       .select()
       .from(executionPlans)
       .where(eq(executionPlans.executionPlanId, planId))
-      .for('key share')
+      .for('update')
     if (!planRow) throw new Error(REFERENCE_INTEGRITY_ERROR)
     planRows.push(planRow)
   }
@@ -170,6 +170,21 @@ async function lockAndVerifyReferences(
   }
 
   verifyReferenceRows(record, ancestorContextReference, contextRows, planRows, executionRows)
+
+  // The plan/context claims are already locked in the shared global order.
+  // Clear clocks only after every exact reference and owner row was validated.
+  for (const contextRow of contextRows) {
+    await transaction
+      .update(contextPackages)
+      .set({ unreferencedSince: null })
+      .where(eq(contextPackages.contextPackageId, contextRow.contextPackageId))
+  }
+  for (const planRow of planRows) {
+    await transaction
+      .update(executionPlans)
+      .set({ unreferencedSince: null })
+      .where(eq(executionPlans.executionPlanId, planRow.executionPlanId))
+  }
 }
 
 async function readAncestorContextReference(

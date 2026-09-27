@@ -6,8 +6,10 @@ export {
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
 export {
+  lockAndResetReferenceRetentionWindows,
   PostgresContextPackageRepository,
   PostgresContextPackageRetention,
+  type ReferenceRetentionClaim,
 } from './context-package-repository.js'
 export { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.js'
 export { PostgresContextCommandRepository } from './context-command-repository.js'

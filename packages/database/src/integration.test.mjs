@@ -165,15 +165,13 @@ async function compiledAtBeforeExistingRows(database, retentionClass) {
   return new Date(baseMs - 365 * 24 * 60 * 60 * 1_000).toISOString()
 }
 
-async function expectFirstEligibleRetentionCandidate(database, retentionClass, targetId, cutoff) {
-  const cutoffIso = cutoff.toISOString()
+async function retentionCursorBefore(database, retentionClass, targetId) {
   const query =
     retentionClass === 'plans'
-      ? sql`select execution_plan_id from execution_plans where compiled_at < ${cutoffIso}::timestamptz order by compiled_at asc limit 1`
-      : sql`select context_package_id from context_packages where compiled_at < ${cutoffIso}::timestamptz order by compiled_at asc limit 1`
+      ? sql`select execution_plan_id from execution_plans where execution_plan_id < ${targetId} order by execution_plan_id desc limit 1`
+      : sql`select context_package_id from context_packages where context_package_id < ${targetId} order by context_package_id desc limit 1`
   const [row] = await database.execute(query)
-  const actualId = row?.execution_plan_id ?? row?.context_package_id
-  expect(actualId).toBe(targetId)
+  return row?.execution_plan_id ?? row?.context_package_id
 }
 
 function retentionDelegationRecord(input) {
@@ -1979,6 +1977,17 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
     // An execution compiled from the plan pins it.
     await seedAcceptancePlan(isolated.application)
+    const beforeExecutionReference = await retention.deleteEligibleExecutionPlans(
+      assessedAt,
+      options
+    )
+    expect(beforeExecutionReference.retainedByReason).toEqual({ not_expired: 1 })
+    const [beforeExecutionClock] = await isolated.application
+      .select({ clock: executionPlans.unreferencedSince })
+      .from(executionPlans)
+      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+      .limit(1)
+    expect(beforeExecutionClock?.clock?.toISOString()).toBe(assessedAt.toISOString())
     const executionService = new ExecutionLifecycleService(
       new PostgresExecutionRepository(isolated.application)
     )
@@ -1994,6 +2003,12 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       executionPlan: { ...reference, schemaVersion: 1 },
       acceptedAt: plan.compiledAt,
     })
+    const [afterExecutionClock] = await isolated.application
+      .select({ clock: executionPlans.unreferencedSince })
+      .from(executionPlans)
+      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+      .limit(1)
+    expect(afterExecutionClock?.clock).toBeNull()
     expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
 
     // A validation command that checked the plan is a foreign key, so the
@@ -2025,7 +2040,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const withValidation = await retention.deleteEligibleExecutionPlans(assessedAt, options)
     expect(withValidation.deleted).toBe(0)
 
-    // With both references gone the plan is freed on the same pass.
+    // With both references gone the first pass starts the post-reference window.
     await isolated.application.execute(
       sql`delete from execution_validation_commands where execution_plan_id = ${plan.executionPlanId}`
     )
@@ -2061,7 +2076,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         .where(eq(delegations.delegationId, delegation.delegationId))
     }
     const freed = await retention.deleteEligibleExecutionPlans(assessedAt, options)
-    expect(freed.deleted).toBe(1)
+    expect(freed.deleted).toBe(0)
+    expect(freed.retainedByReason).toEqual({ not_expired: 1 })
+    const expired = await retention.deleteEligibleExecutionPlans(
+      new Date(assessedAt.getTime() + ninetyDaysMs + 1),
+      options
+    )
+    expect(expired.deleted).toBe(1)
     expect(
       await new PostgresExecutionPlanRepository(isolated.application).get(reference)
     ).toBeUndefined()
@@ -2097,12 +2118,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await packages.put(contextPackage)
     await new PostgresExecutionPlanRepository(isolated.application).put(plan)
     const now = new Date(Date.parse(plan.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
-    await expectFirstEligibleRetentionCandidate(
-      isolated.application,
-      'plans',
-      plan.executionPlanId,
-      new Date(now.getTime() - 90 * 24 * 60 * 60 * 1_000)
-    )
+    const afterId = await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId)
     const commandService = new CommandInboxService({
       repository: new PostgresCommandAcceptanceRepository(isolated.application),
       executionIdFactory: () => 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFJ',
@@ -2132,14 +2148,31 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     }
     let competingAcceptance
     const deletion = new PostgresExecutionPlanRetention(isolated.application)
-    const result = await deletion.deleteEligibleExecutionPlans(now, {
-      policyRetainMs: 90 * 24 * 60 * 60 * 1_000,
+    const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
+    const firstObservation = await deletion.deleteEligibleExecutionPlans(now, {
+      policyRetainMs,
+      bound: 1,
+      afterId,
       dryRun: false,
-      journal: async () => {
-        competingAcceptance = commandService.acceptExecution(input)
-        await waitForLockWait(isolated.application, 'execution_plans')
-      },
     })
+    expect(firstObservation).toMatchObject({
+      scanned: 1,
+      deleted: 0,
+      retainedByReason: { not_expired: 1 },
+    })
+    const result = await deletion.deleteEligibleExecutionPlans(
+      new Date(now.getTime() + policyRetainMs + 1),
+      {
+        policyRetainMs,
+        bound: 1,
+        afterId,
+        dryRun: false,
+        journal: async () => {
+          competingAcceptance = commandService.acceptExecution(input)
+          await waitForLockWait(isolated.application, 'execution_plans')
+        },
+      }
+    )
 
     expect(result.deleted).toBe(1)
     await expect(competingAcceptance).rejects.toMatchObject({
@@ -2193,16 +2226,30 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     let competingPut
     let competingPutState = 'pending'
     const now = new Date(Date.parse(contextPackage.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
-    await expectFirstEligibleRetentionCandidate(
+    const afterId = await retentionCursorBefore(
       isolated.application,
       'context-packages',
-      contextPackage.contextPackageId,
-      new Date(now.getTime() - 90 * 24 * 60 * 60 * 1_000)
+      contextPackage.contextPackageId
     )
+    const retention = new PostgresContextPackageRetention(isolated.application)
+    const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
+    const firstObservation = await retention.deleteEligibleContextPackages(now, {
+      policyRetainMs,
+      bound: 1,
+      afterId,
+      dryRun: false,
+    })
+    expect(firstObservation).toMatchObject({
+      scanned: 1,
+      deleted: 0,
+      retainedByReason: { not_expired: 1 },
+    })
     const deletion = await new PostgresContextPackageRetention(
       isolated.application
-    ).deleteEligibleContextPackages(now, {
-      policyRetainMs: 90 * 24 * 60 * 60 * 1_000,
+    ).deleteEligibleContextPackages(new Date(now.getTime() + policyRetainMs + 1), {
+      policyRetainMs,
+      bound: 1,
+      afterId,
       dryRun: false,
       journal: async () => {
         competingPut = new PostgresExecutionPlanRepository(isolated.application).put(plan).then(
@@ -4782,11 +4829,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     await retention.deleteEligibleContextPackages(now, options)
     expect(await packages.get(fixture)).toBeDefined()
 
-    // With both references gone the package is deleted.
+    // With both references gone the first pass starts a full post-reference window.
     await isolated.application.execute(
       sql`delete from context_authoring_commands where command_key = ${'f'.repeat(64)}`
     )
     await retention.deleteEligibleContextPackages(now, options)
+    expect(await packages.get(fixture)).toBeDefined()
+    await retention.deleteEligibleContextPackages(
+      new Date(now.getTime() + options.policyRetainMs + 1),
+      options
+    )
     expect(await packages.get(fixture)).toBeUndefined()
   }, 60_000)
 
