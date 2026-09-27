@@ -34,8 +34,8 @@ assessment callers retain the combined `add(verdict)` operation.
   receipt scope. Both were traced and corrected without casts or weaker
   validation; subsequent database builds passed.
 - After integration with the draft's SQLite guards, fresh domain, database and
-  SQLite package builds all passed. The sixteen PostgreSQL/domain source,
-  fixture and checkpoint files were verified byte-identical to the tested
+  SQLite package builds all passed. The fifteen PostgreSQL/domain source and
+  fixture files were verified byte-identical to the tested
   implementation commit `21fbe4b8f6606e0603df1e0cd4133c0b4fdc64e5`.
 - Domain hold/reference/eligibility tests: **35 passed, 90 assertions**. Two new
   candidate-accounting tests failed before the new counter API was implemented.
