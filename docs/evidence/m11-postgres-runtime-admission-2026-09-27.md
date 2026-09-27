@@ -334,6 +334,44 @@ restart and old-replica cutover proof; and the operator CLI/runbook. No allowanc
 backfill, fabricated funding, arbitrary capacity or unknown-cost-as-zero is
 permitted. Migration 0052 must not be promoted alone to bypass these gates.
 
+## Operator connection and CLI implementation checkpoint
+
+Added an explicit migration-profile connection factory without weakening the
+application factory's role boundary. Its new tests first failed because the
+factory was absent (three assertion failures, not a module-load failure), then
+passed after implementation. Both factories sanitize invalid URL errors; the
+migration factory rejects application and administration profiles. A profile
+label is configuration, never proof of database authority.
+
+The CLI requires an exact host/port/database target and explicit confirmation for
+pause/resume. It never substitutes application/admin URLs, accepts a force flag,
+uses a saved audit report, performs migration or enables a deployment. Current
+real operations are status/pause only; audit/resume await the database core.
+
+Verification in the root checkout:
+
+- Connection and CLI adapter tests: **16 pass, 0 fail, 123 assertions**, two files.
+- Database package build: exit 0; scoped lint, formatting and diff checks pass.
+- Database package test command: **46 pass, 133 skip, 0 fail, 212 assertions**.
+  Its PostgreSQL cases are deliberately disabled in that package run; the enabled
+  CLI acceptance below is recorded separately, not inferred from skipped cases.
+- Test inventory readback assigns the new adapter test to the unit lane.
+- Enabled PostgreSQL CLI acceptance: **1 pass, 0 fail, 14 assertions**, 4.63s.
+  Four separate bounded CLI processes targeted one migrated isolated database.
+  An application URL placed in `DATABASE_MIGRATION_URL` could not pause intake;
+  the actual migration role paused it, and a new process read the identical
+  durable status/revision/role. The fixture database was disposed in `finally`
+  and the post-test generated database inventory was empty.
+- Bounded independent read-only review found no actionable defect in the new
+  factory, CLI, tests or operator checkpoint; it did not run tests or certify the
+  broader milestone.
+
+The initial CLI test run only failed because the new script did not exist; this
+is not counted as a behavioral regression proof. An initial inventory invocation
+used an unsupported runner flag; direct `discoverTestInventory()` readback
+corrected that check. No broader suite, safe resume, concurrent cutover, cloud
+activation or milestone completion is claimed by this checkpoint.
+
 ## Remaining full-scope gates (unchanged)
 
 Allowance preflight remains read-only, not capacity reserved across an effect.

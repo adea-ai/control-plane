@@ -1,6 +1,7 @@
 export {
   assertPostgresUrl,
   createPostgresConnection,
+  createPostgresMigrationConnection,
   DatabaseConnectionError,
   databaseReadinessProbe,
 } from './connection.js'

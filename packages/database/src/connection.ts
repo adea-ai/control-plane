@@ -36,8 +36,21 @@ export function createPostgresConnection(
 ): PostgresConnection {
   if (credentials.role !== 'application')
     throw new DatabaseConnectionError('INVALID_CREDENTIAL_ROLE')
-  assertPostgresUrl(credentials.url)
-  const client = postgres(credentials.url, {
+  return createConnection(credentials.url, options)
+}
+
+/** Operator connection profile; database privileges, not this label, grant authority. */
+export function createPostgresMigrationConnection(
+  credentials: DatabaseCredentials<'migration'>,
+  options: PostgresConnectionOptions = {}
+): PostgresConnection {
+  if (credentials.role !== 'migration') throw new DatabaseConnectionError('INVALID_CREDENTIAL_ROLE')
+  return createConnection(credentials.url, options)
+}
+
+function createConnection(url: string, options: PostgresConnectionOptions): PostgresConnection {
+  assertPostgresUrl(url)
+  const client = postgres(url, {
     idle_timeout: options.idleTimeoutSeconds ?? 20,
     max: options.maxConnections ?? 10,
     prepare: false,

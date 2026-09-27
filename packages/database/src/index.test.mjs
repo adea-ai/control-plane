@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { getTableConfig } from 'drizzle-orm/pg-core'
+import * as connectionModule from './connection.ts'
 import {
   commandInbox,
   createPostgresConnection,
@@ -362,6 +363,49 @@ describe('createPostgresConnection', () => {
         url: 'postgresql://migrator:secret@database/control_plane',
       })
     ).toThrow(DatabaseConnectionError)
+  })
+})
+
+describe('createPostgresMigrationConnection', () => {
+  test('provides an explicit migration connection without relabeling credentials', async () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    const connection = connectionModule.createPostgresMigrationConnection({
+      role: 'migration',
+      url: 'postgresql://migrator:local-only@127.0.0.1:1/control_plane',
+    })
+    try {
+      expect(connection.database).toBeDefined()
+      expect(typeof connection.check).toBe('function')
+    } finally {
+      await connection.close()
+    }
+  })
+
+  test('rejects application and administrator profiles', () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    for (const role of ['application', 'administration']) {
+      expect(() =>
+        connectionModule.createPostgresMigrationConnection({
+          role,
+          url: 'postgresql://operator:local-only@127.0.0.1:1/control_plane',
+        })
+      ).toThrow(DatabaseConnectionError)
+    }
+  })
+
+  test('sanitizes invalid migration URLs', () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    try {
+      connectionModule.createPostgresMigrationConnection({
+        role: 'migration',
+        url: 'mysql://migrator:top-secret@database/control_plane',
+      })
+      throw new Error('Expected connection creation to fail')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DatabaseConnectionError)
+      expect(JSON.stringify(error)).not.toContain('top-secret')
+      expect(error.diagnostic).toEqual({ code: 'INVALID_DATABASE_URL' })
+    }
   })
 })
 

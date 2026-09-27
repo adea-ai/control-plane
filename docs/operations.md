@@ -228,12 +228,31 @@ Hosted role re-provisioning. Production schema preflight checks effective
 table and column permissions, not a caller-supplied operator flag.
 
 **Do not promote this checkpoint as a complete rollout workflow.** Bounded
-paginated inventory, verified drain, fresh exclusive-lock resume, an operator
-CLI and concurrent cutover acceptance are still unimplemented. There is no
+paginated inventory, verified drain, fresh exclusive-lock resume and concurrent
+cutover acceptance are still unimplemented. There is no
 supported resume command yet. A deployment must also externally quiesce old
 API/workflow replicas that do not honor the fence before migration; the current
 automatic schema/image promotion does not establish that proof. Never restore
 intake with an arbitrary SQL update or invent historical funding authority.
+
+The operator CLI now supports actual PostgreSQL `status` and `pause` operations.
+It loads only `DATABASE_MIGRATION_URL`, uses an explicit migration connection
+factory, and verifies the target host, port and database before connecting. The
+connection profile does not grant authority: the service checks the authenticated
+database role's actual privileges. Do not put credentials in command arguments.
+After building the workspace, use the exact intended target:
+
+```sh
+bun run admission:admin status --host <host> --port <port> --database <database>
+bun run admission:admin pause --host <host> --port <port> --database <database> --confirm pause
+```
+
+The `audit` and `resume` CLI dispatch paths are prepared for the bounded database
+service, but that service is not implemented at this checkpoint. Their adapter
+tests are not drain/resume acceptance. Do not use them as a supported rollout
+procedure yet. No force flag, saved-report input, automatic migration or
+deployment is provided. Failed operations return exit code 1 with sanitized
+stderr; a completed audit that does not permit resume returns exit code 2.
 
 ## Catalog approval gate (#188)
 
