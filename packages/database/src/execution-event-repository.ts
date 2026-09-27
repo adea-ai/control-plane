@@ -1,11 +1,13 @@
 import {
   ExecutionSchema,
   RetentionAssessmentCounter,
+  RetentionHoldError,
   evaluateRetentionEligibility,
   type Execution,
   type RetentionAssessment,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import {
   ExecutionEventSchema,
@@ -20,6 +22,11 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { toExecutionUpdate } from './execution-repository.js'
 import { executionEvents, retiredExecutionEventIds } from './schema/events.js'
 import { executions } from './schema/executions.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
 
@@ -34,7 +41,11 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
    */
   async assessExpiredEvents(
     now: Date,
-    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
   ): Promise<RetentionAssessment> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
@@ -48,13 +59,32 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
         retentionExpiresAt: executionEvents.retentionExpiresAt,
         publicationStatus: executionEvents.publicationStatus,
         executionState: executions.state,
+        workspaceId: executions.workspaceId,
+        projectId: executions.projectId,
       })
       .from(executionEvents)
       .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
       .where(lt(executionEvents.retentionExpiresAt, now))
       .orderBy(asc(executionEvents.retentionExpiresAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      const holds = await this.database.transaction((transaction) =>
+        countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'execution-events',
+            scope: {
+              kind: 'project',
+              workspaceId: candidate.workspaceId,
+              projectId: candidate.projectId,
+            },
+          },
+          options.retentionHoldPolicy
+        )
+      )
       const verdict = evaluateRetentionEligibility({
         retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
         now: assessedAt,
@@ -63,7 +93,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
         publicationSettled: candidate.publicationStatus === 'published',
         rejectionKeyReserved: true,
         pendingReferences: 0,
-        holds: 0,
+        holds,
       })
       if (!counter.add(verdict)) break
     }
@@ -87,6 +117,7 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EVENT_RETENTION_INVALID_TIMESTAMP')
@@ -107,45 +138,94 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
         retentionExpiresAt: executionEvents.retentionExpiresAt,
         publicationStatus: executionEvents.publicationStatus,
         executionState: executions.state,
+        workspaceId: executions.workspaceId,
+        projectId: executions.projectId,
       })
       .from(executionEvents)
       .innerJoin(executions, eq(executions.executionId, executionEvents.executionId))
       .where(lt(executionEvents.retentionExpiresAt, now))
       .orderBy(asc(executionEvents.retentionExpiresAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt: candidate.retentionExpiresAt.toISOString(),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: terminalExecutionStates.has(candidate.executionState),
-        publicationSettled: candidate.publicationStatus === 'published',
-        rejectionKeyReserved: true,
-        pendingReferences: 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      // Journal the retirement identity and the delete before applying them.
-      if (options.journal !== undefined) {
-        await options.journal([
-          {
-            kind: 'postgres.retireEventId',
-            eventId: candidate.eventId,
-            executionId: candidate.executionId,
-            sequence: candidate.sequence,
-            retiredAt: now.toISOString(),
-          },
-          { kind: 'postgres.deleteEvent', eventId: candidate.eventId },
-        ])
-      }
+      if (!counter.admitCandidate()) break
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'execution-events')
+        const [owner] = await transaction
+          .select({
+            state: executions.state,
+            workspaceId: executions.workspaceId,
+            projectId: executions.projectId,
+          })
+          .from(executions)
+          .where(eq(executions.executionId, candidate.executionId))
+          .limit(1)
+          .for('update')
+        const [stored] = await transaction
+          .select({
+            eventId: executionEvents.eventId,
+            executionId: executionEvents.executionId,
+            sequence: executionEvents.sequence,
+            workspaceId: executionEvents.workspaceId,
+            projectId: executionEvents.projectId,
+            retentionExpiresAt: executionEvents.retentionExpiresAt,
+            publicationStatus: executionEvents.publicationStatus,
+          })
+          .from(executionEvents)
+          .where(eq(executionEvents.eventId, candidate.eventId))
+          .limit(1)
+          .for('update')
+        if (
+          owner === undefined ||
+          stored === undefined ||
+          stored.executionId !== candidate.executionId
+        )
+          return { bound: false, verdict: undefined, removed: false, raced: true }
+        if (stored.workspaceId !== owner.workspaceId || stored.projectId !== owner.projectId) {
+          throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
+        }
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'execution-events',
+            scope: { kind: 'project', workspaceId: owner.workspaceId, projectId: owner.projectId },
+          },
+          options.retentionHoldPolicy
+        )
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt: stored.retentionExpiresAt.toISOString(),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal: terminalExecutionStates.has(owner.state),
+          publicationSettled: stored.publicationStatus === 'published',
+          rejectionKeyReserved: true,
+          pendingReferences: 0,
+          holds,
+        })
+        counter.recordVerdict(verdict)
+        if (verdict.verdict !== 'eligible' || dryRun)
+          return { bound: false, verdict, removed: false, raced: false }
+        // Journal the retirement identity and delete only after hold and owner claims.
+        if (options.journal !== undefined) {
+          await options.journal([
+            {
+              kind: 'postgres.retireEventId',
+              eventId: stored.eventId,
+              executionId: stored.executionId,
+              sequence: stored.sequence,
+              retiredAt: now.toISOString(),
+            },
+            { kind: 'postgres.deleteEvent', eventId: stored.eventId },
+          ])
+        }
         await transaction
           .insert(retiredExecutionEventIds)
           .values({
-            eventId: candidate.eventId,
-            executionId: candidate.executionId,
-            sequence: candidate.sequence,
+            eventId: stored.eventId,
+            executionId: stored.executionId,
+            sequence: stored.sequence,
             retiredAt: now,
           })
           .onConflictDoNothing()
@@ -153,16 +233,17 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
           .delete(executionEvents)
           .where(
             and(
-              eq(executionEvents.eventId, candidate.eventId),
+              eq(executionEvents.eventId, stored.eventId),
               eq(executionEvents.publicationStatus, 'published'),
               lt(executionEvents.retentionExpiresAt, now)
             )
           )
           .returning({ eventId: executionEvents.eventId })
-        return removed.length === 1
+        return { bound: false, verdict, removed: removed.length === 1, raced: removed.length !== 1 }
       })
-      if (outcome) deleted += 1
-      else raced += 1
+      if (outcome.bound) break
+      if (outcome.removed) deleted += 1
+      if (outcome.raced) raced += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }
