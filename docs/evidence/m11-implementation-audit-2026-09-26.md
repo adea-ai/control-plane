@@ -121,8 +121,20 @@ passed. The wider SQLite package run passed 127 tests but failed 17 old orphan
 plan fixtures in four existing test files. The fixture-only repair is now
 integrated: all four files passed 29 tests / 141 assertions with real immutable
 parents and accepted execution/attempt owners. Production guards are not waived.
-PostgreSQL window wiring and portable-import reference claims still await
-integration and final combined validation. Independent portable-import review
+PostgreSQL window wiring is now integrated, including command writers, sorted
+context-before-plan bulk claims, bounded continuation, and release-time clocks.
+A raced identical plan insert rolls back its nested transaction and retries once
+from the existing-record path; exhaustion fails without receipt or clock mutation.
+Focused real PostgreSQL race and exhaustion checks passed (one test / five
+assertions and one test / seven assertions). The dependency build, formatting and
+lint passed, with one nonfatal caught-error lint warning. Independent bounded
+review found no actionable issue in the retry closure. The complete window-file
+rerun did **not** pass: two tests passed, five failed with five errors / 14
+assertions under extreme host load; existing 30-second case deadlines were not
+extended. The shared task database remained healthy, and all isolated test
+databases, sessions and transactions were cleaned up. This is not a green full
+integration suite. Portable-import reference claims still await integration and
+final combined validation. Independent portable-import review
 found missing canonical descendant-limit checks and incomplete schema/compiler
 pins; these are assigned for domain-validator reuse and red/green regression
 repair, not considered closed by self-consistent record hashes.
