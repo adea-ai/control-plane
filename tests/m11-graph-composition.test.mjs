@@ -65,9 +65,45 @@ async function acceptGraphExecution(composition) {
 }
 
 async function closeUnstartedLocalComposition(composition) {
-  await composition.close()
-  composition.persistence.close({ checkpoint: true })
+  try {
+    await composition.close()
+  } finally {
+    composition.persistence.close({ checkpoint: true })
+  }
 }
+
+test('graph fixture cleanup closes pre-opened SQLite even when composition closure fails', async () => {
+  for (const closeFails of [false, true]) {
+    const directory = await mkdtemp(join(tmpdir(), 'm11-graph-cleanup-'))
+    const composition = new LocalControlPlaneComposition({ dataDirectory: directory })
+    try {
+      await composition.persistence.migrate()
+      expect((await composition.persistence.health()).ready).toBe(true)
+      const failure = new Error('fixture composition close failed')
+      const owner = closeFails
+        ? {
+            persistence: composition.persistence,
+            close: async () => {
+              await composition.close()
+              throw failure
+            },
+          }
+        : composition
+      const cleanup = closeUnstartedLocalComposition(owner)
+      if (closeFails) await expect(cleanup).rejects.toBe(failure)
+      else await cleanup
+      await expect(composition.persistence.health()).rejects.toMatchObject({
+        code: 'SQLITE_CLOSED',
+      })
+    } finally {
+      try {
+        await closeUnstartedLocalComposition(composition)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  }
+})
 
 test('Local and Hosted Simple forward graph lifecycle operations after SQLite admission', async () => {
   for (const profile of ['local', 'hosted-simple']) {
@@ -187,8 +223,11 @@ test('Local and Hosted Simple forward graph lifecycle operations after SQLite ad
         idempotencyKey: input.idempotencyKey,
       })
     } finally {
-      await closeUnstartedLocalComposition(composition)
-      await rm(directory, { recursive: true, force: true })
+      try {
+        await closeUnstartedLocalComposition(composition)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
     }
   }
 })
@@ -276,8 +315,11 @@ test('Local and Hosted Simple resume graph approval from their own SQLite databa
       expect(completed.outcome).toBe('completed')
       expect(calls).toEqual(['prepare', 'finalize'])
     } finally {
-      await composition.close()
-      await rm(directory, { recursive: true, force: true })
+      try {
+        await closeUnstartedLocalComposition(composition)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
     }
   }
 })
