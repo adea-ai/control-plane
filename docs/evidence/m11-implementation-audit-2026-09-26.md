@@ -133,11 +133,17 @@ rerun did **not** pass: two tests passed, five failed with five errors / 14
 assertions under extreme host load; existing 30-second case deadlines were not
 extended. The shared task database remained healthy, and all isolated test
 databases, sessions and transactions were cleaned up. This is not a green full
-integration suite. Portable-import reference claims still await integration and
-final combined validation. Independent portable-import review
-found missing canonical descendant-limit checks and incomplete schema/compiler
-pins; these are assigned for domain-validator reuse and red/green regression
-repair, not considered closed by self-consistent record hashes.
+integration suite. SQLite portable-import claims are now integrated: canonical
+domain derivation rules and exact schema/compiler context pins are validated
+inside the import transaction before reference clocks or provenance change.
+The two independent-review findings are closed by the new public domain
+validators, with a fresh bounded source review finding no actionable issue.
+Affected suites passed: context 60 tests / 204 assertions, execution-plan 20 /
+97 (including distinct legacy parent/child contexts), and portability 25 / 216.
+All three package builds/lints, formatting and diff checks passed. A first
+filtered importer attempt failed on unresolved default fixture secrets; corrected
+fixtures passed the named five cases / 107 assertions without relaxing guards.
+PostgreSQL bulk-import claims and final combined validation still remain open.
 
 The released image baseline's production schema was separately found behind:
 both Railway services' exact database bindings were verified, then released
@@ -174,16 +180,17 @@ The subsequent all-writer inventory found two additional SQLite paths:
 `SqliteContextAuthoringCommandRepository.commit` insert previously absent targets
 directly without claiming their plan/package ancestor. PostgreSQL command
 writers delegate their guarded target repositories. These SQLite integration
-gaps are assigned to the reference-window lane with missing-parent regressions;
-the bounded seven-file ancestry review did not cover those separate writers.
+gaps were repaired in the integrated SQLite reference-window increment with
+missing-parent regressions; the earlier bounded seven-file ancestry review did
+not cover those separate writers.
 
 The standalone fixture increment seeds exact catalog/context parents and passed
 all 11 standalone tests without skips (84 assertions) after a fresh 37-package
 closure. A separate calendar-invalid expiry regression reproduced an unsafe
 eligible verdict. The corrected pure predicate rejects invalid or normalized
-calendar dates and passed 18 tests (31 assertions). A root CLI regression is
-still deliberately red because bounded reference scans do not yet return a
-continuation token; the parser now allows SQLite's actual `r-<hash>` target IDs.
+calendar dates and passed 18 tests (31 assertions). The formerly red root CLI
+paging regression is now green with bounded continuation; the parser allows
+SQLite's actual `r-<hash>` target IDs.
 
 Root fixture repairs already passed 14 profile/restore/recovery tests (108
 assertions), with the real PostgreSQL M10/CP1 flags enabled. Six earlier CLI
