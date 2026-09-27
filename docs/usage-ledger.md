@@ -30,10 +30,20 @@ receipts commit or roll back together. New writes verify the stored execution's 
 workspace and parent attribution, and any attempt's exact ID and owner. Identical entry and
 receipt writes are immutable; divergent identities or damaged persisted state are rejected.
 
+`PostgresDurableUsageStore` implements the same port with versioned budget and immutable
+operation-receipt tables alongside raw entries. Migration 0051 widens sequence storage to
+bigint while runtime guards require safe integers. Accounting acquires the execution-retention
+class lock before the workspace lock and owner/attempt rows. Actual PostgreSQL tests prove
+basic lifecycle, fresh-connection replay, callback rollback, concurrent money/token
+admission, child rollup, ownership/corruption rejection and retention contention. These are
+component tests, not production capacity or live-profile acceptance. Do not run the
+old direct append repository as a concurrent authoritative budget writer. See the
+[PostgreSQL checkpoint](evidence/m11-postgres-durable-usage-store-2026-09-27.md).
+
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
-implementation. Raw usage retention, surviving aggregates/replay fences, the PostgreSQL budget
-store, and activation before runtime/model/tool/sandbox work remain required under M11.3/M11.9.
+implementation. Raw usage retention, surviving aggregates/replay fences, complete PostgreSQL
+acceptance, and activation before runtime/model/tool/sandbox work remain required under M11.3/M11.9.
 Native-store tests do not certify those production paths or provider billing attribution.
 
 `DurableUsageLedger` now supplies the shared transactional accounting service for this
@@ -48,8 +58,8 @@ the released amount in a settlement receipt.
 Budget summaries include finalized child funding consumption. Public usage summaries
 describe billable entries owned by the requested execution, not duplicated descendant
 charges. Neither summary includes provider credentials or source/idempotency identifiers.
-The service and native adapter remain component implementations: application admission,
-terminal reconciliation, PostgreSQL budget persistence and production activation are
+The service and persistence adapters remain component implementations: application admission,
+terminal reconciliation, complete PostgreSQL acceptance and production activation are
 still required. Policy-authorized budget extensions are not yet implemented by the
 durable service. Opening-summary replay verifies the original zero-use allocation rather
 than comparing it with later reservations or current parent availability. Finalization

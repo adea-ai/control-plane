@@ -5,6 +5,10 @@ implementation guide, not executed acceptance evidence or a scope reduction for 
 The PostgreSQL store is being implemented in a separate bounded lane; it was not part of
 this snapshot. Original milestone acceptance criteria remain unchanged.
 
+Later component implementation and executed PostgreSQL checks are recorded in the
+[PostgreSQL checkpoint](m11-postgres-durable-usage-store-2026-09-27.md). They do not
+complete the transaction-bound application activation described here.
+
 ## Verified seams and gaps
 
 | Boundary                  | Current source                                                                                                                                   | Remaining implementation                                                                                                           |

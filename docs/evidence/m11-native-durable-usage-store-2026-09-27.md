@@ -121,8 +121,12 @@ assertions across 27 files in 26.90 seconds. Changed-file lint with warnings den
 formatting, and whitespace checks passed. This proves the native recovery guard, not
 production accounting activation or whole-milestone acceptance.
 
+The PostgreSQL store and functional matrix now have separate executed evidence in the
+[PostgreSQL checkpoint](m11-postgres-durable-usage-store-2026-09-27.md); this does not
+certify application activation or production profile acceptance.
+
 Implement policy-authorized extensions with retained opening-history provenance,
-implement and independently validate the PostgreSQL store, then activate the service at
+then activate the service at
 supported composition boundaries. Preserve both money and token
 funding through child finalization; reserve before external work; reconcile real terminal
 usage without inventing provider prices. Implement the full 400-day retention lifecycle with

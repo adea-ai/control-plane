@@ -66,13 +66,27 @@ array expansion uses a guarded CASE and cannot assume damaged JSON is an array.
 - Independent bounded Luna source review found no actionable defect in the
   store, schema/migration and retention changes. That reviewer ran no tests and
   did not audit production composition or bypass writers.
+- Canonical workspace type-check passed against the stable runtime source:
+  43 fresh build/OpenAPI tasks in 1m8.168s, migration metadata, runtime SDK
+  compatibility, live 200-requirement/103-issue checks, architecture and Railway
+  infrastructure types. Dependency boundaries passed 1,485 files in 41 packages.
+  At the initial three-case fixture checkpoint, the ordinary database package
+  run passed 33 tests with 123 assertions and
+  explicitly skipped 119 integration cases; those skips are not acceptance
+  evidence. Enabled PostgreSQL results are recorded separately above.
+- After the fixture extension, all nine durable PostgreSQL integration tests
+  passed with zero failures and 53 assertions in 38.14 seconds. The actual matrix
+  includes once-only child rollup, workspace/parent/attempt rejection, persisted
+  budget/receipt/attempt corruption, raw-entry deletion high-water rejection, and
+  both deletion-versus-accounting lock orders. Race fixtures observe actual
+  PostgreSQL lock waits, release barriers in finally, handle expected rejection
+  immediately, and drain all started operations. The canonical type-check above
+  predates this test-only extension; runtime TypeScript was unchanged.
 
 ## Remaining acceptance
 
-The rest of the real durable-service PostgreSQL matrix remains pending:
-once-only child rollup, ownership rejection, persisted corruption and high-water
-checks, and retention-versus-budget lock contention. The tests above prove only
-their named cases, not the full production profile or capacity targets.
+The functional store matrix above is executed evidence for its named cases,
+not proof of the full production profile, capacity targets, or deployed recovery.
 
 Transaction-bound command acceptance, pre-runtime reservation, trusted funding
 authority, real terminal metering, authorized budget extensions, complete 400-day
