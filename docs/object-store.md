@@ -47,6 +47,15 @@ clients. Rollout needs namespace ownership and scoped credentials. Generic
 S3-compatible providers require operator acceptance of their precondition
 behavior; SDK-level tests do not establish live-provider correctness.
 
+Current filesystem mutable and conditional writers share an atomic per-key
+write-mode claim. The claim records a persistent mode, not a process lock or
+lease: it is not reclaimed based on elapsed time or a PID. A conditional claim
+without an envelope can be resumed by another conditional writer. A mutable
+claim without a complete legacy object returns a retryable provider failure
+to conditional creation instead of falsely reporting an existing object.
+Deleting a key also removes its mode claim. Concurrent deletion, old binaries
+and external filesystem mutation remain outside this cooperative-write fence.
+
 Before rollout, stop all old writers/readers using the artifact namespace.
 Old filesystem implementations cannot read the new envelope format; do not
 downgrade by opening a root containing conditional artifacts with old code.
