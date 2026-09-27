@@ -1,19 +1,129 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
+import { ContextPackageCompiler, contextPackageSerializationFixtures } from '@control-plane/context'
 import {
+  ExecutionPlanAcceptanceValidator,
+  ExecutionPlanCompiler,
+} from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
+import {
+  PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
+  PostgresContextPackageRepository,
+  PostgresExecutionPlanRepository,
   PostgresReconciliationCheckpointRepository,
   reconciliationCheckpoints,
 } from '@control-plane/database'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
-import { CommandInboxService, ExecutionReconciliationService } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  ExecutionReconciliationService,
+  VersionedCatalog,
+} from '@control-plane/domain'
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
 import { ReconciliationScheduler } from '@control-plane/deployment'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const checkedAt = '2026-08-24T15:00:00.000Z'
 const suffixes = ['V', 'W', 'X']
+const correlation = {
+  workspaceId: 'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+  projectId: 'prj_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+  taskId: 'tsk_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+  agentId: 'agt_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+}
+
+async function seedAcceptancePlans(isolated, requestIds) {
+  const base = contextPackageSerializationFixtures.futurePi
+  const contextPackage = new ContextPackageCompiler(base.compiler.version).compile({
+    objective: base.objective,
+    projectState: {
+      schemaVersion: 1,
+      workspaceId: correlation.workspaceId,
+      projectId: correlation.projectId,
+      revision: base.projectState.revision,
+      items: [],
+      createdAt: checkedAt,
+      updatedAt: checkedAt,
+    },
+    expectedProjectStateRevision: base.projectState.revision,
+    candidates: [],
+    artifacts: [],
+    constraints: base.constraints,
+    permissions: base.permissions,
+    successCriteria: base.successCriteria,
+    returnContract: base.returnContract,
+    budgets: base.budgets,
+    compiledAt: checkedAt,
+  })
+  const catalogInputs = createExecutionPlanTestFixtureInputs({ contextPackage })
+  const catalogRepository = new PostgresCatalogRepository(isolated.application)
+  const catalog = new VersionedCatalog(catalogRepository, catalogRepository)
+  const { contentDigest: _contentDigest, ...skillManifest } = catalogInputs.skills[0].manifest
+  await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
+  await catalog.createSkill({
+    skillId: catalogInputs.skills[0].skillId,
+    displayName: 'Hosted reconciliation metrics fixture',
+    ownership: { scope: 'system' },
+    provenance: { source: 'system-curated', ownerRef: 'system', trust: 'trusted' },
+    createdAt: catalogInputs.skills[0].createdAt,
+  })
+  const skillDraft = await catalog.createSkillDraft({
+    skillId: catalogInputs.skills[0].skillId,
+    skillVersionId: catalogInputs.skills[0].skillVersionId,
+    manifest: skillManifest,
+    content: catalogInputs.skills[0].content,
+    createdAt: catalogInputs.skills[0].createdAt,
+  })
+  const publishedSkill = await catalog.publishSkillVersion({
+    skillVersionId: skillDraft.skillVersionId,
+    expectedRevision: skillDraft.revision,
+    publishedAt: checkedAt,
+  })
+  await catalog.createAgentProfile({
+    profileId: catalogInputs.profile.profileId,
+    displayName: 'Hosted reconciliation metrics fixture',
+    ownership: { scope: 'system' },
+    createdAt: catalogInputs.profile.createdAt,
+  })
+  const profileDraft = await catalog.createAgentProfileDraft({
+    profileId: catalogInputs.profile.profileId,
+    profileVersionId: catalogInputs.profile.profileVersionId,
+    version: catalogInputs.profile.version,
+    definition: {
+      ...catalogInputs.profile.definition,
+      skills: [
+        {
+          skillId: publishedSkill.skillId,
+          skillVersionId: publishedSkill.skillVersionId,
+          contentDigest: publishedSkill.manifest.contentDigest,
+        },
+      ],
+    },
+    createdAt: catalogInputs.profile.createdAt,
+  })
+  const publishedProfile = await catalog.publishAgentProfileVersion({
+    profileVersionId: profileDraft.profileVersionId,
+    expectedRevision: profileDraft.revision,
+    publishedAt: checkedAt,
+  })
+  const plans = new PostgresExecutionPlanRepository(isolated.application)
+  const compiledPlans = requestIds.map((requestId) => {
+    const inputs = createExecutionPlanTestFixtureInputs({ contextPackage })
+    inputs.correlation = { ...correlation, requestId }
+    inputs.profile = publishedProfile
+    inputs.skills = [publishedSkill]
+    return new ExecutionPlanCompiler('1.0.0').compile(inputs)
+  })
+  for (const plan of compiledPlans) await plans.put(plan)
+  return {
+    plans: compiledPlans,
+    validator: new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: { profiles: catalogRepository, skills: catalogRepository },
+    }),
+  }
+}
 
 describe.skipIf(!integrationEnabled)('reconciliation metrics against PostgreSQL rows', () => {
   let isolated
@@ -36,32 +146,33 @@ describe.skipIf(!integrationEnabled)('reconciliation metrics against PostgreSQL 
     const identifiers = suffixes.map((suffix) => ({
       executionId: `exe_01DRZ3NDEKTSV4RRFFQ69G5FA${suffix}`,
       commandId: `cmd_01DRZ3NDEKTSV4RRFFQ69G5FA${suffix}`,
+      requestId: `req_01DRZ3NDEKTSV4RRFFQ69G5FA${suffix}`,
     }))
+    const { plans, validator } = await seedAcceptancePlans(
+      isolated,
+      identifiers.map(({ requestId }) => requestId)
+    )
     let accepted = 0
     const inbox = new CommandInboxService({
       repository: new PostgresCommandAcceptanceRepository(isolated.application),
       executionIdFactory: () => identifiers[accepted].executionId,
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: validator,
     })
     const acceptedExecutions = []
-    for (const identifier of identifiers) {
+    for (const [index, identifier] of identifiers.entries()) {
+      const plan = plans[index]
       const { execution } = await inbox.acceptExecution({
         callerPrincipalId: 'svc_agent-hq',
         operation: 'execution.accept',
         commandId: identifier.commandId,
-        requestId: `req_01DRZ3NDEKTSV4RRFFQ69G5FA${identifier.executionId.slice(-1)}`,
+        requestId: identifier.requestId,
         idempotencyKey: `reconciliation-metrics-${identifier.executionId.slice(-1)}`,
         payloadHash: '8'.repeat(64),
-        correlation: {
-          workspaceId: 'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV',
-          projectId: 'prj_01DRZ3NDEKTSV4RRFFQ69G5FAV',
-          taskId: 'tsk_01DRZ3NDEKTSV4RRFFQ69G5FAV',
-          agentId: 'agt_01DRZ3NDEKTSV4RRFFQ69G5FAV',
-        },
+        correlation,
         executionPlan: {
-          executionPlanId: `pln_01DRZ3NDEKTSV4RRFFQ69G5FA${identifier.executionId.slice(-1)}`,
-          contentDigest: `sha256:${'7'.repeat(64)}`,
-          schemaVersion: 1,
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
         },
         receivedAt: '2026-08-24T14:00:00.000Z',
         retentionExpiresAt: '2099-01-01T00:00:00.000Z',

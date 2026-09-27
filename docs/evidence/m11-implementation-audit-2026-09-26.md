@@ -345,6 +345,38 @@ file; the full repository-policy file now passes 27 tests. This wiring makes
 previously omitted cases runnable, not automatically passing. Hosted fixture
 repair and actual execution results remain separate.
 
+The follow-up integrated snapshot is `80efa71d` plus the three independently
+reviewed application integration fixtures. Cloud replay and Hosted reconciliation
+now publish real skill/profile versions through `VersionedCatalog`, persist
+immutable context/plan parents, and use the real admission validator. The metrics
+case keeps three distinct request-correlated plans; projection no longer inserts
+an execution already committed by admission. Original replay/conflict, checkpoint,
+metric assertions and deadlines remain unchanged. The serialized app-only Turbo
+invocation freshly built its dependency closure: 30 successful tasks, none cached,
+95.193 seconds. Cloud passed three tests / 66 assertions and Hosted passed all
+three previously unscheduled files, seven tests / 26 assertions. Earlier database
+93-test evidence is separate; this invocation did not repeat that package.
+
+The complete seeded smoke group first passed 189 tests with one explicit
+PostgreSQL-conformance skip while the owned database was stopped. With the real
+isolated PostgreSQL baseline enabled, the full smoke group passed all 190 tests,
+zero failures/skips, 2,054 assertions across 23 files in 58.59 seconds. This matrix
+uses real persistence with scripted runtime ports, not deployed Restate or a
+live provider. Local lane timing does not prove the CI timing budget. Scoped
+fixture format/lint/diff checks and all 1,432-file / 41-package boundaries passed;
+current requirements (200 / 103), architecture (41 / 16 / four profiles), schema
+and compatibility checks passed as well. Required current-head CI remains open.
+
+Separate real PostgreSQL/WebSocket remote-control, backup/restore and explicit
+owned-container disruption drills passed on the `80efa71d` production-source
+snapshot (unchanged from `9060c82a`). They prove authenticated delivery/replay,
+restored evidence and app-role operations, and rejection during service loss
+followed by recovery of committed receipts/context/plan evidence. Runtime behavior
+was scripted; these are not native active-cancellation, live-provider, production
+RPO/RTO or full-profile acceptance. The owned database is stopped between testing
+windows, preserving its volume; no staging or production deployment is certified
+by these local drills.
+
 Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three
 in the database job. All seven reference-window cases passed at existing
 deadlines; downstream package integration and remote/restore drills did not
@@ -395,6 +427,15 @@ recovery, rotation, rollback and measured RPO/RTO evidence remains separate.
 #188/#190/#191 still require full runtime/profile and adversarial acceptance;
 #195 requires full canonical-source/diagram reconciliation; #196/#197 require
 their original independent/human evidence and an exact frozen candidate.
+The fresh native TDD figure audit confirms that figure 3 still depicts an
+all-profile "Restate Workflow", despite the approved Local embedded SQLite
+default and corrected companion label. Its stored aspect ratio is approximately
+0.190 with no crop: the narrow layout is intrinsic to the rendered asset.
+Figures 1 and 3 also need repo/catalog topology reconciliation; figure 2 matches
+the companion source. Native PDF export succeeded, but its user-scoped file
+reference could not be safely materialized for page inspection, so page fit,
+pagination and caption placement remain unverified. No native figure was changed
+or reported visually accepted by this bounded read-only audit.
 Human calibration, independent review and fresh VPS evidence must be supplied
 or genuinely performed. Agent review is useful implementation evidence but is
 not a substitute for those evidence classes. Production readiness is not
@@ -402,4 +443,5 @@ claimed from the local PostgreSQL environment.
 
 No original acceptance criterion is waived, relabelled as M12, or marked
 verified by this checkpoint. Implementation follow-up is tracked in the owning
-open issues; final release approval remains blocked by their original gates.
+open issues; final Milestone 11 signoff remains blocked by their original gates.
+Incremental repair PRs and releases do not constitute that milestone signoff.

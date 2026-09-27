@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { createServer } from 'node:http'
+import { sql } from 'drizzle-orm'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
@@ -10,6 +11,11 @@ import {
   ExecutionLifecycleService,
   InteractionService,
 } from '@control-plane/domain'
+import {
+  ExecutionPlanAcceptanceValidator,
+  ExecutionPlanCompiler,
+} from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import {
   PostgresCatalogRepository,
   PostgresContextPackageRepository,
@@ -30,6 +36,138 @@ import { createControlApiApplication } from './application.ts'
 let database
 const applications = []
 const compositions = []
+let acceptancePlanSeed
+
+async function seedAcceptancePlan() {
+  if (acceptancePlanSeed) return acceptancePlanSeed
+  acceptancePlanSeed = (async () => {
+    const publishedAt = new Date().toISOString()
+    const contextPackage = contextPackageSerializationFixtures.futurePi
+    const planInputs = createExecutionPlanTestFixtureInputs({ contextPackage })
+    planInputs.profile.profileId = 'prf_01JABCDEF0123456789ABCDEFH'
+    planInputs.profile.profileVersionId = 'pfv_01JABCDEF0123456789ABCDEFH'
+    planInputs.skills[0].skillId = 'skl_01JABCDEF0123456789ABCDEFH'
+    planInputs.skills[0].skillVersionId = 'skv_01JABCDEF0123456789ABCDEFH'
+    const contextPackages = new PostgresContextPackageRepository(database.application)
+    const planRepository = new PostgresExecutionPlanRepository(database.application)
+    const catalogRepository = new PostgresCatalogRepository(database.application)
+    const catalog = new VersionedCatalog(catalogRepository, catalogRepository)
+    await contextPackages.put(contextPackage)
+    const profileId = planInputs.profile.profileId
+    const profileVersionId = planInputs.profile.profileVersionId
+    const skillId = planInputs.skills[0].skillId
+    const skillVersionId = planInputs.skills[0].skillVersionId
+    await catalog.createSkill({
+      skillId,
+      displayName: 'Acceptance replay fixture',
+      ownership: { scope: 'system' },
+      provenance: { source: 'system-curated', ownerRef: 'system', trust: 'trusted' },
+      createdAt: planInputs.skills[0].createdAt,
+    })
+    const { contentDigest: _contentDigest, ...skillManifest } = planInputs.skills[0].manifest
+    const skillDraft = await catalog.createSkillDraft({
+      skillId,
+      skillVersionId,
+      manifest: skillManifest,
+      content: planInputs.skills[0].content,
+      createdAt: planInputs.skills[0].createdAt,
+    })
+    const publishedSkill = await catalog.publishSkillVersion({
+      skillVersionId,
+      expectedRevision: skillDraft.revision,
+      publishedAt,
+    })
+    await catalog.createAgentProfile({
+      profileId,
+      displayName: 'Acceptance replay fixture',
+      ownership: { scope: 'system' },
+      createdAt: planInputs.profile.createdAt,
+    })
+    const profileDraft = await catalog.createAgentProfileDraft({
+      profileId,
+      profileVersionId,
+      version: 3,
+      definition: {
+        ...planInputs.profile.definition,
+        skills: [
+          {
+            skillId,
+            skillVersionId,
+            contentDigest: publishedSkill.manifest.contentDigest,
+          },
+        ],
+      },
+      createdAt: planInputs.profile.createdAt,
+    })
+    const publishedProfile = await catalog.publishAgentProfileVersion({
+      profileVersionId,
+      expectedRevision: profileDraft.revision,
+      publishedAt,
+    })
+    planInputs.profile = publishedProfile
+    planInputs.skills = [publishedSkill]
+    const plan = new ExecutionPlanCompiler('1.0.0').compile(planInputs)
+    await planRepository.put(plan)
+
+    return {
+      plan,
+      validator: new ExecutionPlanAcceptanceValidator(planRepository, {
+        catalog: { profiles: catalogRepository, skills: catalogRepository },
+      }),
+    }
+  })()
+  try {
+    return await acceptancePlanSeed
+  } catch (error) {
+    acceptancePlanSeed = undefined
+    throw error
+  }
+}
+
+async function cleanupAcceptancePlanSeed({ commandId, executionId, interactionId }) {
+  if (!acceptancePlanSeed) return
+  const { plan } = await acceptancePlanSeed
+  if (interactionId !== undefined) {
+    await database.application.execute(
+      sql`delete from interaction_commands where receipt -> 'request' -> 'payload' ->> 'interactionId' = ${interactionId}`
+    )
+    await database.application.execute(
+      sql`delete from interaction_requests where interaction_id = ${interactionId}`
+    )
+  }
+  await database.application.execute(
+    sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+  )
+  await database.application.execute(
+    sql`delete from execution_events where execution_id = ${executionId}`
+  )
+  await database.application.execute(
+    sql`delete from execution_attempts where execution_id = ${executionId}`
+  )
+  await database.application.execute(sql`delete from command_inbox where command_id = ${commandId}`)
+  await database.application.execute(
+    sql`delete from executions where execution_id = ${executionId}`
+  )
+  await database.application.execute(
+    sql`delete from execution_plans where execution_plan_id = ${plan.executionPlanId}`
+  )
+  await database.application.execute(
+    sql`delete from context_packages where context_package_id = ${plan.contextPackage.contextPackageId}`
+  )
+  await database.application.execute(
+    sql`delete from skill_versions where skill_version_id = ${plan.skills[0].skillVersionId}`
+  )
+  await database.application.execute(
+    sql`delete from skills where skill_id = ${plan.skills[0].skillId}`
+  )
+  await database.application.execute(
+    sql`delete from agent_profile_versions where profile_version_id = ${plan.profile.profileVersionId}`
+  )
+  await database.application.execute(
+    sql`delete from agent_profiles where profile_id = ${plan.profile.profileId}`
+  )
+  acceptancePlanSeed = undefined
+}
 
 test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
   'cloud interaction HTTP replay preserves the response identity after a lost signal ACK and API restart',
@@ -113,10 +251,11 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         body: JSON.stringify(payload),
       })
     try {
+      const { plan, validator } = await seedAcceptancePlan()
       const accepted = await new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(database.application),
         executionIdFactory: () => request.payload.executionId,
-        executionPlanValidator: { validate: async () => true },
+        executionPlanValidator: validator,
       }).acceptExecution({
         callerPrincipalId: request.caller.servicePrincipalId,
         operation: 'execution.accept',
@@ -127,10 +266,14 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         correlation: {
           workspaceId: request.workspaceId,
           projectId: request.projectId,
-          taskId: 'tsk_01JABCDEF0123456789ABCDEFG',
-          agentId: 'agt_01JABCDEF0123456789ABCDEFG',
+          taskId: plan.correlation.taskId,
+          agentId: plan.correlation.agentId,
         },
-        executionPlan: ControlApiFixtures.executionAcceptance.request.payload.executionPlan,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
         receivedAt: now,
         retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
       })
@@ -207,8 +350,16 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       ).toBe(409)
       expect(signals).toHaveLength(2)
     } finally {
-      ingress.closeAllConnections()
-      await new Promise((resolve) => ingress.close(resolve))
+      try {
+        await cleanupAcceptancePlanSeed({
+          commandId: 'cmd_01JABCDEF0123456789ABCDEFA',
+          executionId: request.payload.executionId,
+          interactionId: request.payload.interactionId,
+        })
+      } finally {
+        ingress.closeAllConnections()
+        await new Promise((resolve) => ingress.close(resolve))
+      }
     }
   }
 )
@@ -299,10 +450,11 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         body: JSON.stringify(payload),
       })
     try {
+      const { plan, validator } = await seedAcceptancePlan()
       await new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(database.application),
         executionIdFactory: () => request.payload.executionId,
-        executionPlanValidator: { validate: async () => true },
+        executionPlanValidator: validator,
       }).acceptExecution({
         callerPrincipalId: request.caller.servicePrincipalId,
         operation: 'execution.accept',
@@ -313,10 +465,14 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
         correlation: {
           workspaceId: request.workspaceId,
           projectId: request.projectId,
-          taskId: 'tsk_01JABCDEF0123456789ABCDEFG',
-          agentId: 'agt_01JABCDEF0123456789ABCDEFG',
+          taskId: plan.correlation.taskId,
+          agentId: plan.correlation.agentId,
         },
-        executionPlan: ControlApiFixtures.executionAcceptance.request.payload.executionPlan,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
         receivedAt: now,
         retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
       })
@@ -354,8 +510,15 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       ).toBe(400)
       expect(signals).toHaveLength(2)
     } finally {
-      ingress.closeAllConnections()
-      await new Promise((resolve) => ingress.close(resolve))
+      try {
+        await cleanupAcceptancePlanSeed({
+          commandId: 'cmd_01JABCDEF0123456789ABCDEFB',
+          executionId: request.payload.executionId,
+        })
+      } finally {
+        ingress.closeAllConnections()
+        await new Promise((resolve) => ingress.close(resolve))
+      }
     }
   }
 )
