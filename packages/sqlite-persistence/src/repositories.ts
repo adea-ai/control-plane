@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
+import {
+  DurableUsageLedger,
+  budgetOpeningEntryIdempotencyKey,
+  type DurableUsageBudgetSummary,
+} from '@control-plane/usage-ledger'
+import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
 import type {
   JsonValue,
   PersistenceProvider,
@@ -47,6 +53,8 @@ import {
   type ExecutionPlan,
   type ExecutionPlanReference,
   type ExecutionPlanRepository,
+  executionBudgetAdmissionSource,
+  executionPlanBudgetAllowance,
 } from '@control-plane/execution-plan'
 import { ExecutionEventSchema } from '@control-plane/events'
 import { observeReferenceRetentionWindow } from '@control-plane/domain'
@@ -56,6 +64,7 @@ import {
   setReferenceRetentionWindow,
 } from './retention-reference-metadata.js'
 import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
+import { SqliteDurableUsageStore } from './usage-store.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -169,7 +178,14 @@ export interface SqliteReconciliationCandidateScan {
 }
 
 export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepository {
-  constructor(readonly provider: PersistenceProvider) {}
+  readonly #budgetAdmission: boolean
+
+  constructor(
+    readonly provider: PersistenceProvider,
+    options: { readonly budgetAdmission?: boolean } = {}
+  ) {
+    this.#budgetAdmission = options.budgetAdmission === true
+  }
 
   accept(
     commandInput: CommandInboxRecord,
@@ -188,7 +204,13 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         ) {
           throw new Error('EXECUTION_ID_CONFLICT')
         }
-        await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
+        const storedPlan = await assertSqliteStoredPlanReference(
+          transaction,
+          execution.executionPlan
+        )
+        const allowance = this.#budgetAdmission
+          ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
+          : undefined
         await transaction.put({
           namespace: namespaces.commands,
           id: commandId,
@@ -204,11 +226,27 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           id: recordId(execution.executionId),
           value: commandId,
         })
+        if (allowance !== undefined) {
+          await SqliteDurableUsageStore.withTransaction(
+            transaction,
+            allowance.workspaceId,
+            (store) => new DurableUsageLedger({ store }).openBudget(allowance)
+          )
+        }
         return { outcome: 'accepted', command, execution }
       }
       const existing = CommandInboxRecordSchema.parse(existingRecord.value)
       const existingExecution = await this.#execution(transaction, existing.executionId)
       if (existing.payloadHash === command.payloadHash) {
+        if (this.#budgetAdmission) {
+          await this.#verifyAdmissionInTransaction(
+            transaction,
+            existing,
+            existingExecution,
+            existing,
+            existingExecution
+          )
+        }
         return { outcome: 'duplicate', command: existing, execution: existingExecution }
       }
       const conflicted = CommandInboxRecordSchema.parse({
@@ -225,6 +263,28 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         value: json(conflicted),
       })
       return { outcome: 'conflict', command: conflicted, execution: existingExecution }
+    })
+  }
+
+  async verifyAdmission(
+    commandInput: CommandInboxRecord,
+    executionInput: Execution
+  ): Promise<void> {
+    if (!this.#budgetAdmission) return
+    const command = CommandInboxRecordSchema.parse(commandInput)
+    const execution = ExecutionSchema.parse(executionInput)
+    await this.provider.transaction(async (transaction) => {
+      const storedRecord = await transaction.get(namespaces.commands, recordId(scopeKey(command)))
+      if (storedRecord === undefined) throw invalidPersistedAdmission()
+      const storedCommand = CommandInboxRecordSchema.parse(storedRecord.value)
+      const storedExecution = await this.#execution(transaction, storedCommand.executionId)
+      await this.#verifyAdmissionInTransaction(
+        transaction,
+        command,
+        execution,
+        storedCommand,
+        storedExecution
+      )
     })
   }
 
@@ -556,6 +616,111 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     const record = await transaction.get(namespaces.executions, recordId(executionId))
     if (record === undefined) throw new Error('COMMAND_EXECUTION_INVARIANT_VIOLATION')
     return ExecutionSchema.parse(record.value)
+  }
+
+  async #admissionAllowance(
+    transaction: PersistenceTransaction,
+    command: CommandInboxRecord,
+    execution: Execution,
+    storedPlan: ExecutionPlan
+  ) {
+    const parentPlan = storedPlan.parentExecutionPlan
+    if (execution.parentExecutionId === undefined) {
+      if (parentPlan !== undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+    } else {
+      const parentRecord = await transaction.get(
+        namespaces.executions,
+        recordId(execution.parentExecutionId)
+      )
+      if (parentRecord === undefined)
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      const parent = ExecutionSchema.parse(parentRecord.value)
+      if (
+        parent.executionId !== execution.parentExecutionId ||
+        parent.correlation.workspaceId !== execution.correlation.workspaceId ||
+        parent.correlation.projectId !== execution.correlation.projectId ||
+        parentPlan === undefined ||
+        parent.executionPlan.executionPlanId !== parentPlan.executionPlanId ||
+        parent.executionPlan.contentDigest !== parentPlan.contentDigest
+      ) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+    }
+    return executionPlanBudgetAllowance(command, execution, storedPlan)
+  }
+
+  async #verifyAdmissionInTransaction(
+    transaction: PersistenceTransaction,
+    commandInput: CommandInboxRecord,
+    executionInput: Execution,
+    storedCommand: CommandInboxRecord,
+    storedExecution: Execution
+  ): Promise<void> {
+    const suppliedSource = executionBudgetAdmissionSource(commandInput, executionInput)
+    const storedSource = executionBudgetAdmissionSource(storedCommand, storedExecution)
+    if (!isDeepStrictEqual(suppliedSource, storedSource)) throw invalidPersistedAdmission()
+
+    const verified = await SqliteDurableUsageStore.withTransaction(
+      transaction,
+      storedCommand.workspaceId,
+      async (store) => {
+        const ledger = new DurableUsageLedger({ store })
+        let summary: DurableUsageBudgetSummary
+        try {
+          summary = await ledger.summary(storedCommand.workspaceId, storedExecution.executionId)
+        } catch (error) {
+          if (error instanceof DurableUsageError && error.code === 'BUDGET_NOT_FOUND') {
+            throw invalidPersistedAdmission()
+          }
+          throw error
+        }
+        const entries = await ledger.entries(storedCommand.workspaceId, storedExecution.executionId)
+        const openingKey = budgetOpeningEntryIdempotencyKey(
+          storedSource.idempotencyKey,
+          storedExecution.executionId
+        )
+        const openingEntries = entries.filter((entry) => entry.source.idempotencyKey === openingKey)
+        const opening = openingEntries[0]
+        if (
+          openingEntries.length !== 1 ||
+          opening === undefined ||
+          opening.sequence !== 1 ||
+          opening.kind !== 'credit' ||
+          opening.source.sourceId !== storedSource.sourceId
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        const effect = await store.transaction(storedCommand.workspaceId, (usageTransaction) =>
+          usageTransaction.getEffect(storedSource.idempotencyKey)
+        )
+        const openingSummary = {
+          executionId: storedExecution.executionId,
+          currency: summary.currency,
+          maximumMicrounits: opening.quantity.value,
+          maximumTokens: summary.maximumTokens,
+          spentMicrounits: 0,
+          reservedMicrounits: 0,
+          availableMicrounits: opening.quantity.value,
+          spentTokens: 0,
+          reservedTokens: 0,
+          availableTokens: summary.maximumTokens,
+          settled: false,
+        }
+        if (
+          effect === undefined ||
+          effect.workspaceId !== storedCommand.workspaceId ||
+          effect.executionId !== storedExecution.executionId ||
+          effect.idempotencyKey !== storedSource.idempotencyKey ||
+          !isDeepStrictEqual(effect.result, openingSummary)
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        return summary
+      }
+    )
+    if (verified.settled && executionStates.has(storedExecution.state)) {
+      throw invalidPersistedAdmission()
+    }
   }
 }
 
@@ -1359,6 +1524,10 @@ function scopeKey(scope: CommandInboxScope): string {
     scope.projectId,
     scope.idempotencyKey,
   ].join('\u001f')
+}
+
+function invalidPersistedAdmission(): DurableUsageError {
+  return new DurableUsageError('STORE_STATE_INVALID')
 }
 
 const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/

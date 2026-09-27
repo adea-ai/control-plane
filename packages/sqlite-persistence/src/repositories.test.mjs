@@ -10,11 +10,13 @@ import {
   contextPackageSerializationFixtures,
 } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
   SqliteContextAuthoringCommandRepository,
+  SqliteDurableUsageStore,
   SqliteExecutionPlanRepository,
   SqliteExecutionRepository,
   SqlitePersistenceProvider,
@@ -70,9 +72,9 @@ async function seedDefaultPlan(provider) {
   await new SqliteExecutionPlanRepository(provider).put(defaultPlan)
 }
 
-function service(provider, now = receivedAt) {
+function service(provider, now = receivedAt, repositoryOptions) {
   return new CommandInboxService({
-    repository: new SqliteCommandAcceptanceRepository(provider),
+    repository: new SqliteCommandAcceptanceRepository(provider, repositoryOptions),
     executionIdFactory: () => ids.executionId,
     executionPlanValidator: { validate: async () => true },
     now: () => now,
@@ -80,6 +82,58 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('budget admission commits the owner and initial funded ledger together', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-budget-admission-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    try {
+      await provider.migrate()
+      await seedDefaultPlan(provider)
+
+      const accepted = await service(provider, receivedAt, {
+        budgetAdmission: true,
+      }).acceptExecution(
+        commandInput({
+          requestId: defaultPlan.correlation.requestId,
+          correlation: {
+            workspaceId: defaultPlan.correlation.workspaceId,
+            projectId: defaultPlan.correlation.projectId,
+            taskId: defaultPlan.correlation.taskId,
+            agentId: defaultPlan.correlation.agentId,
+          },
+        })
+      )
+      const ledger = new DurableUsageLedger({ store: new SqliteDurableUsageStore(provider) })
+      const summary = await ledger.summary(
+        defaultPlan.correlation.workspaceId,
+        accepted.execution.executionId
+      )
+      const entries = await ledger.entries(
+        defaultPlan.correlation.workspaceId,
+        accepted.execution.executionId
+      )
+
+      expect(summary).toMatchObject({
+        executionId: accepted.execution.executionId,
+        currency: defaultPlan.constraints.limits.budget.currency,
+        maximumMicrounits: defaultPlan.constraints.limits.budget.maximumMicrounits,
+        maximumTokens: defaultPlan.constraints.limits.tokens.maximumTotal,
+        spentMicrounits: 0,
+        reservedMicrounits: 0,
+        availableMicrounits: defaultPlan.constraints.limits.budget.maximumMicrounits,
+        spentTokens: 0,
+        reservedTokens: 0,
+        availableTokens: defaultPlan.constraints.limits.tokens.maximumTotal,
+        settled: false,
+      })
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({ executionId: accepted.execution.executionId, sequence: 1 })
+      expect(entries[0].kind).toBe('credit')
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('new acceptance requires its persisted plan while accepted replay survives plan cleanup', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-plan-acceptance-'))
     const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
