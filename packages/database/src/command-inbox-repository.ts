@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import {
   CommandInboxError,
   CommandInboxRecordSchema,
@@ -17,13 +18,28 @@ import {
   type RetentionHoldPolicy,
   RetentionHoldError,
 } from '@control-plane/domain'
+import {
+  executionBudgetAdmissionSource,
+  executionPlanBudgetAllowance,
+  type ExecutionPlan,
+} from '@control-plane/execution-plan'
+import {
+  DurableUsageLedger,
+  budgetOpeningEntryIdempotencyKey,
+  type DurableUsageBudgetSummary,
+} from '@control-plane/usage-ledger'
+import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
 import { executions } from './schema/executions.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
-import { lockExecutionPlanReference } from './execution-plan-repository.js'
+import {
+  lockExecutionPlanReference,
+  PostgresExecutionPlanRepository,
+} from './execution-plan-repository.js'
+import { PostgresDurableUsageStore } from './usage-store.js'
 import {
   acquirePostgresRetentionHoldClassMutex,
   countPostgresMatchingActiveRetentionHolds,
@@ -33,7 +49,14 @@ import {
 const terminalExecutionStates = new Set<string>(['completed', 'failed', 'cancelled', 'timed_out'])
 
 export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  readonly #budgetAdmission: boolean
+
+  constructor(
+    readonly database: ControlPlaneDatabase,
+    options: { readonly budgetAdmission?: boolean } = {}
+  ) {
+    this.#budgetAdmission = options.budgetAdmission === true
+  }
 
   /**
    * Read-only eligibility assessment for the command-inbox class (#194).
@@ -290,72 +313,147 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
   ): Promise<CommandAcceptanceResult> {
     const parsedCommand = CommandInboxRecordSchema.parse(command)
     const parsedExecution = ExecutionSchema.parse(execution)
-    return this.database.transaction(async (transaction) => {
-      await transaction.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${retirementKey(parsedCommand)}, 0))`
-      )
-      await assertNotRetired(transaction, parsedCommand)
-      const [existingScope] = await transaction
-        .select({ commandId: commandInbox.commandId })
-        .from(commandInbox)
-        .where(scopeWhere(parsedCommand))
-        .limit(1)
-      if (!existingScope) {
-        if (
-          parsedCommand.executionPlan.executionPlanId !==
-            parsedExecution.executionPlan.executionPlanId ||
-          parsedCommand.executionPlan.contentDigest !==
-            parsedExecution.executionPlan.contentDigest ||
-          !(await lockExecutionPlanReference(transaction, parsedExecution.executionPlan))
-        ) {
-          throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+    return this.database.transaction(
+      async (transaction) => {
+        if (this.#budgetAdmission) {
+          await PostgresDurableUsageStore.acquireTransactionLocks(
+            transaction,
+            parsedCommand.workspaceId
+          )
         }
-      }
-      const insertedCommand = await transaction
-        .insert(commandInbox)
-        .values(toCommandRow(parsedCommand))
-        .onConflictDoNothing()
-        .returning({ commandId: commandInbox.commandId })
-      if (insertedCommand.length === 1) {
-        await transaction.insert(executions).values(toExecutionRow(parsedExecution))
-        return { outcome: 'accepted', command: parsedCommand, execution: parsedExecution }
-      }
+        await transaction.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${retirementKey(parsedCommand)}, 0))`
+        )
+        await assertNotRetired(transaction, parsedCommand)
+        const [existingScope] = await transaction
+          .select({ commandId: commandInbox.commandId })
+          .from(commandInbox)
+          .where(scopeWhere(parsedCommand))
+          .limit(1)
+        let allowance: ReturnType<typeof executionPlanBudgetAllowance> | undefined
+        if (!existingScope) {
+          if (
+            parsedCommand.executionPlan.executionPlanId !==
+              parsedExecution.executionPlan.executionPlanId ||
+            parsedCommand.executionPlan.contentDigest !==
+              parsedExecution.executionPlan.contentDigest ||
+            !(await lockExecutionPlanReference(transaction, parsedExecution.executionPlan))
+          ) {
+            throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+          }
+          if (this.#budgetAdmission) {
+            const plan = await new PostgresExecutionPlanRepository(transaction).get(
+              parsedExecution.executionPlan
+            )
+            if (plan === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+            allowance = await this.#admissionAllowance(
+              transaction,
+              parsedCommand,
+              parsedExecution,
+              plan
+            )
+          }
+        }
+        const insertedCommand = await transaction
+          .insert(commandInbox)
+          .values(toCommandRow(parsedCommand))
+          .onConflictDoNothing()
+          .returning({ commandId: commandInbox.commandId })
+        if (insertedCommand.length === 1) {
+          await transaction.insert(executions).values(toExecutionRow(parsedExecution))
+          if (allowance !== undefined) {
+            await PostgresDurableUsageStore.withTransaction(
+              transaction,
+              allowance.workspaceId,
+              (store) => new DurableUsageLedger({ store }).openBudget(allowance)
+            )
+          }
+          return { outcome: 'accepted', command: parsedCommand, execution: parsedExecution }
+        }
 
-      const [existingRow] = await transaction
-        .select()
-        .from(commandInbox)
-        .where(scopeWhere(parsedCommand))
-        .limit(1)
-      if (!existingRow) throw new Error('COMMAND_ID_CONFLICT')
-      const existing = fromCommandRow(existingRow)
-      const [executionRow] = await transaction
-        .select()
-        .from(executions)
-        .where(eq(executions.executionId, existing.executionId))
-        .limit(1)
-      if (!executionRow) throw new Error('COMMAND_EXECUTION_INVARIANT_VIOLATION')
-      const existingExecution = fromExecutionRow(executionRow)
-      if (existing.payloadHash === parsedCommand.payloadHash) {
-        return { outcome: 'duplicate', command: existing, execution: existingExecution }
-      }
+        const [existingRow] = await transaction
+          .select()
+          .from(commandInbox)
+          .where(scopeWhere(parsedCommand))
+          .limit(1)
+        if (!existingRow) throw new Error('COMMAND_ID_CONFLICT')
+        const existing = fromCommandRow(existingRow)
+        const [executionRow] = await transaction
+          .select()
+          .from(executions)
+          .where(eq(executions.executionId, existing.executionId))
+          .limit(1)
+          .for('key share')
+        if (!executionRow) throw new Error('COMMAND_EXECUTION_INVARIANT_VIOLATION')
+        const existingExecution = fromExecutionRow(executionRow)
+        if (existing.payloadHash === parsedCommand.payloadHash) {
+          if (this.#budgetAdmission) {
+            await this.#verifyAdmissionInTransaction(
+              transaction,
+              existing,
+              existingExecution,
+              existing,
+              existingExecution
+            )
+          }
+          return { outcome: 'duplicate', command: existing, execution: existingExecution }
+        }
 
-      const [conflictedRow] = await transaction
-        .update(commandInbox)
-        .set({
-          conflictCount: sql`${commandInbox.conflictCount} + 1`,
-          lastConflictAt: new Date(parsedCommand.lastSeenAt),
-          lastSeenAt: new Date(parsedCommand.lastSeenAt),
-          version: sql`${commandInbox.version} + 1`,
-        })
-        .where(eq(commandInbox.commandId, existing.commandId))
-        .returning()
-      if (!conflictedRow) throw new Error('COMMAND_CONFLICT_AUDIT_FAILED')
-      return {
-        outcome: 'conflict',
-        command: fromCommandRow(conflictedRow),
-        execution: existingExecution,
-      }
-    })
+        const [conflictedRow] = await transaction
+          .update(commandInbox)
+          .set({
+            conflictCount: sql`${commandInbox.conflictCount} + 1`,
+            lastConflictAt: new Date(parsedCommand.lastSeenAt),
+            lastSeenAt: new Date(parsedCommand.lastSeenAt),
+            version: sql`${commandInbox.version} + 1`,
+          })
+          .where(eq(commandInbox.commandId, existing.commandId))
+          .returning()
+        if (!conflictedRow) throw new Error('COMMAND_CONFLICT_AUDIT_FAILED')
+        return {
+          outcome: 'conflict',
+          command: fromCommandRow(conflictedRow),
+          execution: existingExecution,
+        }
+      },
+      { accessMode: 'read write', deferrable: false, isolationLevel: 'read committed' }
+    )
+  }
+
+  async verifyAdmission(
+    commandInput: CommandInboxRecord,
+    executionInput: Execution
+  ): Promise<void> {
+    if (!this.#budgetAdmission) return
+    const command = CommandInboxRecordSchema.parse(commandInput)
+    const execution = ExecutionSchema.parse(executionInput)
+    await this.database.transaction(
+      async (transaction) => {
+        await PostgresDurableUsageStore.acquireTransactionLocks(transaction, command.workspaceId)
+        const [storedCommandRow] = await transaction
+          .select()
+          .from(commandInbox)
+          .where(scopeWhere(command))
+          .limit(1)
+        if (storedCommandRow === undefined) throw invalidPersistedAdmission()
+        const storedCommand = fromCommandRow(storedCommandRow)
+        const [storedExecutionRow] = await transaction
+          .select()
+          .from(executions)
+          .where(eq(executions.executionId, storedCommand.executionId))
+          .limit(1)
+          .for('key share')
+        if (storedExecutionRow === undefined) throw invalidPersistedAdmission()
+        await this.#verifyAdmissionInTransaction(
+          transaction,
+          command,
+          execution,
+          storedCommand,
+          fromExecutionRow(storedExecutionRow)
+        )
+      },
+      { accessMode: 'read write', deferrable: false, isolationLevel: 'read committed' }
+    )
   }
 
   async get(scope: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
@@ -457,11 +555,121 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       .returning({ commandId: commandInbox.commandId })
     return updated.length === 1
   }
+
+  async #admissionAllowance(
+    transaction: CommandTransaction,
+    command: CommandInboxRecord,
+    execution: Execution,
+    plan: ExecutionPlan
+  ) {
+    const parentPlan = plan.parentExecutionPlan
+    if (execution.parentExecutionId === undefined) {
+      if (parentPlan !== undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+    } else {
+      const [parentRow] = await transaction
+        .select()
+        .from(executions)
+        .where(eq(executions.executionId, execution.parentExecutionId))
+        .limit(1)
+        .for('key share')
+      if (parentRow === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      const parent = fromExecutionRow(parentRow)
+      if (
+        parent.executionId !== execution.parentExecutionId ||
+        parent.correlation.workspaceId !== execution.correlation.workspaceId ||
+        parent.correlation.projectId !== execution.correlation.projectId ||
+        parentPlan === undefined ||
+        parent.executionPlan.executionPlanId !== parentPlan.executionPlanId ||
+        parent.executionPlan.contentDigest !== parentPlan.contentDigest
+      ) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+    }
+    return executionPlanBudgetAllowance(command, execution, plan)
+  }
+
+  async #verifyAdmissionInTransaction(
+    transaction: CommandTransaction,
+    commandInput: CommandInboxRecord,
+    executionInput: Execution,
+    storedCommand: CommandInboxRecord,
+    storedExecution: Execution
+  ): Promise<void> {
+    const suppliedSource = executionBudgetAdmissionSource(commandInput, executionInput)
+    const storedSource = executionBudgetAdmissionSource(storedCommand, storedExecution)
+    if (!isDeepStrictEqual(suppliedSource, storedSource)) throw invalidPersistedAdmission()
+
+    const verified = await PostgresDurableUsageStore.withTransaction(
+      transaction,
+      storedCommand.workspaceId,
+      async (store) => {
+        const ledger = new DurableUsageLedger({ store })
+        let summary: DurableUsageBudgetSummary
+        try {
+          summary = await ledger.summary(storedCommand.workspaceId, storedExecution.executionId)
+        } catch (error) {
+          if (error instanceof DurableUsageError && error.code === 'BUDGET_NOT_FOUND') {
+            throw invalidPersistedAdmission()
+          }
+          throw error
+        }
+        const entries = await ledger.entries(storedCommand.workspaceId, storedExecution.executionId)
+        const openingKey = budgetOpeningEntryIdempotencyKey(
+          storedSource.idempotencyKey,
+          storedExecution.executionId
+        )
+        const openingEntries = entries.filter((entry) => entry.source.idempotencyKey === openingKey)
+        const opening = openingEntries[0]
+        if (
+          openingEntries.length !== 1 ||
+          opening === undefined ||
+          opening.sequence !== 1 ||
+          opening.kind !== 'credit' ||
+          opening.source.sourceId !== storedSource.sourceId
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        const effect = await store.transaction(storedCommand.workspaceId, (usageTransaction) =>
+          usageTransaction.getEffect(storedSource.idempotencyKey)
+        )
+        const openingSummary = {
+          executionId: storedExecution.executionId,
+          currency: summary.currency,
+          maximumMicrounits: opening.quantity.value,
+          maximumTokens: summary.maximumTokens,
+          spentMicrounits: 0,
+          reservedMicrounits: 0,
+          availableMicrounits: opening.quantity.value,
+          spentTokens: 0,
+          reservedTokens: 0,
+          availableTokens: summary.maximumTokens,
+          settled: false,
+        }
+        if (
+          effect === undefined ||
+          effect.workspaceId !== storedCommand.workspaceId ||
+          effect.executionId !== storedExecution.executionId ||
+          effect.idempotencyKey !== storedSource.idempotencyKey ||
+          !isDeepStrictEqual(effect.result, openingSummary)
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        return summary
+      }
+    )
+    if (verified.settled && !terminalExecutionStates.has(storedExecution.state)) {
+      throw invalidPersistedAdmission()
+    }
+  }
 }
 
 type CommandRow = typeof commandInbox.$inferSelect
 
 type CommandTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
+
+function invalidPersistedAdmission(): DurableUsageError {
+  return new DurableUsageError('STORE_STATE_INVALID')
+}
 
 async function assertNotRetired(
   database: ControlPlaneDatabase | CommandTransaction,
