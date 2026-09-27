@@ -9,6 +9,11 @@ Later component implementation and executed PostgreSQL checks are recorded in th
 [PostgreSQL checkpoint](m11-postgres-durable-usage-store-2026-09-27.md). They do not
 complete the transaction-bound application activation described here.
 
+The later [admission preparation checkpoint](m11-usage-admission-replay-2026-09-27.md)
+adds tested callback-scoped transaction binding, service-level duplicate verification and the
+actual Local/Cloud/Hosted composition sites. These preparation APIs are not yet installed as
+authoritative budget admission in those compositions.
+
 ## Verified seams and gaps
 
 | Boundary                  | Current source                                                                                                                                   | Remaining implementation                                                                                                           |

@@ -40,6 +40,15 @@ component tests, not production capacity or live-profile acceptance. Do not run 
 old direct append repository as a concurrent authoritative budget writer. See the
 [PostgreSQL checkpoint](evidence/m11-postgres-durable-usage-store-2026-09-27.md).
 
+Both stores also expose callback-scoped `withTransaction(existingTransaction, workspaceId,
+operation)` for atomic integration with command acceptance. These bound stores do not start
+nested transactions; their capabilities expire after the callback, pending operations drain,
+and caught callback failures still force rollback. PostgreSQL admission must call
+`acquireTransactionLocks` before existing command/plan/owner locks. The
+[admission preparation checkpoint](evidence/m11-usage-admission-replay-2026-09-27.md) records
+native and actual PostgreSQL tests, replay verification and remaining composition work.
+The APIs alone do not activate production budget enforcement.
+
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
 implementation. Raw usage retention, surviving aggregates/replay fences, complete PostgreSQL

@@ -36,11 +36,17 @@ export class SqliteDurableUsageStore implements DurableUsageStore {
     const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
     if (!workspaceId.success) throw new DurableUsageError('INVALID_ENTRY')
     const lease = new UsageStoreLease()
+    let result: Result
+    let invalid = false
     try {
-      return await operation(new BoundSqliteDurableUsageStore(transaction, workspaceId.data, lease))
+      result = await operation(
+        new BoundSqliteDurableUsageStore(transaction, workspaceId.data, lease)
+      )
     } finally {
-      if (await lease.revokeAndDrain()) throw new DurableUsageError('STORE_STATE_INVALID')
+      invalid = await lease.revokeAndDrain()
     }
+    if (invalid) throw new DurableUsageError('STORE_STATE_INVALID')
+    return result
   }
 
   transaction<Result>(
@@ -51,16 +57,20 @@ export class SqliteDurableUsageStore implements DurableUsageStore {
     if (!parsedWorkspaceId.success) throw new DurableUsageError('INVALID_ENTRY')
     return this.provider.transaction(async (transaction) => {
       const lease = new UsageStoreLease()
+      let result: Result
+      let invalid = false
       try {
-        return await operation(
+        result = await operation(
           leaseUsageTransaction(
             new SqliteUsageTransaction(transaction, parsedWorkspaceId.data),
             lease
           )
         )
       } finally {
-        if (await lease.revokeAndDrain()) throw new DurableUsageError('STORE_STATE_INVALID')
+        invalid = await lease.revokeAndDrain()
       }
+      if (invalid) throw new DurableUsageError('STORE_STATE_INVALID')
+      return result
     })
   }
 }
@@ -337,8 +347,10 @@ class BoundSqliteDurableUsageStore implements DurableUsageStore {
     operation: (transaction: DurableUsageTransaction) => Promise<Result>
   ): Promise<Result> {
     const transactionLease = new UsageStoreLease()
+    let result: Result
+    let pending = false
     try {
-      return await operation(
+      result = await operation(
         leaseUsageTransaction(
           new SqliteUsageTransaction(this.#existingTransaction, this.#workspaceId),
           this.#lease,
@@ -349,14 +361,15 @@ class BoundSqliteDurableUsageStore implements DurableUsageStore {
       this.#lease.poison()
       throw error
     } finally {
-      const pending = await transactionLease.revokeAndDrain()
+      pending = await transactionLease.revokeAndDrain()
       this.#lease.endOperation()
       this.#active = false
       if (pending) {
         this.#lease.poison()
-        throw new DurableUsageError('STORE_STATE_INVALID')
       }
     }
+    if (pending) throw new DurableUsageError('STORE_STATE_INVALID')
+    return result
   }
 }
 

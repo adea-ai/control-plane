@@ -135,6 +135,27 @@ async function withStore(run) {
 }
 
 describe('SQLite durable usage transactions', () => {
+  test('preserves a failed operation error while rolling back bound writes', async () => {
+    await withStore(async (provider) => {
+      const failure = new Error('BOUND_USAGE_ORIGINAL_FAILURE')
+      await expect(
+        provider.transaction((transaction) =>
+          SqliteDurableUsageStore.withTransaction(transaction, workspaceId, (store) =>
+            store.transaction(workspaceId, async (usage) => {
+              await usage.putBudget(budget())
+              throw failure
+            })
+          )
+        )
+      ).rejects.toBe(failure)
+      expect(
+        await provider.transaction((transaction) =>
+          transaction.list(SQLITE_USAGE_NAMESPACES.budgets)
+        )
+      ).toEqual([])
+    })
+  })
+
   test('uses the caller transaction and rolls back owner and budget writes together', async () => {
     await withStore(async (provider) => {
       const ownerRecordId = recordId(executionId)

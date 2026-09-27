@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test as runTest } from 'bun:test'
 import process from 'node:process'
 import { and, eq, sql } from 'drizzle-orm'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
@@ -19,6 +19,10 @@ import { PostgresDurableUsageStore } from './usage-store.ts'
 import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.ts'
 import { usageLedgerEntries } from './schema/usage-ledger.ts'
 import { executions } from './schema/executions.ts'
+
+// Each case includes a cold isolated database and canonical migrations, plus
+// real connections/lock waits. This is a fixture deadline, not a runtime SLO.
+const test = (name, operation) => runTest(name, operation, 30_000)
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
@@ -316,6 +320,33 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
         )
       })
     ).rejects.toThrow('STORE_STATE_INVALID')
+    await expect(
+      store.transaction(rollbackOwner.execution.correlation.workspaceId, (usage) =>
+        usage.getBudget(rollbackOwner.execution.executionId)
+      )
+    ).resolves.toBeUndefined()
+
+    const originalFailure = new Error('BOUND_USAGE_ORIGINAL_FAILURE')
+    await expect(
+      isolated.application.transaction((transaction) =>
+        PostgresDurableUsageStore.withTransaction(
+          transaction,
+          rollbackOwner.execution.correlation.workspaceId,
+          (boundStore) =>
+            boundStore.transaction(
+              rollbackOwner.execution.correlation.workspaceId,
+              async (usage) => {
+                await usage.putBudget({
+                  ...budget,
+                  workspaceId: rollbackOwner.execution.correlation.workspaceId,
+                  executionId: rollbackOwner.execution.executionId,
+                })
+                throw originalFailure
+              }
+            )
+        )
+      )
+    ).rejects.toBe(originalFailure)
     await expect(
       store.transaction(rollbackOwner.execution.correlation.workspaceId, (usage) =>
         usage.getBudget(rollbackOwner.execution.executionId)

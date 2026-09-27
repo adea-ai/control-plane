@@ -114,13 +114,17 @@ export class PostgresDurableUsageStore implements DurableUsageStore {
     if (!workspaceId.success) throw usageError('INVALID_ENTRY')
     await PostgresDurableUsageStore.acquireTransactionLocks(transaction, workspaceId.data)
     const lease = new PostgresUsageStoreLease()
+    let result: Result
+    let invalid = false
     try {
-      return await operation(
+      result = await operation(
         new BoundPostgresDurableUsageStore(transaction, workspaceId.data, lease)
       )
     } finally {
-      if (await lease.revokeAndDrain()) throw storeStateInvalid()
+      invalid = await lease.revokeAndDrain()
     }
+    if (invalid) throw storeStateInvalid()
+    return result
   }
 
   async transaction<Result>(
@@ -134,16 +138,20 @@ export class PostgresDurableUsageStore implements DurableUsageStore {
       async (transaction) => {
         await PostgresDurableUsageStore.acquireTransactionLocks(transaction, workspaceId.data)
         const lease = new PostgresUsageStoreLease()
+        let result: Result
+        let invalid = false
         try {
-          return await operation(
+          result = await operation(
             leasePostgresUsageTransaction(
               new PostgresDurableUsageTransaction(transaction, workspaceId.data),
               lease
             )
           )
         } finally {
-          if (await lease.revokeAndDrain()) throw storeStateInvalid()
+          invalid = await lease.revokeAndDrain()
         }
+        if (invalid) throw storeStateInvalid()
+        return result
       },
       { accessMode: 'read write', deferrable: false, isolationLevel: 'read committed' }
     )
@@ -189,8 +197,10 @@ class BoundPostgresDurableUsageStore implements DurableUsageStore {
     operation: (transaction: DurableUsageTransaction) => Promise<Result>
   ): Promise<Result> {
     const transactionLease = new PostgresUsageStoreLease()
+    let result: Result
+    let pending = false
     try {
-      return await operation(
+      result = await operation(
         leasePostgresUsageTransaction(
           new PostgresDurableUsageTransaction(this.#existingTransaction, this.#workspaceId),
           this.#lease,
@@ -201,14 +211,15 @@ class BoundPostgresDurableUsageStore implements DurableUsageStore {
       this.#lease.poison()
       throw error
     } finally {
-      const pending = await transactionLease.revokeAndDrain()
+      pending = await transactionLease.revokeAndDrain()
       this.#lease.endOperation()
       this.#active = false
       if (pending) {
         this.#lease.poison()
-        throw storeStateInvalid()
       }
     }
+    if (pending) throw storeStateInvalid()
+    return result
   }
 }
 
