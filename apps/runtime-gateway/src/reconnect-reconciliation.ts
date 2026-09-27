@@ -160,6 +160,7 @@ export class RuntimeReconnectReconciliationService {
         await this.#delivery.deliver(command.commandId, {
           channelGeneration: source.channelGeneration,
           sequence: nextSequence ? await nextSequence() : sequence++,
+          protocolVersion: source.protocolVersion,
         })
         result.expired++
         continue
@@ -181,6 +182,7 @@ export class RuntimeReconnectReconciliationService {
       await this.#delivery.deliver(command.commandId, {
         channelGeneration: source.channelGeneration,
         sequence: nextSequence ? await nextSequence() : sequence++,
+        protocolVersion: source.protocolVersion,
       })
       result.redelivered++
       this.#metrics.increment('runtime_gateway.recovery_redeliveries')

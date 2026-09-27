@@ -99,6 +99,7 @@ export class RuntimeGatewayOutboundError extends Error {
       | 'RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE'
       | 'RUNTIME_GATEWAY_CHANNEL_BACKPRESSURED'
       | 'RUNTIME_GATEWAY_COMMAND_TOO_LARGE'
+      | 'RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE'
   ) {
     super(code)
     this.name = 'RuntimeGatewayOutboundError'
@@ -250,6 +251,12 @@ export class RuntimeGatewayWebSocketLifecycle {
       !sameChannel(connection.record, coordinated)
     ) {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE')
+    }
+    if (
+      command.protocolVersion.major !== coordinated.protocolVersion.major ||
+      command.protocolVersion.minor > coordinated.protocolVersion.minor
+    ) {
+      throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE')
     }
     await connection.authenticatedChannel.assertCommandAllowed(command)
     signal?.throwIfAborted()

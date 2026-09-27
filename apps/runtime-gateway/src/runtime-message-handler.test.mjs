@@ -25,8 +25,14 @@ describe('Runtime Gateway production message routing', () => {
       },
       events: {
         ingestProgress: async () => calls.push('progress'),
-        ingestResult: async () => calls.push('result'),
-        ingestError: async () => calls.push('error'),
+        ingestResult: async () => {
+          calls.push('result')
+          return { outcome: 'applied' }
+        },
+        ingestError: async () => {
+          calls.push('error')
+          return { outcome: 'applied' }
+        },
       },
     })
     const artifactResult = {

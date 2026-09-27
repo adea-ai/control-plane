@@ -97,6 +97,129 @@ describe('durable Runtime Gateway command delivery', () => {
     ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_PAYLOAD_MISMATCH' })
   })
 
+  test('authorizes before command admission and leaves denied commands unrecorded', async () => {
+    const repository = new InMemoryRuntimeCommandRepository()
+    const gateway = new RuntimeCommandDeliveryService({
+      repository,
+      sender: new RecordingSender(),
+      metrics: new RecordingGatewayMetrics(),
+      authorize: async () => {
+        throw Object.assign(new Error('denied'), { code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED' })
+      },
+    })
+
+    await expect(gateway.enqueue(command)).rejects.toMatchObject({
+      code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED',
+    })
+    expect(await repository.get(command.commandId)).toBeUndefined()
+  })
+
+  test('rechecks authority before every dispatch and pending redelivery', async () => {
+    const repository = new InMemoryRuntimeCommandRepository()
+    const sender = new RecordingSender()
+    let allowed = true
+    const gateway = new RuntimeCommandDeliveryService({
+      repository,
+      sender,
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-08-25T12:00:01.000Z'),
+      authorize: async () => {
+        if (!allowed)
+          throw Object.assign(new Error('denied'), { code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED' })
+      },
+    })
+    await gateway.enqueue(command)
+    allowed = false
+
+    await expect(
+      gateway.deliver(command.commandId, { channelGeneration: 1, sequence: 1 })
+    ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED' })
+    const pending = new RuntimePendingCommandDispatcher({ repository, delivery: gateway })
+    await expect(
+      pending.dispatch(
+        {
+          nodeId: command.nodeId,
+          workspaceId: command.workspaceId,
+          channelGeneration: 1,
+          gatewayInstanceId: 'gateway-test',
+          connectionId: 'connection-test',
+          protocolVersion: { major: 1, minor: 7 },
+          connectedAt: command.issuedAt,
+          lastHeartbeatAt: command.issuedAt,
+        },
+        1
+      )
+    ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED' })
+    expect((await repository.get(command.commandId)).status).toBe('queued')
+    expect(sender.envelopes).toHaveLength(0)
+  })
+
+  test('rechecks authority after the dispatch write and never sends after revocation', async () => {
+    const repository = new InMemoryRuntimeCommandRepository()
+    const sender = new RecordingSender()
+    let checks = 0
+    const gateway = new RuntimeCommandDeliveryService({
+      repository,
+      sender,
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-08-25T12:00:01.000Z'),
+      authorize: async () => {
+        checks += 1
+        if (checks === 3)
+          throw Object.assign(new Error('revoked during dispatch'), {
+            code: 'RUNTIME_COMMAND_AUTHORIZATION_DENIED',
+          })
+      },
+    })
+    await gateway.enqueue(command)
+    await expect(
+      gateway.deliver(command.commandId, { channelGeneration: 1, sequence: 1 })
+    ).rejects.toMatchObject({ code: 'RUNTIME_COMMAND_SEND_FAILED' })
+    expect(await gateway.get(command.commandId)).toMatchObject({ status: 'dispatched' })
+    expect(sender.envelopes).toEqual([])
+  })
+
+  test('commits expiry despite revoked authority but never expires a terminal result', async () => {
+    const repository = new InMemoryRuntimeCommandRepository()
+    const sender = new RecordingSender()
+    const gateway = service(repository, sender)
+    await gateway.enqueue(command)
+    await gateway.deliver(command.commandId, { channelGeneration: 1, sequence: 1 })
+    await gateway.recordResult(golden.result)
+
+    const replay = new RuntimeCommandDeliveryService({
+      repository,
+      sender,
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-08-25T12:05:00.000Z'),
+      authorize: async () => {
+        throw new Error('revoked')
+      },
+    })
+    await expect(
+      replay.deliver(command.commandId, { channelGeneration: 2, sequence: 2 })
+    ).rejects.toThrow('revoked')
+    expect(await repository.get(command.commandId)).toMatchObject({ status: 'succeeded' })
+
+    const expiredRepository = new InMemoryRuntimeCommandRepository()
+    const expired = await service(expiredRepository, new RecordingSender()).enqueue(command)
+    const revokedAfterExpiry = new RuntimeCommandDeliveryService({
+      repository: expiredRepository,
+      sender,
+      metrics: new RecordingGatewayMetrics(),
+      now: () => new Date('2026-08-25T12:05:00.000Z'),
+      authorize: async () => {
+        throw new Error('revoked')
+      },
+    })
+    const outcome = await revokedAfterExpiry.deliver(expired.record.commandId, {
+      channelGeneration: 1,
+      sequence: 1,
+    })
+    expect(outcome).toMatchObject({ sent: false, record: { status: 'expired' } })
+    expect(sender.envelopes).toHaveLength(1)
+  })
+
   test('expires queued commands before reconnect and rejects stale channel delivery', async () => {
     const repository = new InMemoryRuntimeCommandRepository()
     const sender = new RecordingSender()

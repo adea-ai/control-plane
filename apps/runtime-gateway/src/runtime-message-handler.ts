@@ -63,14 +63,16 @@ export class RuntimeGatewayMessageRouter implements RuntimeGatewayMessageHandler
       return
     }
     if (envelope.type === 'result') {
-      await this.#events.ingestResult(envelope, source)
+      const effect = await this.#events.ingestResult(envelope, source)
+      if (effect.outcome !== 'applied' && effect.outcome !== 'duplicate') return
       const resultReference =
         'artifact' in envelope.result ? envelope.result.artifact.artifactId : undefined
       await this.#delivery.recordResult(envelope, resultReference)
       return
     }
     if (envelope.type === 'error') {
-      await this.#events.ingestError(envelope, source)
+      const effect = await this.#events.ingestError(envelope, source)
+      if (effect.outcome !== 'applied' && effect.outcome !== 'duplicate') return
       await this.#delivery.recordError(envelope)
       return
     }

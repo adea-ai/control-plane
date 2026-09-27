@@ -40,6 +40,7 @@ export interface RuntimeGatewayStartOptions extends ServiceStartOptions {
   readonly traceId?: RuntimeGatewayCompositionOptions['traceId']
   /** Explicit metric adapter; when absent the gateway emits no consistency metrics. */
   readonly metricAdapter?: RuntimeGatewayCompositionOptions['metricAdapter']
+  readonly runtime?: RuntimeGatewayCompositionOptions['runtime']
   readonly instanceId?: RuntimeGatewayCompositionOptions['instanceId']
   readonly hostname?: RuntimeGatewayCompositionOptions['hostname']
 }
@@ -70,6 +71,7 @@ export const start = ({
           reachability: options.reachability,
           traceId: options.traceId,
           metricAdapter: options.metricAdapter,
+          ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
         })
         server = composed.webSocketServer
       }
