@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.10.0...workflow-worker-v1.10.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **m11:** close approval and retention audit gaps ([#740](https://github.com/adea-ai/control-plane/issues/740)) ([58559d9](https://github.com/adea-ai/control-plane/commit/58559d9a0b4b4283396635f8b25bf633f4a87beb))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.9.0...workflow-worker-v1.10.0) (2026-09-23)
 
 

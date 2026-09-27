@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.5.3...execution-plan-v1.5.4) (2026-09-27)
+
+
+### Bug Fixes
+
+* **m11:** close approval and retention audit gaps ([#740](https://github.com/adea-ai/control-plane/issues/740)) ([58559d9](https://github.com/adea-ai/control-plane/commit/58559d9a0b4b4283396635f8b25bf633f4a87beb))
+
 ## [1.5.3](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.5.2...execution-plan-v1.5.3) (2026-09-22)
 
 
