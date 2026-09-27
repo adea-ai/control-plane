@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { expect, test } from 'bun:test'
 import { FilesystemObjectStore, ObjectStoreError, R2ObjectStore } from '@control-plane/object-store'
 import { ObjectStoreHostedArtifactStore } from './hosted-managed-pi-artifact-stores.js'
@@ -95,7 +96,7 @@ test.each([false, true])(
           ContentLength: stored.body.byteLength,
           ContentType: stored.contentType,
           Metadata: stored.metadata,
-          Body: { transformToByteArray: async () => stored.body.slice() },
+          Body: Readable.from([stored.body.slice()]),
         }
       },
     }
