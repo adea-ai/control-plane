@@ -4,6 +4,12 @@ This checkpoint is partial M11.3/M11.9 progress, not milestone completion,
 provider spend enforcement or deployment certification. Original issues #188,
 #190, #191, #194, #195, #196 and #197 remain open.
 
+The later [PostgreSQL composition checkpoint](m11-postgres-runtime-admission-2026-09-27.md)
+adds actual local PostgreSQL worker guard evidence and runs the full integration
+lane, including the formerly skipped Hosted files. Controlled callbacks and a
+shared connection across rebuilt compositions are not live-provider/process
+restart or runtime idempotency proof. The native results below remain historical.
+
 ## Implemented boundary
 
 `DurableRuntimeBudgetAdmission` verifies the recorded acceptance against the
@@ -86,7 +92,7 @@ allocation, trusted provider/funding provenance, exact charges, unknown-cost
 holds, terminal settlement and approved extensions remain unfinished. Raw
 runtime accounting metadata must not authorize HQ charges or zero-cost settlement.
 
-This checkpoint does not certify live PostgreSQL runtime admission, Railway,
+This original native checkpoint alone does not certify PostgreSQL runtime admission, Railway,
 Restate, a real model/provider, E2B, whole-process recovery, deployed ACP/graph
 execution, capacity/retention/restore or independent human acceptance. No issue
 closure, staging wake, production deployment or merge is implied.
