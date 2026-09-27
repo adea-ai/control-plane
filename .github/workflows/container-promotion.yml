@@ -141,6 +141,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: control-plane / production
+    concurrency:
+      group: control-plane-production-deployment
+      cancel-in-progress: false
     steps:
       - name: Checkout the promotion client
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -153,11 +156,23 @@ jobs:
           bun-version: 1.4.0
           no-cache: true
 
+      - name: Install frozen workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the database migration dependency closure
+        run: bun run build --filter=@control-plane/database...
+
       - name: Download promotion evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: promotion-*-${{ github.sha }}
           merge-multiple: true
+
+      - name: Migrate and verify the production database schema
+        env:
+          NEON_PRODUCTION_MIGRATION_URL: ${{ secrets.NEON_PRODUCTION_MIGRATION_URL }}
+          RAILWAY_PRODUCTION_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+        run: bun scripts/migrate-production-schema.mjs
 
       - name: Deploy, reconcile, and verify exact image digests
         env:

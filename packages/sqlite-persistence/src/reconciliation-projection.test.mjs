@@ -8,6 +8,11 @@ import {
   ExecutionReconciliationService,
 } from '@control-plane/domain'
 import {
+  acceptancePlan,
+  acceptancePlanReference,
+  seedAcceptancePlan,
+} from './execution-plan-fixtures.mjs'
+import {
   SqliteExecutionCancellationRepository,
   SqliteExecutionEventRepository,
   SqliteExecutionRepository,
@@ -21,18 +26,14 @@ import {
 
 const now = '2026-09-01T12:00:00.000Z'
 const later = '2026-09-01T12:05:00.000Z'
+const { requestId } = acceptancePlan.correlation
 const correlation = {
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  workspaceId: acceptancePlan.correlation.workspaceId,
+  projectId: acceptancePlan.correlation.projectId,
+  taskId: acceptancePlan.correlation.taskId,
+  agentId: acceptancePlan.correlation.agentId,
 }
-const requestId = 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV'
-const executionPlan = {
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  contentDigest: `sha256:${'7'.repeat(64)}`,
-  schemaVersion: 1,
-}
+const executionPlan = acceptancePlanReference
 const executionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const commandId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const attemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -82,6 +83,7 @@ async function seeded({ runtimeStatus = 'succeeded' } = {}) {
     executionPlanValidator: { validate: async () => true },
     now: () => now,
   })
+  await seedAcceptancePlan(persistence)
   const { execution } = await inbox.acceptExecution({
     callerPrincipalId: 'svc_agent-hq',
     operation: 'execution.accept',

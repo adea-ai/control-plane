@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
-import { ContextPackageReferenceSchema, ContextPackageSchema } from '@control-plane/context'
+import {
+  ContextPackageReferenceSchema,
+  ContextPackageSchema,
+  assertContextPackageIntegrity,
+  assertContextPackageDerivedFrom,
+} from '@control-plane/context'
 import {
   IdentifierSchemas,
   ServiceCallerAssertionSchema,
@@ -12,6 +17,13 @@ import {
   SkillVersionSchema,
   composeExecutionConstraints,
   type ExecutionConstraintSet,
+  type AgentProfileRepository,
+  type AgentProfileVersion,
+  type CatalogApprovalPolicy,
+  type CatalogApprovalRepository,
+  type SkillRepository,
+  type SkillVersion,
+  evaluateVersionApproval,
 } from '@control-plane/domain'
 import {
   CapabilityRequirementSchema,
@@ -257,6 +269,57 @@ export function deriveExecutionPlan(parentInput: unknown, input: unknown): Execu
   })
 }
 
+/** Verify a child plan using the same authority and runtime derivation rules used at creation. */
+export function assertExecutionPlanDerivedFrom(
+  parentInput: unknown,
+  childInput: unknown,
+  parentContextPackageInput: unknown,
+  childContextPackageInput: unknown
+): ExecutionPlan {
+  const parent = assertExecutionPlanIntegrity(parentInput)
+  const child = assertExecutionPlanIntegrity(childInput)
+  let parentContextPackage: z.output<typeof ContextPackageSchema>
+  let childContextPackage: z.output<typeof ContextPackageSchema>
+  try {
+    parentContextPackage = assertContextPackageIntegrity(parentContextPackageInput)
+    childContextPackage = assertContextPackageIntegrity(childContextPackageInput)
+  } catch {
+    fail('CONTRADICTORY_REFERENCE', child.executionPlanId)
+  }
+  if (
+    canonical(contextPin(parentContextPackage)) !== canonical(parent.contextPackage) ||
+    canonical(contextPin(childContextPackage)) !== canonical(child.contextPackage)
+  ) {
+    fail('CONTRADICTORY_REFERENCE', child.executionPlanId)
+  }
+
+  const derivationParentContext = canonicalContextPackage(parentContextPackage)
+  const derivationChildContext = canonicalContextPackage(childContextPackage)
+  const sameContext =
+    canonical(contextPin(parentContextPackage)) === canonical(contextPin(childContextPackage))
+  if (!sameContext) {
+    assertContextPackageDerivedFrom(parentContextPackage, childContextPackage)
+  }
+  const derivationParent = sameContext
+    ? { ...parent, contextPackage: contextPin(derivationParentContext) }
+    : parent
+  const derived = deriveExecutionPlan(derivationParent, {
+    correlation: child.correlation,
+    contextPackage: derivationChildContext,
+    constraints: child.constraints,
+    runtimeRequirements: child.runtimeRequirements,
+    outputContract: child.outputContract,
+    compiledAt: child.compiledAt,
+  })
+  if (
+    canonical(withoutExecutionPlanIdentity(derived)) !==
+    canonical(withoutExecutionPlanIdentity(child))
+  ) {
+    fail('CHILD_AUTHORITY_EXPANSION', child.executionPlanId)
+  }
+  return child
+}
+
 export interface ExecutionPlanRepository {
   put(plan: ExecutionPlan): Promise<ExecutionPlanReference>
   get(reference: ExecutionPlanReference): Promise<ExecutionPlan | undefined>
@@ -362,8 +425,24 @@ export function assertExecutionPlanIntegrity(input: unknown): ExecutionPlan {
   return plan
 }
 
+export interface ExecutionPlanAcceptanceValidatorOptions {
+  /** Current catalog reads used only for new execution acceptance. */
+  readonly catalog: {
+    readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
+    readonly skills: Pick<SkillRepository, 'getSkillVersion'>
+  }
+  /** Optional execution-time approval policy shared with catalog resolution. */
+  readonly approvalGate?: {
+    readonly approvals: Pick<CatalogApprovalRepository, 'list'>
+    readonly policy: CatalogApprovalPolicy
+  }
+}
+
 export class ExecutionPlanAcceptanceValidator {
-  constructor(readonly repository: ExecutionPlanRepository) {}
+  constructor(
+    readonly repository: ExecutionPlanRepository,
+    readonly options?: ExecutionPlanAcceptanceValidatorOptions
+  ) {}
 
   async validate(input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
@@ -373,15 +452,126 @@ export class ExecutionPlanAcceptanceValidator {
     readonly agentId: string
   }): Promise<boolean> {
     const plan = await this.repository.get(input.executionPlan)
-    return (
+    const correlated =
       plan !== undefined &&
       plan.schemaVersion === input.executionPlan.schemaVersion &&
       plan.correlation.workspaceId === input.workspaceId &&
       plan.correlation.projectId === input.projectId &&
       plan.correlation.taskId === input.taskId &&
       plan.correlation.agentId === input.agentId
+    if (!correlated) return false
+
+    const options = this.options
+    if (options === undefined) return true
+
+    const [profile, skills] = await Promise.all([
+      options.catalog.profiles.getAgentProfileVersion(plan.profile.profileVersionId),
+      Promise.all(
+        plan.skills.map((pin) => options.catalog.skills.getSkillVersion(pin.skillVersionId))
+      ),
+    ])
+    if (
+      !profilePinIsCurrent(profile, plan.profile) ||
+      skills.some((skill) => skill === undefined)
+    ) {
+      return false
+    }
+    const currentSkills = skills as SkillVersion[]
+    if (!profileSkillsMatchPlan(profile, currentSkills, plan)) return false
+
+    const gate = options.approvalGate
+    if (gate === undefined || !gate.policy.required) return true
+
+    const approvals = await Promise.all([
+      evaluateVersionApproval({
+        approvals: gate.approvals,
+        versionKind: 'agent_profile',
+        versionId: profile.profileVersionId,
+        policy: gate.policy,
+        version: {
+          revision: profile.revision,
+          contentDigest: profile.contentDigest,
+          publishedAt: profile.lifecycleMetadata.publishedAt,
+        },
+      }),
+      ...currentSkills.map((skill) =>
+        evaluateVersionApproval({
+          approvals: gate.approvals,
+          versionKind: 'skill',
+          versionId: skill.skillVersionId,
+          policy: gate.policy,
+          version: {
+            revision: skill.revision,
+            contentDigest: skill.manifest.contentDigest,
+            publishedAt: skill.lifecycleMetadata.publishedAt,
+          },
+        })
+      ),
+    ])
+    return approvals.every(
+      ({ verdict }) =>
+        verdict === 'approved' || verdict === 'grandfathered' || verdict === 'not_required'
     )
   }
+}
+
+function profilePinIsCurrent(
+  profile: AgentProfileVersion | undefined,
+  pin: ExecutionPlan['profile']
+): profile is AgentProfileVersion {
+  return (
+    profile !== undefined &&
+    profile.lifecycle === 'published' &&
+    profile.profileId === pin.profileId &&
+    profile.profileVersionId === pin.profileVersionId &&
+    profile.version === pin.version &&
+    profile.revision === pin.revision &&
+    profile.definition.schemaVersion === pin.schemaVersion &&
+    profile.contentDigest === pin.contentDigest
+  )
+}
+
+function profileSkillsMatchPlan(
+  profile: AgentProfileVersion,
+  skills: readonly SkillVersion[],
+  plan: ExecutionPlan
+): boolean {
+  if (
+    profile.definition.skills.length !== plan.skills.length ||
+    new Set(profile.definition.skills.map((reference) => reference.skillVersionId)).size !==
+      profile.definition.skills.length
+  ) {
+    return false
+  }
+
+  const planPins = new Map(plan.skills.map((pin) => [pin.skillVersionId, pin]))
+  if (planPins.size !== plan.skills.length) return false
+  if (
+    !profile.definition.skills.every((reference) => {
+      const pin = planPins.get(reference.skillVersionId)
+      return (
+        pin !== undefined &&
+        reference.skillId === pin.skillId &&
+        reference.contentDigest === pin.contentDigest
+      )
+    })
+  ) {
+    return false
+  }
+
+  return skills.every((skill) => {
+    const pin = planPins.get(skill.skillVersionId)
+    return (
+      pin !== undefined &&
+      skill.lifecycle === 'published' &&
+      skill.skillId === pin.skillId &&
+      skill.skillVersionId === pin.skillVersionId &&
+      skill.revision === pin.revision &&
+      skill.manifest.schemaVersion === pin.schemaVersion &&
+      skill.manifest.semanticVersion === pin.semanticVersion &&
+      skill.manifest.contentDigest === pin.contentDigest
+    )
+  })
 }
 
 function parseCompilationInput(input: unknown): z.output<typeof CompilationInputSchema> {
@@ -485,6 +675,28 @@ function assertContextIntegrity(contextPackage: z.output<typeof ContextPackageSc
     contextPackage.contextPackageId !== hashIdentifier('ctx', expectedDigest)
   ) {
     fail('CONTRADICTORY_REFERENCE', contextPackage.contextPackageId)
+  }
+}
+
+function canonicalContextPackage(
+  contextPackage: z.output<typeof ContextPackageSchema>
+): z.output<typeof ContextPackageSchema> {
+  const content = omitIdentity(contextPackage, 'contextPackageId')
+  const contentDigest = sha256(normalize(content))
+  return ContextPackageSchema.parse({
+    ...content,
+    contextPackageId: hashIdentifier('ctx', contentDigest),
+    contentDigest,
+  })
+}
+
+function withoutExecutionPlanIdentity(plan: ExecutionPlan): Record<string, unknown> {
+  return {
+    ...omitIdentity(plan, 'executionPlanId'),
+    contextPackage: {
+      schemaVersion: plan.contextPackage.schemaVersion,
+      compilerVersion: plan.contextPackage.compilerVersion,
+    },
   }
 }
 

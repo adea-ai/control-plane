@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { CatalogApprovalService } from './index.ts'
+import { CatalogApprovalAdministration, CatalogApprovalService } from './index.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
 
@@ -35,7 +35,7 @@ function setup({ profile, skill } = {}) {
       return skill?.skillVersionId === versionId ? skill : undefined
     },
   }
-  return { approvals, service: new CatalogApprovalService({ approvals, versions }) }
+  return { approvals, versions, service: new CatalogApprovalService({ approvals, versions }) }
 }
 
 const publishedProfile = {
@@ -65,6 +65,33 @@ const decision = (overrides = {}) => ({
 })
 
 describe('catalog version approval decisions', () => {
+  test('administration requires a verified operator and refuses claimed identity or authority', async () => {
+    const { approvals, versions } = setup({ profile: publishedProfile })
+    const request = { operation: 'approvals.record', decision: decision() }
+    await expect(
+      new CatalogApprovalAdministration({ approvals, versions }).apply(request)
+    ).rejects.toMatchObject({ code: 'CATALOG_APPROVAL_OPERATOR_REQUIRED' })
+    const operator = {
+      actorPrincipalRef: 'operator:sqlite:uid:42',
+      authorityRef: 'authority:sqlite:local-os',
+    }
+    const administration = new CatalogApprovalAdministration({ approvals, versions, operator })
+    await expect(administration.apply(request)).rejects.toMatchObject({
+      code: 'CATALOG_APPROVAL_OPERATOR_MISMATCH',
+    })
+    await expect(
+      administration.apply({
+        ...request,
+        decision: decision({ ...operator, authorityRef: 'grant://someone-else' }),
+      })
+    ).rejects.toMatchObject({ code: 'CATALOG_APPROVAL_OPERATOR_MISMATCH' })
+    expect(approvals.decisions).toHaveLength(0)
+    const recorded = await administration.apply({ ...request, decision: decision(operator) })
+    expect(recorded.decision).toMatchObject(operator)
+    expect(
+      (await administration.apply({ ...request, decision: decision(operator) })).replayed
+    ).toBe(true)
+  })
   test('records a version/digest-bound approval and inspects it', async () => {
     const { service } = setup({ profile: publishedProfile })
     const recorded = await service.decide(decision())

@@ -40,7 +40,7 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
           throw new Error('EXECUTION_VALIDATION_COMMAND_CONFLICT')
         return existing
       }
-      await new PostgresExecutionPlanRepository(transaction).put(plan)
+      await new PostgresExecutionPlanRepository(transaction).putForReference(plan)
       await transaction.insert(executionValidationCommands).values({
         commandKey: key,
         workspaceId: record.scope.workspaceId,
@@ -54,7 +54,7 @@ export class PostgresExecutionValidationCommandRepository implements ExecutionVa
 }
 
 async function read(
-  database: Pick<ControlPlaneDatabase, 'select' | 'insert'>,
+  database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>,
   scope: ExecutionValidationCommandScope
 ): Promise<ExecutionValidationCommandRecord | undefined> {
   const [row] = await database

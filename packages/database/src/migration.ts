@@ -7,6 +7,16 @@ import { assertPostgresUrl, DatabaseConnectionError } from './connection.js'
 
 export interface MigrationOptions {
   readonly migrationsFolder?: string
+  readonly connectTimeoutSeconds?: number
+  readonly statementTimeoutMs?: number
+  readonly lockTimeoutMs?: number
+  readonly verifyTls?: boolean
+}
+
+function assertBoundedTimeout(name: string, value: number | undefined, maximum: number): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > maximum)) {
+    throw new Error(`Invalid migration ${name} timeout`)
+  }
 }
 
 export async function migrateDatabase(
@@ -15,10 +25,23 @@ export async function migrateDatabase(
 ): Promise<void> {
   if (credentials.role !== 'migration') throw new DatabaseConnectionError('INVALID_CREDENTIAL_ROLE')
   assertPostgresUrl(credentials.url)
+  assertBoundedTimeout('connection', options.connectTimeoutSeconds, 60)
+  assertBoundedTimeout('statement', options.statementTimeoutMs, 300_000)
+  assertBoundedTimeout('lock', options.lockTimeoutMs, 30_000)
   const client = postgres(credentials.url, {
     max: 1,
     onnotice: () => undefined,
     prepare: false,
+    ...(options.connectTimeoutSeconds === undefined
+      ? {}
+      : { connect_timeout: options.connectTimeoutSeconds }),
+    ...(options.verifyTls === true ? { ssl: 'verify-full' as const } : {}),
+    connection: {
+      ...(options.statementTimeoutMs === undefined
+        ? {}
+        : { statement_timeout: options.statementTimeoutMs }),
+      ...(options.lockTimeoutMs === undefined ? {} : { lock_timeout: options.lockTimeoutMs }),
+    },
   })
   try {
     await migrate(drizzle(client), {

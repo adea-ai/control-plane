@@ -2,6 +2,7 @@ import { open, lstat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { parseArgs } from 'node:util'
+import { userInfo } from 'node:os'
 import {
   CatalogApprovalAdministration,
   CatalogApprovalAdministrationRequestSchema,
@@ -13,6 +14,7 @@ import {
 } from '@control-plane/sqlite-persistence'
 import {
   createPostgresConnection,
+  catalogApprovalDatabaseAuthority,
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
 } from '@control-plane/database'
@@ -54,6 +56,8 @@ try {
     await file.close()
   }
   let administration
+  const actorPrincipalRef = `operator:os-user:${encodeURIComponent(userInfo().username)}`
+  let operator
   if (values.backend === 'sqlite') {
     if (values.host || !isAbsolute(values.database)) throw new Error('INVALID_TARGET')
     const stat = await lstat(values.database)
@@ -62,9 +66,11 @@ try {
     close = async () => provider.close()
     await provider.migrate()
     const versions = new SqliteVersionedCatalogRepository(provider)
+    operator = { actorPrincipalRef, authorityRef: 'authority:sqlite:local-os' }
     administration = new CatalogApprovalAdministration({
       approvals: new SqliteCatalogApprovalRepository(provider),
       versions,
+      operator,
     })
   } else if (values.backend === 'postgres') {
     const credentials = loadDatabaseCredentials(process.env, 'application')
@@ -77,12 +83,23 @@ try {
       throw new Error('INVALID_TARGET')
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
+    operator = {
+      actorPrincipalRef,
+      authorityRef: await catalogApprovalDatabaseAuthority(connection.database),
+    }
     administration = new CatalogApprovalAdministration({
       approvals: new PostgresCatalogApprovalRepository(connection.database),
       versions: new PostgresCatalogRepository(connection.database),
+      operator,
     })
   } else throw new Error('INVALID_BACKEND')
-  const result = await administration.apply(request)
+  // Request attribution is descriptive input, not identity proof. Persist only
+  // the OS account and authenticated database authority of this adapter.
+  const result = await administration.apply(
+    request.operation === 'approvals.record'
+      ? { ...request, decision: { ...request.decision, ...operator } }
+      : request
+  )
   process.stdout.write(JSON.stringify(result) + '\n')
 } catch {
   // Never print input documents, database URLs, query parameters or underlying errors.

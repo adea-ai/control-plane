@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  ContextCompilationError,
   ContextPackageReferenceSchema,
-  ContextPackageSchema,
   ContextAuthoringCommandScopeSchema,
   contextAuthoringCommandKey,
   ContextAuthoringCommandRecordSchema,
@@ -41,10 +41,16 @@ import {
   type SkillVersion,
   RetentionAssessmentCounter,
   RetentionJournalOperationSchema,
+  observeReferenceRetentionWindow,
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
 } from '@control-plane/domain'
+import {
+  clearReferenceRetentionWindow,
+  getReferenceRetentionWindow,
+  setReferenceRetentionWindow,
+} from './retention-reference-metadata.js'
 
 const namespaces = {
   profiles: 'agent-profiles',
@@ -60,13 +66,6 @@ const namespaces = {
   projectStateUpdates: 'project-state-updates',
 } as const
 
-const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
-
-/** Canonical stored instant strictly before `now`; anything else is not a candidate. */
-function expiredAt(value: string, now: Date): boolean {
-  return canonicalInstant.test(value) && Date.parse(value) < now.getTime()
-}
-
 /** The context package an execution plan pins, read from the plan JSON. */
 function executionPlanPin(value: unknown): string | undefined {
   const plan = value as { contextPackage?: { contextPackageId?: unknown } } | null
@@ -78,6 +77,65 @@ function executionPlanPin(value: unknown): string | undefined {
 function authoringPackageId(value: unknown): string | undefined {
   const record = value as { contextPackageId?: unknown } | null
   return typeof record?.contextPackageId === 'string' ? record.contextPackageId : undefined
+}
+
+/** The parent package a derived package pins, read from its immutable payload. */
+function contextPackageParentId(value: unknown): string | undefined {
+  const package_ = value as { parentContextPackage?: { contextPackageId?: unknown } } | null
+  const parentId = package_?.parentContextPackage?.contextPackageId
+  return typeof parentId === 'string' ? parentId : undefined
+}
+
+async function assertSqliteStoredContextPackageReference(
+  transaction: PersistenceTransaction,
+  referenceInput: ContextPackageReference
+): Promise<ContextPackage> {
+  const reference = ContextPackageReferenceSchema.parse(referenceInput)
+  const stored = await transaction.get(
+    namespaces.contextPackages,
+    recordId(reference.contextPackageId)
+  )
+  if (stored === undefined) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  const parent = assertContextPackageIntegrity(stored.value)
+  if (
+    parent.contextPackageId !== reference.contextPackageId ||
+    parent.contentDigest !== reference.contentDigest
+  ) {
+    throw new ContextCompilationError('CONTRADICTORY_CONTEXT_REFERENCE', reference.contextPackageId)
+  }
+  await clearReferenceRetentionWindow(
+    transaction,
+    'contextPackages',
+    recordId(reference.contextPackageId)
+  )
+  return parent
+}
+
+/** Insert a new package only after validating and claiming its exact parent. */
+async function putContextPackageInTransaction(
+  transaction: PersistenceTransaction,
+  package_: ContextPackage
+): Promise<void> {
+  const id = recordId(package_.contextPackageId)
+  const existing = await transaction.get(namespaces.contextPackages, id)
+  if (existing !== undefined) {
+    if (!isDeepStrictEqual(assertContextPackageIntegrity(existing.value), package_))
+      throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
+    return
+  }
+  if (package_.parentContextPackage) {
+    if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
+      throw new ContextCompilationError(
+        'CONTRADICTORY_CONTEXT_REFERENCE',
+        package_.contextPackageId
+      )
+    }
+    await assertSqliteStoredContextPackageReference(transaction, package_.parentContextPackage)
+  }
+  await clearReferenceRetentionWindow(transaction, 'contextPackages', id)
+  await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
 }
 
 export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
@@ -256,12 +314,8 @@ export class SqliteContextAuthoringCommandRepository implements ContextAuthoring
           throw new Error('CONTEXT_AUTHORING_COMMAND_CONFLICT')
         return existing
       }
-      const id = recordId(package_.contextPackageId)
-      const stored = await transaction.get(namespaces.contextPackages, id)
-      if (stored && !isDeepStrictEqual(assertContextPackageIntegrity(stored.value), package_))
-        throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
-      if (!stored)
-        await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
+      await putContextPackageInTransaction(transaction, package_)
+      await assertSqliteStoredContextPackageReference(transaction, record.contextPackage)
       await transaction.put({
         namespace: 'context-authoring-commands',
         id: authoringCommandId(record.scope),
@@ -345,25 +399,17 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       contentDigest: package_.contentDigest,
     }
     return this.provider.transaction(async (transaction) => {
-      const id = recordId(package_.contextPackageId)
-      const record = await transaction.get(namespaces.contextPackages, id)
-      if (record === undefined) {
-        await transaction.put({ namespace: namespaces.contextPackages, id, value: json(package_) })
-      } else if (!isDeepStrictEqual(assertContextPackageIntegrity(record.value), package_)) {
-        throw new Error('CONTEXT_PACKAGE_ID_CONFLICT')
-      }
+      await putContextPackageInTransaction(transaction, package_)
       return reference
     })
   }
 
   /**
    * Deletes context packages past their retention window and free of
-   * references (#194). A package is pinned by an execution plan and by the
-   * authoring command that produced it, so either reference retains it as
-   * `reference_pending`; deletion is therefore bottom-up with plans. Age is
-   * measured from `compiledAt`, because a package is immutable once compiled
-   * and "last reference released" cannot be observed directly. `dryRun`
-   * defaults to true.
+   * references (#194). A package is pinned by an execution plan, a child
+   * package, or the authoring command that produced it. Its clock starts at
+   * the first sweep that proves no references remain. `dryRun`
+   * defaults to true and never writes reference-window metadata.
    */
   async deleteEligibleContextPackages(
     now: Date,
@@ -372,9 +418,15 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly afterId?: string
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('CONTEXT_PACKAGE_RETENTION_INVALID_TIMESTAMP')
+    if (
+      options.afterId !== undefined &&
+      (options.afterId.length === 0 || options.afterId.length > 128)
+    )
+      throw new Error('CONTEXT_PACKAGE_RETENTION_INVALID_CURSOR')
     const assessedAt = now.toISOString()
     const dryRun = options.dryRun ?? true
     const counter = new RetentionAssessmentCounter(
@@ -384,65 +436,93 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
     )
     let deleted = 0
     let raced = 0
-    let afterId: string | undefined
-    let done = false
-    while (!done) {
+    let scanned = 0
+    let cursor = options.afterId
+    let nextAfterId: string | undefined
+    let truncated = false
+    if (counter.bound === 0) {
       const page = await this.provider.transaction((transaction) =>
         transaction.scan(namespaces.contextPackages, {
-          limit: 128,
-          ...(afterId === undefined ? {} : { afterId }),
+          limit: 1,
+          ...(cursor === undefined ? {} : { afterId: cursor }),
+        })
+      )
+      truncated = page.length > 0
+    }
+    while (counter.bound > 0 && scanned < counter.bound) {
+      const remaining = counter.bound - scanned
+      const limit = Math.max(1, Math.min(128, remaining + 1))
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.contextPackages, {
+          limit,
+          ...(cursor === undefined ? {} : { afterId: cursor }),
         })
       )
       if (page.length === 0) break
-      afterId = page[page.length - 1]?.id
-      const candidates = page.filter((record) => {
-        const parsed = ContextPackageSchema.safeParse(record.value)
-        return parsed.success && expiredAt(parsed.data.compiledAt, now)
-      })
-      if (candidates.length === 0) {
-        if (page.length < 128) break
-        continue
-      }
-      // Reference sets are computed once per page rather than per candidate.
-      const planPins = new Set(
-        (await this.provider.transaction((transaction) => transaction.list('execution-plans')))
-          .map((record) => executionPlanPin(record.value))
-          .filter((value) => value !== undefined)
-      )
-      const authoringCommands = new Set(
-        (
-          await this.provider.transaction((transaction) =>
-            transaction.list('context-authoring-commands')
-          )
-        )
-          .map((record) => authoringPackageId(record.value))
-          .filter((value) => value !== undefined)
-      )
-      for (const candidate of candidates) {
+      for (let index = 0; index < page.length; index += 1) {
+        if (scanned >= counter.bound) {
+          truncated = true
+          break
+        }
+        const candidate = page[index]!
         const outcome = await this.provider.transaction(async (transaction) => {
           const stored = await transaction.get(namespaces.contextPackages, candidate.id)
-          if (stored === undefined) return { verdict: undefined, removed: false }
-          const package_ = assertContextPackageIntegrity(stored.value)
-          const verdict = evaluateRetentionEligibility({
-            retentionExpiresAt:
-              options.policyRetainMs === null
-                ? undefined
-                : new Date(Date.parse(package_.compiledAt) + options.policyRetainMs).toISOString(),
-            now: assessedAt,
-            policyRetainMs: options.policyRetainMs,
-            ownerTerminal: true,
-            publicationSettled: true,
-            rejectionKeyReserved: true,
-            pendingReferences:
-              planPins.has(package_.contextPackageId) ||
-              authoringCommands.has(package_.contextPackageId)
-                ? 1
-                : 0,
-            holds: 0,
-          })
-          if (verdict.verdict !== 'eligible' || dryRun) {
-            return { verdict, removed: false }
+          if (stored === undefined) {
+            if (!dryRun)
+              await clearReferenceRetentionWindow(transaction, 'contextPackages', candidate.id)
+            return { verdict: undefined, removed: false, raced: true }
           }
+          const package_ = assertContextPackageIntegrity(stored.value)
+          // BEGIN IMMEDIATE serializes this fresh reference scan with every
+          // writer that pins a context package.
+          const planPins = (await transaction.list('execution-plans'))
+            .map((record) => executionPlanPin(record.value))
+            .filter((value) => value !== undefined)
+          const authoringCommands = (await transaction.list('context-authoring-commands'))
+            .map((record) => authoringPackageId(record.value))
+            .filter((value) => value !== undefined)
+          const childPackagePins = (await transaction.list(namespaces.contextPackages))
+            .map((record) => contextPackageParentId(record.value))
+            .filter((value) => value !== undefined)
+          const pendingReferences =
+            planPins.includes(package_.contextPackageId) ||
+            authoringCommands.includes(package_.contextPackageId) ||
+            childPackagePins.includes(package_.contextPackageId)
+              ? 1
+              : 0
+          const currentWindow = await getReferenceRetentionWindow(
+            transaction,
+            'contextPackages',
+            stored.id
+          )
+          const observed = observeReferenceRetentionWindow({
+            now: assessedAt,
+            unreferencedSince: currentWindow,
+            pendingReferences,
+            policyRetainMs: options.policyRetainMs,
+          })
+          if (!dryRun && observed.unreferencedSince !== currentWindow)
+            await setReferenceRetentionWindow(
+              transaction,
+              'contextPackages',
+              stored.id,
+              observed.unreferencedSince
+            )
+          const verdict =
+            options.policyRetainMs !== null && pendingReferences > 0
+              ? { verdict: 'retained' as const, reason: 'reference_pending' as const }
+              : evaluateRetentionEligibility({
+                  retentionExpiresAt: observed.retentionExpiresAt,
+                  now: assessedAt,
+                  policyRetainMs: options.policyRetainMs,
+                  ownerTerminal: true,
+                  publicationSettled: true,
+                  rejectionKeyReserved: true,
+                  pendingReferences,
+                  holds: 0,
+                })
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, removed: false, raced: false }
           if (options.journal !== undefined) {
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
@@ -458,19 +538,45 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
               stored.revision
             )
           } catch {
-            return { verdict, removed: false }
+            return { verdict, removed: false, raced: true }
           }
-          return { verdict, removed }
+          if (removed)
+            await clearReferenceRetentionWindow(transaction, 'contextPackages', stored.id)
+          return { verdict, removed, raced: !removed }
         })
-        if (outcome.verdict !== undefined && !counter.add(outcome.verdict)) {
-          done = true
+        scanned += 1
+        cursor = candidate.id
+        if (outcome.verdict !== undefined) counter.add(outcome.verdict)
+        if (outcome.raced) raced += 1
+        if (outcome.removed) deleted += 1
+        if (scanned >= counter.bound) {
+          let hasLookahead = index + 1 < page.length
+          if (!hasLookahead) {
+            const lookahead = await this.provider.transaction((transaction) =>
+              transaction.scan(namespaces.contextPackages, {
+                limit: 1,
+                ...(cursor === undefined ? {} : { afterId: cursor }),
+              })
+            )
+            hasLookahead = lookahead.length > 0
+          }
+          truncated = hasLookahead
+          if (hasLookahead) nextAfterId = cursor
           break
         }
-        if (outcome.removed) deleted += 1
       }
-      if (page.length < 128) break
+      if (truncated || scanned >= counter.bound) break
+      if (page.length < limit) break
     }
-    return { dryRun, deleted, raced, ...counter.result() }
+    return {
+      dryRun,
+      deleted,
+      raced,
+      ...counter.result(),
+      scanned,
+      truncated,
+      ...(nextAfterId === undefined ? {} : { nextAfterId }),
+    }
   }
 
   async get(input: ContextPackageReference): Promise<ContextPackage | undefined> {

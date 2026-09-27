@@ -1,4 +1,5 @@
 import {
+  CommandInboxError,
   ExecutionAttemptSchema,
   ExecutionSchema,
   RetentionAssessmentCounter,
@@ -12,12 +13,19 @@ import {
 import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
+import { delegations } from './schema/delegations.js'
 import { executionEvents } from './schema/events.js'
+import { executionCancellations } from './schema/execution-cancellations.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import { interactionCommands } from './schema/interaction-commands.js'
+import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
+import { lockExecutionPlanReference } from './execution-plan-repository.js'
+import { usageLedgerEntries } from './schema/usage-ledger.js'
 
 const MAXIMUM_SCAN_LIMIT = 1_000
+type ExecutionReferenceReader = Pick<ControlPlaneDatabase, 'select'>
 
 /**
  * The class has no stored retention deadline, so eligibility derives one from
@@ -31,6 +39,24 @@ function effectiveDeadline(
   if (terminalAt === null) return undefined
   if (policyRetainMs === null) return undefined
   return new Date(terminalAt.getTime() + policyRetainMs).toISOString()
+}
+
+function hasCompleteAttemptHistory(
+  attemptCount: number,
+  latestAttemptId: string | null | undefined,
+  attempts: readonly { attemptId: string; sequence: number }[]
+): boolean {
+  if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attempts.length !== attemptCount)
+    return false
+  if (attemptCount === 0) return latestAttemptId == null
+  if (latestAttemptId == null) return false
+
+  const ordered = [...attempts].toSorted((left, right) => left.sequence - right.sequence)
+  return (
+    new Set(ordered.map((attempt) => attempt.attemptId)).size === attemptCount &&
+    ordered.every((attempt, index) => attempt.sequence === index + 1) &&
+    ordered.at(-1)?.attemptId === latestAttemptId
+  )
 }
 
 export interface ReconciliationCandidateScan {
@@ -51,8 +77,10 @@ export class PostgresExecutionRepository implements ExecutionRepository {
    *
    * The ordering proof for this class is reference safety, so it is the last
    * class to become eligible: an execution stays retained while its acceptance
-   * record, its events, its reconciliation checkpoint or a non-terminal attempt
-   * still exists. Attempts are removed with the execution, terminal ones only,
+   * record, either command receipt, an interaction request, its events,
+   * reconciliation checkpoint, non-terminal attempt, runtime command, usage
+   * ledger entry, or delegation endpoint still exists.
+   * Attempts are removed with the execution, terminal ones only,
    * and every delete is guarded by the row version so a concurrent transition
    * is reported as `raced` rather than forced. `dryRun` defaults to true.
    */
@@ -74,9 +102,6 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const candidates = await this.database
       .select({
         executionId: executions.executionId,
-        state: executions.state,
-        version: executions.version,
-        terminalAt: executions.terminalAt,
       })
       .from(executions)
       .where(
@@ -90,40 +115,77 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       )
       .orderBy(asc(executions.terminalAt))
       .limit(counter.bound + 1)
-    const candidateIds = candidates.map((candidate) => candidate.executionId)
-    const attemptsByExecution = await this.#terminalAttempts(candidateIds)
-    const references = await this.#referenceSets(candidateIds)
     for (const candidate of candidates) {
-      const attempts = attemptsByExecution.get(candidate.executionId) ?? []
-      const verdict = evaluateRetentionEligibility({
-        retentionExpiresAt: effectiveDeadline(candidate.terminalAt, options.policyRetainMs),
-        now: assessedAt,
-        policyRetainMs: options.policyRetainMs,
-        ownerTerminal: true,
-        publicationSettled: true,
-        rejectionKeyReserved: true,
-        pendingReferences:
-          references.commands.has(candidate.executionId) ||
-          references.events.has(candidate.executionId) ||
-          references.checkpoints.has(candidate.executionId) ||
-          references.activeAttempts.has(candidate.executionId) ||
-          references.runtimeCommands.has(candidate.executionId)
-            ? 1
-            : 0,
-        holds: 0,
-      })
-      if (!counter.add(verdict)) break
-      if (verdict.verdict !== 'eligible' || dryRun) continue
-      if (options.journal !== undefined) {
-        await options.journal([
-          ...attempts.map((attempt) => ({
-            kind: 'postgres.deleteAttempt' as const,
-            attemptId: attempt.attemptId,
-          })),
-          { kind: 'postgres.deleteExecution' as const, executionId: candidate.executionId },
-        ])
-      }
-      const removed = await this.database.transaction(async (transaction) => {
+      const outcome = await this.database.transaction(async (transaction) => {
+        const [owner] = await transaction
+          .select({
+            executionId: executions.executionId,
+            state: executions.state,
+            version: executions.version,
+            terminalAt: executions.terminalAt,
+            attemptCount: executions.attemptCount,
+            latestAttemptId: executions.latestAttemptId,
+          })
+          .from(executions)
+          .where(eq(executions.executionId, candidate.executionId))
+          .for('update')
+          .limit(1)
+        if (owner === undefined) return { kind: 'missing' as const }
+
+        // The owner lock serializes new FK-backed rows and reserve writers. Lock
+        // attempts next, then take every reference snapshot inside this claim.
+        const attempts = await transaction
+          .select({
+            attemptId: executionAttempts.attemptId,
+            sequence: executionAttempts.sequence,
+            state: executionAttempts.state,
+          })
+          .from(executionAttempts)
+          .where(eq(executionAttempts.executionId, owner.executionId))
+          .for('update')
+        const attemptsComplete = hasCompleteAttemptHistory(
+          owner.attemptCount,
+          owner.latestAttemptId,
+          attempts
+        )
+        const references = await this.#referenceSets([owner.executionId], transaction)
+        const verdict = evaluateRetentionEligibility({
+          retentionExpiresAt: effectiveDeadline(owner.terminalAt, options.policyRetainMs),
+          now: assessedAt,
+          policyRetainMs: options.policyRetainMs,
+          ownerTerminal:
+            owner.terminalAt !== null &&
+            ['completed', 'failed', 'cancelled', 'timed_out'].includes(owner.state),
+          publicationSettled: true,
+          rejectionKeyReserved: true,
+          pendingReferences:
+            references.commands.has(owner.executionId) ||
+            references.events.has(owner.executionId) ||
+            references.checkpoints.has(owner.executionId) ||
+            references.activeAttempts.has(owner.executionId) ||
+            references.runtimeCommands.has(owner.executionId) ||
+            references.cancellationReceipts.has(owner.executionId) ||
+            references.interactionReceipts.has(owner.executionId) ||
+            references.interactionRequests.has(owner.executionId) ||
+            references.usageLedger.has(owner.executionId) ||
+            references.delegations.has(owner.executionId) ||
+            !attemptsComplete
+              ? 1
+              : 0,
+          holds: 0,
+        })
+        if (!counter.add(verdict)) return { kind: 'bound' as const }
+        if (verdict.verdict !== 'eligible' || dryRun) return { kind: 'assessed' as const }
+
+        if (options.journal !== undefined) {
+          await options.journal([
+            ...attempts.map((attempt) => ({
+              kind: 'postgres.deleteAttempt' as const,
+              attemptId: attempt.attemptId,
+            })),
+            { kind: 'postgres.deleteExecution' as const, executionId: owner.executionId },
+          ])
+        }
         if (attempts.length > 0) {
           await transaction.delete(executionAttempts).where(
             inArray(
@@ -132,34 +194,47 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             )
           )
         }
-        return transaction
+        const removed = await transaction
           .delete(executions)
           .where(
             and(
-              eq(executions.executionId, candidate.executionId),
-              eq(executions.state, candidate.state),
-              eq(executions.version, candidate.version)
+              eq(executions.executionId, owner.executionId),
+              eq(executions.state, owner.state),
+              eq(executions.version, owner.version)
             )
           )
           .returning({ executionId: executions.executionId })
+        return { kind: removed.length === 1 ? ('deleted' as const) : ('raced' as const) }
       })
-      if (removed.length === 1) deleted += 1
-      else raced += 1
+      if (outcome.kind === 'bound') {
+        break
+      }
+      if (outcome.kind === 'missing' || outcome.kind === 'raced') raced += 1
+      if (outcome.kind === 'deleted') deleted += 1
     }
     return { dryRun, deleted, raced, ...counter.result() }
   }
 
   /**
    * Every namespace that carries execution identity, as sets of execution ids
-   * among `executionIds`. Plain selects rather than correlated subqueries: the
-   * driver's boolean representation is not JS truthiness.
+   * among `executionIds`. Receipt references are read from their JSON identity
+   * fields; interaction requests and usage entries have FKs, while delegations
+   * carry parent/child identity without FKs.
    */
-  async #referenceSets(executionIds: readonly string[]): Promise<{
+  async #referenceSets(
+    executionIds: readonly string[],
+    database: ExecutionReferenceReader = this.database
+  ): Promise<{
     commands: Set<string>
     events: Set<string>
     checkpoints: Set<string>
     activeAttempts: Set<string>
     runtimeCommands: Set<string>
+    cancellationReceipts: Set<string>
+    interactionReceipts: Set<string>
+    interactionRequests: Set<string>
+    usageLedger: Set<string>
+    delegations: Set<string>
   }> {
     if (executionIds.length === 0) {
       return {
@@ -168,23 +243,40 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         checkpoints: new Set(),
         activeAttempts: new Set(),
         runtimeCommands: new Set(),
+        cancellationReceipts: new Set(),
+        interactionReceipts: new Set(),
+        interactionRequests: new Set(),
+        usageLedger: new Set(),
+        delegations: new Set(),
       }
     }
     const ids = [...executionIds]
-    const [commands, events, checkpoints, activeAttempts, runtimeCommandRefs] = await Promise.all([
-      this.database
+    const [
+      commands,
+      events,
+      checkpoints,
+      activeAttempts,
+      runtimeCommandRefs,
+      cancellationReceiptRefs,
+      interactionPayloadRefs,
+      interactionRequestRefs,
+      directInteractionRequests,
+      usageLedgerRefs,
+      delegationRefs,
+    ] = await Promise.all([
+      database
         .select({ executionId: commandInbox.executionId })
         .from(commandInbox)
         .where(inArray(commandInbox.executionId, ids)),
-      this.database
+      database
         .select({ executionId: executionEvents.executionId })
         .from(executionEvents)
         .where(inArray(executionEvents.executionId, ids)),
-      this.database
+      database
         .select({ executionId: reconciliationCheckpoints.executionId })
         .from(reconciliationCheckpoints)
         .where(inArray(reconciliationCheckpoints.executionId, ids)),
-      this.database
+      database
         .select({ executionId: executionAttempts.executionId })
         .from(executionAttempts)
         .where(
@@ -197,10 +289,60 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       // an execution that still has them is not eligible — the foreign key
       // would refuse the delete anyway, and one class must never depend on
       // another's ordering to avoid a failed pass.
-      this.database
+      database
         .select({ executionId: runtimeCommands.executionId })
         .from(runtimeCommands)
         .where(inArray(runtimeCommands.executionId, ids)),
+      database
+        .select({
+          executionId: sql<string>`${executionCancellations.receipt}->'request'->'payload'->>'executionId'`,
+        })
+        .from(executionCancellations)
+        .where(
+          inArray(
+            sql<string>`${executionCancellations.receipt}->'request'->'payload'->>'executionId'`,
+            ids
+          )
+        ),
+      database
+        .select({
+          executionId: sql<string>`${interactionCommands.receipt}->'request'->'payload'->>'executionId'`,
+        })
+        .from(interactionCommands)
+        .where(
+          inArray(
+            sql<string>`${interactionCommands.receipt}->'request'->'payload'->>'executionId'`,
+            ids
+          )
+        ),
+      database
+        .select({ executionId: interactionRequests.executionId })
+        .from(interactionRequests)
+        .innerJoin(
+          interactionCommands,
+          sql`${interactionCommands.receipt}->'request'->'payload'->>'interactionId' = ${interactionRequests.interactionId}`
+        )
+        .where(inArray(interactionRequests.executionId, ids)),
+      database
+        .select({ executionId: interactionRequests.executionId })
+        .from(interactionRequests)
+        .where(inArray(interactionRequests.executionId, ids)),
+      database
+        .select({ executionId: usageLedgerEntries.executionId })
+        .from(usageLedgerEntries)
+        .where(inArray(usageLedgerEntries.executionId, ids)),
+      database
+        .select({
+          parentExecutionId: delegations.parentExecutionId,
+          childExecutionId: delegations.childExecutionId,
+        })
+        .from(delegations)
+        .where(
+          or(
+            inArray(delegations.parentExecutionId, ids),
+            inArray(delegations.childExecutionId, ids)
+          )
+        ),
     ])
     return {
       commands: new Set(commands.map((row) => row.executionId)),
@@ -208,32 +350,17 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       checkpoints: new Set(checkpoints.map((row) => row.executionId)),
       activeAttempts: new Set(activeAttempts.map((row) => row.executionId)),
       runtimeCommands: new Set(runtimeCommandRefs.map((row) => row.executionId)),
+      cancellationReceipts: new Set(cancellationReceiptRefs.map((row) => row.executionId)),
+      interactionReceipts: new Set([
+        ...interactionPayloadRefs.map((row) => row.executionId),
+        ...interactionRequestRefs.map((row) => row.executionId),
+      ]),
+      interactionRequests: new Set(directInteractionRequests.map((row) => row.executionId)),
+      usageLedger: new Set(usageLedgerRefs.map((row) => row.executionId)),
+      delegations: new Set(
+        delegationRefs.flatMap((row) => [row.parentExecutionId, row.childExecutionId])
+      ),
     }
-  }
-
-  async #terminalAttempts(
-    executionIds: readonly string[]
-  ): Promise<Map<string, readonly { attemptId: string }[]>> {
-    const grouped = new Map<string, { attemptId: string }[]>()
-    if (executionIds.length === 0) return grouped
-    const rows = await this.database
-      .select({
-        attemptId: executionAttempts.attemptId,
-        executionId: executionAttempts.executionId,
-      })
-      .from(executionAttempts)
-      .where(
-        and(
-          inArray(executionAttempts.executionId, [...executionIds]),
-          sql`${executionAttempts.state} in ('completed', 'failed', 'cancelled', 'timed_out')`
-        )
-      )
-    for (const row of rows) {
-      const bucket = grouped.get(row.executionId)
-      if (bucket === undefined) grouped.set(row.executionId, [{ attemptId: row.attemptId }])
-      else bucket.push({ attemptId: row.attemptId })
-    }
-    return grouped
   }
 
   /**
@@ -284,12 +411,24 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   }
 
   async insertExecution(execution: Execution): Promise<boolean> {
-    const inserted = await this.database
-      .insert(executions)
-      .values(toExecutionRow(ExecutionSchema.parse(execution)))
-      .onConflictDoNothing()
-      .returning({ executionId: executions.executionId })
-    return inserted.length === 1
+    const parsed = ExecutionSchema.parse(execution)
+    return this.database.transaction(async (transaction) => {
+      const [existing] = await transaction
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(eq(executions.executionId, parsed.executionId))
+        .limit(1)
+      if (existing) return false
+      if (!(await lockExecutionPlanReference(transaction, parsed.executionPlan))) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+      const inserted = await transaction
+        .insert(executions)
+        .values(toExecutionRow(parsed))
+        .onConflictDoNothing()
+        .returning({ executionId: executions.executionId })
+      return inserted.length === 1
+    })
   }
 
   async getExecution(executionId: string): Promise<Execution | undefined> {

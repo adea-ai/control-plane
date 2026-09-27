@@ -21,6 +21,9 @@ export const contextPackages = pgTable(
     projectId: identifier('project_id').notNull(),
     contextPackage: jsonb('context_package').$type<ContextPackage>().notNull(),
     compiledAt: timestamp('compiled_at', { mode: 'date', withTimezone: true }).notNull(),
+    // Retention metadata, not part of the immutable package/digest. Reference
+    // writers must clear this clock atomically when a new reference is persisted.
+    unreferencedSince: timestamp('unreferenced_since', { mode: 'date', withTimezone: true }),
     createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

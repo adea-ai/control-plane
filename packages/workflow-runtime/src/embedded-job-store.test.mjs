@@ -42,7 +42,7 @@ async function withStore(run) {
   }
   try {
     await run({
-      store: () => new WorkflowJobStore(provider),
+      store: (options) => new WorkflowJobStore(provider, options),
       reopen: async () => {
         provider.close({ checkpoint: true })
         provider = await open()
@@ -57,6 +57,39 @@ async function withStore(run) {
 }
 
 describe('WorkflowJobStore', () => {
+  test('guards new references inside enqueue transaction and leaves duplicates exempt', async () => {
+    await withStore(async ({ store }) => {
+      let guardCalls = 0
+      const rejected = store({
+        beforeEnqueue: async (transaction, record) => {
+          guardCalls += 1
+          expect(record.workflowKey).toBe(input.executionId)
+          await transaction.put({ namespace: 'guard-probe', id: 'rolled-back', value: 1 })
+          throw new Error('WORKFLOW_PARENT_MISSING')
+        },
+      })
+      await expect(
+        rejected.enqueue({ workflowKey: input.executionId, input, at: now })
+      ).rejects.toThrow('WORKFLOW_PARENT_MISSING')
+      expect(await rejected.get(input.executionId)).toBeUndefined()
+      expect(guardCalls).toBe(1)
+      // A second successful guard could not insert the same probe if the
+      // rejected guard's write escaped its enqueue transaction.
+      const allowed = store({
+        beforeEnqueue: async (transaction) => {
+          guardCalls += 1
+          await transaction.put({ namespace: 'guard-probe', id: 'rolled-back', value: 2 })
+        },
+      })
+      expect(
+        (await allowed.enqueue({ workflowKey: input.executionId, input, at: now })).outcome
+      ).toBe('created')
+      expect(
+        (await rejected.enqueue({ workflowKey: input.executionId, input, at: later })).outcome
+      ).toBe('duplicate')
+      expect(guardCalls).toBe(2)
+    })
+  })
   test('enqueues idempotently per workflow key and preserves the original input', async () => {
     await withStore(async ({ store }) => {
       const queue = store()

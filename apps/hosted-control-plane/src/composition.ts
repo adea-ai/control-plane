@@ -172,9 +172,9 @@ export interface HostedServerCompositionOptions {
   readonly databaseUrl: string
   readonly restateAdminUrl?: string
   /**
-   * Optional catalog approval policy (#188): when required, profile
-   * resolution denies versions without an approved, version-bound decision.
-   * Absent leaves resolution unchanged.
+   * Optional catalog approval policy (#188): when required, resolution,
+   * validation, and new execution acceptance require approved, version-bound
+   * catalog pins. Absent leaves approval enforcement unchanged.
    */
   readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
   /**
@@ -280,13 +280,28 @@ export class HostedServerControlPlaneComposition {
     const inboxMetrics: CommandInboxMetrics | undefined = consistencyMetrics
     const plans = new PostgresExecutionPlanRepository(this.connection.database)
     const catalog = new PostgresCatalogRepository(this.connection.database)
+    const catalogApprovals = new PostgresCatalogApprovalRepository(this.connection.database)
     const projectStates = new PostgresProjectStateRepository(this.connection.database)
     const contextPackages = new PostgresContextPackageRepository(this.connection.database)
+    const executionPlanValidatorOptions = {
+      catalog: { profiles: catalog, skills: catalog },
+      ...(options.catalogApprovalPolicy === undefined
+        ? {}
+        : {
+            approvalGate: {
+              approvals: catalogApprovals,
+              policy: options.catalogApprovalPolicy,
+            },
+          }),
+    }
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: createExecutionId,
-        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        executionPlanValidator: new ExecutionPlanAcceptanceValidator(
+          plans,
+          executionPlanValidatorOptions
+        ),
         ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
       dispatcher: new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl }),
@@ -330,13 +345,21 @@ export class HostedServerControlPlaneComposition {
       profiles: catalog,
       projectStates,
       skills: catalog,
+      ...(options.catalogApprovalPolicy === undefined
+        ? {}
+        : {
+            approvalGate: {
+              approvals: catalogApprovals,
+              policy: options.catalogApprovalPolicy,
+            },
+          }),
     })
     this.profileResolutionService = new RepositoryProfileResolutionService(
       catalog,
       options.catalogApprovalPolicy === undefined
         ? undefined
         : {
-            approvals: new PostgresCatalogApprovalRepository(this.connection.database),
+            approvals: catalogApprovals,
             skills: catalog,
             policy: options.catalogApprovalPolicy,
           }
@@ -400,7 +423,10 @@ export class HostedServerControlPlaneComposition {
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database),
         executionIdFactory: unavailableExecutionIdFactory,
-        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans),
+        executionPlanValidator: new ExecutionPlanAcceptanceValidator(
+          plans,
+          executionPlanValidatorOptions
+        ),
         ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
     })

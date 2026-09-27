@@ -9,6 +9,7 @@ import {
 import { eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { interactionCommands } from './schema/interaction-commands.js'
+import { executions } from './schema/executions.js'
 
 const key = (scope: InteractionCommandScope) =>
   createHash('sha256').update(interactionCommandScopeKey(scope)).digest('hex')
@@ -31,6 +32,18 @@ export class PostgresInteractionCommandRepository implements InteractionCommandR
       )
       const existing = await read(transaction, receipt.request)
       if (existing) return { receipt: existing, inserted: false }
+      const [owner] = await transaction
+        .select({ workspaceId: executions.workspaceId, projectId: executions.projectId })
+        .from(executions)
+        .where(eq(executions.executionId, receipt.request.payload.executionId))
+        .for('key share')
+        .limit(1)
+      if (owner === undefined) throw new Error('INTERACTION_COMMAND_EXECUTION_MISSING')
+      if (
+        owner.workspaceId !== receipt.request.workspaceId ||
+        owner.projectId !== receipt.request.projectId
+      )
+        throw new Error('INTERACTION_COMMAND_SCOPE_MISMATCH')
       await transaction.insert(interactionCommands).values({
         commandKey: key(receipt.request),
         workspaceId: receipt.request.workspaceId,

@@ -1,7 +1,10 @@
 import {
+  ContextPackageReferenceSchema,
   ContextPackageSchema,
+  assertContextPackageIntegrity,
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
+  type ContextPackage,
 } from '@control-plane/context'
 import { compareCodePointOrder } from '@control-plane/domain'
 import {
@@ -20,6 +23,7 @@ import {
   projectStates,
   skillVersions,
   skills,
+  lockAndResetReferenceRetentionWindows,
   type ControlPlaneDatabase,
 } from '@control-plane/database'
 import {
@@ -30,9 +34,12 @@ import {
   SkillVersionSchema,
 } from '@control-plane/domain'
 import {
+  ExecutionPlanReferenceSchema,
   ExecutionPlanSchema,
+  assertExecutionPlanIntegrity,
   ExecutionValidationCommandRecordSchema,
   executionValidationCommandKey,
+  type ExecutionPlan,
 } from '@control-plane/execution-plan'
 import { and, eq } from 'drizzle-orm'
 import { EvalRunSchema } from '@control-plane/production-readiness'
@@ -45,7 +52,9 @@ import {
 } from './manifest.js'
 import {
   PortableMigrationError,
+  collectImportedPortableReferenceClaims,
   portableJson,
+  type PortableReferenceLineageLookup,
   type PortableImportTransaction,
   type PortableMigrationProvenance,
   type PortableRecordInspection,
@@ -311,8 +320,12 @@ export class PostgresPortableStateDestination implements PortableStateDestinatio
         const committedProvenance = provenance
         await this.#database.transaction(
           async (transaction) => {
-            for (const record of [...records].toSorted(byWriteOrder)) {
+            const staged = [...records].toSorted(byWriteOrder)
+            for (const record of staged) {
               await writeRecord(transaction, record)
+            }
+            if (staged.length > 0) {
+              await validateAndResetPostgresImportedReferences(transaction, staged)
             }
             const [existing] = await transaction
               .select()
@@ -349,6 +362,101 @@ export class PostgresPortableStateDestination implements PortableStateDestinatio
 }
 
 type DatabaseTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
+
+async function validateAndResetPostgresImportedReferences(
+  transaction: DatabaseTransaction,
+  staged: readonly PortableRecord[]
+): Promise<void> {
+  const lookup: PortableReferenceLineageLookup = {
+    contextPackage: (reference) => readPostgresContextPackage(transaction, reference),
+    executionPlan: async (reference) => {
+      const plan = await readPostgresExecutionPlan(transaction, reference)
+      const contextPackage = await readPostgresContextPackage(transaction, plan.contextPackage)
+      return { plan, contextPackage }
+    },
+  }
+  const claims = await collectImportedPortableReferenceClaims(staged, lookup)
+  const result = await lockAndResetReferenceRetentionWindows(transaction, claims)
+  if (!result.ok) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [result.id])
+  }
+}
+
+async function readPostgresContextPackage(
+  transaction: DatabaseTransaction,
+  input: unknown
+): Promise<ContextPackage> {
+  let reference: ReturnType<typeof ContextPackageReferenceSchema.parse>
+  try {
+    reference = ContextPackageReferenceSchema.parse(input)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE')
+  }
+  const [row] = await transaction
+    .select()
+    .from(contextPackages)
+    .where(eq(contextPackages.contextPackageId, reference.contextPackageId))
+    .limit(1)
+  if (!row) throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  let package_: ContextPackage
+  try {
+    package_ = assertContextPackageIntegrity(ContextPackageSchema.parse(row.contextPackage))
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  }
+  if (
+    row.contextPackageId !== reference.contextPackageId ||
+    row.contentDigest !== reference.contentDigest ||
+    package_.contextPackageId !== reference.contextPackageId ||
+    package_.contentDigest !== reference.contentDigest ||
+    row.schemaVersion !== package_.schemaVersion ||
+    row.workspaceId !== package_.projectState.workspaceId ||
+    row.projectId !== package_.projectState.projectId ||
+    row.compiledAt.toISOString() !== package_.compiledAt
+  ) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  }
+  return package_
+}
+
+async function readPostgresExecutionPlan(
+  transaction: DatabaseTransaction,
+  input: unknown
+): Promise<ExecutionPlan> {
+  let reference: ReturnType<typeof ExecutionPlanReferenceSchema.parse>
+  try {
+    reference = ExecutionPlanReferenceSchema.parse(input)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE')
+  }
+  const [row] = await transaction
+    .select()
+    .from(executionPlans)
+    .where(eq(executionPlans.executionPlanId, reference.executionPlanId))
+    .limit(1)
+  if (!row) throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
+  let plan: ExecutionPlan
+  try {
+    plan = assertExecutionPlanIntegrity(ExecutionPlanSchema.parse(row.plan))
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
+  }
+  if (
+    row.executionPlanId !== reference.executionPlanId ||
+    row.contentDigest !== reference.contentDigest ||
+    plan.executionPlanId !== reference.executionPlanId ||
+    plan.contentDigest !== reference.contentDigest ||
+    row.schemaVersion !== plan.schemaVersion ||
+    row.workspaceId !== plan.correlation.workspaceId ||
+    row.projectId !== plan.correlation.projectId ||
+    row.taskId !== plan.correlation.taskId ||
+    row.agentId !== plan.correlation.agentId ||
+    row.compiledAt.toISOString() !== plan.compiledAt
+  ) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
+  }
+  return plan
+}
 
 async function writeRecord(
   transaction: DatabaseTransaction,

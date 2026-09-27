@@ -1,7 +1,7 @@
 # Control Plane Diagram Sources
 
 Status: Canonical repository companion source
-Last reviewed: 2026-08-28
+Last reviewed: 2026-09-26 (Local durability correction; full canonical audit remains open)
 
 These Mermaid definitions are the version-controlled Control Plane companion to the canonical Google Drive diagram catalog. If the two sources diverge, update both in the same architecture reconciliation pass.
 
@@ -13,6 +13,7 @@ These Mermaid definitions are the version-controlled Control Plane companion to 
 4. Do not conflate Adea Remote Relay with Control Plane Runtime Gateway.
 5. Co-located Local runtime/provider access must not traverse Runtime Gateway.
 6. M9 managed cloud is Railway + Neon + R2 + Restate; M10 adds Local/Hosted adapters without changing core semantics.
+7. Owner-approved #548: Local uses embedded SQLite durable execution without Restate; managed cloud and Hosted retain Restate behind the same workflow contracts.
 
 ## Control Plane TDD: Execution & Orchestration
 
@@ -21,7 +22,7 @@ flowchart TB
     RQ[Execution Request] --> AUTH[Validate Authorization]
     AUTH --> RES[Resolve AgentProfile / Skills / Context]
     RES --> EP[Compile immutable ExecutionPlan]
-    EP --> RS[Restate Durable Lifecycle]
+    EP --> RS[Durable Lifecycle: embedded SQLite Local / Restate Hosted and Cloud]
     RS --> C{Graph semantics required?}
     C -->|No| RA[RuntimeAdapter]
     C -->|Yes| LG[Bounded LangGraph.js Segment]
@@ -136,7 +137,7 @@ flowchart TB
     subgraph Local["M10 Local"]
       LCP[All-in-one Control Plane]
       SQL[(node:sqlite)]
-      LRS[Single-node Restate]
+      LRS[Embedded SQLite Durable Queue / Workflow Journal]
       FS[(Filesystem ObjectStore)]
       DRT[Direct RuntimeTransport]
     end

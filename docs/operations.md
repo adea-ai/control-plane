@@ -151,6 +151,39 @@ production release candidate.
 
 A database migration failure blocks rollout. Never hide a broken revision behind a green process health check. Applied schema changes are repaired forward unless a reviewed restore operation is explicitly required.
 
+### Production schema promotion gate
+
+The production deployment job serializes promotions across release tags and runs
+`bun scripts/migrate-production-schema.mjs` before changing either Railway image
+source. It installs frozen workspace dependencies and builds the database
+migration dependency closure from the checked-out release candidate. The gate
+uses the existing `RAILWAY_PRODUCTION_TOKEN` plus the separate environment-scoped
+`NEON_PRODUCTION_MIGRATION_URL` secret in `control-plane / production`. The latter
+must use the direct production endpoint, `control_plane_migrator`, `neondb`, and
+`sslmode=verify-full`; never substitute a pooled runtime, staging, or administrator
+credential. Do not print either secret or the rendered service variables.
+
+Before applying schema changes, the gate checks both production services' exact
+database bindings, verifies the connected migration identity, and requires the
+database journal to be an exact hash/timestamp prefix of the tagged migration
+source. It acquires the shared session advisory lock `(1295070001, 11)`, then
+rechecks that prefix before calling the canonical repository migrator with
+bounded connection, statement, and lock timeouts. Foreign, gapped, or ahead
+history, concurrent migration ownership, unsafe URL options, or missing secrets
+block promotion. After migration it verifies the complete journal and connects
+with each service's actual application credential using certificate verification
+to check runtime grants, role restrictions, and the retention-clock columns.
+
+On failure, inspect sanitized workflow status and perform a separately scoped
+readback of the exact target and journal. Do not bypass the gate, change history
+hashes, or roll back DDL to make an older image promotable. A migration can have
+committed before a later privilege or rollout check fails; verify state and
+repair forward, then rerun the intended release. An older tag whose history is
+behind the database is deliberately rejected and requires an explicit reviewed
+schema-compatible rollback procedure. This gate does not establish service
+runtime TLS configuration, representative execution, RPO/RTO, or full profile
+acceptance merely because process readiness is green.
+
 For M9 staging certification, verify the retained `m9/certification/` result with `get` and `head`,
 match its digest to the terminal execution/command state, and replay the same accepted command to
 confirm that no second logical artifact is created. Do not report this as managed Pi certification.
@@ -197,6 +230,13 @@ publication — unapproved versions stay authorable and listable.
   (`scripts/catalog-approval-admin.mjs`, `approvals.record` / `approvals.show`) against the target
   database. The request file is validated (absolute path, regular file, size-capped) and the CLI
   reports a single sanitized failure code; it never echoes database or credential content.
+  The tool replaces request-supplied actor/authority attribution with the executing OS account
+  (`operator:os-user:<encoded-account>`) and its real storage authority: Local OS access for SQLite,
+  or the PostgreSQL session's `current_user`. These identify a privileged operator session, not an
+  authenticated product user or a validated product grant. Shared OS/database accounts are shared
+  attribution; use individual operator accounts when individual accountability is required.
+  Programmatic administration must supply adapter-verified operator context and matching attribution;
+  a JSON principal or grant reference alone is not proof of authority.
 - With the gate enabled, a version published at or after the cutover denies execution with
   `*_APPROVAL_MISSING` until a decision exists, and denies with `*_APPROVAL_REJECTED` when a rejection
   was recorded. Approve deliberately: the decision is append-only and bound to the exact revision and
@@ -228,8 +268,11 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #                               execution, acceptance record or validation
 #                               command still pins them)
 #   --class interaction-receipts (deletes confirmed interaction/cancellation
-#                               receipts past the replay window; unconfirmed
-#                               receipts are lost-ack identities and always stay)
+#                               receipts only after their scoped execution is
+#                               terminal and settled through attempts,
+#                               reconciliation and event delivery; the window
+#                               starts at the later of acceptance/settlement;
+#                               unconfirmed receipts always stay)
 #   --class runtime-ledgers    (deletes commands with a recorded result and their
 #                               event receipts; expired or unresolved commands are
 #                               reconciliation work and stay)
@@ -243,10 +286,13 @@ retained while a plan pins it or the authoring command that produced it still
 exists.
 
 Executions are the last class to become eligible: an execution stays retained
-while its acceptance record, its events, a reconciliation checkpoint or a
-non-terminal attempt still exists, so a pass over the earlier classes is what
-frees it. Running `--class executions` first is harmless — the pass reports
-`reference_pending` until those records are gone.
+while its acceptance record, either interaction/cancellation receipt, its
+interaction requests, events, a reconciliation checkpoint or a non-terminal
+attempt still exists, so a pass over the earlier classes is what frees it.
+Interaction requests currently have no configured retention deletion class;
+they remain a durable reference until that lifecycle is defined. Running
+`--class executions` first is harmless — the pass reports `reference_pending`
+until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
 are eligible, and why the rest are retained. Deleting requires
@@ -272,10 +318,14 @@ bun scripts/retention-reapply.mjs --backend postgres --database control_plane \
   --host <neon-host> --journal <retention-journal.jsonl>
 ```
 
-Reapply is idempotent: inserts are insert-if-absent and deletes are by identity,
-so replaying a journal — or replaying an entry whose storage change never
-happened — is safe. Keep the journal with the backups; without it a restored
-snapshot cannot be brought forward.
+Reapply is idempotent: inserts are insert-if-absent and deletes are by identity.
+An entry whose transaction never committed still applies its approved deletion
+intent; idempotence alone does not reconcile that outcome or later holds and
+references. The current command is not proof of full restore acceptance. Keep
+the journal independently of the database and reconcile ambiguous outcomes
+before exposing a restored copy; without the journal a snapshot cannot be
+brought forward. External durability and outcome reconciliation remain open
+M11 gates.
 
 Which classes can ever be swept, and which the policy keeps reference-governed,
 is one command away — it prints the decided duration, the governance mode, the

@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CommandInboxService } from '@control-plane/domain'
 import {
+  acceptancePlan,
+  acceptancePlanReference,
+  seedAcceptancePlan,
+} from './execution-plan-fixtures.mjs'
+import {
   SqliteCommandAcceptanceRepository,
   SqliteExecutionEventRepository,
   SqlitePersistenceProvider,
@@ -12,13 +17,9 @@ import {
 
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  ...acceptancePlan.correlation,
   executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  executionPlanId: acceptancePlan.executionPlanId,
 }
 
 const receivedAt = '2026-08-24T10:00:00.000Z'
@@ -43,11 +44,7 @@ function commandInput(overrides = {}) {
       taskId: ids.taskId,
       agentId: ids.agentId,
     },
-    executionPlan: {
-      executionPlanId: ids.executionPlanId,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
-    },
+    executionPlan: acceptancePlanReference,
     receivedAt,
     retentionExpiresAt: expiredAt,
     ...overrides,
@@ -63,6 +60,7 @@ const scope = {
 }
 
 async function accept(provider, overrides = {}) {
+  await seedAcceptancePlan(provider)
   const service = new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider),
     executionIdFactory: () => ids.executionId,
@@ -115,6 +113,7 @@ function eventDraft(eventId, overrides = {}) {
 }
 
 async function seedExecution(provider) {
+  await seedAcceptancePlan(provider)
   await provider.transaction((transaction) =>
     transaction.put({
       namespace: 'executions',
@@ -130,11 +129,7 @@ async function seedExecution(provider) {
           agentId: ids.agentId,
           requestId: ids.requestId,
         },
-        executionPlan: {
-          executionPlanId: ids.executionPlanId,
-          contentDigest: `sha256:${'b'.repeat(64)}`,
-          schemaVersion: 1,
-        },
+        executionPlan: acceptancePlanReference,
         attemptCount: 0,
         acceptedAt: receivedAt,
         terminalAt: expiredAt,
@@ -358,6 +353,7 @@ describe('SQLite retention assessment (#194)', () => {
       await provider.migrate()
       // Seeded directly: this covers the bound, and a candidate without its
       // owner execution must be retained rather than crash the pass.
+      await seedAcceptancePlan(provider)
       await seedRaw(provider, 'command-inbox', 'expired-one', {
         callerPrincipalId: 'svc_agent-hq',
         operation: 'execution.accept',
@@ -371,11 +367,7 @@ describe('SQLite retention assessment (#194)', () => {
         payloadHash: 'a'.repeat(64),
         status: 'accepted',
         executionId: ids.executionId,
-        executionPlan: {
-          executionPlanId: ids.executionPlanId,
-          contentDigest: `sha256:${'b'.repeat(64)}`,
-          schemaVersion: 1,
-        },
+        executionPlan: acceptancePlanReference,
         version: 1,
         conflictCount: 0,
         receivedAt,
@@ -395,11 +387,7 @@ describe('SQLite retention assessment (#194)', () => {
         payloadHash: 'a'.repeat(64),
         status: 'accepted',
         executionId: ids.executionId,
-        executionPlan: {
-          executionPlanId: ids.executionPlanId,
-          contentDigest: `sha256:${'b'.repeat(64)}`,
-          schemaVersion: 1,
-        },
+        executionPlan: acceptancePlanReference,
         version: 1,
         conflictCount: 0,
         receivedAt,

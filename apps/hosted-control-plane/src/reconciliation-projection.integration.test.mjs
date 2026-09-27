@@ -4,10 +4,23 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
+import { ContextPackageCompiler, contextPackageSerializationFixtures } from '@control-plane/context'
 import {
+  CommandInboxService,
+  ExecutionLifecycleService,
+  VersionedCatalog,
+} from '@control-plane/domain'
+import {
+  ExecutionPlanAcceptanceValidator,
+  ExecutionPlanCompiler,
+} from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
+import {
+  PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
+  PostgresContextPackageRepository,
   PostgresExecutionRepository,
+  PostgresExecutionPlanRepository,
   PostgresRuntimeCommandRepository,
   PostgresRuntimeConnectionRepository,
   reconciliationCheckpoints,
@@ -24,15 +37,98 @@ const correlation = {
   agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
 }
 const requestId = 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV'
-const executionPlan = {
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  contentDigest: `sha256:${'7'.repeat(64)}`,
-  schemaVersion: 1,
-}
 const executionId = 'exe_01DRZ3NDEKTSV4RRFFQ69G5FAV'
 const commandId = 'cmd_01DRZ3NDEKTSV4RRFFQ69G5FAV'
 const attemptId = 'att_01DRZ3NDEKTSV4RRFFQ69G5FAV'
 const resultReference = 'art_01DRZ3NDEKTSV4RRFFQ69G5FAV'
+
+async function seedAcceptancePlan(isolated) {
+  const base = contextPackageSerializationFixtures.futurePi
+  const contextPackage = new ContextPackageCompiler(base.compiler.version).compile({
+    objective: base.objective,
+    projectState: {
+      schemaVersion: 1,
+      workspaceId: correlation.workspaceId,
+      projectId: correlation.projectId,
+      revision: base.projectState.revision,
+      items: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+    expectedProjectStateRevision: base.projectState.revision,
+    candidates: [],
+    artifacts: [],
+    constraints: base.constraints,
+    permissions: base.permissions,
+    successCriteria: base.successCriteria,
+    returnContract: base.returnContract,
+    budgets: base.budgets,
+    compiledAt: now,
+  })
+  const inputs = createExecutionPlanTestFixtureInputs({ contextPackage })
+  inputs.correlation = { ...correlation, requestId }
+  const catalogRepository = new PostgresCatalogRepository(isolated.application)
+  const catalog = new VersionedCatalog(catalogRepository, catalogRepository)
+  const { contentDigest: _contentDigest, ...skillManifest } = inputs.skills[0].manifest
+  await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
+  await catalog.createSkill({
+    skillId: inputs.skills[0].skillId,
+    displayName: 'Hosted reconciliation fixture',
+    ownership: { scope: 'system' },
+    provenance: { source: 'system-curated', ownerRef: 'system', trust: 'trusted' },
+    createdAt: inputs.skills[0].createdAt,
+  })
+  const skillDraft = await catalog.createSkillDraft({
+    skillId: inputs.skills[0].skillId,
+    skillVersionId: inputs.skills[0].skillVersionId,
+    manifest: skillManifest,
+    content: inputs.skills[0].content,
+    createdAt: inputs.skills[0].createdAt,
+  })
+  const publishedSkill = await catalog.publishSkillVersion({
+    skillVersionId: skillDraft.skillVersionId,
+    expectedRevision: skillDraft.revision,
+    publishedAt: now,
+  })
+  await catalog.createAgentProfile({
+    profileId: inputs.profile.profileId,
+    displayName: 'Hosted reconciliation fixture',
+    ownership: { scope: 'system' },
+    createdAt: inputs.profile.createdAt,
+  })
+  const profileDraft = await catalog.createAgentProfileDraft({
+    profileId: inputs.profile.profileId,
+    profileVersionId: inputs.profile.profileVersionId,
+    version: inputs.profile.version,
+    definition: {
+      ...inputs.profile.definition,
+      skills: [
+        {
+          skillId: publishedSkill.skillId,
+          skillVersionId: publishedSkill.skillVersionId,
+          contentDigest: publishedSkill.manifest.contentDigest,
+        },
+      ],
+    },
+    createdAt: inputs.profile.createdAt,
+  })
+  const publishedProfile = await catalog.publishAgentProfileVersion({
+    profileVersionId: profileDraft.profileVersionId,
+    expectedRevision: profileDraft.revision,
+    publishedAt: now,
+  })
+  inputs.profile = publishedProfile
+  inputs.skills = [publishedSkill]
+  const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
+  const plans = new PostgresExecutionPlanRepository(isolated.application)
+  await plans.put(plan)
+  return {
+    plan,
+    validator: new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: { profiles: catalogRepository, skills: catalogRepository },
+    }),
+  }
+}
 
 describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreSQL rows', () => {
   let isolated
@@ -80,10 +176,11 @@ describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreS
     // Seed real rows: an accepted execution advanced to running with an attempt,
     // and a runtime command whose terminal result the gateway recorded but the
     // workflow runtime never applied.
+    const { plan, validator } = await seedAcceptancePlan(isolated)
     const inbox = new CommandInboxService({
       repository: new PostgresCommandAcceptanceRepository(isolated.application),
       executionIdFactory: () => executionId,
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: validator,
       now: () => now,
     })
     const { execution } = await inbox.acceptExecution({
@@ -94,12 +191,15 @@ describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreS
       idempotencyKey: 'reconciliation-projection:1',
       payloadHash: '8'.repeat(64),
       correlation,
-      executionPlan,
+      executionPlan: {
+        executionPlanId: plan.executionPlanId,
+        contentDigest: plan.contentDigest,
+        schemaVersion: plan.schemaVersion,
+      },
       receivedAt: now,
       retentionExpiresAt: '2099-01-01T00:00:00.000Z',
     })
     const executions = new PostgresExecutionRepository(isolated.application)
-    await executions.insertExecution(execution)
     const lifecycle = new ExecutionLifecycleService(executions)
     await lifecycle.createAttempt({
       executionId,

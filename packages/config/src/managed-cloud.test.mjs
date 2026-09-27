@@ -42,6 +42,12 @@ describe('managed cloud configuration', () => {
     ).toEqual({ required: true })
     expect(
       loadManagedCloudConfiguration(
+        { ...base, CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true' },
+        'workflow-worker'
+      ).catalogApproval
+    ).toEqual({ required: true })
+    expect(
+      loadManagedCloudConfiguration(
         {
           ...base,
           CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'true',
@@ -54,6 +60,12 @@ describe('managed cloud configuration', () => {
       loadManagedCloudConfiguration(
         { ...base, CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'yes' },
         'control-api'
+      )
+    ).toThrow()
+    expect(() =>
+      loadManagedCloudConfiguration(
+        { ...base, CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED: 'yes' },
+        'workflow-worker'
       )
     ).toThrow()
     expect(() =>

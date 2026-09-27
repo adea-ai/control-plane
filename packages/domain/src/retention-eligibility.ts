@@ -85,9 +85,12 @@ export function evaluateRetentionEligibility(
   if (facts.confirmed === false) return retained('unconfirmed_signal')
   if (facts.retentionExpiresAt === undefined) return retained('missing_expiry')
   if (!canonicalInstant.test(facts.retentionExpiresAt)) return retained('malformed_expiry')
+  const expiry = Date.parse(facts.retentionExpiresAt)
+  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== facts.retentionExpiresAt)
+    return retained('malformed_expiry')
   const now = Date.parse(facts.now)
   if (Number.isNaN(now)) throw new Error('RETENTION_ELIGIBILITY_INVALID_NOW')
-  if (Date.parse(facts.retentionExpiresAt) >= now) return retained('not_expired')
+  if (expiry >= now) return retained('not_expired')
   if (!facts.ownerTerminal) return retained('non_terminal_owner')
   if (!facts.publicationSettled) return retained('unsettled_publication')
   if (!facts.rejectionKeyReserved) return retained('rejection_key_absent')
@@ -105,7 +108,7 @@ export function evaluateRetentionEligibility(
 export const RetentionAssessmentSchema = z.object({
   classId: z.string().min(1).max(64),
   assessedAt: z.string(),
-  /** Expired candidates inspected in this pass. */
+  /** Candidates inspected in this pass; reference-window scans include young targets. */
   scanned: z.number().int().nonnegative(),
   /** True when the scan hit its bound and more candidates remain. */
   truncated: z.boolean(),
@@ -137,6 +140,12 @@ export const RetentionDeletionResultSchema = z.object({
   compacted: z.number().int().nonnegative().optional(),
   raced: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  /**
+   * Backend-local scan position for plan/package reference-window passes. Reuse
+   * only with the same target, backend and class; this is not deletion authority.
+   * A later full observation pass starts again after the final page.
+   */
+  nextAfterId: z.string().min(1).max(128).optional(),
   retainedByReason: z.partialRecord(
     RetentionEligibilityReasonSchema,
     z.number().int().nonnegative()
@@ -182,7 +191,7 @@ export class RetentionAssessmentCounter {
   readonly #retained = new Map<RetentionEligibilityReason, number>()
 
   constructor(classId: string, assessedAt: string, bound: number) {
-    if (!Number.isSafeInteger(bound) || bound < 1)
+    if (!Number.isSafeInteger(bound) || bound < 0)
       throw new Error('RETENTION_ASSESSMENT_INVALID_BOUND')
     this.#classId = classId
     this.#assessedAt = assessedAt

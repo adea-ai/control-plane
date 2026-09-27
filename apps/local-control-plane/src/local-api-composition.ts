@@ -111,10 +111,25 @@ export class LocalControlApiComposition {
     this.runtimeInventoryCheckpoints = new SqliteRuntimeInventoryCheckpointRepository(persistence)
     this.runtimeEventEffects = new SqliteRuntimeEventEffectSink(persistence)
     this.runtimeDiscoveryRepository = new SqliteRuntimeDiscoveryRepository(persistence)
+    const catalogApprovals = new SqliteCatalogApprovalRepository(persistence)
+    const executionPlanValidatorOptions = {
+      catalog: { profiles: this.catalog, skills: this.catalog },
+      ...(catalogApprovalPolicy === undefined
+        ? {}
+        : {
+            approvalGate: {
+              approvals: catalogApprovals,
+              policy: catalogApprovalPolicy,
+            },
+          }),
+    }
     this.commands = new CommandInboxService({
       repository: this.commandRepository,
       executionIdFactory: createExecutionId,
-      executionPlanValidator: new ExecutionPlanAcceptanceValidator(this.executionPlans),
+      executionPlanValidator: new ExecutionPlanAcceptanceValidator(
+        this.executionPlans,
+        executionPlanValidatorOptions
+      ),
       ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
     })
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
@@ -145,13 +160,16 @@ export class LocalControlApiComposition {
       profiles: this.catalog,
       projectStates: this.projectStates,
       skills: this.catalog,
+      ...(catalogApprovalPolicy === undefined
+        ? {}
+        : { approvalGate: { approvals: catalogApprovals, policy: catalogApprovalPolicy } }),
     })
     this.profileResolutionService = new RepositoryProfileResolutionService(
       this.catalog,
       catalogApprovalPolicy === undefined
         ? undefined
         : {
-            approvals: new SqliteCatalogApprovalRepository(persistence),
+            approvals: catalogApprovals,
             skills: this.catalog,
             policy: catalogApprovalPolicy,
           }

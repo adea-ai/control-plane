@@ -5,8 +5,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { CommandInboxError, CommandInboxService } from '@control-plane/domain'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   SqliteCommandAcceptanceRepository,
+  SqliteContextPackageRepository,
+  SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
 } from '../packages/sqlite-persistence/src/index.ts'
 import { retentionApply } from '../scripts/retention-apply.mjs'
@@ -24,15 +28,16 @@ async function apply(argv) {
   })
   return { status, stdout, stderr }
 }
+const plan = createExecutionPlanTestFixture()
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  workspaceId: plan.correlation.workspaceId,
+  projectId: plan.correlation.projectId,
+  taskId: plan.correlation.taskId,
+  agentId: plan.correlation.agentId,
   executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  executionPlanId: plan.executionPlanId,
 }
 const receivedAt = '2026-08-24T10:00:00.000Z'
 const expiredAt = '2026-09-23T10:00:00.000Z'
@@ -72,6 +77,12 @@ async function patchSingleton(provider, namespace, patch) {
 }
 
 async function seedTerminalCommand(provider) {
+  // New admission requires real parents. The validator stub does not waive
+  // durable reference integrity enforced by the repository transaction.
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new SqliteExecutionPlanRepository(provider).put(plan)
   const repository = new SqliteCommandAcceptanceRepository(provider)
   await new CommandInboxService({
     repository,
@@ -93,8 +104,8 @@ async function seedTerminalCommand(provider) {
     },
     executionPlan: {
       executionPlanId: ids.executionPlanId,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
     },
     receivedAt,
     retentionExpiresAt: expiredAt,
@@ -296,6 +307,85 @@ describe('retention apply CLI (#194)', () => {
       ])
       expect(badInstant.status).toBe(1)
       expect(badInstant.stderr.trim()).toBe('RETENTION_APPLY_FAILED')
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  test('rejects malformed bounds and unsupported or malformed continuation before storage', async () => {
+    for (const extra of [
+      ['--bound', '1junk'],
+      ['--bound', '1.5'],
+      ['--bound', '0'],
+      ['--bound', '9007199254740992'],
+      ['--after-id', 'target'],
+    ]) {
+      const result = await run('/tmp/absent-retention-cursor-fixture.sqlite', extra)
+      expect(result).toEqual({ status: 1, stdout: '', stderr: 'RETENTION_APPLY_FAILED\n' })
+    }
+    for (const afterId of ['', 'private/data', 'x'.repeat(129)]) {
+      const result = await apply([
+        '--backend',
+        'sqlite',
+        '--class',
+        'execution-plans',
+        '--database',
+        '/tmp/absent-retention-cursor-fixture.sqlite',
+        '--after-id',
+        afterId,
+      ])
+      expect(result).toEqual({ status: 1, stdout: '', stderr: 'RETENTION_APPLY_FAILED\n' })
+    }
+  })
+
+  test('reference-class continuation visits each young target once without skipping a bounded page', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-cursor-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const packages = new SqliteContextPackageRepository(provider)
+      for (const package_ of Object.values(contextPackageSerializationFixtures))
+        await packages.put(package_)
+      const targetIds = await provider.transaction(async (transaction) =>
+        (await transaction.list('context-packages')).map((record) => record.id).toSorted()
+      )
+      expect(targetIds).toHaveLength(3)
+      let afterId
+      for (let page = 0; page < targetIds.length; page++) {
+        const result = await apply([
+          '--backend',
+          'sqlite',
+          '--class',
+          'context-packages',
+          '--database',
+          path,
+          '--now',
+          assessedAt,
+          '--bound',
+          '1',
+          ...(afterId === undefined ? [] : ['--after-id', afterId]),
+        ])
+        expect(result.status).toBe(0)
+        const report = JSON.parse(result.stdout)
+        expect(report.dryRun).toBe(true)
+        expect(report.result.scanned).toBe(1)
+        expect(report.result.deleted).toBe(0)
+        afterId = report.result.nextAfterId
+        expect(afterId).toBe(page < targetIds.length - 1 ? targetIds[page] : undefined)
+      }
+      // Dry-run pagination cannot establish release clocks or remove content.
+      expect(
+        await provider.transaction((transaction) => transaction.list('context-packages'))
+      ).toHaveLength(3)
+      for (const namespace of [
+        'retention-plan-reference-windows',
+        'retention-context-reference-windows',
+      ])
+        expect(
+          await provider.transaction((transaction) => transaction.list(namespace))
+        ).toHaveLength(0)
     } finally {
       await provider.close()
       await rm(directory, { recursive: true, force: true })

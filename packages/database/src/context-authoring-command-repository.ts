@@ -45,7 +45,7 @@ export class PostgresContextAuthoringCommandRepository implements ContextAuthori
           throw new Error('CONTEXT_AUTHORING_COMMAND_CONFLICT')
         return existing
       }
-      await new PostgresContextPackageRepository(transaction).put(package_)
+      await new PostgresContextPackageRepository(transaction).putForReference(package_)
       await transaction.insert(contextAuthoringCommands).values({
         commandKey: commandKey(record.scope),
         workspaceId: record.scope.workspaceId,
@@ -59,7 +59,7 @@ export class PostgresContextAuthoringCommandRepository implements ContextAuthori
 }
 
 async function read(
-  database: Pick<ControlPlaneDatabase, 'select' | 'insert'>,
+  database: Pick<ControlPlaneDatabase, 'select' | 'insert' | 'transaction'>,
   scope: ContextAuthoringCommandScope
 ): Promise<ContextAuthoringCommandRecord | undefined> {
   const [row] = await database

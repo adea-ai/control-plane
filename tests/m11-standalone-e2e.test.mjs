@@ -42,7 +42,10 @@ import {
   verifyFilesystemCheckpoint,
 } from '@control-plane/deployment'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import {
   LangGraphOrchestrationAdapter,
   LangGraphSqliteCheckpointSaver,
@@ -222,6 +225,7 @@ describe('M11 standalone execution composition', () => {
         )
       try {
         await local.start()
+        await seedExecutionPlanInputs(local)
         await local.executionPlans.put(plan)
         const acceptedAt = new Date().toISOString()
         const deadlineAt = new Date(Date.now() + 90000).toISOString()
@@ -353,7 +357,9 @@ describe('M11 standalone execution composition', () => {
           profile: 'local',
           topology: { externalServices: 0, runtimeTransport: 'direct-local' },
         })
-        const plan = family === 'acp' ? createAcpExecutionPlan() : createExecutionPlanTestFixture()
+        const planOptions = family === 'acp' ? acpExecutionPlanOptions() : {}
+        const plan = createExecutionPlanTestFixture(planOptions)
+        await seedExecutionPlanInputs(first, planOptions)
         await first.executionPlans.put(plan)
         const accepted = await first.commands.acceptExecution(command(plan))
         executionId = accepted.execution.executionId
@@ -445,6 +451,7 @@ describe('M11 standalone execution composition', () => {
       try {
         await local.start()
         const plan = createExecutionPlanTestFixture()
+        await seedExecutionPlanInputs(local)
         await local.executionPlans.put(plan)
         const issuedAt = new Date().toISOString()
         const response = await local.executionAcceptanceService.accept(
@@ -567,6 +574,7 @@ describe('M11 standalone execution composition', () => {
         },
       })
       const plan = createExecutionPlanTestFixture()
+      await seedExecutionPlanInputs(local)
       await local.executionPlans.put(plan)
       const issuedAt = new Date().toISOString()
       const accepted = await sdk.acceptExecution({
@@ -975,11 +983,18 @@ async function waitForTerminalExecution(runtimeComposition, executionId) {
   throw new Error('M11_LOCAL_RESTATE_EXECUTION_TIMEOUT')
 }
 
-function createAcpExecutionPlan() {
-  return createExecutionPlanTestFixture({
+function acpExecutionPlanOptions() {
+  return {
     profileCapabilityRequirements: ['stream.output', 'execution.cancel'],
     skillRequiredCapabilities: [],
-  })
+  }
+}
+
+async function seedExecutionPlanInputs(local, options = {}) {
+  const inputs = createExecutionPlanTestFixtureInputs(options)
+  await local.catalog.insertAgentProfileVersion(inputs.profile)
+  for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
+  await local.contextPackages.put(inputs.contextPackage)
 }
 
 function composition(dataDirectory, runtimeTransport) {

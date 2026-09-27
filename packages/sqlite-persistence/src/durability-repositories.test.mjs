@@ -9,6 +9,11 @@ import {
 } from '@control-plane/domain'
 import { ExecutionEventService } from '@control-plane/events'
 import {
+  acceptancePlan,
+  acceptancePlanReference,
+  seedAcceptancePlan,
+} from './execution-plan-fixtures.mjs'
+import {
   SqliteExecutionEventRepository,
   SqliteExecutionRepository,
   SqlitePersistenceProvider,
@@ -269,6 +274,7 @@ describe('SQLite standalone durability repositories', () => {
 
   test('receipts written pre-cutover replay as duplicates via the legacy frame hash', async () => {
     await withReopen(async ({ current }) => {
+      await seedAcceptancePlan(current())
       const executions = new SqliteExecutionRepository(current())
       const lifecycle = new ExecutionLifecycleService(executions)
       await lifecycle.createExecution(executionInput())
@@ -308,6 +314,7 @@ describe('SQLite standalone durability repositories', () => {
 
   test('atomically persists runtime event receipts and terminal state across reopen', async () => {
     await withReopen(async ({ current, reopened }) => {
+      await seedAcceptancePlan(current())
       const executions = new SqliteExecutionRepository(current())
       const lifecycle = new ExecutionLifecycleService(executions)
       const execution = await lifecycle.createExecution(executionInput())
@@ -478,16 +485,14 @@ function executionInput() {
   return {
     executionId: ids.executionId,
     correlation: {
-      workspaceId: ids.workspaceId,
-      projectId: ids.projectId,
-      taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      workspaceId: acceptancePlan.correlation.workspaceId,
+      projectId: acceptancePlan.correlation.projectId,
+      taskId: acceptancePlan.correlation.taskId,
+      agentId: acceptancePlan.correlation.agentId,
+      requestId: acceptancePlan.correlation.requestId,
     },
     executionPlan: {
-      executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      contentDigest: `sha256:${'e'.repeat(64)}`,
-      schemaVersion: 1,
+      ...acceptancePlanReference,
     },
     acceptedAt: now,
     deadlineAt: '2026-08-30T13:00:00.000Z',

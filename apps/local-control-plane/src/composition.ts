@@ -43,6 +43,7 @@ import {
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
   SqliteCatalogApprovalRepository,
+  assertSqliteWorkflowExecutionReference,
 } from '@control-plane/sqlite-persistence'
 import {
   createRestateEndpointFactory,
@@ -160,9 +161,9 @@ export interface LocalReconciliationConfiguration {
 
 export interface LocalControlPlaneCompositionOptions {
   /**
-   * Optional catalog approval policy (#188): when required, profile
-   * resolution denies versions without an approved, version-bound decision.
-   * Absent leaves resolution unchanged.
+   * Optional catalog approval policy (#188): when required, resolution,
+   * validation, and new execution acceptance require approved, version-bound
+   * catalog pins. Absent leaves approval enforcement unchanged.
    */
   readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
@@ -350,7 +351,12 @@ export class LocalControlPlaneComposition {
     // The embedded mode routes acceptance, interactions, cancellations, and
     // reconciliation remediation through one queue-backed dispatcher; restate
     // mode keeps the ingress client as the default inside the API composition.
-    this.workflowJobs = new WorkflowJobStore(this.persistence)
+    this.workflowJobs = new WorkflowJobStore(
+      this.persistence,
+      this.durableExecution !== 'embedded-sqlite'
+        ? {}
+        : { beforeEnqueue: assertSqliteWorkflowExecutionReference }
+    )
     this.workflowDispatcher =
       this.durableExecution === 'embedded-sqlite'
         ? new EmbeddedExecutionWorkflowDispatcher({ store: this.workflowJobs })

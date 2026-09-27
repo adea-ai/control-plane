@@ -1,12 +1,21 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { CommandInboxError, CommandInboxService } from '@control-plane/domain'
 import {
+  CommandInboxError,
+  CommandInboxService,
+  parseRetentionJournalLine,
+} from '@control-plane/domain'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
+  SqliteContextPackageRepository,
+  SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
 } from '../packages/sqlite-persistence/src/index.ts'
 import { retentionApply } from '../scripts/retention-apply.mjs'
@@ -36,15 +45,16 @@ async function reapply(argv) {
   })
   return { status, stdout, stderr }
 }
+const plan = createExecutionPlanTestFixture()
 const ids = {
   commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  workspaceId: plan.correlation.workspaceId,
+  projectId: plan.correlation.projectId,
+  taskId: plan.correlation.taskId,
+  agentId: plan.correlation.agentId,
   executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  executionPlanId: plan.executionPlanId,
 }
 const receivedAt = '2026-08-24T10:00:00.000Z'
 const expiredAt = '2026-09-23T10:00:00.000Z'
@@ -70,6 +80,10 @@ async function patchSingleton(provider, namespace, patch) {
 }
 
 async function seedTerminalRetiredCommand(provider) {
+  await new SqliteContextPackageRepository(provider).put(
+    contextPackageSerializationFixtures.futurePi
+  )
+  await new SqliteExecutionPlanRepository(provider).put(plan)
   const repository = new SqliteCommandAcceptanceRepository(provider)
   await new CommandInboxService({
     repository,
@@ -91,8 +105,8 @@ async function seedTerminalRetiredCommand(provider) {
     },
     executionPlan: {
       executionPlanId: ids.executionPlanId,
-      contentDigest: `sha256:${'b'.repeat(64)}`,
-      schemaVersion: 1,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
     },
     receivedAt,
     retentionExpiresAt: expiredAt,
@@ -108,6 +122,126 @@ async function seedTerminalRetiredCommand(provider) {
 }
 
 describe('retention restore-time reapplication (#194)', () => {
+  test('an empty valid journal still invalidates restored reference clocks', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-clocks-'))
+    const path = join(directory, 'restored.sqlite')
+    const journalPath = join(directory, 'retention.jsonl')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await provider.transaction(async (transaction) => {
+        for (const namespace of [
+          ...Object.values(REFERENCE_RETENTION_NAMESPACES),
+          'unrelated-metadata',
+        ])
+          await transaction.put({
+            namespace,
+            id: 'target',
+            value: { unreferencedSince: '2025-01-01T00:00:00.000Z' },
+          })
+      })
+      await writeFile(journalPath, '')
+      const result = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        path,
+        '--journal',
+        journalPath,
+      ])
+      expect(result.status).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({ records: 0, applied: 0, skipped: 0 })
+      for (const namespace of Object.values(REFERENCE_RETENTION_NAMESPACES))
+        expect(
+          await provider.transaction((transaction) => transaction.get(namespace, 'target'))
+        ).toBeUndefined()
+      expect(
+        await provider.transaction((transaction) => transaction.get('unrelated-metadata', 'target'))
+      ).toBeDefined()
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  test('rejects journal operations outside their declared class or backend', () => {
+    const record = { version: 1, at: assessedAt, backend: 'sqlite', classId: 'evaluation-runs' }
+    for (const operation of [
+      { kind: 'sqlite.delete', namespace: 'executions', id: ids.executionId },
+      { kind: 'sqlite.put', namespace: 'evaluation-runs', id: 'eval-1', value: {} },
+      { kind: 'postgres.deleteEvaluationRun', evalRunId: 'eval-1' },
+    ]) {
+      expect(() =>
+        parseRetentionJournalLine(JSON.stringify({ ...record, operations: [operation] }))
+      ).toThrow()
+    }
+    expect(() =>
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          backend: 'postgres',
+          operations: [{ kind: 'postgres.deleteExecution', executionId: ids.executionId }],
+        })
+      )
+    ).toThrow()
+    expect(
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          backend: 'postgres',
+          classId: 'executions',
+          operations: [
+            { kind: 'postgres.deleteAttempt', attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+            { kind: 'postgres.deleteExecution', executionId: ids.executionId },
+          ],
+        })
+      ).operations
+    ).toHaveLength(2)
+    expect(
+      parseRetentionJournalLine(
+        JSON.stringify({
+          ...record,
+          operations: [{ kind: 'sqlite.delete', namespace: 'evaluation-runs', id: 'eval-1' }],
+        })
+      ).operations
+    ).toHaveLength(1)
+  })
+
+  test('rejects a misclassified journal before changing the restored database', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-journal-scope-'))
+    const path = join(directory, 'restored.sqlite')
+    const journalPath = join(directory, 'retention.jsonl')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'executions',
+          id: ids.executionId,
+          value: { state: 'running' },
+        })
+      )
+      await writeFile(
+        journalPath,
+        `${JSON.stringify({ version: 1, at: assessedAt, backend: 'sqlite', classId: 'evaluation-runs', operations: [{ kind: 'sqlite.delete', namespace: 'executions', id: ids.executionId }] })}\n`
+      )
+      const result = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        path,
+        '--journal',
+        journalPath,
+      ])
+      expect(result.status).toBe(1)
+      expect(
+        await provider.transaction((transaction) => transaction.get('executions', ids.executionId))
+      ).toBeDefined()
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('an older snapshot plus the journal restores deletion and rejection identity', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-restore-'))
     const path = join(directory, 'state.sqlite')

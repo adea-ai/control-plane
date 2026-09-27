@@ -1,19 +1,38 @@
 import { createHash } from 'node:crypto'
 import { EvalRunSchema } from '@control-plane/production-readiness'
 import {
+  ContextPackageReferenceSchema,
+  ContextPackageSchema,
+  assertContextPackageIntegrity,
+  assertContextPackageDerivedFrom,
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
+  type ContextPackage,
+  type ContextPackageReference,
 } from '@control-plane/context'
 import {
+  ExecutionPlanReferenceSchema,
+  ExecutionPlanSchema,
+  assertExecutionPlanDerivedFrom,
+  assertExecutionPlanIntegrity,
+  assertExecutionValidationCommandPlan,
   ExecutionValidationCommandRecordSchema,
   executionValidationCommandKey,
+  type ExecutionPlan,
+  type ExecutionPlanReference,
 } from '@control-plane/execution-plan'
 import type {
   DeploymentProfile,
   JsonValue,
   ObjectStore,
   PersistenceProvider,
+  PersistenceTransaction,
 } from '@control-plane/deployment'
+import { compareCodePointOrder } from '@control-plane/domain'
+import {
+  REFERENCE_RETENTION_NAMESPACES,
+  assertSqliteStoredPlanReference,
+} from '@control-plane/sqlite-persistence'
 import {
   PORTABLE_CONTRACT_VERSION,
   PORTABLE_EXPORT_SCHEMA_VERSION,
@@ -132,6 +151,19 @@ export interface PortableImportTransaction {
   recordProvenance(provenance: PortableMigrationProvenance): Promise<void>
   commit(): Promise<void>
   rollback(): Promise<void>
+}
+
+export interface PortableReferenceLineageLookup {
+  readonly contextPackage: (reference: ContextPackageReference) => Promise<ContextPackage>
+  readonly executionPlan: (reference: ExecutionPlanReference) => Promise<{
+    readonly plan: ExecutionPlan
+    readonly contextPackage: ContextPackage
+  }>
+}
+
+export interface PortableReferenceClaims {
+  readonly contextPackages: readonly ContextPackageReference[]
+  readonly executionPlans: readonly (ExecutionPlanReference & { readonly schemaVersion: number })[]
 }
 
 export interface PortableStateDestination {
@@ -562,6 +594,7 @@ export class PersistencePortableStateDestination implements PortableStateDestina
               }
             }
           }
+          await validateAndResetImportedReferences(transaction, staged)
           const existingProvenance = await transaction.get(
             'profile-migrations',
             committedProvenance.exportId
@@ -586,6 +619,298 @@ export class PersistencePortableStateDestination implements PortableStateDestina
         provenance = undefined
       },
     })
+  }
+}
+
+async function validateAndResetImportedReferences(
+  transaction: PersistenceTransaction,
+  staged: readonly PortableRecord[]
+): Promise<void> {
+  if (staged.length === 0) return
+  const claims = await collectImportedPortableReferenceClaims(staged, {
+    contextPackage: (reference) => readStoredContextPackage(transaction, reference),
+    executionPlan: async (reference) => {
+      const stored = await readStoredExecutionPlan(transaction, reference)
+      return { plan: stored.plan, contextPackage: stored.context }
+    },
+  })
+
+  for (const reference of claims.contextPackages) {
+    await transaction.delete(
+      REFERENCE_RETENTION_NAMESPACES.contextPackages,
+      sqliteRecordId(reference.contextPackageId)
+    )
+  }
+  for (const reference of claims.executionPlans) {
+    await transaction.delete(
+      REFERENCE_RETENTION_NAMESPACES.executionPlans,
+      sqliteRecordId(reference.executionPlanId)
+    )
+  }
+}
+
+/** Validate every newly staged portable reference and collect exact immutable targets once. */
+export async function collectImportedPortableReferenceClaims(
+  staged: readonly PortableRecord[],
+  lookup: PortableReferenceLineageLookup
+): Promise<PortableReferenceClaims> {
+  const contextReferences = new Map<string, ContextPackageReference>()
+  const planReferences = new Map<
+    string,
+    ExecutionPlanReference & { readonly schemaVersion: number }
+  >()
+
+  const addContext = (reference: ContextPackageReference, logicalId: string) => {
+    const parsed = ContextPackageReferenceSchema.parse(reference)
+    const previous = contextReferences.get(parsed.contextPackageId)
+    if (previous && previous.contentDigest !== parsed.contentDigest) {
+      throw new PortableMigrationError('PORTABLE_PLAN_STALE', [logicalId])
+    }
+    contextReferences.set(parsed.contextPackageId, parsed)
+  }
+  const addPlan = (plan: ExecutionPlan, logicalId: string) => {
+    const reference = ExecutionPlanReferenceSchema.parse({
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+    })
+    const previous = planReferences.get(reference.executionPlanId)
+    if (
+      previous &&
+      (previous.contentDigest !== reference.contentDigest ||
+        previous.schemaVersion !== plan.schemaVersion)
+    ) {
+      throw new PortableMigrationError('PORTABLE_PLAN_STALE', [logicalId])
+    }
+    planReferences.set(reference.executionPlanId, {
+      ...reference,
+      schemaVersion: plan.schemaVersion,
+    })
+  }
+
+  for (const record of staged) {
+    if (record.category === 'context-package') {
+      const package_ = parseImportedContextPackage(record)
+      addContext(
+        { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest },
+        record.logicalId
+      )
+      if (package_.parentContextPackage) {
+        const parent = await lookup.contextPackage(package_.parentContextPackage)
+        try {
+          assertContextPackageDerivedFrom(parent, package_)
+        } catch {
+          throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
+        }
+        addContext(
+          { contextPackageId: parent.contextPackageId, contentDigest: parent.contentDigest },
+          record.logicalId
+        )
+      }
+      continue
+    }
+
+    if (record.category === 'execution-plan') {
+      const plan = parseImportedExecutionPlan(record)
+      addPlan(plan, record.logicalId)
+      const contextPackage = await lookup.contextPackage(plan.contextPackage)
+      assertPlanContextScope(plan, contextPackage)
+      addContext(
+        {
+          contextPackageId: contextPackage.contextPackageId,
+          contentDigest: contextPackage.contentDigest,
+        },
+        record.logicalId
+      )
+
+      if (plan.parentExecutionPlan) {
+        const parent = await lookup.executionPlan(plan.parentExecutionPlan)
+        try {
+          assertExecutionPlanDerivedFrom(parent.plan, plan, parent.contextPackage, contextPackage)
+        } catch {
+          throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
+        }
+        addPlan(parent.plan, record.logicalId)
+        addContext(
+          {
+            contextPackageId: parent.contextPackage.contextPackageId,
+            contentDigest: parent.contextPackage.contentDigest,
+          },
+          record.logicalId
+        )
+      }
+      continue
+    }
+
+    if (record.category === 'context-authoring-command') {
+      const command = ContextAuthoringCommandRecordSchema.parse(record.value)
+      if (
+        record.revision !== 0 ||
+        record.logicalId !==
+          `context-authoring-commands/${contextAuthoringCommandKey(command.scope)}`
+      ) {
+        throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+      }
+      const package_ = await lookup.contextPackage(command.contextPackage)
+      if (
+        package_.projectState.workspaceId !== command.scope.workspaceId ||
+        package_.projectState.projectId !== command.scope.projectId
+      ) {
+        throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
+      }
+      addContext(
+        { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest },
+        record.logicalId
+      )
+      continue
+    }
+
+    if (record.category === 'execution-validation-command') {
+      const command = ExecutionValidationCommandRecordSchema.parse(record.value)
+      if (
+        record.revision !== 0 ||
+        record.logicalId !==
+          `execution-validation-commands/${executionValidationCommandKey(command.scope)}`
+      ) {
+        throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+      }
+      const target = await lookup.executionPlan(command.executionPlan)
+      assertPlanContextScope(target.plan, target.contextPackage)
+      try {
+        assertExecutionValidationCommandPlan(command, target.plan)
+      } catch {
+        throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
+      }
+      addPlan(target.plan, record.logicalId)
+      addContext(
+        {
+          contextPackageId: target.contextPackage.contextPackageId,
+          contentDigest: target.contextPackage.contentDigest,
+        },
+        record.logicalId
+      )
+    }
+  }
+
+  return {
+    contextPackages: [...contextReferences.values()].toSorted((left, right) =>
+      compareCodePointOrder(left.contextPackageId, right.contextPackageId)
+    ),
+    executionPlans: [...planReferences.values()].toSorted((left, right) =>
+      compareCodePointOrder(left.executionPlanId, right.executionPlanId)
+    ),
+  }
+}
+
+function parseImportedContextPackage(record: PortableRecord) {
+  let package_: ReturnType<typeof ContextPackageSchema.parse>
+  try {
+    package_ = ContextPackageSchema.parse(record.value)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  if (package_.parentContextPackage?.contextPackageId === package_.contextPackageId) {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  try {
+    package_ = assertContextPackageIntegrity(package_)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  if (
+    record.revision !== 0 ||
+    record.logicalId !== `context-packages/${package_.contextPackageId}`
+  ) {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  return package_
+}
+
+function parseImportedExecutionPlan(record: PortableRecord) {
+  let plan: ReturnType<typeof ExecutionPlanSchema.parse>
+  try {
+    plan = ExecutionPlanSchema.parse(record.value)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  if (plan.parentExecutionPlan?.executionPlanId === plan.executionPlanId) {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  try {
+    plan = assertExecutionPlanIntegrity(plan)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  if (record.revision !== 0 || record.logicalId !== `execution-plans/${plan.executionPlanId}`) {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  return plan
+}
+
+async function readStoredContextPackage(
+  transaction: PersistenceTransaction,
+  input: unknown
+): Promise<ReturnType<typeof ContextPackageSchema.parse>> {
+  const reference = ContextPackageReferenceSchema.parse(input)
+  const stored = await transaction.get(
+    'context-packages',
+    sqliteRecordId(reference.contextPackageId)
+  )
+  if (stored === undefined) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  }
+  let package_: ReturnType<typeof ContextPackageSchema.parse>
+  try {
+    package_ = assertContextPackageIntegrity(ContextPackageSchema.parse(stored.value))
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  }
+  if (
+    package_.contextPackageId !== reference.contextPackageId ||
+    package_.contentDigest !== reference.contentDigest
+  ) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
+  }
+  return package_
+}
+
+async function readStoredExecutionPlan(
+  transaction: PersistenceTransaction,
+  input: unknown
+): Promise<{
+  readonly plan: ReturnType<typeof ExecutionPlanSchema.parse>
+  readonly context: ReturnType<typeof ContextPackageSchema.parse>
+}> {
+  const reference = ExecutionPlanReferenceSchema.parse(input)
+  let plan: ReturnType<typeof ExecutionPlanSchema.parse>
+  try {
+    plan = await assertSqliteStoredPlanReference(transaction, reference)
+  } catch {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
+  }
+  if (
+    plan.executionPlanId !== reference.executionPlanId ||
+    plan.contentDigest !== reference.contentDigest
+  ) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
+  }
+  const context = await readStoredContextPackage(transaction, plan.contextPackage)
+  assertPlanContextScope(plan, context)
+  return { plan, context }
+}
+
+function assertPlanContextScope(
+  plan: ReturnType<typeof ExecutionPlanSchema.parse>,
+  context: ReturnType<typeof ContextPackageSchema.parse>
+): void {
+  if (
+    plan.contextPackage.contextPackageId !== context.contextPackageId ||
+    plan.contextPackage.contentDigest !== context.contentDigest ||
+    plan.contextPackage.schemaVersion !== context.schemaVersion ||
+    plan.contextPackage.compilerVersion !== context.compiler.version ||
+    plan.correlation.workspaceId !== context.projectState.workspaceId ||
+    plan.correlation.projectId !== context.projectState.projectId
+  ) {
+    throw new PortableMigrationError('PORTABLE_PLAN_STALE', [plan.executionPlanId])
   }
 }
 

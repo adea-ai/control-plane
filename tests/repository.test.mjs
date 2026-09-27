@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
+import { Glob } from 'bun'
 import {
   assertCoverageGoal,
   parseCoverageMinimum,
@@ -104,6 +105,23 @@ test('defines root quality and build commands', async () => {
   assert.match(manifest.scripts.test, /--parallel/)
 })
 
+test('schedules every discovered integration file through a package command', async () => {
+  const integration = await discoverTestFiles('integration')
+  for (const path of integration) {
+    const [kind, name, ...relativeParts] = path.split('/')
+    const manifest = await readJson(`${kind}/${name}/package.json`)
+    const command = manifest.scripts['test:integration']
+    assert.equal(typeof command, 'string', `${path} has no executable integration command`)
+    assert.match(command, /^bun test /)
+    assert.match(command, /--timeout 30000/)
+    const patterns = command.split(/\s+/).filter((token) => token.endsWith('.test.mjs'))
+    assert.ok(
+      patterns.some((pattern) => new Glob(pattern).match(relativeParts.join('/'))),
+      `${path} is not selected by its package integration command`
+    )
+  }
+})
+
 test('configures an uploadable Code Foundry coverage report', async () => {
   const bunfig = await readFile(new URL('../bunfig.toml', import.meta.url), 'utf8')
   const manifest = await readJson('package.json')
@@ -137,7 +155,10 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
+    'packages/database/src/delegation-reference.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
+    'packages/database/src/retention-ancestry.integration.test.mjs',
+    'packages/database/src/retention-reference-windows.integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',

@@ -10,6 +10,7 @@ import {
   composeProviderContextPackage,
   deriveContextPackage,
   assertContextPackageIntegrity,
+  assertContextPackageDerivedFrom,
 } from './index.ts'
 
 const now = '2026-08-23T12:00:00.000Z'
@@ -57,6 +58,20 @@ function legacyIdentifier(digestValue) {
   }
   if (bits > 0) output += alphabet[(value << (5 - bits)) & 31]
   return `ctx_${output.slice(0, 26)}`
+}
+
+function rehashContextPackage(package_) {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    ...content
+  } = package_
+  const contentDigest = legacyDigest(content)
+  return {
+    ...content,
+    contextPackageId: legacyIdentifier(contentDigest),
+    contentDigest,
+  }
 }
 
 describe('context package digest cutover', () => {
@@ -565,6 +580,51 @@ describe('reproducible ContextPackage compilation', () => {
         compiledAt: now,
       })
     ).toThrow('CHILD_SCOPE_EXPANSION')
+  })
+
+  test('revalidates child derivation limits without rejecting legacy package digests', () => {
+    const parent = compile(baseInput())
+    const child = deriveContextPackage(parent, {
+      objective: 'Handle the focused child task',
+      allowedStateItemIds: [itemOneId],
+      allowedArtifactIds: [artifactId],
+      budgets: { maximumBytes: 300, maximumTokens: 40 },
+      successCriteria: ['Return focused evidence'],
+      returnContract: { contractRef: 'contract://child-result/v1' },
+      compiledAt: now,
+    })
+    expect(assertContextPackageDerivedFrom(parent, child)).toEqual(child)
+
+    const legacyChild = rehashContextPackage(child)
+    expect(assertContextPackageIntegrity(legacyChild)).toEqual(legacyChild)
+    expect(assertContextPackageDerivedFrom(parent, legacyChild)).toEqual(legacyChild)
+
+    const widenedScope = rehashContextPackage({
+      ...child,
+      constraints: {
+        ...child.constraints,
+        allowedStateItemIds: [
+          ...child.constraints.allowedStateItemIds,
+          'psi_01JZBCDEF0123456789ABCDEFG',
+        ],
+      },
+    })
+    expect(assertContextPackageIntegrity(widenedScope)).toEqual(widenedScope)
+    expect(() => assertContextPackageDerivedFrom(parent, widenedScope)).toThrow(
+      'CHILD_SCOPE_EXPANSION'
+    )
+
+    const widenedBudget = rehashContextPackage({
+      ...child,
+      budgets: {
+        ...child.budgets,
+        maximumBytes: parent.budgets.maximumBytes + 1,
+      },
+    })
+    expect(assertContextPackageIntegrity(widenedBudget)).toEqual(widenedBudget)
+    expect(() => assertContextPackageDerivedFrom(parent, widenedBudget)).toThrow(
+      'CHILD_BUDGET_EXPANSION'
+    )
   })
 
   test('persists immutable references and publishes adapter-neutral serialization fixtures', async () => {

@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import {
   CatalogApprovalDecisionSchema,
   type CatalogApprovalDecision,
@@ -9,6 +9,19 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { catalogApprovals } from './schema/catalog.js'
 
 const parse = <Value>(input: unknown): Value => CatalogApprovalDecisionSchema.parse(input) as Value
+
+/** Authority comes from the authenticated database session, never a request or URL claim. */
+export async function catalogApprovalDatabaseAuthority(
+  database: ControlPlaneDatabase
+): Promise<string> {
+  const rows = await database.execute<{ operator_role: string }>(
+    sql`select current_user as operator_role`
+  )
+  const role = rows[0]?.operator_role
+  if (typeof role !== 'string' || role.length === 0)
+    throw new Error('CATALOG_APPROVAL_OPERATOR_REQUIRED')
+  return `authority:postgres:role:${encodeURIComponent(role)}`
+}
 
 function approvalRow(input: CatalogApprovalDecision) {
   return {

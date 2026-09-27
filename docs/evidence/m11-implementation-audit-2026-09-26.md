@@ -1,0 +1,447 @@
+# M11 implementation audit checkpoint — 2026-09-26
+
+Decision: **not accepted**. This is an implementation audit checkpoint, not the
+independent frozen-candidate release report required by #197.
+
+## Scope and baseline
+
+The reviewed baseline is `b3fe4b6af7eca85a6720be54cfa4b7b158cf26ab`
+(1.58.1). The substantial merged catalog-approval and retention increments are
+present. Approval policy is ratified in #188: execution-time gating, default
+off, with the production cutover `2026-09-25T00:00:00.000Z`. That decision is
+resolved; this audit does not ask the owner to ratify it again.
+
+Live GitHub milestone 11 has nine closed and seven open issues: #188, #190,
+#191, #194, #195, #196, #197. The requirement inventory contains 200 rows and
+103 linked issue audits. Neither issue counts nor component tests establish
+completion. The unrelated marketplace edits in the primary checkout were
+preserved; this audit uses isolated worktrees.
+
+## Confirmed defects
+
+All findings are owned by the M11 implementation agent and are due before M11
+release approval; no calendar release date is ratified. Regressions and repair
+status are recorded below and in draft PR #740. Outstanding high-severity
+findings are release blockers, not accepted deferrals.
+
+| Severity | Finding                                                                                                                                      | Owner and acceptance condition                                                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| High     | Hosted validation does not receive its configured catalog approval gate.                                                                     | M11 implementation agent, #188/#190: prove validation denies an unapproved pin when enabled.                                                         |
+| High     | A historical stored plan can authorize a new execution without current version eligibility checks.                                           | M11 implementation agent, #188/#190: revalidate current pinned lifecycle/digest/approval at new acceptance while preserving already-accepted replay. |
+| High     | Receipt deletion treats the owner as terminal without reading it; removing an unresolved cancellation permits reconciliation to resume work. | M11 implementation agent, #194: retain unresolved intent, use terminal reconciliation plus the replay window, prove both backends.                   |
+| High     | Plan/package retention and PostgreSQL execution deletion use stale reference snapshots; concurrent writers can create dangling references.   | M11 implementation agent, #194: coordinate all reference writers and deletion claims atomically, with deterministic interleaving regressions.        |
+| High     | Plan/package expiry uses compilation time instead of the ratified 90-day interval after the last reference is released.                      | M11 implementation agent, #194: persist a conservative release-time anchor and prove renewed references reset the interval.                          |
+| High     | No durable owner hold state is consulted; deletion supplies `holds: 0`.                                                                      | M11 implementation agent, #194: durable scoped holds and atomic hold checks at physical deletion, including concurrent hold creation.                |
+| High     | Restore journal operations are not bound to their declared class/backend.                                                                    | M11 implementation agent, #194: reject mismatched operations before any restored data is mutated.                                                    |
+| Medium   | The pure eligibility predicate returns eligible for calendar-invalid, canonical-shaped expiry strings.                                       | M11 implementation agent, #194: reject invalid/normalized calendar dates before any eligible verdict; focused red/green checks now pass.             |
+| Medium   | SQLite checks sweep bounds after journalling/deletion; compound receipt and messaging sweeps reset the bound per half.                       | M11 implementation agent, #194: admit before mutation and enforce one total class bound; assert remaining rows and journal count.                    |
+| Medium   | Approval CLI accepts an input principal/authority as if authenticated.                                                                       | M11 implementation agent, #188/#190: record actual operator-session provenance, not a caller's claimed product principal.                            |
+
+The journal and attribution findings concern trusted privileged operator input;
+they are not evidence of an unauthenticated remote exploit. The approval
+bypasses concern real new-execution authorization paths. Fixes need current-head
+regression evidence before these findings can be closed.
+
+## Repair checkpoint
+
+Draft implementation PR [#740](https://github.com/adea-ai/control-plane/pull/740)
+includes current main `03e7bfc646a1d4377e65b8ec7b4d840d3f409405`
+(release 1.58.3 and marketplace PRs #738/#741). Its approval increment rechecks current catalog
+pins and configured approval at new acceptance in the API, Hosted and Local
+compositions. Historical accepted-command and validation replay remain exempt
+from recompilation. The Local and Hosted validation services now receive the
+configured gate. The increment passed 94 focused tests across seven files and
+31 scoped build tasks; independent agent review found no current production
+acceptance bypass. Its requested composed acceptance-before-persistence regression
+was subsequently added and passed after 35 parent dependency build tasks: one
+test, 34 assertions. It proves missing approval leaves zero command/execution
+records, matching approval permits admission, and approval removal preserves the
+original accepted replay with exactly one durable command/execution. This later
+run is separate from the earlier 94-test increment count. These are
+implementation checks, not independent human release acceptance.
+
+The journal increment rejects class/backend/namespace mismatches before replay
+mutation. Its scoped checks passed 16 root tests and 141 domain tests. Operator
+administration now records the actual OS/database session identity; nine focused
+tests and a real PostgreSQL session-authority check passed. Shared OS/database
+accounts still share operator attribution; no product-user authentication is
+claimed.
+
+Bound admission now precedes journal/mutation and receipt/messaging sweeps use
+one shared counter. After rebuilding dependencies, the parent integration
+passed 38 focused retention tests (141 assertions). The receipt lifecycle repair
+is integrated: exact owner/interaction/attempt linkage, terminal settlement and
+latest attempt/checkpoint/event times are checked inside the deletion
+transaction. Parent validation passed 18 SQLite tests (66 assertions) and four
+focused PostgreSQL tests (32 assertions, including the metadata probe below).
+Independent review found cross-execution attempt linkage and SQLite JSON/key
+identity gaps; targeted red regressions reproduced them and the corrected cases
+now retain those receipts. Atomic plan/package claims for the core writers are
+now integrated; the separate PostgreSQL execution-deletion/new-receipt writer
+race repair is integrated too. A full
+integrated candidate suite, current-head CI and deployment verification have not
+yet been completed.
+
+The integrated core reference patch passed 26 focused SQLite tests (166
+assertions) and ten focused PostgreSQL tests (87 assertions) in its isolated
+lane. Local job admission now checks exact execution/workflow/plan identities,
+scope and marketplace pins inside the enqueue transaction; duplicate jobs
+retain historical replay. Parent checks passed 35 dependency build tasks, four
+Local composed tests (27 assertions), 13 SQLite reference/retention tests (68
+assertions), 16 queue-store tests (84 assertions) and 16 domain reconciliation
+tests (45 assertions). The latter reproduced and repaired dropped marketplace
+pins during reconciliation resume. Reference schema/payload identity checks
+also passed a real PostgreSQL probe (11 assertions, other tests filtered).
+These counts overlap earlier focused groups and must not be summed as a unique
+full-suite total. Delegation writer coordination is now integrated, including
+same-or-derived context lineage and locked ancestor existence. Its isolated
+PostgreSQL suite passed 20 cases and bounded independent source review closed
+the lineage finding. The execution/receipt claim lane also now checks complete
+attempt history, retaining missing latest-attempt data as ambiguous without
+journalling deletion; its isolated checks passed 26 SQLite tests (148 assertions)
+and eight PostgreSQL tests (65 assertions).
+
+After these integrations, all 35 Local/database dependency build tasks passed.
+The first focused integrated run passed all 20 delegation cases, but eight shared
+PostgreSQL cases and one SQLite receipt case failed because their old fixtures
+admitted nonexistent plan parents through the newly guarded writers. Those
+fixtures are now corrected without disabling production guards. After fresh
+backend builds, the parent passed all eight former PostgreSQL failures plus the
+authoring isolation case (nine tests, 71 assertions) and all 13 SQLite receipt
+cases (37 assertions). Other PostgreSQL cases were filtered, not skipped or
+claimed passing. This is still not a full green integrated candidate.
+Final integrated validation remains open. SQLite reference clocks and backend
+continuation are now integrated: a first unreferenced observation grants the
+full 90-day window; new references clear clocks atomically; dry-run/bound-zero
+do not write metadata; every inspected target consumes the bounded cursor.
+The isolated lane passed 38 tests (269 assertions), with bounded source review
+and a separate closure of validation's missing-context error ordering. A fresh
+parent SQLite build and all eight root retention CLI tests (66 assertions)
+passed. The wider SQLite package run passed 127 tests but failed 17 old orphan
+plan fixtures in four existing test files. The fixture-only repair is now
+integrated: all four files passed 29 tests / 141 assertions with real immutable
+parents and accepted execution/attempt owners. Production guards are not waived.
+PostgreSQL window wiring is now integrated, including command writers, sorted
+context-before-plan bulk claims, bounded continuation, and release-time clocks.
+A raced identical plan insert rolls back its nested transaction and retries once
+from the existing-record path; exhaustion fails without receipt or clock mutation.
+Focused real PostgreSQL race and exhaustion checks passed (one test / five
+assertions and one test / seven assertions). The dependency build, formatting and
+lint passed, with one nonfatal caught-error lint warning. Independent bounded
+review found no actionable issue in the retry closure. The complete window-file
+rerun did **not** pass: two tests passed, five failed with five errors / 14
+assertions under extreme host load; existing 30-second case deadlines were not
+extended. The shared task database remained healthy, and all isolated test
+databases, sessions and transactions were cleaned up. This is not a green full
+integration suite. SQLite portable-import claims are now integrated: canonical
+domain derivation rules and exact schema/compiler context pins are validated
+inside the import transaction before reference clocks or provenance change.
+The two independent-review findings are closed by the new public domain
+validators, with a fresh bounded source review finding no actionable issue.
+Affected suites passed: context 60 tests / 204 assertions, execution-plan 20 /
+97 (including distinct legacy parent/child contexts), and portability 25 / 216.
+All three package builds/lints, formatting and diff checks passed. A first
+filtered importer attempt failed on unresolved default fixture secrets; corrected
+fixtures passed the named five cases / 107 assertions without relaxing guards.
+PostgreSQL bulk-import claims are now integrated through the same typed lineage
+collector and one context-first/plan-second bulk claim, inside the serializable
+import transaction before provenance. Exact persisted row identity, schema,
+digest, scope and compilation time are revalidated. The worker passed database
+and portability builds, the complete SQLite portability file (19 tests / 187
+assertions), and the full isolated PostgreSQL portability file (three tests / 41
+assertions), with scoped lint/format/diff checks. Fresh bounded independent
+source review found no actionable correctness issue.
+
+The PostgreSQL regressions prove mixed existing parents/new children, unrelated
+clock preservation, equivalent-only replay and atomic rejection of a correctly
+rehashed widened plan. They do not separately prove imported command clock
+resets, missing/self references, context derivation failures, corrupted stored
+metadata/compiler pins, or a valid insert preceding an invalid record in one
+batch. Shared-collector SQLite tests and source review are not those missing
+PostgreSQL behavioral tests. Final combined validation remains open.
+
+The released image baseline's production schema was separately found behind:
+both Railway services' exact database bindings were verified, then released
+`0047` and `0048` were rehearsed on an isolated Neon child and applied through
+the canonical immutable released-source migrator. Full journal readback,
+idempotent replay, individual runtime grants and least-privilege checks passed.
+Unmerged `0049` remains off production. The fail-closed pre-deploy migration gate
+is now integrated after 22 focused promotion tests, scoped static checks and
+fresh independent source review. The earlier missing authority checks and
+installed-driver constructor defect reproduced before their corrections;
+current-head combined validation and actual released workflow execution remain
+open. The full rollout/profile acceptance remains open. See
+[production schema readback](m11-production-schema-readback-2026-09-26.md).
+
+Durable-hold storage and owner/session administration are reviewed and retained
+on a separate implementation branch, not activated in PR #740. A review found
+an inherited-object-key class-policy lookup: an unconfigured `constructor`
+class could return a zero hold count. The regression reproduced it; own-property
+checks now fail closed, while explicitly configured own keys remain valid.
+Focused checks passed nine domain tests (34 assertions), four SQLite tests
+(16 assertions) and four real PostgreSQL tests (20 assertions), with fresh
+builds and independent finding closure. This is foundation evidence only:
+migration generation, all physical-deletion hold checks, operational owner
+composition and restore/provider hold coordination remain open.
+
+Ancestry-reference coordination is now integrated: new derived plan/package puts
+verify and claim exact ancestors, deletion claims recheck surviving descendants,
+and identical historical replay stays duplicate-first. The isolated lane passed
+14 SQLite tests (61 assertions), five PostgreSQL ancestry tests (24 assertions,
+including both real lock-contention probes), and two existing PostgreSQL
+authoring tests (20 assertions). Both backend builds/lints passed; independent
+bounded source review found no actionable defect. The authoring pair exposed a
+pre-existing test-order dependency, now repaired and independently passing in
+the parent focused selection. These are not full integrated candidate results.
+
+The subsequent all-writer inventory found two additional SQLite paths:
+`SqliteExecutionValidationCommandRepository.commit` and
+`SqliteContextAuthoringCommandRepository.commit` insert previously absent targets
+directly without claiming their plan/package ancestor. PostgreSQL command
+writers delegate their guarded target repositories. These SQLite integration
+gaps were repaired in the integrated SQLite reference-window increment with
+missing-parent regressions; the earlier bounded seven-file ancestry review did
+not cover those separate writers.
+
+The standalone fixture increment seeds exact catalog/context parents and passed
+all 11 standalone tests without skips (84 assertions) after a fresh 37-package
+closure. A separate calendar-invalid expiry regression reproduced an unsafe
+eligible verdict. The corrected pure predicate rejects invalid or normalized
+calendar dates and passed 18 tests (31 assertions). The formerly red root CLI
+paging regression is now green with bounded continuation; the parser allows
+SQLite's actual `r-<hash>` target IDs.
+
+Root fixture repairs already passed 14 profile/restore/recovery tests (108
+assertions), with the real PostgreSQL M10/CP1 flags enabled. Six earlier CLI
+fixture tests passed 39 assertions. The later continuation/argument checks and
+domain result schema tests passed 24 tests (75 assertions); these overlap earlier
+CLI checks. Actual context/plan parents and current catalog versions are seeded
+instead of weakening guards. These are component checks, not frozen-candidate
+release acceptance.
+
+Historical post-reference window foundation checkpoint: nullable PostgreSQL
+clocks and a pure conservative clock helper were prepared. Six helper tests (14 assertions), the
+domain build and migration/schema check passed. One real isolated PostgreSQL
+probe (seven assertions) verified migration/defaults and that metadata updates
+leave immutable plan/package JSON and digests unchanged. At that checkpoint,
+deletion claims and reference writers still needed lifetime transaction/lock
+wiring. The subsequent SQLite and PostgreSQL integrations are recorded above;
+their component evidence does not establish full retention acceptance.
+
+Restore invalidation is prepared alongside that foundation: SQLite restore
+clears only the two auxiliary clock namespaces on its validated staged copy,
+and both backend reapplication commands reset clocks even for an empty valid
+journal. Ordinary migration/reopen preserves them. Focused checks passed 11
+SQLite provider tests (47 assertions), six restore-wrapper tests (42 assertions)
+and one real PostgreSQL metadata/reset probe (nine assertions). Seventeen
+dependency/backend build tasks and scoped lint/format checks passed. This
+prevents an older snapshot's clock from ignoring a later reference cycle; it
+does not establish completed sweep/writer wiring or external journal durability.
+
+The current journal records deletion intent before the transaction commits;
+replay applies that intent even if the transaction never committed. This is
+idempotent, not a no-op or proof of commit. Restore acceptance must also
+reconcile ambiguous outcomes and later holds/references before exposure; the
+existing restore component probes do not establish those cases.
+
+Validation receipts are an additional retention coverage gap: they indefinitely
+pin plans, have no registered age/deletion path, and current plan-deletion tests
+remove them through raw fixture writes. Such fixture cleanup is not evidence of
+a supported operational retention path. Their disposition must be reconciled
+with the ratified retention policy before plan retention is accepted in full.
+
+## Frozen change-set security review and formatting
+
+The source-only PR #740 scan reviewed immutable range
+`03e7bfc646a1d4377e65b8ec7b4d840d3f409405` to
+`b44c4a2ad25cec3d8fb193638e82d6e848aeb223`: three nonoverlapping Luna lanes
+accounted for all 96 canonical source items, and the parent reviewed the 16
+additional changed root tests/documentation files. No plausible diff-related
+security candidates were returned; no application execution or exploit
+reproduction was performed by these lanes.
+
+Scan `4dbb9d31-ff26-451c-94e4-54b4cb08efb6` was sealed, but canonical readback
+still labels coverage **partial** and retains five stale architecture/discovery
+deferrals from earlier checkpoints. Its 168 surface entries represent 112
+unique labels, not 168 unique file reviews. The final progress reports 96/96
+source items, but this checkpoint does not claim a clean complete-coverage
+canonical report, rewrite the sealed artifacts, or waive #190. The reporting
+discrepancy remains explicit.
+
+The SQLite lane raised an archived-but-unpublished event settlement question.
+Parent source inspection found `ExecutionEventService.archive` called only by
+the service and tests, with the events package private; no ordinary application
+or API archive path was identified. This is an unresolved full-retention policy
+acceptance question, not a confirmed attacker-reachable vulnerability.
+
+The first combined acceptance attempt stopped at formatting in three SQLite
+files; no subsequent combined lint/build/test/integration gates ran. After the
+immutable review ended, only those three files were mechanically formatted.
+Current-head combined validation and deployment remain open.
+
+The subsequent combined run at `ad16a60641e69dec79b1721731aa73c027cafcb5`
+passed formatting, package lint, boundary/canonical-ordering checks, all 43
+build/OpenAPI tasks, migration and compatibility checks, the 200-requirement /
+103-issue audit, architecture and infrastructure type checks. Its end-to-end
+group passed 146 tests / 876 assertions across 17 files. Smoke passed 188 tests
+but failed one exact test-discovery inventory assertion: the expected list
+omitted the three newly added database integration files. PostgreSQL integration
+and final infrastructure validation did not run; unit completion is not claimed.
+
+The two portability test imports previously rejected by the boundary checker
+now use domain's existing exact reexport, with no new dependency or weaker
+assertion. The focused boundary check passes 1,432 files in 41 packages. A focused
+red discovery test confirmed precisely the three missing filenames; the expected
+list now includes them, preserving exact/disjoint inventory assertions. All 26
+repository tests and scoped format/lint/diff checks pass. These repairs are
+test-only changes after the frozen security snapshot, not rescanned production
+changes. Remaining local gates and required current-head CI remain open.
+
+## Baseline evidence
+
+The subsequent unit run at `994d95fd` passed 1,542 tests and failed five Local
+cases across four files. That invocation omitted coverage instrumentation and
+is unit-test evidence only, not a coverage gate. The fixture-only repair now
+persists matching immutable context/plan parents, catalog versions and real
+accepted execution/attempt owners. All four files pass 24 tests / 135
+assertions and scoped lint/format/diff checks. Independent bounded source review
+found no actionable issue; original assertions and production guards remain
+unchanged. The subsequent coverage-instrumented unit run at `c73f7e05` passed
+1,545 tests and failed two ACP process cases, with 6,805 assertions across 198
+files; all five former Local failures cleared. Three focused ACP cases and a
+single complete seeded/randomized ACP file diagnostic then passed (31 tests /
+98 assertions). No ACP behavior or timeout was changed, and isolated passes do
+not supersede the failed whole-unit lane. The LCOV goal checker did not run
+after those failures. Bun's printed coverage averages are not the aggregate
+LCOV percentages: the prior merged PR #741's
+[Foundation Core log](https://github.com/adea-ai/control-plane/actions/runs/36266134600/job/108471036941)
+showed 74.06%
+printed function coverage but an 84.34% function / 84.27% line LCOV gate pass.
+The repaired candidate still needs its own complete unit/LCOV gate.
+
+The subsequent frozen-head unit run at `9060c82a` passed all 1,547 tests across
+198 files with the existing randomized seed and deadlines, without retries or
+ACP changes. Its aggregate LCOV gate passed 82.90% lines and 84.26% functions
+against the unchanged 80% goals. JUnit and LCOV artifacts were preserved before
+later runs could overwrite coverage. This direct unit invocation does not
+establish a complete combined build/acceptance or CI timing-budget pass.
+
+The serialized integration runner at the same head freshly built dependencies
+and passed all 93 database tests across four files, plus LangGraph (two), testing
+helpers (one), and PostgreSQL portability (three). It stopped in Cloud API:
+one replay test passed and two failed with `INVALID_EXECUTION_PLAN_REFERENCE`.
+Those two fixtures use contrived plan references and an unconditional validator
+without persisted immutable context/plan parents. The production admission guard
+is retained; fixture repair and downstream integration/recovery checks remain
+open. This failed invocation is not a complete integration pass.
+
+A separate execution-coverage audit found that all three Hosted integration
+files were discovered but unscheduled: their package had no `test:integration`
+command. Foundation and Neon use the serialized Turbo integration runner, not
+the discovered-file list directly. A new repository regression reproduced the
+missing command before adding the Hosted command at the existing 30-second
+deadline. It checks executable package selection for every discovered integration
+file; the full repository-policy file now passes 27 tests. This wiring makes
+previously omitted cases runnable, not automatically passing. Hosted fixture
+repair and actual execution results remain separate.
+
+The follow-up integrated snapshot is `80efa71d` plus the three independently
+reviewed application integration fixtures. Cloud replay and Hosted reconciliation
+now publish real skill/profile versions through `VersionedCatalog`, persist
+immutable context/plan parents, and use the real admission validator. The metrics
+case keeps three distinct request-correlated plans; projection no longer inserts
+an execution already committed by admission. Original replay/conflict, checkpoint,
+metric assertions and deadlines remain unchanged. The serialized app-only Turbo
+invocation freshly built its dependency closure: 30 successful tasks, none cached,
+95.193 seconds. Cloud passed three tests / 66 assertions and Hosted passed all
+three previously unscheduled files, seven tests / 26 assertions. Earlier database
+93-test evidence is separate; this invocation did not repeat that package.
+
+The complete seeded smoke group first passed 189 tests with one explicit
+PostgreSQL-conformance skip while the owned database was stopped. With the real
+isolated PostgreSQL baseline enabled, the full smoke group passed all 190 tests,
+zero failures/skips, 2,054 assertions across 23 files in 58.59 seconds. This matrix
+uses real persistence with scripted runtime ports, not deployed Restate or a
+live provider. Local lane timing does not prove the CI timing budget. Scoped
+fixture format/lint/diff checks and all 1,432-file / 41-package boundaries passed;
+current requirements (200 / 103), architecture (41 / 16 / four profiles), schema
+and compatibility checks passed as well. Required current-head CI remains open.
+
+Separate real PostgreSQL/WebSocket remote-control, backup/restore and explicit
+owned-container disruption drills passed on the `80efa71d` production-source
+snapshot (unchanged from `9060c82a`). They prove authenticated delivery/replay,
+restored evidence and app-role operations, and rejection during service loss
+followed by recovery of committed receipts/context/plan evidence. Runtime behavior
+was scripted; these are not native active-cancellation, live-provider, production
+RPO/RTO or full-profile acceptance. The owned database is stopped between testing
+windows, preserving its volume; no staging or production deployment is certified
+by these local drills.
+
+Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three
+in the database job. All seven reference-window cases passed at existing
+deadlines; downstream package integration and remote/restore drills did not
+run. Source diagnosis found an existing-plan missing-context error-code mapping
+regression, plus shared-fixture collisions and a race-test synchronization gap.
+The isolated repair preserves claim guards and lock order while mapping an
+absent stored context to `MISSING_CONTEXT_PACKAGE`, gives the plan-retention
+test a unique content identity and bounded target cursor, and isolates receipt
+race cases in fresh databases. Receipt-first ordering protects the exact owner
+with no deletion journal; deletion-first ordering is checked after the actual
+owner lock, with PostgreSQL confirming a blocked KEY SHARE writer before release.
+The full database integration file passed 61 tests / 640 assertions before
+final test-quality refinements. Both race cases then passed on the final diff
+(two tests / nine assertions), including awaited cleanup and actual blocked-lock
+readback. Scoped build/format/diff checks passed; package lint exited zero with
+one pre-existing caught-error warning. Fresh independent bounded source review
+found no actionable issue; the exact reviewed files are integrated. Neither
+host load nor relaxed deadlines explains away the prior
+failures. Standalone infrastructure validation passed for two application
+services. No full combined acceptance or candidate rollout is claimed.
+
+- Frozen install and build: all 41 packages built successfully.
+- Focused approval/retention tests: 83 passed, 401 assertions.
+- Existing API/Local input tests: 47 passed, 257 assertions across three actual
+  files. Two requested paths did not exist and are not counted as evidence.
+- Real isolated PostgreSQL checks: seven passed, 62 assertions, covering
+  approval persistence, receipt/runtime-ledger deletion, rejection identity,
+  receipt concurrency and journal restoration. Other tests were deliberately
+  filtered, not represented as a full integration pass.
+- Requirements/architecture checks: 200 requirements, 103 issue audits;
+  architecture inventory 41 packages, 16 operations, four profiles.
+
+Passing baseline checks did not detect the defects above. Targeted red tests
+reproduced journal class mismatch, caller-controlled attribution, and bounded
+sweep over-deletion. Regression results belong with each fix, not with this
+baseline snapshot.
+
+## Remaining original gates
+
+#194 still requires all durable classes, durable holds, and externally retained
+restore journals/reapplication before a restored copy becomes available. Its
+registry reports ten implemented, four reference-governed and six bounded
+classes without paths; metadata is not implementation or profile acceptance.
+The remaining bounded classes are native terminal snapshots, workflow
+references, usage, logs/traces, artifacts and backups. Full operational fault,
+recovery, rotation, rollback and measured RPO/RTO evidence remains separate.
+
+#188/#190/#191 still require full runtime/profile and adversarial acceptance;
+#195 requires full canonical-source/diagram reconciliation; #196/#197 require
+their original independent/human evidence and an exact frozen candidate.
+The fresh native TDD figure audit confirms that figure 3 still depicts an
+all-profile "Restate Workflow", despite the approved Local embedded SQLite
+default and corrected companion label. Its stored aspect ratio is approximately
+0.190 with no crop: the narrow layout is intrinsic to the rendered asset.
+Figures 1 and 3 also need repo/catalog topology reconciliation; figure 2 matches
+the companion source. Native PDF export succeeded, but its user-scoped file
+reference could not be safely materialized for page inspection, so page fit,
+pagination and caption placement remain unverified. No native figure was changed
+or reported visually accepted by this bounded read-only audit.
+Human calibration, independent review and fresh VPS evidence must be supplied
+or genuinely performed. Agent review is useful implementation evidence but is
+not a substitute for those evidence classes. Production readiness is not
+claimed from the local PostgreSQL environment.
+
+No original acceptance criterion is waived, relabelled as M12, or marked
+verified by this checkpoint. Implementation follow-up is tracked in the owning
+open issues; final Milestone 11 signoff remains blocked by their original gates.
+Incremental repair PRs and releases do not constitute that milestone signoff.

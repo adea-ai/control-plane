@@ -331,4 +331,37 @@ describe('Hosted server composition', () => {
       })
     ).toThrow()
   })
+
+  test('wires one configured approval store into Hosted validation and profile resolution', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-approval-'))
+    const composition = new HostedServerControlPlaneComposition({
+      dataDirectory: directory,
+      databaseUrl: 'postgresql://app:secret@postgres/control_plane',
+      requestIdentityPublicKey: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',
+      connection: {
+        database: {},
+        check: async () => undefined,
+        close: async () => undefined,
+      },
+      catalogApprovalPolicy: {
+        required: true,
+        requiredSince: '2026-09-25T00:00:00.000Z',
+      },
+    })
+
+    try {
+      const validationGate = composition.executionValidationService.options.approvalGate
+      expect(validationGate.policy).toEqual({
+        required: true,
+        requiredSince: '2026-09-25T00:00:00.000Z',
+      })
+      expect(validationGate.approvals.list).toBeFunction()
+      expect(composition.profileResolutionService.approvalGate.approvals).toBe(
+        validationGate.approvals
+      )
+    } finally {
+      await composition.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 })

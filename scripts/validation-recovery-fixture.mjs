@@ -1,6 +1,7 @@
 import { deepStrictEqual } from 'node:assert'
 import { createHash } from 'node:crypto'
 import { createExecutionPlanTestFixture } from '../packages/execution-plan/src/testing.ts'
+import { contextPackageSerializationFixtures } from '../packages/context/src/index.ts'
 import {
   assertExecutionPlanIntegrity,
   assertExecutionValidationCommandPlan,
@@ -25,6 +26,7 @@ export function validationRecoveryFixture(marker) {
   }
   return {
     plan,
+    contextPackage: contextPackageSerializationFixtures.futurePi,
     record,
     commandKey: executionValidationCommandKey(record.scope),
     assertRecovered(recoveredRecord, recoveredPlan) {

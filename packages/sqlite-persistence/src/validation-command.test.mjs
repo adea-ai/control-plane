@@ -2,11 +2,15 @@ import { test, expect } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { deriveExecutionPlan } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { executionValidationPayloadHash } from '@control-plane/execution-plan'
 import {
+  REFERENCE_RETENTION_NAMESPACES,
   SqlitePersistenceProvider,
+  SqliteContextPackageRepository,
   SqliteExecutionValidationCommandRepository,
   SqliteExecutionPlanRepository,
 } from './index.ts'
@@ -37,11 +41,15 @@ test('retains one atomic validation result across concurrency and file reopen', 
   try {
     await provider.migrate()
     const repository = new SqliteExecutionValidationCommandRepository(provider)
+    await new SqliteContextPackageRepository(provider).put(
+      contextPackageSerializationFixtures.futurePi
+    )
     const failing = new SqliteExecutionValidationCommandRepository({
       transaction: (operation) =>
         provider.transaction((transaction) =>
           operation({
             get: transaction.get.bind(transaction),
+            delete: transaction.delete.bind(transaction),
             put: async (write) => {
               if (write.namespace === 'execution-validation-commands')
                 throw new Error('INJECTED_VALIDATION_WRITE_FAILURE')
@@ -105,6 +113,144 @@ test('retains one atomic validation result across concurrency and file reopen', 
     const loaded = await reopened.get(scope)
     loaded.executionPlan.contentDigest = `sha256:${'0'.repeat(64)}`
     expect(await reopened.get(scope)).toEqual(results[0])
+  } finally {
+    await provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a new validation receipt requires its existing plan context while exact replay survives cleanup', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'validation-reference-context-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+  const plan = createExecutionPlanTestFixture({
+    profileCapabilityRequirements: ['execution.cancel'],
+  })
+  const scope = {
+    callerPrincipalId: 'svc_agent-hq',
+    workspaceId: plan.correlation.workspaceId,
+    projectId: plan.correlation.projectId,
+    operation: 'execution.validate',
+    idempotencyKey: 'validation-context-reference-0001',
+  }
+  const record = {
+    scope,
+    commandId: ControlApiFixtures.executionValidation.request.commandId,
+    requestId: plan.correlation.requestId,
+    payloadHash: executionValidationPayloadHash(ControlApiFixtures.executionValidation.request),
+    executionPlan: { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
+    recordedAt: '2026-09-07T12:00:00.000Z',
+  }
+  try {
+    await provider.migrate()
+    const packages = new SqliteContextPackageRepository(provider)
+    const plans = new SqliteExecutionPlanRepository(provider)
+    const repository = new SqliteExecutionValidationCommandRepository(provider)
+    await packages.put(contextPackageSerializationFixtures.futurePi)
+    await plans.put(plan)
+    await provider.transaction(async (transaction) => {
+      const [stored] = await transaction.list('context-packages')
+      await transaction.delete('context-packages', stored.id, stored.revision)
+    })
+
+    await expect(repository.commit(record, plan)).rejects.toMatchObject({
+      code: 'MISSING_CONTEXT_PACKAGE',
+    })
+    await provider.transaction(async (transaction) => {
+      expect(await transaction.list('execution-validation-commands')).toEqual([])
+    })
+
+    await packages.put(contextPackageSerializationFixtures.futurePi)
+    const accepted = await repository.commit(record, plan)
+    await provider.transaction(async (transaction) => {
+      const [stored] = await transaction.list('context-packages')
+      await transaction.delete('context-packages', stored.id, stored.revision)
+    })
+    expect(await repository.commit(record, plan)).toEqual(accepted)
+  } finally {
+    await provider.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('validation direct insertion checks parent ancestry, clears windows, and keeps exact replay historical', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'validation-parent-reference-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+  const contextPackage = contextPackageSerializationFixtures.futurePi
+  const parent = createExecutionPlanTestFixture()
+  const child = deriveExecutionPlan(parent, {
+    correlation: parent.correlation,
+    contextPackage,
+    constraints: parent.constraints,
+    runtimeRequirements: parent.runtimeRequirements,
+    outputContract: parent.outputContract,
+    compiledAt: '2026-09-08T12:00:00.000Z',
+  })
+  const scope = {
+    callerPrincipalId: 'svc_agent-hq',
+    workspaceId: child.correlation.workspaceId,
+    projectId: child.correlation.projectId,
+    operation: 'execution.validate',
+    idempotencyKey: 'validation-derived-parent-0001',
+  }
+  const record = {
+    scope,
+    commandId: ControlApiFixtures.executionValidation.request.commandId,
+    requestId: child.correlation.requestId,
+    payloadHash: executionValidationPayloadHash(ControlApiFixtures.executionValidation.request),
+    executionPlan: { executionPlanId: child.executionPlanId, contentDigest: child.contentDigest },
+    recordedAt: '2026-09-08T12:00:00.000Z',
+  }
+  try {
+    await provider.migrate()
+    const packages = new SqliteContextPackageRepository(provider)
+    const plans = new SqliteExecutionPlanRepository(provider)
+    const repository = new SqliteExecutionValidationCommandRepository(provider)
+    await packages.put(contextPackage)
+    await expect(repository.commit(record, child)).rejects.toMatchObject({
+      code: 'INVALID_REFERENCE',
+    })
+    await provider.transaction(async (transaction) => {
+      expect(await transaction.list('execution-plans')).toEqual([])
+      expect(await transaction.list('execution-validation-commands')).toEqual([])
+    })
+
+    await plans.put(parent)
+    const parentId = await provider.transaction(
+      async (transaction) =>
+        (await transaction.list('execution-plans')).find(
+          (candidate) => candidate.value.executionPlanId === parent.executionPlanId
+        ).id
+    )
+    const contextId = await provider.transaction(
+      async (transaction) =>
+        (await transaction.list('context-packages')).find(
+          (candidate) => candidate.value.contextPackageId === contextPackage.contextPackageId
+        ).id
+    )
+    const planWindows = REFERENCE_RETENTION_NAMESPACES.executionPlans
+    const contextWindows = REFERENCE_RETENTION_NAMESPACES.contextPackages
+    await provider.transaction(async (transaction) => {
+      await transaction.put({
+        namespace: planWindows,
+        id: parentId,
+        value: { unreferencedSince: '2026-09-01T00:00:00.000Z' },
+      })
+      await transaction.put({
+        namespace: contextWindows,
+        id: contextId,
+        value: { unreferencedSince: '2026-09-01T00:00:00.000Z' },
+      })
+    })
+    expect(await repository.commit(record, child)).toEqual(record)
+    expect(
+      await provider.transaction((transaction) => transaction.get(planWindows, parentId))
+    ).toBeUndefined()
+    expect(
+      await provider.transaction((transaction) => transaction.get(contextWindows, contextId))
+    ).toBeUndefined()
+
+    await provider.transaction((transaction) => transaction.delete('execution-plans', parentId))
+    expect(await repository.commit(record, child)).toEqual(record)
   } finally {
     await provider.close()
     await rm(directory, { recursive: true, force: true })

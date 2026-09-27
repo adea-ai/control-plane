@@ -692,6 +692,37 @@ export function assertContextPackageIntegrity(input: unknown): ContextPackage {
   return package_
 }
 
+/** Verify a child package by reapplying the same derivation constraints used when it was created. */
+export function assertContextPackageDerivedFrom(
+  parentInput: unknown,
+  childInput: unknown
+): ContextPackage {
+  const parent = assertContextPackageIntegrity(parentInput)
+  const child = assertContextPackageIntegrity(childInput)
+  const parentReference = child.parentContextPackage
+  if (
+    parentReference === undefined ||
+    parentReference.contextPackageId !== parent.contextPackageId ||
+    parentReference.contentDigest !== parent.contentDigest
+  ) {
+    fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
+  }
+
+  const derived = deriveContextPackage(parent, {
+    objective: child.objective,
+    allowedStateItemIds: child.constraints.allowedStateItemIds,
+    allowedArtifactIds: child.constraints.allowedArtifactIds,
+    budgets: child.budgets,
+    successCriteria: child.successCriteria,
+    returnContract: child.returnContract,
+    compiledAt: child.compiledAt,
+  })
+  if (canonical(withoutPackageIdentity(derived)) !== canonical(withoutPackageIdentity(child))) {
+    fail('CONTRADICTORY_CONTEXT_REFERENCE', child.contextPackageId)
+  }
+  return child
+}
+
 function assertUniqueCandidates(candidates: z.output<typeof CandidateSchema>[]): void {
   const seen = new Set<string>()
   for (const candidate of candidates) {
@@ -839,6 +870,16 @@ function assertPackageIntegrity(package_: ContextPackage): void {
   ) {
     throw new Error('CONTEXT_PACKAGE_INTEGRITY_ERROR')
   }
+}
+function withoutPackageIdentity(
+  package_: ContextPackage
+): Omit<ContextPackage, 'contextPackageId' | 'contentDigest'> {
+  const {
+    contextPackageId: _contextPackageId,
+    contentDigest: _contentDigest,
+    ...content
+  } = package_
+  return content
 }
 function hashIdentifier(prefix: string, digest: string): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
