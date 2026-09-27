@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ControlApiFixtures } from '@control-plane/contracts'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
 
@@ -34,8 +38,14 @@ test('Local cancellation composition replays the stored signal after lost ACK an
   try {
     await persistence.migrate()
     let composition = new LocalControlApiComposition(persistence, ingress)
+    const planInputs = createExecutionPlanTestFixtureInputs()
     const plan = createExecutionPlanTestFixture()
+    await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
     await composition.executionPlans.put(plan)
+    await composition.catalog.insertAgentProfileVersion(planInputs.profile)
+    for (const skill of planInputs.skills) {
+      await composition.catalog.insertSkillVersion(skill)
+    }
     const base = ControlApiFixtures.executionAcceptance.request
     const accepted = await composition.executionAcceptanceService.accept(
       {

@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { DirectLocalRuntimeTransport, TransportedRuntimeAdapter } from '@control-plane/runtime-sdk'
 import { FilesystemObjectStore } from '@control-plane/object-store'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqlitePersistenceProvider,
@@ -679,6 +682,10 @@ describe('Local Control Plane composition', () => {
     async (runtimeKind) => {
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-local-lifecycle-'))
       // This wire fixture completes a text-only task; it does not implement filesystem access.
+      const planInputs = createExecutionPlanTestFixtureInputs({
+        profileCapabilityRequirements: [],
+        skillRequiredCapabilities: [],
+      })
       const plan = createExecutionPlanTestFixture({
         profileCapabilityRequirements: [],
         skillRequiredCapabilities: [],
@@ -770,6 +777,10 @@ describe('Local Control Plane composition', () => {
         }
         await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
         await composition.executionPlans.put(plan)
+        await composition.catalog.insertAgentProfileVersion(planInputs.profile)
+        for (const skill of planInputs.skills) {
+          await composition.catalog.insertSkillVersion(skill)
+        }
         const accepted = await composition.commands.acceptExecution({
           callerPrincipalId: 'svc_agent-hq',
           operation: 'execution.accept',

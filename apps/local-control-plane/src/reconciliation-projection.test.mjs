@@ -2,30 +2,32 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
+import { ExecutionLifecycleService, ExecutionReconciliationService } from '@control-plane/domain'
 import {
-  CommandInboxService,
-  ExecutionLifecycleService,
-  ExecutionReconciliationService,
-} from '@control-plane/domain'
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
+import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
 } from '@control-plane/sqlite-persistence'
 import { LocalControlPlaneComposition } from './composition.ts'
 
+const planInputs = createExecutionPlanTestFixtureInputs()
+const plan = createExecutionPlanTestFixture()
 const correlation = {
-  workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  workspaceId: plan.correlation.workspaceId,
+  projectId: plan.correlation.projectId,
+  taskId: plan.correlation.taskId,
+  agentId: plan.correlation.agentId,
 }
 const executionPlan = {
-  executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  contentDigest: `sha256:${'7'.repeat(64)}`,
-  schemaVersion: 1,
+  executionPlanId: plan.executionPlanId,
+  contentDigest: plan.contentDigest,
+  schemaVersion: plan.schemaVersion,
 }
 const now = '2026-09-01T12:00:00.000Z'
-const executionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
 const fakeWorkflowRuntime = {
   start: async () => undefined,
@@ -56,17 +58,17 @@ async function composed(reconciliation) {
 }
 
 async function seeded(composition, { runtimeStatus = 'succeeded' } = {}) {
-  const inbox = new CommandInboxService({
-    repository: composition.commandRepository,
-    executionIdFactory: () => executionId,
-    executionPlanValidator: { validate: async () => true },
-    now: () => now,
-  })
-  const { execution } = await inbox.acceptExecution({
+  await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
+  await composition.executionPlans.put(plan)
+  await composition.catalog.insertAgentProfileVersion(planInputs.profile)
+  for (const skill of planInputs.skills) {
+    await composition.catalog.insertSkillVersion(skill)
+  }
+  const accepted = await composition.commands.acceptExecution({
     callerPrincipalId: 'svc_agent-hq',
     operation: 'execution.accept',
     commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-    requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    requestId: plan.correlation.requestId,
     idempotencyKey: 'local-reconciliation:1',
     payloadHash: '8'.repeat(64),
     correlation,
@@ -74,7 +76,7 @@ async function seeded(composition, { runtimeStatus = 'succeeded' } = {}) {
     receivedAt: now,
     retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   })
-  await composition.executions.insertExecution(execution)
+  const { execution } = accepted
   const lifecycle = new ExecutionLifecycleService(composition.executions)
   await lifecycle.createAttempt({
     executionId: execution.executionId,
