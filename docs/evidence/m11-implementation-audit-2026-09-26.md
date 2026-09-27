@@ -299,6 +299,25 @@ changes. Remaining local gates and required current-head CI remain open.
 
 ## Baseline evidence
 
+The subsequent unit run at `994d95fd` passed 1,542 tests and failed five Local
+cases across four files. That invocation omitted coverage instrumentation and
+is unit-test evidence only, not a coverage gate. The fixture-only repair now
+persists matching immutable context/plan parents, catalog versions and real
+accepted execution/attempt owners. All four files pass 24 tests / 135
+assertions and scoped lint/format/diff checks. Independent bounded source review
+found no actionable issue; original assertions and production guards remain
+unchanged. A coverage-instrumented unit rerun remains pending.
+
+Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three
+in the database job. All seven reference-window cases passed at existing
+deadlines; downstream package integration and remote/restore drills did not
+run. Source diagnosis found an existing-plan missing-context error-code mapping
+regression, plus shared-fixture collisions and a race-test synchronization gap.
+Their repairs remain pending; neither host load nor relaxed deadlines explains
+away these failures. Standalone infrastructure validation passed for two
+application services. No full combined acceptance or candidate rollout is
+claimed.
+
 - Frozen install and build: all 41 packages built successfully.
 - Focused approval/retention tests: 83 passed, 401 assertions.
 - Existing API/Local input tests: 47 passed, 257 assertions across three actual
