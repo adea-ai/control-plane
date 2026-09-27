@@ -233,6 +233,117 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
     }
   })
 
+  test('binds durable usage to an existing transaction, including rollback and lease scope', async () => {
+    const { isolated } = await createDatabase()
+    const owner = await createOwner(isolated.application)
+    const workspaceId = owner.execution.correlation.workspaceId
+    const executionId = owner.execution.executionId
+    const store = new PostgresDurableUsageStore(isolated.application)
+    const budget = {
+      schemaVersion: 1,
+      workspaceId,
+      executionId,
+      currency: 'USD',
+      maximumMicrounits: 1_000,
+      maximumTokens: 10,
+      status: 'open',
+      nextSequence: 1,
+      reservations: [],
+    }
+    let escapedStore
+    let escapedTransaction
+
+    await isolated.application.transaction(async (transaction) => {
+      await PostgresDurableUsageStore.acquireTransactionLocks(transaction, workspaceId)
+      await PostgresDurableUsageStore.withTransaction(
+        transaction,
+        workspaceId,
+        async (boundStore) => {
+          escapedStore = boundStore
+          await expect(
+            boundStore.transaction(nextId('wsp'), async () => undefined)
+          ).rejects.toMatchObject({ code: 'USAGE_LEDGER_SCOPE_MISMATCH' })
+
+          await boundStore.transaction(workspaceId, async (usage) => {
+            escapedTransaction = usage
+            await usage.putBudget(budget)
+            await expect(
+              boundStore.transaction(workspaceId, async () => undefined)
+            ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+          })
+          await expect(escapedTransaction.getBudget(executionId)).rejects.toMatchObject({
+            code: 'STORE_STATE_INVALID',
+          })
+          await expect(escapedTransaction.putBudget(budget)).rejects.toMatchObject({
+            code: 'STORE_STATE_INVALID',
+          })
+        }
+      )
+    })
+
+    await expect(
+      store.transaction(workspaceId, (usage) => usage.getBudget(executionId))
+    ).resolves.toEqual(budget)
+    await expect(
+      escapedStore.transaction(workspaceId, async () => undefined)
+    ).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+
+    const rollbackOwner = await createOwner(isolated.application)
+    await expect(
+      isolated.application.transaction(async (transaction) => {
+        await PostgresDurableUsageStore.withTransaction(
+          transaction,
+          rollbackOwner.execution.correlation.workspaceId,
+          async (boundStore) => {
+            try {
+              await boundStore.transaction(
+                rollbackOwner.execution.correlation.workspaceId,
+                async (usage) => {
+                  await usage.putBudget({
+                    ...budget,
+                    workspaceId: rollbackOwner.execution.correlation.workspaceId,
+                    executionId: rollbackOwner.execution.executionId,
+                  })
+                  throw new Error('BOUND_USAGE_CALLBACK_FAILURE')
+                }
+              )
+            } catch (error) {
+              expect(error.message).toBe('BOUND_USAGE_CALLBACK_FAILURE')
+            }
+          }
+        )
+      })
+    ).rejects.toThrow('STORE_STATE_INVALID')
+    await expect(
+      store.transaction(rollbackOwner.execution.correlation.workspaceId, (usage) =>
+        usage.getBudget(rollbackOwner.execution.executionId)
+      )
+    ).resolves.toBeUndefined()
+
+    const pendingOwner = await createOwner(isolated.application)
+    let pendingOperation
+    await expect(
+      isolated.application.transaction(async (transaction) => {
+        await PostgresDurableUsageStore.withTransaction(
+          transaction,
+          pendingOwner.execution.correlation.workspaceId,
+          (boundStore) => {
+            pendingOperation = boundStore.transaction(
+              pendingOwner.execution.correlation.workspaceId,
+              async (usage) => {
+                await new Promise((resolve) => setTimeout(resolve, 0))
+                return usage.getBudget(pendingOwner.execution.executionId)
+              }
+            )
+          }
+        )
+      })
+    ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+    await expect(pendingOperation).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+  })
+
   test('returns identical duplicates but rejects changed operation identity and inputs', async () => {
     const { isolated } = await createDatabase()
     const owner = await createOwner(isolated.application)

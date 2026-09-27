@@ -135,6 +135,103 @@ async function withStore(run) {
 }
 
 describe('SQLite durable usage transactions', () => {
+  test('uses the caller transaction and rolls back owner and budget writes together', async () => {
+    await withStore(async (provider) => {
+      const ownerRecordId = recordId(executionId)
+      const before = await provider.transaction((transaction) =>
+        transaction.get('executions', ownerRecordId)
+      )
+
+      await expect(
+        provider.transaction(async (transaction) => {
+          const owner = await transaction.get('executions', ownerRecordId)
+          await transaction.put({
+            namespace: 'executions',
+            id: ownerRecordId,
+            expectedRevision: owner.revision,
+            value: {
+              ...owner.value,
+              updatedAt: '2026-05-02T00:00:00.000Z',
+              version: owner.value.version + 1,
+            },
+          })
+
+          await SqliteDurableUsageStore.withTransaction(transaction, workspaceId, async (store) => {
+            try {
+              await store.transaction(workspaceId, async (usage) => {
+                await usage.putBudget(budget())
+                throw new Error('BOUND_USAGE_CALLBACK_FAILURE')
+              })
+            } catch (error) {
+              expect(error.message).toBe('BOUND_USAGE_CALLBACK_FAILURE')
+            }
+          })
+        })
+      ).rejects.toThrow('STORE_STATE_INVALID')
+
+      const after = await provider.transaction(async (transaction) => ({
+        owner: await transaction.get('executions', ownerRecordId),
+        budgets: await transaction.list(SQLITE_USAGE_NAMESPACES.budgets),
+      }))
+      expect(after.owner).toEqual(before)
+      expect(after.budgets).toEqual([])
+    })
+  })
+
+  test('bounds callback stores and transaction methods to a single scoped operation', async () => {
+    await withStore(async (provider) => {
+      let escapedStore
+      let escapedTransaction
+      await provider.transaction(async (transaction) => {
+        await SqliteDurableUsageStore.withTransaction(transaction, workspaceId, async (store) => {
+          escapedStore = store
+          await expect(store.transaction(otherWorkspace, async () => undefined)).rejects.toThrow(
+            'USAGE_LEDGER_SCOPE_MISMATCH'
+          )
+
+          await store.transaction(workspaceId, async (usage) => {
+            escapedTransaction = usage
+            await expect(store.transaction(workspaceId, async () => undefined)).rejects.toThrow(
+              'STORE_STATE_INVALID'
+            )
+          })
+
+          await expect(escapedTransaction.getBudget(executionId)).rejects.toThrow(
+            'STORE_STATE_INVALID'
+          )
+          await expect(escapedTransaction.putBudget(budget())).rejects.toThrow(
+            'STORE_STATE_INVALID'
+          )
+        })
+      })
+
+      await expect(escapedStore.transaction(workspaceId, async () => undefined)).rejects.toThrow(
+        'STORE_STATE_INVALID'
+      )
+    })
+  })
+
+  test('drains pending callback operations before rejecting and rolling back the enclosing transaction', async () => {
+    await withStore(async (provider) => {
+      let escapedOperation
+      await expect(
+        provider.transaction(async (transaction) => {
+          await SqliteDurableUsageStore.withTransaction(transaction, workspaceId, (store) => {
+            escapedOperation = store.transaction(workspaceId, async (usage) => {
+              await new Promise((resolve) => setTimeout(resolve, 0))
+              return usage.getBudget(executionId)
+            })
+          })
+        })
+      ).rejects.toThrow('STORE_STATE_INVALID')
+
+      await expect(escapedOperation).rejects.toThrow('STORE_STATE_INVALID')
+      await expect(
+        provider.transaction((transaction) => transaction.list(SQLITE_USAGE_NAMESPACES.budgets))
+      ).resolves.toEqual([])
+    })
+  })
+
   test('commits budget, immutable entry, sequence and receipt together across reopen', async () => {
     await withStore(async (provider, store) => {
       await store.transaction(workspaceId, async (tx) => {

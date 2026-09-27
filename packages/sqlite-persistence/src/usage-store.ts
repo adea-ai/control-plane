@@ -28,14 +28,40 @@ export class SqliteDurableUsageStore implements DurableUsageStore {
     if (provider.dialect !== 'sqlite') throw new DurableUsageError('STORE_STATE_INVALID')
   }
 
+  static async withTransaction<Result>(
+    transaction: PersistenceTransaction,
+    workspaceIdInput: string,
+    operation: (store: DurableUsageStore) => Promise<Result>
+  ): Promise<Result> {
+    const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
+    if (!workspaceId.success) throw new DurableUsageError('INVALID_ENTRY')
+    const lease = new UsageStoreLease()
+    try {
+      return await operation(new BoundSqliteDurableUsageStore(transaction, workspaceId.data, lease))
+    } finally {
+      if (await lease.revokeAndDrain()) throw new DurableUsageError('STORE_STATE_INVALID')
+    }
+  }
+
   transaction<Result>(
     workspaceId: string,
     operation: (transaction: DurableUsageTransaction) => Promise<Result>
   ): Promise<Result> {
-    IdentifierSchemas.workspaceId.parse(workspaceId)
-    return this.provider.transaction((transaction) =>
-      operation(new SqliteUsageTransaction(transaction, workspaceId))
-    )
+    const parsedWorkspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceId)
+    if (!parsedWorkspaceId.success) throw new DurableUsageError('INVALID_ENTRY')
+    return this.provider.transaction(async (transaction) => {
+      const lease = new UsageStoreLease()
+      try {
+        return await operation(
+          leaseUsageTransaction(
+            new SqliteUsageTransaction(transaction, parsedWorkspaceId.data),
+            lease
+          )
+        )
+      } finally {
+        if (await lease.revokeAndDrain()) throw new DurableUsageError('STORE_STATE_INVALID')
+      }
+    })
   }
 }
 
@@ -269,4 +295,157 @@ function scopedId(workspaceId: string, identity: string, sequence?: number): str
   return recordId(
     JSON.stringify([workspaceId, identity, ...(sequence === undefined ? [] : [sequence])])
   )
+}
+
+class BoundSqliteDurableUsageStore implements DurableUsageStore {
+  #active = false
+  readonly #existingTransaction: PersistenceTransaction
+  readonly #workspaceId: string
+  readonly #lease: UsageStoreLease
+
+  constructor(
+    existingTransaction: PersistenceTransaction,
+    workspaceId: string,
+    lease: UsageStoreLease
+  ) {
+    this.#existingTransaction = existingTransaction
+    this.#workspaceId = workspaceId
+    this.#lease = lease
+  }
+
+  transaction<Result>(
+    workspaceIdInput: string,
+    operation: (transaction: DurableUsageTransaction) => Promise<Result>
+  ): Promise<Result> {
+    try {
+      this.#lease.assertActive()
+      const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
+      if (!workspaceId.success) throw new DurableUsageError('INVALID_ENTRY')
+      if (workspaceId.data !== this.#workspaceId)
+        throw new DurableUsageError('USAGE_LEDGER_SCOPE_MISMATCH')
+      if (this.#active) throw new DurableUsageError('STORE_STATE_INVALID')
+
+      this.#lease.beginOperation()
+      this.#active = true
+      return observeSqliteOperation(this.#runTransaction(operation))
+    } catch (error) {
+      return observeSqliteOperation(Promise.reject(error))
+    }
+  }
+
+  async #runTransaction<Result>(
+    operation: (transaction: DurableUsageTransaction) => Promise<Result>
+  ): Promise<Result> {
+    const transactionLease = new UsageStoreLease()
+    try {
+      return await operation(
+        leaseUsageTransaction(
+          new SqliteUsageTransaction(this.#existingTransaction, this.#workspaceId),
+          this.#lease,
+          transactionLease
+        )
+      )
+    } catch (error) {
+      this.#lease.poison()
+      throw error
+    } finally {
+      const pending = await transactionLease.revokeAndDrain()
+      this.#lease.endOperation()
+      this.#active = false
+      if (pending) {
+        this.#lease.poison()
+        throw new DurableUsageError('STORE_STATE_INVALID')
+      }
+    }
+  }
+}
+
+class UsageStoreLease {
+  #active = true
+  #poisoned = false
+  #pending = 0
+  readonly #drainers: Array<() => void> = []
+
+  assertActive(): void {
+    if (!this.#active || this.#poisoned) throw new DurableUsageError('STORE_STATE_INVALID')
+  }
+
+  poison(): void {
+    this.#poisoned = true
+  }
+
+  beginOperation(): void {
+    this.assertActive()
+    this.#pending += 1
+  }
+
+  endOperation(): void {
+    this.#pending -= 1
+    if (this.#pending === 0) {
+      for (const resolve of this.#drainers.splice(0)) resolve()
+    }
+  }
+
+  async revokeAndDrain(): Promise<boolean> {
+    const hadPendingOperations = this.#pending > 0
+    this.#active = false
+    if (hadPendingOperations) await new Promise<void>((resolve) => this.#drainers.push(resolve))
+    return hadPendingOperations || this.#poisoned
+  }
+}
+
+function leaseUsageTransaction(
+  transaction: DurableUsageTransaction,
+  outerLease: UsageStoreLease,
+  operationLease = outerLease
+): DurableUsageTransaction {
+  return {
+    getBudget: (executionId) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () => transaction.getBudget(executionId)),
+    putBudget: (budget) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () => transaction.putBudget(budget)),
+    getEffect: (idempotencyKey) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.getEffect(idempotencyKey)
+      ),
+    putEffect: (effect) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () => transaction.putEffect(effect)),
+    appendEntry: (entry) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () => transaction.appendEntry(entry)),
+    listEntries: (executionId) =>
+      runWithUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.listEntries(executionId)
+      ),
+  }
+}
+
+function runWithUsageStoreLeases<Result>(
+  outerLease: UsageStoreLease,
+  operationLease: UsageStoreLease,
+  operation: () => Promise<Result>
+): Promise<Result> {
+  const promise = (async () => {
+    outerLease.beginOperation()
+    try {
+      operationLease.beginOperation()
+    } catch (error) {
+      outerLease.endOperation()
+      throw error
+    }
+    try {
+      const result = await operation()
+      outerLease.assertActive()
+      operationLease.assertActive()
+      return result
+    } finally {
+      operationLease.endOperation()
+      outerLease.endOperation()
+    }
+  })()
+  return observeSqliteOperation(promise)
+}
+
+function observeSqliteOperation<Result>(promise: Promise<Result>): Promise<Result> {
+  void promise.catch(() => undefined)
+  return promise
 }

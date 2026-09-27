@@ -92,6 +92,37 @@ export function toUsageEffectReceiptRow(
 export class PostgresDurableUsageStore implements DurableUsageStore {
   constructor(readonly database: ControlPlaneDatabase) {}
 
+  static async acquireTransactionLocks(
+    transaction: DomainTransaction,
+    workspaceIdInput: string
+  ): Promise<void> {
+    const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
+    if (!workspaceId.success) throw usageError('INVALID_ENTRY')
+    await acquirePostgresRetentionHoldClassMutex(transaction, 'executions')
+    await transaction.execute(
+      // A separate namespace keeps this lock independent from the retention class lock.
+      sql`select pg_advisory_xact_lock(hashtextextended(${`usage-ledger:workspace:${workspaceId.data}`}, 0))`
+    )
+  }
+
+  static async withTransaction<Result>(
+    transaction: DomainTransaction,
+    workspaceIdInput: string,
+    operation: (store: DurableUsageStore) => Promise<Result>
+  ): Promise<Result> {
+    const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
+    if (!workspaceId.success) throw usageError('INVALID_ENTRY')
+    await PostgresDurableUsageStore.acquireTransactionLocks(transaction, workspaceId.data)
+    const lease = new PostgresUsageStoreLease()
+    try {
+      return await operation(
+        new BoundPostgresDurableUsageStore(transaction, workspaceId.data, lease)
+      )
+    } finally {
+      if (await lease.revokeAndDrain()) throw storeStateInvalid()
+    }
+  }
+
   async transaction<Result>(
     workspaceIdInput: string,
     operation: (transaction: DurableUsageTransaction) => Promise<Result>
@@ -101,16 +132,182 @@ export class PostgresDurableUsageStore implements DurableUsageStore {
 
     return this.database.transaction(
       async (transaction) => {
-        await acquirePostgresRetentionHoldClassMutex(transaction, 'executions')
-        await transaction.execute(
-          // A separate namespace keeps this lock independent from the retention class lock.
-          sql`select pg_advisory_xact_lock(hashtextextended(${`usage-ledger:workspace:${workspaceId.data}`}, 0))`
-        )
-        return operation(new PostgresDurableUsageTransaction(transaction, workspaceId.data))
+        await PostgresDurableUsageStore.acquireTransactionLocks(transaction, workspaceId.data)
+        const lease = new PostgresUsageStoreLease()
+        try {
+          return await operation(
+            leasePostgresUsageTransaction(
+              new PostgresDurableUsageTransaction(transaction, workspaceId.data),
+              lease
+            )
+          )
+        } finally {
+          if (await lease.revokeAndDrain()) throw storeStateInvalid()
+        }
       },
       { accessMode: 'read write', deferrable: false, isolationLevel: 'read committed' }
     )
   }
+}
+
+class BoundPostgresDurableUsageStore implements DurableUsageStore {
+  #active = false
+  readonly #existingTransaction: DomainTransaction
+  readonly #workspaceId: string
+  readonly #lease: PostgresUsageStoreLease
+
+  constructor(
+    existingTransaction: DomainTransaction,
+    workspaceId: string,
+    lease: PostgresUsageStoreLease
+  ) {
+    this.#existingTransaction = existingTransaction
+    this.#workspaceId = workspaceId
+    this.#lease = lease
+  }
+
+  transaction<Result>(
+    workspaceIdInput: string,
+    operation: (transaction: DurableUsageTransaction) => Promise<Result>
+  ): Promise<Result> {
+    try {
+      this.#lease.assertActive()
+      const workspaceId = IdentifierSchemas.workspaceId.safeParse(workspaceIdInput)
+      if (!workspaceId.success) throw usageError('INVALID_ENTRY')
+      if (workspaceId.data !== this.#workspaceId) throw scopeMismatch()
+      if (this.#active) throw storeStateInvalid()
+
+      this.#lease.beginOperation()
+      this.#active = true
+      return observePostgresUsageOperation(this.#runTransaction(operation))
+    } catch (error) {
+      return observePostgresUsageOperation(Promise.reject(error))
+    }
+  }
+
+  async #runTransaction<Result>(
+    operation: (transaction: DurableUsageTransaction) => Promise<Result>
+  ): Promise<Result> {
+    const transactionLease = new PostgresUsageStoreLease()
+    try {
+      return await operation(
+        leasePostgresUsageTransaction(
+          new PostgresDurableUsageTransaction(this.#existingTransaction, this.#workspaceId),
+          this.#lease,
+          transactionLease
+        )
+      )
+    } catch (error) {
+      this.#lease.poison()
+      throw error
+    } finally {
+      const pending = await transactionLease.revokeAndDrain()
+      this.#lease.endOperation()
+      this.#active = false
+      if (pending) {
+        this.#lease.poison()
+        throw storeStateInvalid()
+      }
+    }
+  }
+}
+
+class PostgresUsageStoreLease {
+  #active = true
+  #poisoned = false
+  #pending = 0
+  readonly #drainers: Array<() => void> = []
+
+  assertActive(): void {
+    if (!this.#active || this.#poisoned) throw storeStateInvalid()
+  }
+
+  poison(): void {
+    this.#poisoned = true
+  }
+
+  beginOperation(): void {
+    this.assertActive()
+    this.#pending += 1
+  }
+
+  endOperation(): void {
+    this.#pending -= 1
+    if (this.#pending === 0) {
+      for (const resolve of this.#drainers.splice(0)) resolve()
+    }
+  }
+
+  async revokeAndDrain(): Promise<boolean> {
+    const hadPendingOperations = this.#pending > 0
+    this.#active = false
+    if (hadPendingOperations) await new Promise<void>((resolve) => this.#drainers.push(resolve))
+    return hadPendingOperations || this.#poisoned
+  }
+}
+
+function leasePostgresUsageTransaction(
+  transaction: DurableUsageTransaction,
+  outerLease: PostgresUsageStoreLease,
+  operationLease = outerLease
+): DurableUsageTransaction {
+  return {
+    getBudget: (executionId) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.getBudget(executionId)
+      ),
+    putBudget: (budget) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.putBudget(budget)
+      ),
+    getEffect: (idempotencyKey) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.getEffect(idempotencyKey)
+      ),
+    putEffect: (effect) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.putEffect(effect)
+      ),
+    appendEntry: (entry) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.appendEntry(entry)
+      ),
+    listEntries: (executionId) =>
+      runWithPostgresUsageStoreLeases(outerLease, operationLease, () =>
+        transaction.listEntries(executionId)
+      ),
+  }
+}
+
+function runWithPostgresUsageStoreLeases<Result>(
+  outerLease: PostgresUsageStoreLease,
+  operationLease: PostgresUsageStoreLease,
+  operation: () => Promise<Result>
+): Promise<Result> {
+  const promise = (async () => {
+    outerLease.beginOperation()
+    try {
+      operationLease.beginOperation()
+    } catch (error) {
+      outerLease.endOperation()
+      throw error
+    }
+    try {
+      const result = await operation()
+      outerLease.assertActive()
+      operationLease.assertActive()
+      return result
+    } finally {
+      operationLease.endOperation()
+      outerLease.endOperation()
+    }
+  })()
+  return observePostgresUsageOperation(promise)
+}
+
+function observePostgresUsageOperation<Result>(promise: Promise<Result>): Promise<Result> {
+  void promise.catch(() => undefined)
+  return promise
 }
 
 class PostgresDurableUsageTransaction implements DurableUsageTransaction {
