@@ -105,7 +105,8 @@
         "@control-plane/domain",
         "@control-plane/execution-plan",
         "@control-plane/orchestration",
-        "@control-plane/telemetry"
+        "@control-plane/telemetry",
+        "@control-plane/usage-ledger"
       ],
       "externalDependencies": [
         "@fastify/helmet",
@@ -1432,7 +1433,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:8a6652a641c7a8273efe55745cb03c9c18d74566237327e411d40e5756b6114a"
+      "sourceDigest": "sha256:edde4de6f4e0517e2e8769caf31556f014c43001fecbf652315988ad1b2cf2e6"
     },
     {
       "id": "hosted-server",
@@ -1471,7 +1472,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:74552daac17227d128ec185d9a784f64a8bb60b6dd37a7d35a61e463cb3d1d87"
+      "sourceDigest": "sha256:7a9e3d99a82fb912ae8405cead75dc052430e0baf513dfaa7cda798b6001d66d"
     },
     {
       "id": "hosted-simple",

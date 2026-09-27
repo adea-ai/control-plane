@@ -42,6 +42,11 @@ application, migration and administration roles and canonical migrations:
   proof. Worker records 66 passed, 0 failed, 249 assertions.
 - Database, Control API, Hosted and worker TypeScript builds pass. Changed-code
   strict lint, formatting, whitespace and frozen-lockfile installation pass.
+- OpenAPI and migration-schema checks pass. Architecture inventory/digest drift
+  was reviewed and refreshed (one internal dependency and two composition digests;
+  acceptance classifications unchanged). Architecture checks validate 41 packages,
+  16 operations and four profiles; the live GitHub-backed requirements check
+  validates 200 requirements and 103 issue audits, not their full acceptance.
 
 The first signed HTTP run exposed an incorrect fixture assertion: empty credential
 scopes are malformed (401), whereas a valid token with another scope is forbidden
