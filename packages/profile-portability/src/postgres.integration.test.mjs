@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import { canonicalJsonStringify } from '@control-plane/domain'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import {
   PostgresContextPackageRepository,
