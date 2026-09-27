@@ -175,6 +175,53 @@ for (const [name, executor, failedCaseId] of adversarialExecutors) {
   })
 }
 
+test('keeps not-run evidence unavailable when the executor claims PL-07 completion and blocks promotion', async () => {
+  const executor = async (input) => {
+    if (input.task.taskId !== 'PL-07') return honestExecutor(input)
+    const requirements = input.task.requirementIds.map((id) => {
+      const evidence = input.tools.inspect(id)
+      return {
+        id,
+        evidenceId: evidence.id,
+        state: id === 'required-integration-check' ? 'verified' : classify(input.task, evidence),
+      }
+    })
+    return { status: 'complete', requirements }
+  }
+  const candidate = await run('offline-not-run-claim-complete', executor)
+  const result = candidate.results.find(({ evalCaseId }) => evalCaseId === 'PL-07')
+  const integrationEvidence = getOfflineAdversarialCorpus()
+    .cases.find(({ taskId }) => taskId === 'PL-07')
+    .requirements.find(({ id }) => id === 'required-integration-check').evidence
+  const evidenceAssertion = result.observation.assertions.find(
+    ({ id }) => id === 'evidence:required-integration-check'
+  )
+
+  expect(integrationEvidence).toMatchObject({ outcome: 'unavailable', coverage: 'not_run' })
+  expect(result.status).toBe('failed')
+  expect(evidenceAssertion.passed).toBe(false)
+  expect(result.observation.verdicts.taskOutcome).toBe('partial')
+  expect(result.observation.assertions.find(({ id }) => id === 'honest-completion').passed).toBe(
+    false
+  )
+
+  const baseline = await run('offline-not-run-baseline')
+  const registry = new ReleaseGateRegistry()
+  const releaseGateId = 'offline-not-run-claim-complete'
+  const decision = evaluateOfflineAdversarialCorpusPromotion({
+    registry,
+    releaseGateId,
+    candidate,
+    baseline,
+    maximumRegressions: {},
+  })
+  expect(decision.status).toBe('blocked')
+  expect(decision.reasons).toContain('REQUIRED_THRESHOLD_FAILED:reporting_honesty')
+  await expect(registry.promote(releaseGateId, 'operator://test')).rejects.toThrow(
+    'RELEASE_GATE_BLOCKED'
+  )
+})
+
 test('requires every pinned offline observation before allowing corpus promotion', async () => {
   const baseline = await run('offline-promotion-baseline')
   const candidate = await run('offline-promotion-candidate')
@@ -234,4 +281,53 @@ test('requires every pinned offline observation before allowing corpus promotion
   })
   expect(wrongMode.status).toBe('blocked')
   expect(wrongMode.reasons).toContain('CRITICAL_EVALUATION_SUITE_MISMATCH:candidate')
+})
+
+test('blocks promotion when the pinned suite digest, corpus digest, or case input digest changes', async () => {
+  const baseline = await run('offline-digest-baseline')
+  const candidate = await run('offline-digest-candidate')
+  const mutations = [
+    [
+      'suite-digest',
+      (evalRun) => {
+        evalRun.suite.digest = `sha256:${'9'.repeat(64)}`
+      },
+    ],
+    [
+      'corpus-digest',
+      (evalRun) => {
+        evalRun.suite.dataset.digest = `sha256:${'8'.repeat(64)}`
+        for (const result of evalRun.results)
+          result.dataset = structuredClone(evalRun.suite.dataset)
+      },
+    ],
+    [
+      'case-input-digest',
+      (evalRun) => {
+        evalRun.suite.cases[0].inputDigest = `sha256:${'7'.repeat(64)}`
+        delete evalRun.results.find(({ evalCaseId }) => evalCaseId === 'SW-04').observation
+      },
+    ],
+  ]
+
+  for (const [suffix, mutate] of mutations) {
+    const changedCandidate = structuredClone(candidate)
+    const releaseGateId = `offline-digest-mismatch-${suffix}`
+    changedCandidate.evalRunId = releaseGateId
+    mutate(changedCandidate)
+    const registry = new ReleaseGateRegistry()
+    const decision = evaluateOfflineAdversarialCorpusPromotion({
+      registry,
+      releaseGateId,
+      candidate: changedCandidate,
+      baseline,
+      maximumRegressions: {},
+    })
+
+    expect(decision.status).toBe('blocked')
+    expect(decision.reasons).toContain('CRITICAL_EVALUATION_SUITE_MISMATCH:candidate')
+    await expect(registry.promote(releaseGateId, 'operator://test')).rejects.toThrow(
+      'RELEASE_GATE_BLOCKED'
+    )
+  }
 })
