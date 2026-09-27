@@ -17,6 +17,7 @@ import {
   type ExecutionAcceptanceResponse,
 } from '@control-plane/contracts'
 import {
+  AdmissionRolloutError,
   CommandInboxError,
   InteractionRequestSchema,
   type InteractionSignalDispatcher,
@@ -340,6 +341,15 @@ function transitionTimestamp(now: string, previous: string): string {
 }
 
 function normalizeCommandError(error: unknown): never {
+  if (error instanceof AdmissionRolloutError) {
+    throw new ServiceUnavailableException(
+      {
+        code: 'EXECUTION_INTAKE_UNAVAILABLE',
+        message: 'Execution intake is temporarily unavailable',
+      },
+      { cause: error }
+    )
+  }
   if (error instanceof DurableUsageError) {
     if (error.code === 'BUDGET_EXHAUSTED') {
       throw new UnprocessableEntityException({
