@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type {
+  CreateObjectResult,
   ObjectStore,
   ObjectStoreErrorCode,
   PutObjectInput,
@@ -24,6 +25,7 @@ const MAX_METADATA_BYTES = 8_192
 const CHECKSUM_METADATA_KEY = 'control-plane-sha256'
 
 export type {
+  CreateObjectResult,
   ObjectStore,
   ObjectStoreErrorCode,
   PutObjectInput,
@@ -139,6 +141,23 @@ export class R2ObjectStore implements ObjectStore {
   }
 
   async put(input: PutObjectInput): Promise<StoredObjectDescriptor> {
+    return this.#write(input, false)
+  }
+
+  async putIfAbsent(input: PutObjectInput): Promise<CreateObjectResult> {
+    try {
+      return { outcome: 'created', object: await this.#write(input, true) }
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      const status = asRecord(asRecord(error)['$metadata'])['httpStatusCode']
+      if (status === 412) return { outcome: 'exists' }
+      // A concurrent delete/write conflict is not proof that a winner exists.
+      if (status === 409) throw new ObjectStoreError('OBJECT_STORE_PROVIDER_FAILURE', true)
+      throw normalizeProviderError(error)
+    }
+  }
+
+  async #write(input: PutObjectInput, onlyIfAbsent: boolean): Promise<StoredObjectDescriptor> {
     const visibleKey = validKey(input.key)
     const key = this.#address(visibleKey)
     if (!(input.body instanceof Uint8Array)) invalidInput()
@@ -154,6 +173,7 @@ export class R2ObjectStore implements ObjectStore {
             Key: key,
             Body: input.body,
             ContentLength: input.body.byteLength,
+            ...(onlyIfAbsent ? { IfNoneMatch: '*' } : {}),
             ...(contentType === undefined ? {} : { ContentType: contentType }),
             Metadata: { ...metadata, [CHECKSUM_METADATA_KEY]: sha256.slice('sha256:'.length) },
           })
@@ -169,6 +189,9 @@ export class R2ObjectStore implements ObjectStore {
         metadata,
       })
     } catch (error) {
+      // The create-only operation needs the provider status to distinguish an
+      // existing object from ambiguous failure, without retrying the write.
+      if (onlyIfAbsent) throw error
       throw normalizeProviderError(error)
     }
   }

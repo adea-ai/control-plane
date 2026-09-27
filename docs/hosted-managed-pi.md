@@ -27,8 +27,9 @@ Results default to a 256 KiB bound; an operator may explicitly configure
 `maxResultBytes` between 1 byte and 64 MiB, also subject to the ObjectStore's
 own limit. Conflicting retained content fails closed.
 
-Concurrent-write coalescing is instance-local. The ObjectStore port does not
-provide conditional creation: two independent first writers are not fenced by
+Concurrent-write coalescing is instance-local. The ObjectStore port now exposes
+optional conditional creation in its R2/S3 adapter, but this writer and the
+filesystem adapter have not adopted it: two independent first writers are not fenced by
 this store. The host must preserve single-writer admitted-attempt ownership;
 cross-process conflict fencing still requires a conditional-create or durable
 serialization boundary before this can certify production duplicate-effect

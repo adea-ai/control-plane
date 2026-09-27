@@ -20,4 +20,30 @@ The opaque flat layout replaces the nested-key layout shipped during M10 develop
 
 ## Verification
 
+### Conditional creation
+
+The optional `ObjectStore.putIfAbsent` capability atomically creates a key and
+returns either `{ outcome: 'created', object }` or `{ outcome: 'exists' }`.
+It must never be emulated with HEAD followed by ordinary PUT. An existing
+winner must be read and verified before publishing an artifact reference.
+
+The R2/S3 adapter sends `PutObject` with `If-None-Match: *`. HTTP 412 reports
+an existing object; HTTP 409 is an ambiguous, retryable provider failure, not
+an existing winner. There is no automatic retry or unconditional fallback,
+including when the provider rejects conditional operations. Lost ACK remains
+a failure requiring consumer reconciliation. See [R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
+and [AWS conditional-write behavior](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
+
+The filesystem adapter and Hosted artifact writer have not adopted this
+capability yet; their first-write race remains an open M11 gate. Ordinary `put`
+and `delete` retain their existing semantics. Conditional creation does not
+prevent overwrites by old/unconditional writers, deletion, or unauthorized
+clients. Rollout needs namespace ownership and scoped credentials. Generic
+S3-compatible providers require operator acceptance of their precondition
+behavior; SDK-level tests do not establish live-provider correctness.
+
+Tests cover injected provider outcomes and actual installed-SDK HTTP header
+serialization/signing without network calls. They are not live R2 certification
+or cross-process filesystem acceptance.
+
 Package tests use an injected S3 client boundary and do not require cloud credentials. M9.6 additionally requires a synthetic write/read/head/delete round trip through `R2ObjectStore` from Railway staging using a bucket-scoped least-privilege credential.
