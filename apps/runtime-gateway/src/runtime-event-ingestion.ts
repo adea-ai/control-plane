@@ -25,6 +25,7 @@ import {
 } from '@control-plane/runtime-gateway-protocol'
 import {
   RuntimeExecutionProgressSchema,
+  RuntimeUsageSchema,
   type RuntimeExecutionProgress,
 } from '@control-plane/runtime-sdk'
 import { managedCloudOperationalPolicy } from '@control-plane/config'
@@ -393,7 +394,27 @@ export class RuntimeEventIngestionService {
     normalized: NormalizedRuntimeTerminal
   ): Promise<RuntimeEventEffectResult> {
     validateTerminal(normalized)
-    this.#assertInlineBound(normalized.payload)
+    // Reserved evidence fields come from the validated wire frame and the
+    // authenticated command binding, never from adapter-normalized payloads.
+    // Channel attribution does not authorize a reported funding source or cost.
+    const payload = { ...normalized.payload }
+    delete payload['terminalUsage']
+    delete payload['runtimeUsageSource']
+    if ('terminalUsage' in frame && frame.terminalUsage !== undefined) {
+      Object.assign(
+        payload,
+        ExecutionEventDraftSchema.shape.payload.parse({
+          terminalUsage: RuntimeUsageSchema.parse(frame.terminalUsage),
+        })
+      )
+      payload['runtimeUsageSource'] = {
+        nodeId: context.command.nodeId,
+        runtimeConnectionId: context.command.runtimeConnectionId,
+        commandId: context.command.commandId,
+        channelGeneration: frame.channelGeneration,
+      }
+    }
+    this.#assertInlineBound(payload)
     if (
       'result' in frame &&
       'artifact' in frame.result &&
@@ -411,13 +432,7 @@ export class RuntimeEventIngestionService {
       state: normalized.state,
       ...(normalized.resultReference ? { resultReference: normalized.resultReference } : {}),
       ...(normalized.failure ? { failure: normalized.failure } : {}),
-      draft: this.#draft(
-        context,
-        frame,
-        `execution.${normalized.state}`,
-        normalized.payload,
-        occurredAt
-      ),
+      draft: this.#draft(context, frame, `execution.${normalized.state}`, payload, occurredAt),
     })
     return this.#classify(frame, result)
   }

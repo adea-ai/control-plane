@@ -3111,7 +3111,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         type: 'execution.completed',
         schemaVersion: 1,
         correlation,
-        payload: { usage: { outputTokens: 2 } },
+        payload: {
+          terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+          runtimeUsageSource: {
+            nodeId,
+            runtimeConnectionId,
+            commandId: record.commandId,
+            channelGeneration: 1,
+          },
+        },
         occurredAt: '2026-08-24T23:00:04.000Z',
         recordedAt: '2026-08-24T23:00:04.000Z',
         retentionExpiresAt: '2026-11-22T23:00:04.000Z',
@@ -3144,7 +3152,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         eventId: 'evt_01ERZ3NDEKTSV4RRFFQ69G5FAM',
         type: 'execution.cancelled',
         correlation: { ...correlation, commandId: cancelRecord.commandId },
-        payload: { reason: 'user_requested' },
+        payload: {
+          reason: 'user_requested',
+          terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+          runtimeUsageSource: {
+            nodeId,
+            runtimeConnectionId,
+            commandId: cancelRecord.commandId,
+            channelGeneration: 1,
+          },
+        },
       },
     }
     const effects = [terminal, cancelledTerminal]
@@ -3154,6 +3171,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       'terminal_conflict',
     ])
     const winner = effects[terminalOutcomes.findIndex(({ outcome }) => outcome === 'applied')]
+    const reopenedEvents = new PostgresExecutionEventRepository(isolated.application)
+    expect(
+      await reopenedEvents.latestTerminal(execution.executionId, attempt.attemptId)
+    ).toMatchObject({
+      type: `execution.${winner.state}`,
+      payload: winner.draft.payload,
+    })
+    expect(
+      await reopenedEvents.latestTerminal(execution.executionId, 'att_01FRZ3NDEKTSV4RRFFQ69G5FAM')
+    ).toBeUndefined()
     expect(
       await new PostgresRuntimeEventEffectSink(isolated.application).applyTerminal(winner)
     ).toMatchObject({ outcome: 'duplicate' })

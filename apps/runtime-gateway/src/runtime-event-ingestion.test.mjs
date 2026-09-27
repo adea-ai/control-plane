@@ -12,7 +12,10 @@ import {
 import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
 import { RecordingGatewayMetrics } from './websocket-lifecycle.js'
 import { RuntimeCommandDeliveryService } from './runtime-command-delivery.js'
-import { RuntimeEventIngestionService } from './runtime-event-ingestion.js'
+import {
+  DefaultRuntimeAdapterEventNormalizer,
+  RuntimeEventIngestionService,
+} from './runtime-event-ingestion.js'
 
 const resultReference = 'art_01JABCDEF0123456789ABCDEFG'
 const source = {
@@ -22,6 +25,76 @@ const source = {
 }
 
 describe('Runtime Gateway event ingestion', () => {
+  test.each(['succeeded', 'failed', 'cancelled'])(
+    'persists observed %s terminal usage once with authenticated command attribution',
+    async (status) => {
+      const fixture = await setup(new DefaultRuntimeAdapterEventNormalizer())
+      const terminalUsage = { inputTokens: 12, outputTokens: 4, durationMs: 120 }
+      const frame = {
+        ...golden.result,
+        protocolVersion: { major: 1, minor: 7 },
+        status,
+        terminalUsage,
+        result:
+          status === 'succeeded'
+            ? {
+                artifact: {
+                  artifactId: resultReference,
+                  digest: `sha256:${'a'.repeat(64)}`,
+                  mediaType: 'application/json',
+                  sizeBytes: 10,
+                },
+              }
+            : { data: { error: { code: 'RUNTIME_FAILED', retryable: false } } },
+      }
+      const first = await fixture.ingestion.ingestResult(frame, source)
+      expect(first).toMatchObject({
+        outcome: 'applied',
+        event: {
+          payload: {
+            terminalUsage,
+            runtimeUsageSource: {
+              nodeId: golden.command.nodeId,
+              runtimeConnectionId: golden.command.runtimeConnectionId,
+              commandId: golden.command.commandId,
+              channelGeneration: 1,
+            },
+          },
+        },
+      })
+      expect(await fixture.ingestion.ingestResult(frame, source)).toMatchObject({
+        outcome: 'duplicate',
+      })
+      expect(await fixture.events.queryAfter(golden.command.executionId, 0, 10)).toHaveLength(1)
+      await expect(
+        fixture.ingestion.ingestResult(
+          { ...frame, terminalUsage: { ...terminalUsage, outputTokens: 5 } },
+          source
+        )
+      ).rejects.toMatchObject({ code: 'RUNTIME_EVENT_CONFLICT' })
+    }
+  )
+
+  test('does not allow adapter payloads to impersonate wire usage or its attribution', async () => {
+    const normalizer = new FixtureNormalizer()
+    const normalize = normalizer.normalizeResult.bind(normalizer)
+    normalizer.normalizeResult = async (input) => {
+      const result = await normalize(input)
+      return {
+        ...result,
+        payload: {
+          ...result.payload,
+          terminalUsage: { inputTokens: 999 },
+          runtimeUsageSource: { nodeId: 'spoofed' },
+        },
+      }
+    }
+    const fixture = await setup(normalizer)
+    const result = await fixture.ingestion.ingestResult(golden.result, source)
+    expect(result.event.payload.terminalUsage).toBeUndefined()
+    expect(result.event.payload.runtimeUsageSource).toBeUndefined()
+  })
+
   test('persists progress once and classifies duplicate, conflicting, and out-of-order frames', async () => {
     const fixture = await setup()
     expect(await fixture.ingestion.ingestProgress(golden.progress, source)).toMatchObject({
@@ -328,7 +401,7 @@ describe('Runtime Gateway event ingestion', () => {
   })
 })
 
-async function setup() {
+async function setup(normalizer = new FixtureNormalizer()) {
   const executions = new InMemoryExecutionRepository()
   const lifecycle = new ExecutionLifecycleService(executions)
   let execution = await lifecycle.createExecution({
@@ -406,7 +479,7 @@ async function setup() {
     commands,
     executions,
     effects: new InMemoryRuntimeEventEffectSink({ lifecycle, events }),
-    normalizer: new FixtureNormalizer(),
+    normalizer,
     channelAuthority: authority,
     quarantine,
     metrics,

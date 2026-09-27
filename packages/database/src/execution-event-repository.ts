@@ -334,6 +334,30 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
     return row ? fromExecutionEventRow(row) : undefined
   }
 
+  async latestTerminal(
+    executionId: string,
+    attemptId: string
+  ): Promise<ExecutionEvent | undefined> {
+    const [row] = await this.database
+      .select()
+      .from(executionEvents)
+      .where(
+        and(
+          eq(executionEvents.executionId, executionId),
+          eq(executionEvents.attemptId, attemptId),
+          inArray(executionEvents.eventType, [
+            'execution.completed',
+            'execution.failed',
+            'execution.cancelled',
+          ]),
+          isNull(executionEvents.archivedAt)
+        )
+      )
+      .orderBy(desc(executionEvents.sequence))
+      .limit(1)
+    return row ? fromExecutionEventRow(row) : undefined
+  }
+
   async queryPending(limit: number, dueAt?: string) {
     const rows = await this.database
       .select()
