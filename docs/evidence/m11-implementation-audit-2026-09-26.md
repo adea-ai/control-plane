@@ -306,17 +306,39 @@ persists matching immutable context/plan parents, catalog versions and real
 accepted execution/attempt owners. All four files pass 24 tests / 135
 assertions and scoped lint/format/diff checks. Independent bounded source review
 found no actionable issue; original assertions and production guards remain
-unchanged. A coverage-instrumented unit rerun remains pending.
+unchanged. The subsequent coverage-instrumented unit run at `c73f7e05` passed
+1,545 tests and failed two ACP process cases, with 6,805 assertions across 198
+files; all five former Local failures cleared. Three focused ACP cases and a
+single complete seeded/randomized ACP file diagnostic then passed (31 tests /
+98 assertions). No ACP behavior or timeout was changed, and isolated passes do
+not supersede the failed whole-unit lane. The LCOV goal checker did not run
+after those failures. Bun's printed coverage averages are not the aggregate
+LCOV percentages: the prior merged PR #741's
+[Foundation Core log](https://github.com/adea-ai/control-plane/actions/runs/36266134600/job/108471036941)
+showed 74.06%
+printed function coverage but an 84.34% function / 84.27% line LCOV gate pass.
+The repaired candidate still needs its own complete unit/LCOV gate.
 
 Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three
 in the database job. All seven reference-window cases passed at existing
 deadlines; downstream package integration and remote/restore drills did not
 run. Source diagnosis found an existing-plan missing-context error-code mapping
 regression, plus shared-fixture collisions and a race-test synchronization gap.
-Their repairs remain pending; neither host load nor relaxed deadlines explains
-away these failures. Standalone infrastructure validation passed for two
-application services. No full combined acceptance or candidate rollout is
-claimed.
+The isolated repair preserves claim guards and lock order while mapping an
+absent stored context to `MISSING_CONTEXT_PACKAGE`, gives the plan-retention
+test a unique content identity and bounded target cursor, and isolates receipt
+race cases in fresh databases. Receipt-first ordering protects the exact owner
+with no deletion journal; deletion-first ordering is checked after the actual
+owner lock, with PostgreSQL confirming a blocked KEY SHARE writer before release.
+The full database integration file passed 61 tests / 640 assertions before
+final test-quality refinements. Both race cases then passed on the final diff
+(two tests / nine assertions), including awaited cleanup and actual blocked-lock
+readback. Scoped build/format/diff checks passed; package lint exited zero with
+one pre-existing caught-error warning. Fresh independent bounded source review
+found no actionable issue; the exact reviewed files are integrated. Neither
+host load nor relaxed deadlines explains away the prior
+failures. Standalone infrastructure validation passed for two application
+services. No full combined acceptance or candidate rollout is claimed.
 
 - Frozen install and build: all 41 packages built successfully.
 - Focused approval/retention tests: 83 passed, 401 assertions.
