@@ -91,6 +91,12 @@ export interface CommandAcceptanceResult {
 
 export interface CommandAcceptanceRepository {
   accept(command: CommandInboxRecord, execution: Execution): Promise<CommandAcceptanceResult>
+  /** Verify persisted admission authority before a duplicate can be redispatched.
+   * Durable budget-enabled repositories implement this without reopening a budget
+   * or relying on a historical plan that may have been retired since acceptance.
+   * New-owner admission must still be atomic inside accept, not in this read gate.
+   */
+  verifyAdmission?(command: CommandInboxRecord, execution: Execution): Promise<void>
   get(scope: CommandInboxScope): Promise<CommandInboxRecord | undefined>
   getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined>
   getExecution(executionId: string): Promise<Execution | undefined>
@@ -380,6 +386,9 @@ export class CommandInboxService {
     this.#failureInjector?.checkpoint('control_api.after_accept')
     this.#assertRetained(result.command)
     if (result.outcome === 'conflict') fail('IDEMPOTENCY_PAYLOAD_CONFLICT')
+    if (result.outcome === 'duplicate') {
+      await this.repository.verifyAdmission?.(result.command, result.execution)
+    }
     return {
       replayed: result.outcome === 'duplicate',
       command: result.command,
@@ -485,11 +494,13 @@ export class CommandInboxService {
       this.#emitAcceptanceOutcome(accepted.outcome)
       fail('IDEMPOTENCY_PAYLOAD_CONFLICT')
     }
+    const execution = await this.#execution(existing.executionId)
+    await this.repository.verifyAdmission?.(existing, execution)
     this.#emitAcceptanceOutcome('duplicate')
     return {
       replayed: true,
       command: existing,
-      execution: await this.#execution(existing.executionId),
+      execution,
     }
   }
 
