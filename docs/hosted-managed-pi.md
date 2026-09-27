@@ -27,13 +27,17 @@ Results default to a 256 KiB bound; an operator may explicitly configure
 `maxResultBytes` between 1 byte and 64 MiB, also subject to the ObjectStore's
 own limit. Conflicting retained content fails closed.
 
-Concurrent-write coalescing is instance-local. The ObjectStore port now exposes
-optional conditional creation in its R2/S3 adapter, but this writer and the
-filesystem adapter have not adopted it: two independent first writers are not fenced by
-this store. The host must preserve single-writer admitted-attempt ownership;
-cross-process conflict fencing still requires a conditional-create or durable
-serialization boundary before this can certify production duplicate-effect
-safety.
+Concurrent-write coalescing is instance-local, but first publication now
+requires `ObjectStore.putIfAbsent`. Unsupported adapters fail at construction
+with `HOSTED_ARTIFACT_CONDITIONAL_CREATE_REQUIRED`; there is no unconditional
+fallback. Independent writers of the same result return the verified winning
+reference. A conflicting result is rejected without replacing the winning
+bytes. An `exists` response still requires HEAD/GET binding and byte checks.
+R2/S3 uses a provider precondition; filesystem storage atomically publishes a
+complete private envelope. This fences cooperative first writers, not execution
+admission, deletion, legacy/unconditional writers, or upload authorization.
+Quiesce old writers before activating this implementation. The host still needs
+durable admitted-attempt ownership to prevent duplicate execution effects.
 
 The current ObjectStore path is attempt-bound, not a production RuntimeNode
 upload authority. Workspace/node/command-scoped upload credentials, gateway-side

@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, test } from 'bun:test'
-import { ObjectStoreError } from '@control-plane/object-store'
+import { FilesystemObjectStore, ObjectStoreError, R2ObjectStore } from '@control-plane/object-store'
 import { ObjectStoreHostedArtifactStore } from './hosted-managed-pi-artifact-stores.js'
 
 const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
@@ -38,10 +41,84 @@ function store({ existing = false, head = {}, get = {}, put = {}, missingGet = f
       present = true
       return { ...descriptor, ...put }
     },
+    async putIfAbsent(request) {
+      if (present) return { outcome: 'exists' }
+      return { outcome: 'created', object: await this.put(request) }
+    },
     async delete() {},
     close() {},
   }
 }
+
+test('refuses an artifact store without atomic conditional creation before any storage operation', () => {
+  const objects = store({ existing: true })
+  delete objects.putIfAbsent
+  expect(() => new ObjectStoreHostedArtifactStore(objects)).toThrow(
+    'HOSTED_ARTIFACT_CONDITIONAL_CREATE_REQUIRED'
+  )
+  expect(objects.calls).toEqual([])
+})
+
+test.each([false, true])(
+  'independent writers observing a missing key fence concurrent results (identical=%s)',
+  async (identical) => {
+    let stored
+    let initialHeads = 0
+    let release
+    const barrier = new Promise((resolve) => {
+      release = resolve
+    })
+    const writes = []
+    const client = {
+      async send(command) {
+        if (command.constructor.name === 'HeadObjectCommand' && initialHeads < 2) {
+          initialHeads++
+          if (initialHeads === 2) release()
+          await barrier
+          throw Object.assign(new Error('not found'), { $metadata: { httpStatusCode: 404 } })
+        }
+        if (command.constructor.name === 'PutObjectCommand') {
+          writes.push(command.input)
+          if (stored && command.input.IfNoneMatch === '*') {
+            throw Object.assign(new Error('exists'), { $metadata: { httpStatusCode: 412 } })
+          }
+          stored = {
+            body: command.input.Body.slice(),
+            contentType: command.input.ContentType,
+            metadata: command.input.Metadata,
+          }
+          return {}
+        }
+        if (!stored)
+          throw Object.assign(new Error('not found'), { $metadata: { httpStatusCode: 404 } })
+        return {
+          ContentLength: stored.body.byteLength,
+          ContentType: stored.contentType,
+          Metadata: stored.metadata,
+          Body: { transformToByteArray: async () => stored.body.slice() },
+        }
+      },
+    }
+    const create = () =>
+      new ObjectStoreHostedArtifactStore(
+        new R2ObjectStore({ bucket: 'artifacts', client, maxObjectBytes: 1024 })
+      )
+    const results = await Promise.allSettled([
+      create().persist(input),
+      create().persist({ ...input, value: identical ? input.value : { ok: false } }),
+    ])
+    const successes = results.filter((result) => result.status === 'fulfilled')
+    expect(successes).toHaveLength(identical ? 2 : 1)
+    if (identical) expect(successes[0].value).toEqual(successes[1].value)
+    else
+      expect(results.find((result) => result.status === 'rejected').reason.message).toBe(
+        'HOSTED_ARTIFACT_RESULT_CONFLICT'
+      )
+    expect(writes.every((request) => request.IfNoneMatch === '*')).toBe(true)
+    const reference = await create().persist(input)
+    expect(reference).toEqual(successes[0].value)
+  }
+)
 
 test.each([
   ['wrong head key', { existing: true, head: { key: 'another-workspace/result.json' } }],
@@ -121,3 +198,89 @@ test('recovers a lost PUT acknowledgement by verifying existing bytes without re
   expect(objects.calls.filter(([method]) => method === 'put')).toHaveLength(1)
   expect(objects.calls.filter(([method]) => method === 'get')).toHaveLength(1)
 })
+
+test.each([
+  ['misbound winner key', { head: { key: 'other/result.json' } }],
+  ['misbound winner attempt', { head: { metadata: { attempt: 'another-attempt' } } }],
+  ['corrupt winner bytes', { get: { body: new Uint8Array(body.byteLength) } }],
+  ['unreadable winner', { missingGet: true }],
+])('an existing-object response cannot publish %s', async (_name, options) => {
+  const objects = store(options)
+  objects.putIfAbsent = async (request) => {
+    await objects.put(request)
+    return { outcome: 'exists' }
+  }
+  await expect(new ObjectStoreHostedArtifactStore(objects).persist(input)).rejects.toThrow()
+})
+
+test('does not fall back to ordinary PUT when conditional creation is unavailable at the provider', async () => {
+  const objects = store()
+  objects.putIfAbsent = async () => {
+    throw new ObjectStoreError('OBJECT_STORE_PROVIDER_FAILURE', false)
+  }
+  await expect(new ObjectStoreHostedArtifactStore(objects).persist(input)).rejects.toMatchObject({
+    code: 'OBJECT_STORE_PROVIDER_FAILURE',
+  })
+  expect(objects.calls.filter(([method]) => method === 'put')).toHaveLength(0)
+})
+
+test.each([false, true])(
+  'actual filesystem artifact writers fence simultaneous missing-key observations (identical=%s)',
+  async (identical) => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'm11-conditional-hosted-artifact-'))
+    const objects = [0, 1].map(
+      () => new FilesystemObjectStore({ rootDirectory, maxObjectBytes: 1024 })
+    )
+    let heads = 0
+    let release
+    const barrier = new Promise((resolve) => {
+      release = resolve
+    })
+    for (const object of objects) {
+      const head = object.head.bind(object)
+      let first = true
+      object.head = async (requested) => {
+        if (!first) return head(requested)
+        first = false
+        let observedError
+        try {
+          await head(requested)
+        } catch (error) {
+          observedError = error
+        }
+        expect(observedError).toMatchObject({ code: 'OBJECT_STORE_NOT_FOUND' })
+        heads++
+        if (heads === 2) release()
+        await barrier
+        throw observedError
+      }
+    }
+    try {
+      const requests = [input, { ...input, value: identical ? input.value : { ok: false } }]
+      const results = await Promise.allSettled(
+        objects.map((object, index) =>
+          new ObjectStoreHostedArtifactStore(object).persist(requests[index])
+        )
+      )
+      const successes = results.filter((result) => result.status === 'fulfilled')
+      expect(successes).toHaveLength(identical ? 2 : 1)
+      if (identical) expect(successes[0].value).toEqual(successes[1].value)
+      else
+        expect(results.find((result) => result.status === 'rejected').reason.message).toBe(
+          'HOSTED_ARTIFACT_RESULT_CONFLICT'
+        )
+      const winner = results.findIndex((result) => result.status === 'fulfilled')
+      const reopened = new FilesystemObjectStore({ rootDirectory, maxObjectBytes: 1024 })
+      try {
+        expect(
+          await new ObjectStoreHostedArtifactStore(reopened).persist(requests[winner])
+        ).toEqual(results[winner].value)
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      for (const object of objects) object.close()
+      await rm(rootDirectory, { recursive: true, force: true })
+    }
+  }
+)

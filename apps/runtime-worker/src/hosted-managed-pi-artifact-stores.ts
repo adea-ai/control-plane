@@ -48,6 +48,7 @@ export class InMemoryHostedArtifactStore implements HostedArtifactStore {
 
 export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
   readonly #objectStore: ObjectStore
+  readonly #createObject: NonNullable<ObjectStore['putIfAbsent']>
   readonly #maxResultBytes: number
   readonly #pending = new Map<
     string,
@@ -66,6 +67,9 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
       this.#maxResultBytes > 64 * 1024 * 1024
     )
       throw new Error('HOSTED_ARTIFACT_LIMIT_INVALID')
+    if (typeof objectStore.putIfAbsent !== 'function')
+      throw new Error('HOSTED_ARTIFACT_CONDITIONAL_CREATE_REQUIRED')
+    this.#createObject = objectStore.putIfAbsent.bind(objectStore)
   }
 
   persist(input: {
@@ -126,12 +130,23 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
       this.#assertBinding(existing, key, input.attemptId, input.mediaType)
       return this.#read(input, key, expectedDigest)
     }
-    const stored = await this.#objectStore.put({
+    const result = await this.#createObject({
       key,
       body: input.body,
       contentType: input.mediaType,
       metadata: { attempt: input.attemptId },
     })
+    if (result.outcome === 'exists') {
+      // Another independent writer may have won since our initial HEAD. The
+      // precondition response alone is not evidence of matching durable bytes.
+      const winner = await this.#objectStore.head(key)
+      this.#assertBinding(winner, key, input.attemptId, input.mediaType)
+      if (winner.sha256 !== expectedDigest || winner.size !== input.body.byteLength)
+        throw artifactConflict()
+      return this.#read(input, key, expectedDigest)
+    }
+    if (result.outcome !== 'created') throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
+    const stored = result.object
     this.#assertBinding(stored, key, input.attemptId, input.mediaType)
     if (stored.sha256 !== expectedDigest || stored.size !== input.body.byteLength) {
       throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')

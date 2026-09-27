@@ -14,6 +14,41 @@ function storeWith(send) {
 const input = { key: 'attempt/result', body: new Uint8Array([1, 2]), metadata: { attempt: 'one' } }
 
 describe('S3 conditional object creation', () => {
+  test('SDK retries retain the create-only precondition on every HTTP request', async () => {
+    const requests = []
+    const client = new S3Client({
+      endpoint: 'https://objects.example.test',
+      region: 'auto',
+      forcePathStyle: true,
+      maxAttempts: 2,
+      credentials: { accessKeyId: 'fixture-access', secretAccessKey: 'fixture-secret' },
+      requestHandler: {
+        async handle(request) {
+          requests.push(request)
+          if (requests.length === 1)
+            return {
+              response: {
+                statusCode: 503,
+                headers: {},
+                body: new TextEncoder().encode(
+                  '<Error><Code>ServiceUnavailable</Code><Message>fixture</Message></Error>'
+                ),
+              },
+            }
+          return { response: { statusCode: 200, headers: { etag: 'fixture-etag' } } }
+        },
+      },
+    })
+    const store = new R2ObjectStore({ bucket: 'artifacts', maxObjectBytes: 8, client })
+    try {
+      expect((await store.putIfAbsent(input)).outcome).toBe('created')
+      expect(requests).toHaveLength(2)
+      expect(requests.every((request) => request.headers['if-none-match'] === '*')).toBe(true)
+    } finally {
+      store.close()
+    }
+  })
+
   test('the installed AWS SDK serializes the precondition into the signed HTTP request', async () => {
     const requests = []
     const client = new S3Client({
