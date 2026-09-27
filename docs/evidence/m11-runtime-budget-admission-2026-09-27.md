@@ -24,7 +24,9 @@ execution and immutable plan and checks the actual durable attempt owner.
 Cancellation and cleanup do not require spend admission. The injectable seam
 remains optional for standalone component fixtures, but the actual Local,
 Hosted-simple, Hosted-server and Cloud worker composition roots supply the
-concrete guard using their own SQLite/PostgreSQL stores and command repositories.
+concrete guard using their own SQLite/PostgreSQL stores and command repositories
+on their default activity paths. Local's explicit custom-activities injection
+replaces those defaults; the caller then owns admission enforcement.
 
 Missing historical allowance state fails closed; this is not an automatic
 backfill or permission to re-fund an already-running execution. Operators must

@@ -4,6 +4,10 @@ import { randomUUID } from 'node:crypto'
 import postgres from 'postgres'
 import { assertPostgresUrl, type ControlPlaneDatabase } from './connection.js'
 import { migrateDatabase } from './migration.js'
+import {
+  completeIsolatedDatabaseSetup,
+  createIsolatedDatabaseDisposer,
+} from './isolated-database-cleanup.js'
 import * as schema from './schema/index.js'
 import { withDomainTransaction, type DomainTransaction } from './transaction.js'
 
@@ -43,33 +47,40 @@ export async function createIsolatedTestDatabase(
   const administration = postgres(credentials.administration.url, { max: 1, prepare: false })
   const migrationRole = new URL(credentials.migration.url).username
   const applicationRole = new URL(credentials.application.url).username
-  await administration`create database ${administration(name)} owner ${administration(migrationRole)}`
-
-  const applicationClient = postgres(applicationUrl, { max: 4, prepare: false })
-  const application = drizzle(applicationClient, { schema })
-  let disposed = false
-
-  return {
-    application,
-    name,
-    async dispose() {
-      if (disposed) return
-      disposed = true
-      await applicationClient.end({ timeout: 5 })
+  let applicationClient: ReturnType<typeof postgres> | undefined
+  const dispose = createIsolatedDatabaseDisposer({
+    closeApplication: async () => {
+      await applicationClient?.end({ timeout: 5 })
+    },
+    terminateSessions: async () => {
       await administration`
         select pg_terminate_backend(pid)
         from pg_stat_activity
         where datname = ${name} and pid <> pg_backend_pid()
       `
-      await administration`drop database ${administration(name)}`
-      await administration.end({ timeout: 5 })
     },
-    async migrate() {
-      await migrateDatabase({ role: 'migration', url: migrationUrl })
-      await grantApplicationAccess(migrationUrl, applicationRole)
+    dropDatabase: async () => {
+      // The generated name is owned even when CREATE's acknowledgement is
+      // ambiguous. Never sweep names or touch an operator database here.
+      await administration`drop database if exists ${administration(name)}`
     },
-    transaction: (operation) => withDomainTransaction(application, operation),
-  }
+    closeAdministration: async () => administration.end({ timeout: 5 }),
+  })
+  return completeIsolatedDatabaseSetup(async () => {
+    await administration`create database ${administration(name)} owner ${administration(migrationRole)}`
+    applicationClient = postgres(applicationUrl, { max: 4, prepare: false })
+    const application = drizzle(applicationClient, { schema })
+    return {
+      application,
+      name,
+      dispose,
+      async migrate() {
+        await migrateDatabase({ role: 'migration', url: migrationUrl })
+        await grantApplicationAccess(migrationUrl, applicationRole)
+      },
+      transaction: (operation) => withDomainTransaction(application, operation),
+    }
+  }, dispose)
 }
 
 async function grantApplicationAccess(

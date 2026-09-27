@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -47,19 +47,38 @@ const directories = []
 const providers = []
 let database
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!enabled) return
+  // Every export must observe only its own fixture, independent of test order.
   database = await createIsolatedTestDatabase({
     administration: { role: 'administration', url: process.env.DATABASE_ADMIN_URL },
     migration: { role: 'migration', url: process.env.DATABASE_MIGRATION_URL },
     application: { role: 'application', url: process.env.DATABASE_URL },
   })
-  await database.migrate()
+  try {
+    await database.migrate()
+  } catch (error) {
+    try {
+      await database.dispose()
+    } catch (cleanupError) {
+      const setupError = new AggregateError(
+        [error, cleanupError],
+        'PostgreSQL portability setup failed',
+        { cause: error }
+      )
+      throw setupError
+    } finally {
+      database = undefined
+    }
+    throw error
+  }
 })
 
-afterAll(async () => {
+afterEach(async () => {
   const cleanupErrors = []
-  const providerResults = await Promise.allSettled(providers.map((provider) => provider.close()))
+  const providerResults = await Promise.allSettled(
+    providers.splice(0).map((provider) => provider.close())
+  )
   cleanupErrors.push(
     ...providerResults
       .filter((result) => result.status === 'rejected')
@@ -69,9 +88,11 @@ afterAll(async () => {
     await database?.dispose()
   } catch (error) {
     cleanupErrors.push(error)
+  } finally {
+    database = undefined
   }
   const directoryResults = await Promise.allSettled(
-    directories.map((path) => rm(path, { recursive: true, force: true }))
+    directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))
   )
   cleanupErrors.push(
     ...directoryResults

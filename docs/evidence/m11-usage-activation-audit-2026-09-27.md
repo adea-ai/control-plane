@@ -7,14 +7,27 @@ this snapshot. Original milestone acceptance criteria remain unchanged.
 
 Later component implementation and executed PostgreSQL checks are recorded in the
 [PostgreSQL checkpoint](m11-postgres-durable-usage-store-2026-09-27.md). They do not
-complete the transaction-bound application activation described here.
+by themselves complete transaction-bound application activation.
 
 The later [admission preparation checkpoint](m11-usage-admission-replay-2026-09-27.md)
 adds tested callback-scoped transaction binding, service-level duplicate verification and the
-actual Local/Cloud/Hosted composition sites. These preparation APIs are not yet installed as
-authoritative budget admission in those compositions.
+actual Local/Cloud/Hosted composition sites. Later
+[plan-budget admission](m11-plan-budget-admission-2026-09-27.md) installs atomic
+allowance admission in SQLite/PostgreSQL acceptance and those command composition
+roots, with native and real PostgreSQL/Cloud HTTP evidence. Later
+[runtime allowance preflight](m11-runtime-budget-admission-2026-09-27.md) installs
+read-only dispatch/interaction/graph admission in Local, Hosted-simple,
+Hosted-server and Cloud worker roots. Neither allowance opening nor preflight
+reserves capacity across runtime effects or proves purchased funding.
 
-## Verified seams and gaps
+The table below describes the original source snapshot, not current implementation
+status. Its acceptance-binding gaps have since been implemented as linked above;
+its reservation, authoritative provider accounting, settlement and deployed-profile
+gates remain unfinished. Runtime accounting now accepts scoped reported metadata,
+but that metadata is explicitly not trusted billing authority. See
+[terminal usage provenance](m11-terminal-usage-provenance-2026-09-27.md).
+
+## Historical verified seams and gaps
 
 | Boundary                  | Current source                                                                                                                                   | Remaining implementation                                                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |

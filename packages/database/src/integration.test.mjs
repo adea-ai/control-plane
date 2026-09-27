@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -156,7 +156,16 @@ async function createMigratedIsolatedDatabase() {
     await database.migrate()
     return database
   } catch (error) {
-    await database.dispose()
+    try {
+      await database.dispose()
+    } catch (cleanupError) {
+      const setupError = new AggregateError(
+        [error, cleanupError],
+        'PostgreSQL integration setup failed',
+        { cause: error }
+      )
+      throw setupError
+    }
     throw error
   }
 }
@@ -409,18 +418,16 @@ async function createExecutionOwner(database, request, executionId, attemptId) {
 describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => {
   let isolated
 
-  beforeAll(async () => {
-    isolated = await createIsolatedTestDatabase({
-      administration: loadDatabaseCredentials(process.env, 'administration'),
-      application: loadDatabaseCredentials(process.env, 'application'),
-      migration: loadDatabaseCredentials(process.env, 'migration'),
-    })
+  beforeEach(async () => {
+    // Cases intentionally corrupt rows and reuse stable fixture IDs. Isolation
+    // must be per case, not per file, including the randomized integration lane.
     // Cold remote migrations have their own setup budget, not the child probes' deadline.
-    await isolated.migrate()
+    isolated = await createMigratedIsolatedDatabase()
   }, 60_000)
 
-  afterAll(async () => {
+  afterEach(async () => {
     await isolated?.dispose()
+    isolated = undefined
   })
 
   test('reference-window metadata migrates without changing immutable plan/package contents', async () => {
@@ -6028,6 +6035,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const service = new ExecutionEventService(repository)
     const executionId = 'exe_01BRZ3NDEKTSV4RRFFQ69G5FAV'
     const executionRepository = new PostgresExecutionRepository(isolated.application)
+    await seedAcceptancePlan(isolated.application)
+    await new ExecutionLifecycleService(executionRepository).createExecution({
+      executionId,
+      correlation: acceptancePlan.correlation,
+      executionPlan: acceptancePlanReference,
+      acceptedAt: '2026-08-24T11:01:00.000Z',
+    })
     const current = await executionRepository.getExecution(executionId)
     const queued = {
       ...current,

@@ -100,7 +100,7 @@ async function seedCatalogAndPlan(database) {
   inputs.profile = await catalog.publishAgentProfileVersion({
     profileVersionId: draft.profileVersionId,
     expectedRevision: draft.revision,
-    publishedAt: new Date().toISOString(),
+    publishedAt: acceptedAt,
   })
   await new PostgresContextPackageRepository(database).put(
     contextPackageSerializationFixtures.futurePi
