@@ -7,6 +7,8 @@ import {
   assertContextPackageDerivedFrom,
   ContextAuthoringCommandRecordSchema,
   contextAuthoringCommandKey,
+  type ContextPackage,
+  type ContextPackageReference,
 } from '@control-plane/context'
 import {
   ExecutionPlanReferenceSchema,
@@ -16,6 +18,8 @@ import {
   assertExecutionValidationCommandPlan,
   ExecutionValidationCommandRecordSchema,
   executionValidationCommandKey,
+  type ExecutionPlan,
+  type ExecutionPlanReference,
 } from '@control-plane/execution-plan'
 import type {
   DeploymentProfile,
@@ -147,6 +151,19 @@ export interface PortableImportTransaction {
   recordProvenance(provenance: PortableMigrationProvenance): Promise<void>
   commit(): Promise<void>
   rollback(): Promise<void>
+}
+
+export interface PortableReferenceLineageLookup {
+  readonly contextPackage: (reference: ContextPackageReference) => Promise<ContextPackage>
+  readonly executionPlan: (reference: ExecutionPlanReference) => Promise<{
+    readonly plan: ExecutionPlan
+    readonly contextPackage: ContextPackage
+  }>
+}
+
+export interface PortableReferenceClaims {
+  readonly contextPackages: readonly ContextPackageReference[]
+  readonly executionPlans: readonly (ExecutionPlanReference & { readonly schemaVersion: number })[]
 }
 
 export interface PortableStateDestination {
@@ -610,47 +627,116 @@ async function validateAndResetImportedReferences(
   staged: readonly PortableRecord[]
 ): Promise<void> {
   if (staged.length === 0) return
-  const contextPackageIds = new Set<string>()
-  const executionPlanIds = new Set<string>()
+  const claims = await collectImportedPortableReferenceClaims(staged, {
+    contextPackage: (reference) => readStoredContextPackage(transaction, reference),
+    executionPlan: async (reference) => {
+      const stored = await readStoredExecutionPlan(transaction, reference)
+      return { plan: stored.plan, contextPackage: stored.context }
+    },
+  })
+
+  for (const reference of claims.contextPackages) {
+    await transaction.delete(
+      REFERENCE_RETENTION_NAMESPACES.contextPackages,
+      sqliteRecordId(reference.contextPackageId)
+    )
+  }
+  for (const reference of claims.executionPlans) {
+    await transaction.delete(
+      REFERENCE_RETENTION_NAMESPACES.executionPlans,
+      sqliteRecordId(reference.executionPlanId)
+    )
+  }
+}
+
+/** Validate every newly staged portable reference and collect exact immutable targets once. */
+export async function collectImportedPortableReferenceClaims(
+  staged: readonly PortableRecord[],
+  lookup: PortableReferenceLineageLookup
+): Promise<PortableReferenceClaims> {
+  const contextReferences = new Map<string, ContextPackageReference>()
+  const planReferences = new Map<
+    string,
+    ExecutionPlanReference & { readonly schemaVersion: number }
+  >()
+
+  const addContext = (reference: ContextPackageReference, logicalId: string) => {
+    const parsed = ContextPackageReferenceSchema.parse(reference)
+    const previous = contextReferences.get(parsed.contextPackageId)
+    if (previous && previous.contentDigest !== parsed.contentDigest) {
+      throw new PortableMigrationError('PORTABLE_PLAN_STALE', [logicalId])
+    }
+    contextReferences.set(parsed.contextPackageId, parsed)
+  }
+  const addPlan = (plan: ExecutionPlan, logicalId: string) => {
+    const reference = ExecutionPlanReferenceSchema.parse({
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+    })
+    const previous = planReferences.get(reference.executionPlanId)
+    if (
+      previous &&
+      (previous.contentDigest !== reference.contentDigest ||
+        previous.schemaVersion !== plan.schemaVersion)
+    ) {
+      throw new PortableMigrationError('PORTABLE_PLAN_STALE', [logicalId])
+    }
+    planReferences.set(reference.executionPlanId, {
+      ...reference,
+      schemaVersion: plan.schemaVersion,
+    })
+  }
 
   for (const record of staged) {
     if (record.category === 'context-package') {
       const package_ = parseImportedContextPackage(record)
-      contextPackageIds.add(package_.contextPackageId)
+      addContext(
+        { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest },
+        record.logicalId
+      )
       if (package_.parentContextPackage) {
-        if (package_.parentContextPackage.contextPackageId === package_.contextPackageId) {
-          throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
-        }
-        const parent = await readStoredContextPackage(transaction, package_.parentContextPackage)
+        const parent = await lookup.contextPackage(package_.parentContextPackage)
         try {
           assertContextPackageDerivedFrom(parent, package_)
         } catch {
           throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
         }
-        contextPackageIds.add(parent.contextPackageId)
+        addContext(
+          { contextPackageId: parent.contextPackageId, contentDigest: parent.contentDigest },
+          record.logicalId
+        )
       }
       continue
     }
 
     if (record.category === 'execution-plan') {
       const plan = parseImportedExecutionPlan(record)
-      executionPlanIds.add(plan.executionPlanId)
-      const context = await readStoredContextPackage(transaction, plan.contextPackage)
-      assertPlanContextScope(plan, context)
-      contextPackageIds.add(context.contextPackageId)
+      addPlan(plan, record.logicalId)
+      const contextPackage = await lookup.contextPackage(plan.contextPackage)
+      assertPlanContextScope(plan, contextPackage)
+      addContext(
+        {
+          contextPackageId: contextPackage.contextPackageId,
+          contentDigest: contextPackage.contentDigest,
+        },
+        record.logicalId
+      )
 
       if (plan.parentExecutionPlan) {
-        if (plan.parentExecutionPlan.executionPlanId === plan.executionPlanId) {
-          throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
-        }
-        const parent = await readStoredExecutionPlan(transaction, plan.parentExecutionPlan)
+        const parent = await lookup.executionPlan(plan.parentExecutionPlan)
         try {
-          assertExecutionPlanDerivedFrom(parent.plan, plan, parent.context, context)
+          assertExecutionPlanDerivedFrom(parent.plan, plan, parent.contextPackage, contextPackage)
         } catch {
           throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
         }
-        executionPlanIds.add(parent.plan.executionPlanId)
-        contextPackageIds.add(parent.context.contextPackageId)
+        addPlan(parent.plan, record.logicalId)
+        addContext(
+          {
+            contextPackageId: parent.contextPackage.contextPackageId,
+            contentDigest: parent.contextPackage.contentDigest,
+          },
+          record.logicalId
+        )
       }
       continue
     }
@@ -664,14 +750,17 @@ async function validateAndResetImportedReferences(
       ) {
         throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
       }
-      const package_ = await readStoredContextPackage(transaction, command.contextPackage)
+      const package_ = await lookup.contextPackage(command.contextPackage)
       if (
         package_.projectState.workspaceId !== command.scope.workspaceId ||
         package_.projectState.projectId !== command.scope.projectId
       ) {
         throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
       }
-      contextPackageIds.add(package_.contextPackageId)
+      addContext(
+        { contextPackageId: package_.contextPackageId, contentDigest: package_.contentDigest },
+        record.logicalId
+      )
       continue
     }
 
@@ -684,28 +773,31 @@ async function validateAndResetImportedReferences(
       ) {
         throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
       }
-      const target = await readStoredExecutionPlan(transaction, command.executionPlan)
+      const target = await lookup.executionPlan(command.executionPlan)
+      assertPlanContextScope(target.plan, target.contextPackage)
       try {
         assertExecutionValidationCommandPlan(command, target.plan)
       } catch {
         throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
       }
-      executionPlanIds.add(target.plan.executionPlanId)
-      contextPackageIds.add(target.context.contextPackageId)
+      addPlan(target.plan, record.logicalId)
+      addContext(
+        {
+          contextPackageId: target.contextPackage.contextPackageId,
+          contentDigest: target.contextPackage.contentDigest,
+        },
+        record.logicalId
+      )
     }
   }
 
-  for (const contextPackageId of [...contextPackageIds].toSorted(compareCodePointOrder)) {
-    await transaction.delete(
-      REFERENCE_RETENTION_NAMESPACES.contextPackages,
-      sqliteRecordId(contextPackageId)
-    )
-  }
-  for (const executionPlanId of [...executionPlanIds].toSorted(compareCodePointOrder)) {
-    await transaction.delete(
-      REFERENCE_RETENTION_NAMESPACES.executionPlans,
-      sqliteRecordId(executionPlanId)
-    )
+  return {
+    contextPackages: [...contextReferences.values()].toSorted((left, right) =>
+      compareCodePointOrder(left.contextPackageId, right.contextPackageId)
+    ),
+    executionPlans: [...planReferences.values()].toSorted((left, right) =>
+      compareCodePointOrder(left.executionPlanId, right.executionPlanId)
+    ),
   }
 }
 

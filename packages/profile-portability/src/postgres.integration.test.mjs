@@ -1,17 +1,26 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import {
+  PostgresContextPackageRepository,
   PostgresContextAuthoringCommandRepository,
+  PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
   PostgresEvaluationRepository,
+  contextPackages,
+  executionPlans,
+  profileMigrations,
 } from '@control-plane/database'
+import { assertExecutionPlanIntegrity, deriveExecutionPlan } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
+import { eq } from 'drizzle-orm'
 import {
   SqlitePersistenceProvider,
   SqliteVersionedCatalogRepository,
@@ -49,9 +58,29 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await Promise.all(providers.map((provider) => provider.close()))
-  await database?.dispose()
-  await Promise.all(directories.map((path) => rm(path, { recursive: true, force: true })))
+  const cleanupErrors = []
+  const providerResults = await Promise.allSettled(providers.map((provider) => provider.close()))
+  cleanupErrors.push(
+    ...providerResults
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason)
+  )
+  try {
+    await database?.dispose()
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  const directoryResults = await Promise.allSettled(
+    directories.map((path) => rm(path, { recursive: true, force: true }))
+  )
+  cleanupErrors.push(
+    ...directoryResults
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason)
+  )
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, 'PostgreSQL portability integration cleanup failed')
+  }
 })
 
 describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
@@ -170,7 +199,300 @@ describe.skipIf(!enabled)('PostgreSQL deployment-profile migration', () => {
       localManifest.records.map(({ contentDigest }) => contentDigest)
     )
   })
+
+  test('resets PostgreSQL reference clocks for new lineage edges and preserves equivalent replay clocks', async () => {
+    const fixture = await postgresReferenceFixture('new-edge-clock')
+    const initialClock = '2025-06-07T08:09:10.000Z'
+    await setPostgresReferenceClocks(
+      [fixture.parentContext.contextPackageId, fixture.unrelatedContext.contextPackageId],
+      [fixture.parentPlan.executionPlanId, fixture.unrelatedPlan.executionPlanId],
+      initialClock
+    )
+    const manifest = await exportPortableState(
+      postgresImportSource([
+        portableRecord('context-package', fixture.parentContext),
+        portableRecord('context-package', fixture.childContext),
+        portableRecord('execution-plan', fixture.parentPlan),
+        portableRecord('execution-plan', fixture.childPlan),
+      ]),
+      { exportId: 'postgres-reference-clock-import', createdAt }
+    )
+    const destination = postgresDestination()
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan.applicable).toBe(true)
+    expect(
+      plan.records
+        .filter(({ state }) => state === 'equivalent')
+        .map(({ record }) => record.logicalId)
+    ).toEqual(
+      [
+        `context-packages/${fixture.parentContext.contextPackageId}`,
+        `execution-plans/${fixture.parentPlan.executionPlanId}`,
+      ].toSorted()
+    )
+    expect(
+      plan.records.filter(({ state }) => state === 'missing').map(({ record }) => record.logicalId)
+    ).toEqual(
+      [
+        `context-packages/${fixture.childContext.contextPackageId}`,
+        `execution-plans/${fixture.childPlan.executionPlanId}`,
+      ].toSorted()
+    )
+    await expect(
+      applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'applied' })
+    expect(
+      await postgresReferenceClocks(
+        [
+          fixture.parentContext.contextPackageId,
+          fixture.childContext.contextPackageId,
+          fixture.unrelatedContext.contextPackageId,
+        ],
+        [
+          fixture.parentPlan.executionPlanId,
+          fixture.childPlan.executionPlanId,
+          fixture.unrelatedPlan.executionPlanId,
+        ]
+      )
+    ).toEqual({
+      contextPackages: [null, null, initialClock],
+      executionPlans: [null, null, initialClock],
+    })
+
+    const replayClock = '2025-07-08T09:10:11.000Z'
+    await setPostgresReferenceClocks(
+      [
+        fixture.parentContext.contextPackageId,
+        fixture.childContext.contextPackageId,
+        fixture.unrelatedContext.contextPackageId,
+      ],
+      [
+        fixture.parentPlan.executionPlanId,
+        fixture.childPlan.executionPlanId,
+        fixture.unrelatedPlan.executionPlanId,
+      ],
+      replayClock
+    )
+    const replayPlan = await planPortableImport(manifest, destination)
+    expect(replayPlan.records.every(({ state }) => state === 'equivalent')).toBe(true)
+    await expect(
+      applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'replayed' })
+    expect(
+      await postgresReferenceClocks(
+        [
+          fixture.parentContext.contextPackageId,
+          fixture.childContext.contextPackageId,
+          fixture.unrelatedContext.contextPackageId,
+        ],
+        [
+          fixture.parentPlan.executionPlanId,
+          fixture.childPlan.executionPlanId,
+          fixture.unrelatedPlan.executionPlanId,
+        ]
+      )
+    ).toEqual({
+      contextPackages: [replayClock, replayClock, replayClock],
+      executionPlans: [replayClock, replayClock, replayClock],
+    })
+  })
+
+  test('rolls back PostgreSQL lineage claims, imported rows, provenance, and clocks on invalid derivation', async () => {
+    const fixture = await postgresReferenceFixture('rollback-edge-clock')
+    await new PostgresContextPackageRepository(database.application).put(fixture.childContext)
+    const widenedPlan = rehashExecutionPlan({
+      ...fixture.childPlan,
+      constraints: {
+        ...fixture.childPlan.constraints,
+        tools: {
+          ...fixture.childPlan.constraints.tools,
+          grants: fixture.childPlan.constraints.tools.grants.map((grant, index) =>
+            index === 0 ? { ...grant, operations: [...grant.operations, 'admin'] } : grant
+          ),
+        },
+      },
+    })
+    expect(assertExecutionPlanIntegrity(widenedPlan)).toEqual(widenedPlan)
+    const clock = '2025-08-09T10:11:12.000Z'
+    await setPostgresReferenceClocks(
+      [
+        fixture.parentContext.contextPackageId,
+        fixture.childContext.contextPackageId,
+        fixture.unrelatedContext.contextPackageId,
+      ],
+      [fixture.parentPlan.executionPlanId, fixture.unrelatedPlan.executionPlanId],
+      clock
+    )
+    const exportId = 'postgres-invalid-lineage-rollback'
+    const manifest = await exportPortableState(
+      postgresImportSource([portableRecord('execution-plan', widenedPlan)]),
+      { exportId, createdAt }
+    )
+    const destination = postgresDestination()
+    const plan = await planPortableImport(manifest, destination)
+    expect(plan).toMatchObject({ applicable: true, records: [{ state: 'missing' }] })
+
+    await expect(
+      applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).rejects.toMatchObject({ code: 'PORTABLE_PLAN_STALE' })
+    expect(
+      await database.application
+        .select({ executionPlanId: executionPlans.executionPlanId })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, widenedPlan.executionPlanId))
+    ).toEqual([])
+    expect(
+      await database.application
+        .select({ exportId: profileMigrations.exportId })
+        .from(profileMigrations)
+        .where(eq(profileMigrations.exportId, exportId))
+    ).toEqual([])
+    expect(
+      await postgresReferenceClocks(
+        [
+          fixture.parentContext.contextPackageId,
+          fixture.childContext.contextPackageId,
+          fixture.unrelatedContext.contextPackageId,
+        ],
+        [fixture.parentPlan.executionPlanId, fixture.unrelatedPlan.executionPlanId]
+      )
+    ).toEqual({
+      contextPackages: [clock, clock, clock],
+      executionPlans: [clock, clock],
+    })
+  })
 })
+
+async function postgresReferenceFixture(label) {
+  const parentContext = contextPackageSerializationFixtures.futurePi
+  const childContext = deriveContextPackage(parentContext, {
+    objective: `Portable PostgreSQL child ${label}`,
+    allowedStateItemIds: [],
+    allowedArtifactIds: [],
+    budgets: { maximumBytes: 512, maximumTokens: 128 },
+    successCriteria: ['Preserve durable parent references'],
+    returnContract: parentContext.returnContract,
+    compiledAt: '2026-08-30T13:00:00.000Z',
+  })
+  const parentPlan = createExecutionPlanTestFixture({ contextPackage: parentContext })
+  const childPlan = deriveExecutionPlan(parentPlan, {
+    correlation: parentPlan.correlation,
+    contextPackage: childContext,
+    constraints: parentPlan.constraints,
+    runtimeRequirements: parentPlan.runtimeRequirements,
+    outputContract: parentPlan.outputContract,
+    compiledAt: '2026-08-30T13:00:00.000Z',
+  })
+  const unrelatedContext = contextPackageSerializationFixtures.futureLangGraph
+  const unrelatedPlan = createExecutionPlanTestFixture({ contextPackage: unrelatedContext })
+
+  await new PostgresContextPackageRepository(database.application).put(parentContext)
+  await new PostgresContextPackageRepository(database.application).put(unrelatedContext)
+  await new PostgresExecutionPlanRepository(database.application).put(parentPlan)
+  await new PostgresExecutionPlanRepository(database.application).put(unrelatedPlan)
+
+  return { parentContext, childContext, parentPlan, childPlan, unrelatedContext, unrelatedPlan }
+}
+
+async function setPostgresReferenceClocks(contextIds, planIds, instant) {
+  const timestamp = new Date(instant)
+  for (const contextPackageId of contextIds) {
+    const rows = await database.application
+      .update(contextPackages)
+      .set({ unreferencedSince: timestamp })
+      .where(eq(contextPackages.contextPackageId, contextPackageId))
+      .returning({ contextPackageId: contextPackages.contextPackageId })
+    expect(rows).toHaveLength(1)
+  }
+  for (const executionPlanId of planIds) {
+    const rows = await database.application
+      .update(executionPlans)
+      .set({ unreferencedSince: timestamp })
+      .where(eq(executionPlans.executionPlanId, executionPlanId))
+      .returning({ executionPlanId: executionPlans.executionPlanId })
+    expect(rows).toHaveLength(1)
+  }
+}
+
+async function postgresReferenceClocks(contextIds, planIds) {
+  const contextClockValues = []
+  for (const contextPackageId of contextIds) {
+    const [row] = await database.application
+      .select({ unreferencedSince: contextPackages.unreferencedSince })
+      .from(contextPackages)
+      .where(eq(contextPackages.contextPackageId, contextPackageId))
+      .limit(1)
+    contextClockValues.push(row?.unreferencedSince?.toISOString() ?? null)
+  }
+  const planClockValues = []
+  for (const executionPlanId of planIds) {
+    const [row] = await database.application
+      .select({ unreferencedSince: executionPlans.unreferencedSince })
+      .from(executionPlans)
+      .where(eq(executionPlans.executionPlanId, executionPlanId))
+      .limit(1)
+    planClockValues.push(row?.unreferencedSince?.toISOString() ?? null)
+  }
+  return { contextPackages: contextClockValues, executionPlans: planClockValues }
+}
+
+function postgresImportSource(records) {
+  return {
+    profile: 'cloud',
+    persistence: 'postgresql',
+    objectStore: 's3-compatible',
+    componentVersions: {},
+    async snapshot() {
+      return { records, artifacts: [], secretReferences: [] }
+    },
+  }
+}
+
+function postgresDestination() {
+  return new PostgresPortableStateDestination({
+    database: database.application,
+    profile: 'cloud',
+    capabilities: new Set(),
+    secretProviders: new Set(),
+  })
+}
+
+function portableRecord(category, value) {
+  const namespace = category === 'context-package' ? 'context-packages' : 'execution-plans'
+  const identityField = category === 'context-package' ? 'contextPackageId' : 'executionPlanId'
+  return {
+    category,
+    logicalId: `${namespace}/${value[identityField]}`,
+    revision: 0,
+    value,
+  }
+}
+
+function rehashExecutionPlan(plan) {
+  const { executionPlanId: _executionPlanId, contentDigest: _contentDigest, ...content } = plan
+  const contentDigest = `sha256:${createHash('sha256')
+    .update(canonicalJsonStringify(content))
+    .digest('hex')}`
+  const bytes = Buffer.from(contentDigest.slice(7, 39), 'hex')
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  let bits = 0
+  let accumulator = 0
+  let identifier = ''
+  for (const byte of bytes) {
+    accumulator = (accumulator << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      identifier += alphabet[(accumulator >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) identifier += alphabet[(accumulator << (5 - bits)) & 31]
+  return {
+    ...content,
+    executionPlanId: `pln_${identifier.slice(0, 26)}`,
+    contentDigest,
+  }
+}
 
 async function seedCatalog(provider) {
   const repository = new SqliteVersionedCatalogRepository(provider)
