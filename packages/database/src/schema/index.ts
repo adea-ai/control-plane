@@ -70,6 +70,7 @@ export {
   runtimeDiscoveryResourceKind,
 } from './runtime-discovery-projections.js'
 export { usageFundingSource, usageLedgerEntries, usageLedgerEntryKind } from './usage-ledger.js'
+export { usageBudgetStates, usageOperationReceipts } from './usage-budget-state.js'
 export {
   marketplaceInstallationState,
   marketplaceInstallations,

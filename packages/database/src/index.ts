@@ -67,6 +67,7 @@ export { PostgresRuntimeCommandRepository } from './runtime-command-repository.j
 export { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.js'
 export { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.js'
 export { PostgresUsageLedgerRepository } from './usage-ledger-repository.js'
+export { PostgresDurableUsageStore } from './usage-store.js'
 export type {
   ControlPlaneDatabase,
   PostgresConnection,
@@ -137,6 +138,8 @@ export {
   usageFundingSource,
   usageLedgerEntries,
   usageLedgerEntryKind,
+  usageBudgetStates,
+  usageOperationReceipts,
   skillVersions,
   skills,
   marketplaceInstallationState,
