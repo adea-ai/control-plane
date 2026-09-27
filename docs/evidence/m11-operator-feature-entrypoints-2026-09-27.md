@@ -73,6 +73,11 @@ left untouched. Startup reliability remains an open validation defect.
 
 ## Remaining gates
 
+The subsequent [catalog scenario budget correction](m11-catalog-cli-scenario-budget-2026-09-27.md)
+records an explicit fixture budget aligned with the existing canonical lanes,
+unchanged per-command limits, stronger exit assertions and a passing full SQLite
+package. The failed runs above remain historical evidence, not a green result.
+
 Do not mark this PR ready or merge on these results. Final-head full package and
 workspace validation, required CI, review of the new patch, released activation
 and all original M11 acceptance gates remain required. The completed security

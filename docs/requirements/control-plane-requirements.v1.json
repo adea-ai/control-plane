@@ -3208,8 +3208,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "packages/domain/src/index.test.mjs" },
-        { "kind": "test", "path": "tests/m2-core-domain.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/domain/src/index.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m2-core-domain.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3229,8 +3235,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/profiles-and-skills.md" },
-        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/index.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3250,8 +3262,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/profiles-and-skills.md" },
-        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/index.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3270,7 +3288,12 @@
       "owner": "catalog",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3289,8 +3312,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/profiles-and-skills.md" },
-        { "kind": "test", "path": "packages/domain/src/index.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/index.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3309,7 +3338,12 @@
       "owner": "catalog",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3328,8 +3362,14 @@
       "lane": "contract/schema",
       "issueRefs": [195],
       "evidence": [
-        { "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" },
-        { "kind": "document", "path": "docs/profiles-and-skills.md" }
+        {
+          "kind": "test",
+          "path": "packages/policy/src/decision-resolution.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3349,8 +3389,14 @@
       "lane": "contract/schema",
       "issueRefs": [195],
       "evidence": [
-        { "kind": "test", "path": "packages/execution-plan/src/index.test.mjs" },
-        { "kind": "test", "path": "tests/m10-portability-conformance.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/execution-plan/src/index.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m10-portability-conformance.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3369,7 +3415,12 @@
       "owner": "execution-policy",
       "lane": "contract/schema",
       "issueRefs": [195],
-      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3387,7 +3438,12 @@
       "owner": "runtime-compatibility",
       "lane": "contract/schema",
       "issueRefs": [195],
-      "evidence": [{ "kind": "document", "path": "docs/profiles-and-skills.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/profiles-and-skills.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3406,8 +3462,14 @@
       "lane": "recovery/chaos",
       "issueRefs": [195],
       "evidence": [
-        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
-        { "kind": "test", "path": "packages/domain/src/command-inbox.test.mjs" }
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/domain/src/command-inbox.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3427,8 +3489,14 @@
       "lane": "end-to-end",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
-        { "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-standalone-e2e.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3448,8 +3516,14 @@
       "lane": "recovery/chaos",
       "issueRefs": [195, 194],
       "evidence": [
-        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" },
-        { "kind": "document", "path": "docs/recovery.md" }
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/recovery.md"
+        }
       ],
       "gap": {
         "issue": 194,
@@ -3468,7 +3542,12 @@
       "owner": "durable-execution",
       "lane": "recovery/chaos",
       "issueRefs": [195, 194],
-      "evidence": [{ "kind": "test", "path": "tests/m3-durable-execution.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 194,
         "severity": "high",
@@ -3487,8 +3566,14 @@
       "lane": "contract/schema",
       "issueRefs": [195],
       "evidence": [
-        { "kind": "document", "path": "docs/architecture.md" },
-        { "kind": "test", "path": "tests/m3-durable-execution.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m3-durable-execution.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3508,8 +3593,14 @@
       "lane": "contract/schema",
       "issueRefs": [195],
       "evidence": [
-        { "kind": "test", "path": "packages/runtime-sdk/src/discovery.test.mjs" },
-        { "kind": "test", "path": "tests/m4-runtime-fabric.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/discovery.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m4-runtime-fabric.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3529,8 +3620,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "packages/runtime-sdk/src/eligibility.test.mjs" },
-        { "kind": "test", "path": "packages/runtime-sdk/src/routing.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/eligibility.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/routing.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3550,8 +3647,14 @@
       "lane": "end-to-end",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" },
-        { "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }
+        {
+          "kind": "test",
+          "path": "tests/m6-runtime-adapters.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m11-standalone-e2e.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3571,8 +3674,14 @@
       "lane": "end-to-end",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" },
-        { "kind": "document", "path": "docs/acp-runtime-adapter.md" }
+        {
+          "kind": "test",
+          "path": "tests/m6-runtime-adapters.test.mjs"
+        },
+        {
+          "kind": "document",
+          "path": "docs/acp-runtime-adapter.md"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3592,8 +3701,14 @@
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
       "evidence": [
-        { "kind": "document", "path": "docs/acp-runtime-adapter.md" },
-        { "kind": "test", "path": "tests/m6-runtime-adapters.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/acp-runtime-adapter.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/m6-runtime-adapters.test.mjs"
+        }
       ],
       "gap": {
         "issue": 190,
@@ -3613,8 +3728,14 @@
       "lane": "contract/schema",
       "issueRefs": [195, 190],
       "evidence": [
-        { "kind": "document", "path": "docs/acp-runtime-adapter.md" },
-        { "kind": "test", "path": "packages/runtime-sdk/src/sessions.test.mjs" }
+        {
+          "kind": "document",
+          "path": "docs/acp-runtime-adapter.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/runtime-sdk/src/sessions.test.mjs"
+        }
       ],
       "gap": {
         "issue": 190,
@@ -3633,7 +3754,12 @@
       "owner": "integrations",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3651,7 +3777,12 @@
       "owner": "security",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/security-hardening.md"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3669,7 +3800,12 @@
       "owner": "execution-policy",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/policy/src/decision-resolution.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3687,7 +3823,12 @@
       "owner": "tools",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m7-tools-models-sandboxes.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3705,7 +3846,12 @@
       "owner": "tools",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/acp-runtime-adapter.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/acp-runtime-adapter.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3723,7 +3869,12 @@
       "owner": "security",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/security-hardening.md"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3741,7 +3892,12 @@
       "owner": "integrations",
       "lane": "contract/schema",
       "issueRefs": [195],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 195,
         "severity": "high",
@@ -3759,7 +3915,12 @@
       "owner": "model-gateway",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "packages/model-gateway/src/index.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/model-gateway/src/index.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3777,7 +3938,12 @@
       "owner": "model-gateway",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "document", "path": "docs/security-hardening.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/security-hardening.md"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3795,7 +3961,12 @@
       "owner": "usage",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m7-tools-models-sandboxes.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3814,7 +3985,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/requirements/execution-consistency-source-audit.md" }
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3834,7 +4008,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/requirements/execution-consistency-source-audit.md" }
+        {
+          "kind": "document",
+          "path": "docs/requirements/execution-consistency-source-audit.md"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3853,7 +4030,12 @@
       "owner": "model-gateway",
       "lane": "contract/schema",
       "issueRefs": [195],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 195,
         "severity": "high",
@@ -3871,7 +4053,12 @@
       "owner": "sandbox",
       "lane": "security/adversarial",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m7-tools-models-sandboxes.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m7-tools-models-sandboxes.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3889,7 +4076,12 @@
       "owner": "runtime-gateway",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m5-runtime-gateway.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m5-runtime-gateway.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3907,7 +4099,12 @@
       "owner": "runtime-gateway",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m5-runtime-gateway.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m5-runtime-gateway.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -3926,7 +4123,10 @@
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
       "evidence": [
-        { "kind": "document", "path": "docs/requirements/runtime-node-source-audit.md" }
+        {
+          "kind": "document",
+          "path": "docs/requirements/runtime-node-source-audit.md"
+        }
       ],
       "gap": {
         "issue": 190,
@@ -3945,7 +4145,12 @@
       "owner": "runtime-security",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "test", "path": "tests/m11-standalone-e2e.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m11-standalone-e2e.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -3964,7 +4169,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/requirements/artifact-storage-source-audit.md" }
+        {
+          "kind": "document",
+          "path": "docs/requirements/artifact-storage-source-audit.md"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -3983,7 +4191,12 @@
       "owner": "interactions",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "packages/domain/src/interactions.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/domain/src/interactions.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4002,7 +4215,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "test", "path": "packages/contracts/src/interaction-command.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/contracts/src/interaction-command.test.mjs"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -4021,7 +4237,12 @@
       "owner": "execution-policy",
       "lane": "security/adversarial",
       "issueRefs": [195, 190],
-      "evidence": [{ "kind": "test", "path": "packages/policy/src/decision-resolution.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "packages/policy/src/decision-resolution.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 190,
         "severity": "high",
@@ -4039,7 +4260,12 @@
       "owner": "orchestration",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m8-multi-agent-orchestration.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4057,7 +4283,12 @@
       "owner": "orchestration",
       "lane": "eval",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m8-multi-agent-orchestration.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4075,7 +4306,12 @@
       "owner": "orchestration",
       "lane": "end-to-end",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m8-multi-agent-orchestration.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m8-multi-agent-orchestration.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4093,7 +4329,12 @@
       "owner": "orchestration",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4112,7 +4353,10 @@
       "lane": "eval",
       "issueRefs": [195, 191],
       "evidence": [
-        { "kind": "test", "path": "packages/profile-portability/src/evaluation.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/profile-portability/src/evaluation.test.mjs"
+        }
       ],
       "gap": {
         "issue": 191,
@@ -4132,7 +4376,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 191],
       "evidence": [
-        { "kind": "document", "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml" }
+        {
+          "kind": "document",
+          "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml"
+        }
       ],
       "gap": {
         "issue": 191,
@@ -4152,7 +4399,10 @@
       "lane": "eval",
       "issueRefs": [195, 191],
       "evidence": [
-        { "kind": "test", "path": "packages/profile-portability/src/evaluation.test.mjs" }
+        {
+          "kind": "test",
+          "path": "packages/profile-portability/src/evaluation.test.mjs"
+        }
       ],
       "gap": {
         "issue": 191,
@@ -4171,7 +4421,12 @@
       "owner": "evaluation",
       "lane": "eval",
       "issueRefs": [195, 191],
-      "evidence": [{ "kind": "document", "path": "docs/performance.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/performance.md"
+        }
+      ],
       "gap": {
         "issue": 191,
         "severity": "high",
@@ -4189,7 +4444,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4207,7 +4467,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/m10-portability-conformance.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/m10-portability-conformance.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4225,7 +4490,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/foundation.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4243,7 +4513,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/foundation.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4261,7 +4536,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "test", "path": "tests/foundation.test.mjs" }],
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/foundation.test.mjs"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4279,7 +4559,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -4298,7 +4583,10 @@
       "lane": "contract/schema",
       "issueRefs": [195, 188],
       "evidence": [
-        { "kind": "document", "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml" }
+        {
+          "kind": "document",
+          "path": "docs/runtime-compatibility/runtime-compatibility.v1.yaml"
+        }
       ],
       "gap": {
         "issue": 188,
@@ -4317,7 +4605,12 @@
       "owner": "contracts",
       "lane": "contract/schema",
       "issueRefs": [195, 188],
-      "evidence": [{ "kind": "document", "path": "docs/architecture.md" }],
+      "evidence": [
+        {
+          "kind": "document",
+          "path": "docs/architecture.md"
+        }
+      ],
       "gap": {
         "issue": 188,
         "severity": "high",
@@ -6270,16 +6563,34 @@
       "issue": 60,
       "title": "M7.9: Implement authoritative usage ledger, reservations, and budget enforcement",
       "milestone": "M7",
-      "classification": "verified",
+      "classification": "partially_verified",
       "owner": "usage-ledger",
       "lane": "integration",
       "evidence": [
         {
           "kind": "test",
           "path": "packages/database/src/usage-ledger-repository.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs"
+        },
+        {
+          "kind": "source",
+          "path": "packages/usage-ledger/src/index.ts"
+        },
+        {
+          "kind": "source",
+          "path": "packages/database/src/usage-ledger-repository.ts"
         }
       ],
-      "assessment": "Usage reservations, settlement, idempotency, budget rejection, and authoritative durable ledger behavior have reachable implementation and repository tests."
+      "assessment": "Corrected 2026-09-27: the cited unit test only round-trips row attribution. PostgreSQL integration exercises workspace-scoped append/list and idempotency, while reservation, budget limits and settlement projections remain in InMemoryUsageLedger. No production construction of PostgresUsageLedgerRepository or durable budget hydration was identified; these tests do not establish restart-safe authoritative budget enforcement.",
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "usage-ledger",
+        "disposition": "Persist and wire budget opening, token/money limits, reservations and settlement transactionally with usage accounting across supported profiles; prove concurrency, restart, provider redelivery and aggregate reconciliation. Before applying the decided 400-day usage retention, preserve durable summaries/high-water marks and identity-only duplicate/conflict fences, require settled reservations and canonical owner/reference/hold checks, and certify restore-time reconciliation. Do not delete raw accounting rows based on age alone."
+      }
     },
     {
       "id": "M7-ISSUE-61",
