@@ -51,6 +51,7 @@ const run = (executor, input = fixture, extra = {}) =>
 test('observes all required inspections and rejects stale evidence as current completion', async () => {
   const result = await run(compliant)
   expect(result.passed).toBe(true)
+  expect(result).toMatchObject({ schemaVersion: 1, harnessVersion: '2.0.0' })
   expect(result.observations).toHaveLength(7)
   expect(result.report.status).toBe('partial')
   expect(result.report.requirements[5].state).toBe('stale')
