@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { DurableUsageLedger } from './durable.js'
+import { budgetOpeningEntryIdempotencyKey, DurableUsageLedger } from './durable.js'
 
 const ids = {
   workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
@@ -138,6 +138,15 @@ describe('durable usage ledger', () => {
     expect(Object.isFrozen(opened)).toBe(true)
     const openEntry = (await ledger.entries(ids.workspaceId, ids.executionId))[0]
     expect(openEntry.entryId).toMatch(/^usg_[0-9A-HJKMNP-TV-Z]{26}$/)
+    expect(openEntry.source.idempotencyKey).toBe(
+      budgetOpeningEntryIdempotencyKey(open.source.idempotencyKey, open.executionId)
+    )
+    expect(budgetOpeningEntryIdempotencyKey('another-operation', open.executionId)).not.toBe(
+      openEntry.source.idempotencyKey
+    )
+    expect(
+      budgetOpeningEntryIdempotencyKey(open.source.idempotencyKey, ids.childExecutionId)
+    ).not.toBe(openEntry.source.idempotencyKey)
     const reopened = makeLedger(store)
 
     expect(await reopened.openBudget(open)).toEqual(opened)

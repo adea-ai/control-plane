@@ -1158,6 +1158,14 @@ function fingerprintFor(method: string, input: unknown): string {
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`
 }
 
+/** Canonical opening-credit identity for admission verification; not a new effect. */
+export function budgetOpeningEntryIdempotencyKey(
+  operationIdempotencyKey: string,
+  executionId: string
+): string {
+  return entryIdempotencyKey(operationIdempotencyKey, executionId, 'openBudget', 'credit', 0)
+}
+
 function entryIdempotencyKey(
   operationKey: string,
   executionId: string,
