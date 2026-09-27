@@ -16,16 +16,16 @@ not a demonstrated loss of user data.
 
 Railway deployment-variable readback independently confirmed both services:
 
-| Resource | Verified identity |
-| --- | --- |
-| Railway project | `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f` |
-| Production environment | `52f5b0ac-2af0-4792-aa56-30d80e5db31e` |
-| API | `9167a33b-af0f-4780-8614-a5a161697c9c` |
-| Worker | `d733ec0d-bda5-4be5-86b9-637154d282eb` |
-| Neon project / production branch | `muddy-firefly-58711535` / `br-rough-tooth-ay4q6u73` |
-| Direct migration endpoint | `ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech` |
-| Runtime binding | Same endpoint with `-pooler`, database `neondb`, role `control_plane_app` |
-| Migration role | Direct connection, `control_plane_migrator`, TLS required |
+| Resource                         | Verified identity                                                         |
+| -------------------------------- | ------------------------------------------------------------------------- |
+| Railway project                  | `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f`                                    |
+| Production environment           | `52f5b0ac-2af0-4792-aa56-30d80e5db31e`                                    |
+| API                              | `9167a33b-af0f-4780-8614-a5a161697c9c`                                    |
+| Worker                           | `d733ec0d-bda5-4be5-86b9-637154d282eb`                                    |
+| Neon project / production branch | `muddy-firefly-58711535` / `br-rough-tooth-ay4q6u73`                      |
+| Direct migration endpoint        | `ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech`                    |
+| Runtime binding                  | Same endpoint with `-pooler`, database `neondb`, role `control_plane_app` |
+| Migration role                   | Direct connection, `control_plane_migrator`, TLS required                 |
 
 Both services have `APP_ENV=production`. The API's catalog approval configuration
 is `true`, required since `2026-09-25T00:00:00.000Z`. Configuration readback alone
@@ -60,10 +60,10 @@ session advisory lock `(1295070001, 11)`, direct TLS migration credentials,
 10-second lock and 60-second statement timeouts, and a fresh full canonical
 prefix check. The guard and clients were released in `finally` blocks.
 
-| Applied migration | Timestamp | SQL SHA-256 |
-| --- | --- | --- |
+| Applied migration          | Timestamp       | SQL SHA-256                                                        |
+| -------------------------- | --------------- | ------------------------------------------------------------------ |
 | `0047_blushing_demogoblin` | `1790269239619` | `4c0029b12262f8d97910f81f797a4f5032f5efa0e8dbd5b4eb84a8c75da7612d` |
-| `0048_tense_thor` | `1790300980766` | `0bb385e62db234e126552c62377ab61eebee769719f206d4ef687da8f7e3c088` |
+| `0048_tense_thor`          | `1790300980766` | `0bb385e62db234e126552c62377ab61eebee769719f206d4ef687da8f7e3c088` |
 
 Production now has 49 canonical entries through `0048`; the exact complete
 readback and repeated migration passed. Runtime reads of both new tables,
@@ -97,6 +97,32 @@ staging, and both unrelated preview branches remain. No production data was
 deleted. The rehearsal can be recreated from the preserved production parent
 and canonical migration source; the disposable child's transient state was
 not retained.
+
+## Runtime authority closure
+
+At `2026-09-27T00:34Z`, a separate read-only connection using the existing
+production `control_plane_app` role verified the exact direct endpoint,
+`neondb`, and certificate-verified TLS. Catalog queries returned:
+
+- No role memberships, including potential `SET ROLE` authority.
+- No ownership of the current database or any public `pg_class` objects.
+- No effective `TRUNCATE`, `REFERENCES`, `TRIGGER`, or PostgreSQL 18 `MAINTAIN`
+  privileges on public application tables/views.
+
+The connection used `default_transaction_read_only=on`, a 20-second statement
+timeout, and a 10-second connection timeout. No role, grant, schema, or service
+changes were requested; the client closed and the owned credential-reader
+processes exited. Initial helper setup attempts failed before SQL because the
+CLI writes a bare URI even with `--output json`, and Bun's `postgres` export
+is an ESM namespace with a callable default. Neither was an authentication or
+unsafe-production-authority finding. The corrected readback passed; credentials
+stayed in memory and were never printed or stored.
+
+Independent review found that the proposed gate omitted these authority checks,
+and the actual runtime probe exposed the same driver-initialization gap in its
+session factory. Both proposed-gate defects remain assigned for regression
+repair before integration. This live readback is not execution of the new gate,
+deployment of PR #740, service runtime TLS hardening, or full profile acceptance.
 
 ## Remaining gates
 
