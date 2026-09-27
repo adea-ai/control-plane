@@ -143,7 +143,22 @@ Affected suites passed: context 60 tests / 204 assertions, execution-plan 20 /
 All three package builds/lints, formatting and diff checks passed. A first
 filtered importer attempt failed on unresolved default fixture secrets; corrected
 fixtures passed the named five cases / 107 assertions without relaxing guards.
-PostgreSQL bulk-import claims and final combined validation still remain open.
+PostgreSQL bulk-import claims are now integrated through the same typed lineage
+collector and one context-first/plan-second bulk claim, inside the serializable
+import transaction before provenance. Exact persisted row identity, schema,
+digest, scope and compilation time are revalidated. The worker passed database
+and portability builds, the complete SQLite portability file (19 tests / 187
+assertions), and the full isolated PostgreSQL portability file (three tests / 41
+assertions), with scoped lint/format/diff checks. Fresh bounded independent
+source review found no actionable correctness issue.
+
+The PostgreSQL regressions prove mixed existing parents/new children, unrelated
+clock preservation, equivalent-only replay and atomic rejection of a correctly
+rehashed widened plan. They do not separately prove imported command clock
+resets, missing/self references, context derivation failures, corrupted stored
+metadata/compiler pins, or a valid insert preceding an invalid record in one
+batch. Shared-collector SQLite tests and source review are not those missing
+PostgreSQL behavioral tests. Final combined validation remains open.
 
 The released image baseline's production schema was separately found behind:
 both Railway services' exact database bindings were verified, then released
