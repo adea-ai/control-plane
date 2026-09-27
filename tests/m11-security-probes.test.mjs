@@ -962,17 +962,24 @@ describe('M11.5 probes: artifact store root integrity (STM-011/015)', () => {
   test('artifact keys are content-addressed, so traversal keys never escape the root', async () => {
     await withScratchDirectory(async (root) => {
       const store = new FilesystemObjectStore({ rootDirectory: root, maxObjectBytes: 1024 })
-      for (const key of ['../../escape', '..']) {
-        await expect(store.put({ key, body: new Uint8Array([1, 2, 3]) })).rejects.toMatchObject({
-          code: 'OBJECT_STORE_INVALID_INPUT',
-        })
+      try {
+        for (const key of ['../../escape', '..']) {
+          await expect(store.put({ key, body: new Uint8Array([1, 2, 3]) })).rejects.toMatchObject({
+            code: 'OBJECT_STORE_INVALID_INPUT',
+          })
+        }
+        await store.put({ key: 'normal/probe.bin', body: new Uint8Array([1, 2, 3]) })
+        const entries = await readdir(root, { recursive: true })
+        const bodyName = `sha256-${createHash('sha256').update('normal/probe.bin').digest('hex')}`
+        // The durable writer-mode fence is hashed into the same key namespace;
+        // no caller-selected directory or temporary publication file survives.
+        expect(entries.toSorted()).toEqual(
+          [bodyName, `${bodyName}.control-plane.json`, `${bodyName}.write-mode-v1`].toSorted()
+        )
+        expect((await store.get('normal/probe.bin')).body).toEqual(new Uint8Array([1, 2, 3]))
+      } finally {
+        store.close()
       }
-      await store.put({ key: 'normal/probe.bin', body: new Uint8Array([1, 2, 3]) })
-      const entries = await readdir(root, { recursive: true })
-      expect(
-        entries.every((entry) => /(^|\/)sha256-[0-9a-f]{64}(\.control-plane\.json)?$/.test(entry)),
-        JSON.stringify(entries)
-      ).toBe(true)
     })
   })
 

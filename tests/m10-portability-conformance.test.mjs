@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import process from 'node:process'
 import { URL } from 'node:url'
 import { TextEncoder } from 'node:util'
@@ -634,21 +635,25 @@ async function artifactIdentity(profile) {
           maxObjectBytes: 1024,
         })
       : r2LikeStore()
-  const written = await store.put({
-    key: 'portable/result.txt',
-    body: artifactBody,
-    contentType: 'text/plain',
-    metadata: { workspace: 'workspace-1' },
-  })
-  const read = await store.get(written.key)
-  store.close()
-  return {
-    key: read.key,
-    size: read.size,
-    sha256: read.sha256,
-    contentType: read.contentType,
-    metadata: read.metadata,
-    bodyDigest: sha256(read.body),
+  try {
+    const written = await store.put({
+      key: 'portable/result.txt',
+      body: artifactBody,
+      contentType: 'text/plain',
+      metadata: { workspace: 'workspace-1' },
+    })
+    const read = await store.get(written.key)
+    expect(read.body).toEqual(artifactBody)
+    return {
+      key: read.key,
+      size: read.size,
+      sha256: read.sha256,
+      contentType: read.contentType,
+      metadata: read.metadata,
+      bodyDigest: sha256(read.body),
+    }
+  } finally {
+    store.close()
   }
 }
 
@@ -680,9 +685,14 @@ function r2LikeStore() {
           Metadata: object.metadata,
           ETag: 'portable-etag',
         }
-        return command.constructor.name === 'GetObjectCommand'
-          ? { ...common, Body: { transformToByteArray: async () => object.body } }
-          : common
+        if (command.constructor.name !== 'GetObjectCommand') return common
+        // Match the SDK's streaming body contract. A bulk-only fake must not
+        // force production reads to bypass the incremental byte bound.
+        const body = Readable.from([object.body.subarray(0, 3), object.body.subarray(3)])
+        body.transformToByteArray = async () => {
+          throw new Error('M10_CONFORMANCE_UNBOUNDED_READ')
+        }
+        return { ...common, Body: body }
       },
     },
   })
