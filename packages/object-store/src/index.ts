@@ -203,10 +203,16 @@ export class R2ObjectStore implements ObjectStore {
       const output = asRecord(
         await this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key }))
       )
-      const body = await readBody(output['Body'])
-      if (body.byteLength > this.#maxObjectBytes) tooLarge()
-      const result = descriptorFromProvider(visibleKey, output)
-      if (result.size !== body.byteLength) integrityFailure()
+      const providerBody = output['Body']
+      let result: StoredObjectDescriptor
+      try {
+        result = descriptorFromProvider(visibleKey, output)
+        if (result.size > this.#maxObjectBytes) tooLarge()
+      } catch (error) {
+        await disposeProviderBody(providerBody)
+        throw error
+      }
+      const body = await readBody(providerBody, this.#maxObjectBytes, result.size)
       if (result.sha256 !== digest(body)) integrityFailure()
       return { ...result, body }
     } catch (error) {
@@ -287,17 +293,161 @@ function descriptor(input: {
   }
 }
 
-async function readBody(value: unknown): Promise<Uint8Array> {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    typeof Reflect.get(value, 'transformToByteArray') !== 'function'
-  ) {
-    integrityFailure()
+interface AsyncByteIterator {
+  next(): Promise<unknown> | unknown
+  return?(): Promise<unknown> | unknown
+}
+
+interface ByteStreamReader {
+  read(): Promise<unknown>
+  cancel?(): Promise<unknown> | unknown
+  releaseLock?(): void
+}
+
+async function readBody(
+  value: unknown,
+  maxBytes: number,
+  expectedBytes: number
+): Promise<Uint8Array> {
+  let iterator: AsyncByteIterator | undefined
+  let reader: ByteStreamReader | undefined
+  let readerReleased = false
+  const body = new Uint8Array(expectedBytes)
+  let totalBytes = 0
+  try {
+    if (isObject(value) && typeof Reflect.get(value, 'getReader') === 'function') {
+      reader = Reflect.apply(Reflect.get(value, 'getReader'), value, []) as ByteStreamReader
+      while (true) {
+        const next = asRecord(await reader.read())
+        if (next['done'] === true) break
+        totalBytes = appendBoundedChunk(next['value'], body, totalBytes, maxBytes)
+      }
+    } else if (isObject(value) && typeof Reflect.get(value, Symbol.asyncIterator) === 'function') {
+      iterator = Reflect.apply(
+        Reflect.get(value, Symbol.asyncIterator),
+        value,
+        []
+      ) as AsyncByteIterator
+      while (true) {
+        const next = asRecord(await iterator.next())
+        if (next['done'] === true) break
+        totalBytes = appendBoundedChunk(next['value'], body, totalBytes, maxBytes)
+      }
+    } else {
+      integrityFailure()
+    }
+
+    if (totalBytes !== expectedBytes) integrityFailure()
+    return body
+  } catch (error) {
+    await disposeProviderBody(value, iterator, reader)
+    readerReleased = reader !== undefined
+    throw error
+  } finally {
+    if (reader !== undefined && !readerReleased) safelyReleaseReader(reader)
   }
-  const transformed = await Reflect.apply(Reflect.get(value, 'transformToByteArray'), value, [])
-  if (!(transformed instanceof Uint8Array)) integrityFailure()
-  return transformed
+}
+
+function appendBoundedChunk(
+  value: unknown,
+  body: Uint8Array,
+  currentBytes: number,
+  maxBytes: number
+): number {
+  if (!(value instanceof Uint8Array)) integrityFailure()
+  if (value.byteLength > maxBytes - currentBytes) tooLarge()
+  if (value.byteLength > body.byteLength - currentBytes) integrityFailure()
+  // Copy directly into one exact-size owned buffer; provider chunks are not retained.
+  body.set(value, currentBytes)
+  return currentBytes + value.byteLength
+}
+
+async function disposeProviderBody(
+  value: unknown,
+  iterator?: AsyncByteIterator,
+  reader?: ByteStreamReader
+): Promise<void> {
+  if (reader !== undefined) {
+    try {
+      await reader.cancel?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+    safelyReleaseReader(reader)
+    return
+  }
+
+  if (iterator !== undefined) {
+    try {
+      await iterator.return?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+  }
+
+  if (!isObject(value)) return
+  let destroy: unknown
+  try {
+    destroy = Reflect.get(value, 'destroy')
+  } catch {
+    // A broken cleanup accessor does not mask the original operation failure.
+  }
+  if (typeof destroy === 'function') {
+    try {
+      Reflect.apply(destroy, value, [])
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+    return
+  }
+
+  if (iterator !== undefined) return
+  let getReader: unknown
+  try {
+    getReader = Reflect.get(value, 'getReader')
+  } catch {
+    // Continue to any other available best-effort cleanup path.
+  }
+  if (typeof getReader === 'function') {
+    let acquired: ByteStreamReader | undefined
+    try {
+      acquired = Reflect.apply(getReader, value, []) as ByteStreamReader
+      await acquired.cancel?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    } finally {
+      if (acquired !== undefined) safelyReleaseReader(acquired)
+    }
+    return
+  }
+
+  let getAsyncIterator: unknown
+  try {
+    getAsyncIterator = Reflect.get(value, Symbol.asyncIterator)
+  } catch {
+    // No remaining best-effort cleanup path is available.
+  }
+  if (typeof getAsyncIterator === 'function') {
+    let acquired: AsyncByteIterator | undefined
+    try {
+      acquired = Reflect.apply(getAsyncIterator, value, []) as AsyncByteIterator
+      await acquired.return?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+  }
+}
+
+function safelyReleaseReader(reader: ByteStreamReader): void {
+  try {
+    reader.releaseLock?.()
+  } catch {
+    // A failed read/cancel may already have released the provider lock.
+  }
+}
+
+function isObject(value: unknown): value is object {
+  return typeof value === 'object' && value !== null
 }
 
 function validKey(value: string): string {
