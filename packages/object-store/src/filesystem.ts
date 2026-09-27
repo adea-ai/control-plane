@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
+import { link, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type {
+  CreateObjectResult,
   ObjectStore,
   PutObjectInput,
   StoredObject,
@@ -11,6 +12,10 @@ import type {
 import { ObjectStoreError } from './index.js'
 
 const METADATA_SUFFIX = '.control-plane.json'
+const CONDITIONAL_SUFFIX = '.conditional-v1'
+const CONDITIONAL_MAGIC = Buffer.from('CPFSOBJ1', 'ascii')
+const CONDITIONAL_PREFIX_BYTES = CONDITIONAL_MAGIC.byteLength + 4
+const MAX_CONDITIONAL_HEADER_BYTES = 64 * 1024
 
 interface FilesystemObjectMetadata {
   readonly schemaVersion: 1
@@ -61,6 +66,7 @@ export class FilesystemObjectStore implements ObjectStore {
       metadata,
     }
     const paths = await this.#paths(input.key, true)
+    if (await assertRegularFileOrMissing(paths.conditional)) integrityFailure()
     await Promise.all([
       assertRegularFileOrMissing(paths.body),
       assertRegularFileOrMissing(paths.metadata),
@@ -72,6 +78,7 @@ export class FilesystemObjectStore implements ObjectStore {
       await writeExclusive(bodyTemporary, input.body)
       await writeExclusive(metadataTemporary, JSON.stringify(descriptor))
       await this.#paths(input.key, false)
+      if (await assertRegularFileOrMissing(paths.conditional)) integrityFailure()
       await Promise.all([
         assertRegularFileOrMissing(paths.body),
         assertRegularFileOrMissing(paths.metadata),
@@ -89,6 +96,88 @@ export class FilesystemObjectStore implements ObjectStore {
     }
   }
 
+  async putIfAbsent(input: PutObjectInput): Promise<CreateObjectResult> {
+    this.#assertOpen()
+    if (!(input.body instanceof Uint8Array)) invalidInput()
+    if (input.body.byteLength > this.#maxObjectBytes) tooLarge()
+    const key = validateKey(input.key)
+    const metadata = validMetadata(input.metadata ?? {})
+    const contentType = validContentType(input.contentType)
+    const descriptor: FilesystemObjectMetadata = {
+      schemaVersion: 1,
+      key,
+      size: input.body.byteLength,
+      ...(contentType === undefined ? {} : { contentType }),
+      sha256: digest(input.body),
+      metadata,
+    }
+    const header = Buffer.from(JSON.stringify(descriptor), 'utf8')
+    if (header.byteLength > MAX_CONDITIONAL_HEADER_BYTES) invalidInput()
+    const prefix = Buffer.alloc(CONDITIONAL_PREFIX_BYTES)
+    CONDITIONAL_MAGIC.copy(prefix, 0)
+    prefix.writeUInt32BE(header.byteLength, CONDITIONAL_MAGIC.byteLength)
+    const envelope = Buffer.concat([prefix, header, Buffer.from(input.body)])
+    const paths = await this.#paths(key, true)
+    const conditionalExists = await assertRegularFileOrMissing(paths.conditional)
+    const legacyBodyExists = await assertRegularFileOrMissing(paths.body)
+    const legacyMetadataExists = await assertRegularFileOrMissing(paths.metadata)
+    if (conditionalExists || legacyBodyExists || legacyMetadataExists) return { outcome: 'exists' }
+
+    const temporary = `${paths.conditional}.${randomUUID()}.tmp`
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    let ownsTemporary = false
+    try {
+      if (constants.O_NOFOLLOW === undefined) throw providerFailure()
+      handle = await open(
+        temporary,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600
+      )
+      ownsTemporary = true
+      await handle.writeFile(envelope)
+      await handle.sync()
+      await handle.close()
+      handle = undefined
+
+      await this.#paths(key, false)
+      if (await assertRegularFileOrMissing(paths.conditional)) return { outcome: 'exists' }
+      if (
+        (await assertRegularFileOrMissing(paths.body)) ||
+        (await assertRegularFileOrMissing(paths.metadata))
+      ) {
+        return { outcome: 'exists' }
+      }
+      try {
+        await link(temporary, paths.conditional)
+      } catch (error) {
+        if (errorCode(error) === 'EEXIST') {
+          try {
+            await assertRegularFile(paths.conditional)
+          } catch (existingError) {
+            if (
+              existingError instanceof ObjectStoreError &&
+              existingError.code === 'OBJECT_STORE_NOT_FOUND'
+            ) {
+              throw providerFailure()
+            }
+            throw existingError
+          }
+          return { outcome: 'exists' }
+        }
+        throw error
+      }
+      await syncDirectory(paths.root, this.#rootDevice, this.#rootInode)
+      return { outcome: 'created', object: publicDescriptor(descriptor) }
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      if (isSymlinkLoop(error)) integrityFailure()
+      throw providerFailure()
+    } finally {
+      await handle?.close().catch(() => undefined)
+      if (ownsTemporary) await rm(temporary, { force: true }).catch(() => undefined)
+    }
+  }
+
   async get(key: string): Promise<StoredObject> {
     return this.#readObject(key, true)
   }
@@ -99,7 +188,7 @@ export class FilesystemObjectStore implements ObjectStore {
 
   async delete(key: string): Promise<void> {
     this.#assertOpen()
-    let paths: { readonly body: string; readonly metadata: string }
+    let paths: { readonly body: string; readonly metadata: string; readonly conditional: string }
     try {
       paths = await this.#paths(key, false)
     } catch (error) {
@@ -107,12 +196,17 @@ export class FilesystemObjectStore implements ObjectStore {
       throw error
     }
     await Promise.all([
+      assertRegularFileOrMissing(paths.conditional),
       assertRegularFileOrMissing(paths.body),
       assertRegularFileOrMissing(paths.metadata),
     ])
     try {
       await this.#paths(key, false)
-      await Promise.all([rm(paths.body, { force: true }), rm(paths.metadata, { force: true })])
+      await Promise.all([
+        rm(paths.conditional, { force: true }),
+        rm(paths.body, { force: true }),
+        rm(paths.metadata, { force: true }),
+      ])
     } catch (error) {
       if (error instanceof ObjectStoreError) throw error
       throw providerFailure()
@@ -134,6 +228,9 @@ export class FilesystemObjectStore implements ObjectStore {
     let bodyHandle: Awaited<ReturnType<typeof open>> | undefined
     try {
       const paths = await this.#paths(key, false)
+      if (await assertRegularFileOrMissing(paths.conditional)) {
+        return await this.#readConditional(paths.conditional, key, includeBody, paths.root)
+      }
       await Promise.all([assertRegularFile(paths.body), assertRegularFile(paths.metadata)])
       metadataHandle = await openNoFollow(paths.metadata)
       bodyHandle = await openNoFollow(paths.body)
@@ -160,14 +257,75 @@ export class FilesystemObjectStore implements ObjectStore {
     }
   }
 
+  async #readConditional(
+    path: string,
+    key: string,
+    includeBody: boolean,
+    root: string
+  ): Promise<StoredObject | StoredObjectDescriptor> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      handle = await openNoFollow(path)
+      const fileStat = await handle.stat()
+      const maxEnvelopeBytes =
+        CONDITIONAL_PREFIX_BYTES + MAX_CONDITIONAL_HEADER_BYTES + this.#maxObjectBytes
+      if (
+        !fileStat.isFile() ||
+        !Number.isSafeInteger(fileStat.size) ||
+        fileStat.size < CONDITIONAL_PREFIX_BYTES ||
+        fileStat.size > maxEnvelopeBytes
+      ) {
+        integrityFailure()
+      }
+      const bytes = await readBoundedFile(handle, fileStat.size)
+      if (!bytes.subarray(0, CONDITIONAL_MAGIC.byteLength).equals(CONDITIONAL_MAGIC)) {
+        integrityFailure()
+      }
+      const headerLength = bytes.readUInt32BE(CONDITIONAL_MAGIC.byteLength)
+      if (headerLength === 0 || headerLength > MAX_CONDITIONAL_HEADER_BYTES) integrityFailure()
+      const bodyOffset = CONDITIONAL_PREFIX_BYTES + headerLength
+      if (bodyOffset > bytes.byteLength) integrityFailure()
+      const parsedHeader = JSON.parse(bytes.toString('utf8', CONDITIONAL_PREFIX_BYTES, bodyOffset))
+      const descriptor = parseMetadata(parsedHeader, key, this.#maxObjectBytes)
+      const bodyBytes = bytes.byteLength - bodyOffset
+      if (bodyBytes !== descriptor.size) integrityFailure()
+      const body = bytes.subarray(bodyOffset)
+      if (digest(body) !== descriptor.sha256) integrityFailure()
+      // A reader may be the first process to observe a link whose creator died
+      // before syncing the directory; establish the publication barrier here.
+      await syncDirectory(root, this.#rootDevice, this.#rootInode)
+      const publicValue = publicDescriptor(descriptor)
+      return includeBody ? { ...publicValue, body: new Uint8Array(body) } : publicValue
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      if (isSymlinkLoop(error) || error instanceof SyntaxError || error instanceof RangeError) {
+        integrityFailure()
+      }
+      if (isMissing(error)) notFound()
+      throw providerFailure()
+    } finally {
+      await handle?.close().catch(() => undefined)
+    }
+  }
+
   async #paths(
     key: string,
     createRoot: boolean
-  ): Promise<{ readonly body: string; readonly metadata: string }> {
+  ): Promise<{
+    readonly body: string
+    readonly metadata: string
+    readonly conditional: string
+    readonly root: string
+  }> {
     const validKey = validateKey(key)
     const root = await this.#secureRoot(createRoot)
     const body = resolve(root, `sha256-${createHash('sha256').update(validKey).digest('hex')}`)
-    return { body, metadata: `${body}${METADATA_SUFFIX}` }
+    return {
+      body,
+      metadata: `${body}${METADATA_SUFFIX}`,
+      conditional: `${body}${CONDITIONAL_SUFFIX}`,
+      root,
+    }
   }
 
   async #secureRoot(create: boolean): Promise<string> {
@@ -220,14 +378,28 @@ function parseMetadata(
   ) {
     integrityFailure()
   }
-  const contentType = validContentType(value['contentType'])
+  let contentType: string | undefined
+  let metadata: Readonly<Record<string, string>>
+  try {
+    contentType = validContentType(value['contentType'])
+    metadata = validMetadata(value['metadata'])
+  } catch {
+    integrityFailure()
+  }
+  if (
+    Object.keys(value).some(
+      (key) => !['schemaVersion', 'key', 'size', 'contentType', 'sha256', 'metadata'].includes(key)
+    )
+  ) {
+    integrityFailure()
+  }
   return {
     schemaVersion: 1,
     key: expectedKey,
     size: value['size'] as number,
     ...(contentType === undefined ? {} : { contentType }),
     sha256: value['sha256'] as `sha256:${string}`,
-    metadata: validMetadata(value['metadata']),
+    metadata,
   }
 }
 
@@ -292,12 +464,13 @@ async function assertRegularFile(path: string): Promise<void> {
   if (entry.isSymbolicLink() || !entry.isFile()) integrityFailure()
 }
 
-async function assertRegularFileOrMissing(path: string): Promise<void> {
+async function assertRegularFileOrMissing(path: string): Promise<boolean> {
   try {
     const entry = await lstat(path)
     if (entry.isSymbolicLink() || !entry.isFile()) integrityFailure()
+    return true
   } catch (error) {
-    if (isMissing(error)) return
+    if (isMissing(error)) return false
     if (error instanceof ObjectStoreError) throw error
     throw providerFailure()
   }
@@ -320,6 +493,44 @@ async function writeExclusive(path: string, body: Uint8Array | string): Promise<
   } finally {
     await handle.close()
   }
+}
+
+async function syncDirectory(
+  path: string,
+  expectedDevice: number | undefined,
+  expectedInode: number | undefined
+): Promise<void> {
+  if (constants.O_NOFOLLOW === undefined) throw providerFailure()
+  const directoryFlags = constants.O_DIRECTORY ?? 0
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | directoryFlags)
+  try {
+    const stat = await handle.stat()
+    if (!stat.isDirectory() || stat.dev !== expectedDevice || stat.ino !== expectedInode) {
+      integrityFailure()
+    }
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function readBoundedFile(
+  handle: Awaited<ReturnType<typeof open>>,
+  expectedSize: number
+): Promise<Buffer> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) integrityFailure()
+  const bytes = Buffer.alloc(expectedSize)
+  let offset = 0
+  while (offset < expectedSize) {
+    const { bytesRead } = await handle.read(bytes, offset, expectedSize - offset, offset)
+    if (bytesRead === 0) integrityFailure()
+    offset += bytesRead
+  }
+  const trailingByte = Buffer.alloc(1)
+  const trailing = await handle.read(trailingByte, 0, 1, expectedSize)
+  const finalStat = await handle.stat()
+  if (trailing.bytesRead !== 0 || finalStat.size !== expectedSize) integrityFailure()
+  return bytes
 }
 
 function isMissing(error: unknown): boolean {
