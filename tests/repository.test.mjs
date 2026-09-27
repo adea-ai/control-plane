@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
+import { Glob } from 'bun'
 import {
   assertCoverageGoal,
   parseCoverageMinimum,
@@ -102,6 +103,23 @@ test('defines root quality and build commands', async () => {
   assert.match(manifest.scripts['db:check'], /packages\/database/)
   assert.match(manifest.scripts['test:unit'], /--coverage/)
   assert.match(manifest.scripts.test, /--parallel/)
+})
+
+test('schedules every discovered integration file through a package command', async () => {
+  const integration = await discoverTestFiles('integration')
+  for (const path of integration) {
+    const [kind, name, ...relativeParts] = path.split('/')
+    const manifest = await readJson(`${kind}/${name}/package.json`)
+    const command = manifest.scripts['test:integration']
+    assert.equal(typeof command, 'string', `${path} has no executable integration command`)
+    assert.match(command, /^bun test /)
+    assert.match(command, /--timeout 30000/)
+    const patterns = command.split(/\s+/).filter((token) => token.endsWith('.test.mjs'))
+    assert.ok(
+      patterns.some((pattern) => new Glob(pattern).match(relativeParts.join('/'))),
+      `${path} is not selected by its package integration command`
+    )
+  }
 })
 
 test('configures an uploadable Code Foundry coverage report', async () => {

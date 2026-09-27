@@ -319,6 +319,32 @@ showed 74.06%
 printed function coverage but an 84.34% function / 84.27% line LCOV gate pass.
 The repaired candidate still needs its own complete unit/LCOV gate.
 
+The subsequent frozen-head unit run at `9060c82a` passed all 1,547 tests across
+198 files with the existing randomized seed and deadlines, without retries or
+ACP changes. Its aggregate LCOV gate passed 82.90% lines and 84.26% functions
+against the unchanged 80% goals. JUnit and LCOV artifacts were preserved before
+later runs could overwrite coverage. This direct unit invocation does not
+establish a complete combined build/acceptance or CI timing-budget pass.
+
+The serialized integration runner at the same head freshly built dependencies
+and passed all 93 database tests across four files, plus LangGraph (two), testing
+helpers (one), and PostgreSQL portability (three). It stopped in Cloud API:
+one replay test passed and two failed with `INVALID_EXECUTION_PLAN_REFERENCE`.
+Those two fixtures use contrived plan references and an unconditional validator
+without persisted immutable context/plan parents. The production admission guard
+is retained; fixture repair and downstream integration/recovery checks remain
+open. This failed invocation is not a complete integration pass.
+
+A separate execution-coverage audit found that all three Hosted integration
+files were discovered but unscheduled: their package had no `test:integration`
+command. Foundation and Neon use the serialized Turbo integration runner, not
+the discovered-file list directly. A new repository regression reproduced the
+missing command before adding the Hosted command at the existing 30-second
+deadline. It checks executable package selection for every discovered integration
+file; the full repository-policy file now passes 27 tests. This wiring makes
+previously omitted cases runnable, not automatically passing. Hosted fixture
+repair and actual execution results remain separate.
+
 Serialized PostgreSQL integration at `994d95fd` passed 89 tests but failed three
 in the database job. All seven reference-window cases passed at existing
 deadlines; downstream package integration and remote/restore drills did not
