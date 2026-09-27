@@ -43,6 +43,12 @@ export class HostedManagedPiTerminalBridge {
       return undefined
     }
 
+    const terminalUsage = status.state === 'succeeded' ? status.result?.usage : status.terminalUsage
+    if (terminalUsage !== undefined && command.protocolVersion.minor < 7) {
+      throw new Error('HOSTED_GATEWAY_USAGE_REQUIRES_PROTOCOL_V1_7')
+    }
+    const terminalUsageField = terminalUsage === undefined ? {} : { terminalUsage }
+
     const common = {
       type: 'result' as const,
       schemaVersion: 1 as const,
@@ -65,6 +71,7 @@ export class HostedManagedPiTerminalBridge {
       })
       return GatewayResultEnvelopeSchema.parse({
         ...common,
+        ...terminalUsageField,
         status: 'succeeded',
         result: {
           artifact: {
@@ -79,12 +86,14 @@ export class HostedManagedPiTerminalBridge {
     if (status.state === 'cancelled') {
       return GatewayResultEnvelopeSchema.parse({
         ...common,
+        ...terminalUsageField,
         status: 'cancelled',
         result: { data: {} },
       })
     }
     return GatewayResultEnvelopeSchema.parse({
       ...common,
+      ...terminalUsageField,
       status: 'failed',
       result: { data: { error: status.error } },
     })

@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { executionConstraintFixtures } from '@control-plane/domain'
 import {
@@ -8,8 +11,10 @@ import {
   ManagedPiAdapter,
   ManagedPiConfigurationSchema,
   ManagedPiDriver,
+  ManagedPiStatusSchema,
   translateExecutionPlanToManagedPi,
 } from './index.ts'
+import { persistTerminalRecord, readTerminalRecord } from './terminal-record.ts'
 
 const managedPiAdapter = (client) =>
   new ManagedPiAdapter({
@@ -143,6 +148,7 @@ class RecordingManagedPiClient {
       state: execution.state,
       observedAt: execution.observedAt ?? now,
       ...(execution.result ? { result: execution.result } : {}),
+      ...(execution.terminalUsage === undefined ? {} : { terminalUsage: execution.terminalUsage }),
       ...(execution.error ? { error: execution.error } : {}),
     }
   }
@@ -305,5 +311,100 @@ describe('ManagedPiAdapter normalization', () => {
       state: 'failed',
       error: { code: 'PI_PROCESS_CRASHED', classification: 'runtime', retryable: true },
     })
+  })
+
+  test('preserves terminal usage for unsuccessful states and rejects it on live or succeeded states', async () => {
+    const terminalUsage = {
+      inputTokens: 10,
+      outputTokens: 2,
+      durationMs: 100,
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'provider-measurement:terminal-1',
+        fundingSource: 'external_subscription',
+        currency: 'USD',
+        chargedMicrounits: 0,
+        costExact: true,
+      },
+    }
+    const client = new RecordingManagedPiClient()
+    const adapter = managedPiAdapter(client)
+    const handle = await adapter.start({
+      attemptId,
+      idempotencyKey: 'managed-pi:terminal-usage',
+      executionPlan: plan(),
+    })
+    const execution = client.executions.get(handle.handleId)
+    execution.state = 'errored'
+    execution.error = {
+      code: 'PI_PROCESS_CRASHED',
+      classification: 'runtime',
+      message: 'Managed Pi process exited unexpectedly',
+      retryable: true,
+    }
+    execution.terminalUsage = terminalUsage
+
+    expect(await adapter.status(handle)).toMatchObject({ state: 'failed', terminalUsage })
+    expect(
+      ManagedPiStatusSchema.safeParse({
+        state: 'running',
+        observedAt: now,
+        terminalUsage,
+      }).success
+    ).toBe(false)
+    expect(
+      ManagedPiStatusSchema.safeParse({
+        state: 'succeeded',
+        observedAt: now,
+        result: { output: {}, usage: terminalUsage, artifacts: [] },
+        terminalUsage,
+      }).success
+    ).toBe(false)
+
+    execution.state = 'cancelled'
+    delete execution.error
+    expect(await adapter.status(handle)).toMatchObject({ state: 'cancelled', terminalUsage })
+  })
+
+  test('round-trips terminal usage in a cold terminal record while keeping legacy absence absent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'managed-pi-terminal-usage-'))
+    const terminalUsage = {
+      inputTokens: 10,
+      outputTokens: 2,
+      durationMs: 100,
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'provider-measurement:terminal-2',
+        fundingSource: 'external_subscription',
+        currency: 'USD',
+        chargedMicrounits: 0,
+        costExact: true,
+      },
+    }
+    const handle = {
+      handleId: `managed-pi:${attemptId}`,
+      attemptId,
+      startedAt: now,
+    }
+    const legacyAttemptId = 'att_01JBBCDEF0123456789ABCDEFG'
+    const legacyHandle = {
+      handleId: `managed-pi:${legacyAttemptId}`,
+      attemptId: legacyAttemptId,
+      startedAt: now,
+    }
+    const cancelledEvent = [{ sequence: 1, occurredAt: now, kind: 'status', state: 'cancelled' }]
+    try {
+      const status = { state: 'cancelled', observedAt: now, terminalUsage }
+      await persistTerminalRecord(directory, handle, status, cancelledEvent)
+      expect(await readTerminalRecord(directory, handle)).toEqual(status)
+
+      const legacyStatus = { state: 'cancelled', observedAt: now }
+      await persistTerminalRecord(directory, legacyHandle, legacyStatus, cancelledEvent)
+      const reopenedLegacy = await readTerminalRecord(directory, legacyHandle)
+      expect(reopenedLegacy).toEqual(legacyStatus)
+      expect(reopenedLegacy.terminalUsage).toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

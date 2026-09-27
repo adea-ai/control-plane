@@ -300,7 +300,7 @@ describe('hosted managed Pi runtime worker', () => {
   test('publishes terminal hosted output as an Artifact-backed gateway result', async () => {
     const artifactStore = new InMemoryHostedArtifactStore({ now: () => now })
     const bridge = new HostedManagedPiTerminalBridge({ artifactStore })
-    const command = gatewayCommand()
+    const command = { ...gatewayCommand(), protocolVersion: { major: 1, minor: 7 } }
 
     expect(
       await bridge.result({
@@ -310,6 +310,19 @@ describe('hosted managed Pi runtime worker', () => {
       })
     ).toBeUndefined()
 
+    const usage = {
+      inputTokens: 12,
+      outputTokens: 4,
+      durationMs: 120,
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'hosted-source:usage-1',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 17,
+        costExact: true,
+      },
+    }
     const result = await bridge.result({
       command,
       status: {
@@ -317,7 +330,7 @@ describe('hosted managed Pi runtime worker', () => {
         observedAt: now,
         result: {
           output: { answer: 'hosted-managed-pi-complete' },
-          usage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+          usage,
           artifacts: [],
         },
       },
@@ -329,6 +342,7 @@ describe('hosted managed Pi runtime worker', () => {
       sequence: 8,
       commandId: command.commandId,
       status: 'succeeded',
+      terminalUsage: usage,
       result: {
         artifact: {
           artifactId: `art_${'0'.repeat(25)}1`,
@@ -337,6 +351,35 @@ describe('hosted managed Pi runtime worker', () => {
       },
     })
     expect(artifactStore.references()).toHaveLength(1)
+  })
+
+  test('requires protocol v1.7 instead of dropping observed terminal usage', async () => {
+    const bridge = new HostedManagedPiTerminalBridge({
+      artifactStore: new InMemoryHostedArtifactStore({ now: () => now }),
+    })
+    const observedUsage = { inputTokens: 1, outputTokens: 0, durationMs: 1 }
+    await expect(
+      bridge.result({
+        command: { ...gatewayCommand(), protocolVersion: { major: 1, minor: 6 } },
+        status: {
+          state: 'succeeded',
+          observedAt: now,
+          result: {
+            output: { answer: 'observed' },
+            usage: observedUsage,
+            artifacts: [],
+          },
+        },
+        sequence: 8,
+      })
+    ).rejects.toThrow('HOSTED_GATEWAY_USAGE_REQUIRES_PROTOCOL_V1_7')
+    await expect(
+      bridge.result({
+        command: { ...gatewayCommand(), protocolVersion: { major: 1, minor: 6 } },
+        status: { state: 'cancelled', observedAt: now, terminalUsage: observedUsage },
+        sequence: 9,
+      })
+    ).rejects.toThrow('HOSTED_GATEWAY_USAGE_REQUIRES_PROTOCOL_V1_7')
   })
 
   test('maps terminal hosted failures without persisting false success artifacts', async () => {
@@ -350,21 +393,61 @@ describe('hosted managed Pi runtime worker', () => {
       retryable: true,
     }
 
-    expect(
-      await bridge.result({
-        command,
-        status: { state: 'errored', observedAt: now, error },
-        sequence: 9,
-      })
-    ).toMatchObject({ status: 'failed', result: { data: { error } } })
-    expect(
-      await bridge.result({
-        command,
-        status: { state: 'cancelled', observedAt: now },
-        sequence: 10,
-      })
-    ).toMatchObject({ status: 'cancelled', result: { data: {} } })
+    const failed = await bridge.result({
+      command,
+      status: { state: 'errored', observedAt: now, error },
+      sequence: 9,
+    })
+    expect(failed).toMatchObject({ status: 'failed', result: { data: { error } } })
+    expect(failed.terminalUsage).toBeUndefined()
+    const cancelled = await bridge.result({
+      command,
+      status: { state: 'cancelled', observedAt: now },
+      sequence: 10,
+    })
+    expect(cancelled).toMatchObject({ status: 'cancelled', result: { data: {} } })
+    expect(cancelled.terminalUsage).toBeUndefined()
     expect(artifactStore.references()).toHaveLength(0)
+  })
+
+  test('preserves unsuccessful terminal usage in negotiated v1.7 gateway results', async () => {
+    const bridge = new HostedManagedPiTerminalBridge({
+      artifactStore: new InMemoryHostedArtifactStore({ now: () => now }),
+    })
+    const command = { ...gatewayCommand(), protocolVersion: { major: 1, minor: 7 } }
+    const terminalUsage = {
+      inputTokens: 12,
+      outputTokens: 4,
+      durationMs: 120,
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'hosted-source:unsuccessful-1',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 17,
+        costExact: true,
+      },
+    }
+    const error = {
+      code: 'HOSTED_PI_WORKER_CRASHED',
+      classification: 'infrastructure',
+      message: 'Hosted managed Pi worker crashed',
+      retryable: true,
+    }
+
+    const failed = await bridge.result({
+      command,
+      status: { state: 'errored', observedAt: now, error, terminalUsage },
+      sequence: 11,
+    })
+    expect(failed).toMatchObject({ status: 'failed', terminalUsage })
+
+    const cancelled = await bridge.result({
+      command,
+      status: { state: 'cancelled', observedAt: now, terminalUsage },
+      sequence: 12,
+    })
+    expect(cancelled).toMatchObject({ status: 'cancelled', terminalUsage })
   })
 
   test('persists one replay-safe terminal Artifact through the configured ObjectStore', async () => {

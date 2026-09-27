@@ -15,6 +15,7 @@ import {
   RuntimeSessionOperationSchema,
   RuntimeSessionResultSchema,
   RuntimeStartRequestSchema,
+  RuntimeUsageSchema,
   TransportedRuntimeAdapter,
   inspectRuntimeCapabilities,
   type RuntimeAdapter,
@@ -236,6 +237,7 @@ export const ManagedPiStatusSchema = z
     ]),
     observedAt: TimestampSchema,
     result: RuntimeExecutionResultSchema.omit({ outcome: true }).optional(),
+    terminalUsage: RuntimeUsageSchema.optional(),
     error: RuntimeExecutionStatusSchema.shape.error.optional(),
   })
   .strict()
@@ -246,6 +248,15 @@ export const ManagedPiStatusSchema = z
     const failed = status.state === 'errored' || status.state === 'timed_out'
     if (failed !== (status.error !== undefined)) {
       context.addIssue({ code: 'custom', message: 'Failed Pi status requires one error' })
+    }
+    const unsuccessfulTerminal =
+      status.state === 'errored' || status.state === 'timed_out' || status.state === 'cancelled'
+    if (status.terminalUsage !== undefined && !unsuccessfulTerminal) {
+      context.addIssue({
+        code: 'custom',
+        path: ['terminalUsage'],
+        message: 'Terminal usage requires an unsuccessful terminal status',
+      })
     }
   })
 
@@ -623,6 +634,7 @@ function normalizeStatus(
     ...(status.result
       ? { result: RuntimeExecutionResultSchema.parse({ outcome: 'completed', ...status.result }) }
       : {}),
+    ...(status.terminalUsage === undefined ? {} : { terminalUsage: status.terminalUsage }),
     ...(status.error ? { error: status.error } : {}),
   })
 }
