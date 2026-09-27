@@ -397,6 +397,345 @@ describe('ManagedPiProcessClient', () => {
     }
   })
 
+  test('preserves validated final usage for failed status and cold terminal recovery', async () => {
+    const fixture = await processAdapterFixture('error-with-stats')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JD0000000000000000000001',
+        idempotencyKey: 'process-client:error-with-stats',
+        executionPlan: fixture.plan,
+      })
+      const events = []
+      for await (const event of fixture.adapter.progress(handle)) events.push(event)
+      const status = await fixture.adapter.status(handle)
+      expect(status).toMatchObject({
+        state: 'failed',
+      })
+      expectTerminalUsage(status, 17, 4)
+      expect(events.at(-1)).toMatchObject({ type: 'status', data: { state: 'failed' } })
+      await fixture.adapter.cleanup(handle)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered).toMatchObject({
+        state: 'errored',
+      })
+      expectTerminalUsage(recovered, 17, 4)
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('preserves validated final usage for cancellation and cold terminal recovery', async () => {
+    const fixture = await processAdapterFixture('cancel-with-stats')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JD0000000000000000000002',
+        idempotencyKey: 'process-client:cancel-with-stats',
+        executionPlan: fixture.plan,
+      })
+      const status = await fixture.adapter.cancel(handle, {
+        idempotencyKey: 'cancel-with-stats',
+        requestedAt: new Date().toISOString(),
+      })
+      expect(status).toMatchObject({
+        state: 'cancelled',
+      })
+      expectTerminalUsage(status, 23, 6)
+      await fixture.adapter.cleanup(handle)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered).toMatchObject({
+        state: 'cancelled',
+      })
+      expectTerminalUsage(recovered, 23, 6)
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('does not fabricate successful usage from missing, malformed, or unsafe final stats', async () => {
+    const attemptIds = [
+      'att_01JABCDEF0123456789ABCDEFG',
+      'att_01JBCDEF0123456789ABCDEFGH',
+      'att_01JCDEF0123456789ABCDEFGHJ',
+      'att_01JDEF0123456789ABCDEFGHJK',
+    ]
+    for (const [index, mode] of [
+      'stats-missing',
+      'stats-malformed',
+      'stats-unsafe',
+      'stats-total-overflow',
+    ].entries()) {
+      const fixture = await processAdapterFixture(mode)
+      let handle
+      try {
+        handle = await fixture.adapter.start({
+          attemptId: attemptIds[index],
+          idempotencyKey: `process-client:${mode}`,
+          executionPlan: fixture.plan,
+        })
+        const events = []
+        for await (const event of fixture.adapter.progress(handle)) events.push(event)
+        const status = await fixture.adapter.status(handle)
+        expect(status.state, mode).toBe('failed')
+        expect(status.result, mode).toBeUndefined()
+        expect(status.terminalUsage, mode).toBeUndefined()
+        expect(events.at(-1), mode).toMatchObject({ type: 'status', data: { state: 'failed' } })
+        await fixture.adapter.cleanup(handle)
+        expect(await fixture.recreate().reconcile(handle), mode).toMatchObject({
+          state: 'errored',
+          error: { code: 'PI_RUNTIME_ERROR' },
+        })
+        handle = undefined
+      } finally {
+        if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+        await fixture.cleanup()
+      }
+    }
+  })
+
+  test('status and progress wait for the one measured cancellation snapshot', async () => {
+    const fixture = await processAdapterFixture('cancel-stats-delayed', { rpcTimeoutMs: 1_000 })
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: 'process-client:cancel-stats-delayed',
+        executionPlan: fixture.plan,
+      })
+      const cancelPromise = fixture.adapter.cancel(handle, {
+        idempotencyKey: 'cancel-stats-delayed',
+        requestedAt: new Date().toISOString(),
+      })
+      await delay(20)
+      const progressPromise = (async () => {
+        const events = []
+        for await (const event of fixture.adapter.progress(handle)) events.push(event)
+        return events
+      })()
+      const [cancelled, observed, events] = await Promise.all([
+        cancelPromise,
+        fixture.adapter.status(handle),
+        progressPromise,
+      ])
+      for (const status of [cancelled, observed]) {
+        expect(status.state).toBe('cancelled')
+        expectTerminalUsage(status, 23, 6)
+      }
+      expect(events.at(-1)).toMatchObject({ type: 'status', data: { state: 'cancelled' } })
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('a progress iterator paused before cancellation does not yield an unmeasured terminal event', async () => {
+    const fixture = await processAdapterFixture('cancel-stats-delayed', { rpcTimeoutMs: 1_000 })
+    let handle
+    let iterator
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: 'process-client:progress-cancel-finalization',
+        executionPlan: fixture.plan,
+      })
+      iterator = fixture.adapter.progress(handle)[Symbol.asyncIterator]()
+      const first = await iterator.next()
+      expect(first.value).toMatchObject({ type: 'status', data: { state: 'running' } })
+
+      const cancelPromise = fixture.adapter.cancel(handle, {
+        idempotencyKey: 'progress-cancel-finalization',
+        requestedAt: new Date().toISOString(),
+      })
+      await delay(20)
+      let terminalResolved = false
+      const terminalPromise = iterator.next().then((result) => {
+        terminalResolved = true
+        return result
+      })
+      await delay(30)
+      expect(terminalResolved).toBe(false)
+
+      const [cancelled, terminal] = await Promise.all([cancelPromise, terminalPromise])
+      expectTerminalUsage(cancelled, 23, 6)
+      expect(terminal.value).toMatchObject({ type: 'status', data: { state: 'cancelled' } })
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      if (iterator !== undefined) await iterator.return().catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('cleanup drains cancellation measurement before stopping and removing the execution', async () => {
+    const fixture = await processAdapterFixture('cancel-stats-delayed', { rpcTimeoutMs: 1_000 })
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JABCDEF0123456789ABCDEFG',
+        idempotencyKey: 'process-client:cleanup-cancel-finalization',
+        executionPlan: fixture.plan,
+      })
+      const cancelPromise = fixture.adapter.cancel(handle, {
+        idempotencyKey: 'cleanup-cancel-finalization',
+        requestedAt: new Date().toISOString(),
+      })
+      await delay(20)
+      let cleanupResolved = false
+      const cleanupPromise = fixture.adapter.cleanup(handle).then(() => {
+        cleanupResolved = true
+      })
+      await delay(30)
+      expect(cleanupResolved).toBe(false)
+      const cancelled = await cancelPromise
+      await cleanupPromise
+      expectTerminalUsage(cancelled, 23, 6)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered.state).toBe('cancelled')
+      expectTerminalUsage(recovered, 23, 6)
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('bounded stats timeout preserves cancellation without zero or late mutation', async () => {
+    const fixture = await processAdapterFixture('cancel-stats-hang', { rpcTimeoutMs: 1_000 })
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JBCDEF0123456789ABCDEFGH',
+        idempotencyKey: 'process-client:cancel-stats-hang',
+        executionPlan: fixture.plan,
+      })
+      const start = performance.now()
+      const status = await fixture.adapter.cancel(handle, {
+        idempotencyKey: 'cancel-stats-hang',
+        requestedAt: new Date().toISOString(),
+      })
+      expect(performance.now() - start).toBeLessThan(750)
+      expect(status.state).toBe('cancelled')
+      expect(status.terminalUsage).toBeUndefined()
+      expect(status.result).toBeUndefined()
+      await fixture.adapter.cleanup(handle)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered.state).toBe('cancelled')
+      expect(recovered.terminalUsage).toBeUndefined()
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('late stats from pre-cancel settlement cannot mutate the terminal record', async () => {
+    const fixture = await processAdapterFixture('cancel-race-late-stats')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JCDEF0123456789ABCDEFGHJ',
+        idempotencyKey: 'process-client:cancel-race-late-stats',
+        executionPlan: fixture.plan,
+      })
+      const start = performance.now()
+      const status = await fixture.adapter.cancel(handle, {
+        idempotencyKey: 'cancel-race-late-stats',
+        requestedAt: new Date().toISOString(),
+      })
+      expect(performance.now() - start).toBeLessThan(750)
+      expect(status.state).toBe('cancelled')
+      expect(status.terminalUsage).toBeUndefined()
+      await delay(350)
+      expect((await fixture.adapter.status(handle)).terminalUsage).toBeUndefined()
+      await fixture.adapter.cleanup(handle)
+      expect((await fixture.recreate().reconcile(handle)).terminalUsage).toBeUndefined()
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('does not expose a final snapshot as terminal usage while text settlement is pending', async () => {
+    const fixture = await processAdapterFixture('settle-delayed-text')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JDEF0123456789ABCDEFGHJK',
+        idempotencyKey: 'process-client:settle-delayed-text',
+        executionPlan: fixture.plan,
+      })
+      await delay(30)
+      expect(await fixture.adapter.status(handle)).toMatchObject({ state: 'running' })
+      const events = []
+      for await (const event of fixture.adapter.progress(handle)) events.push(event)
+      expect(events.at(-1)).toMatchObject({ type: 'status', data: { state: 'completed' } })
+      expect(await fixture.adapter.status(handle)).toMatchObject({
+        state: 'completed',
+        result: { usage: { inputTokens: 11, outputTokens: 3 } },
+      })
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('retains independently validated stats when final text retrieval fails', async () => {
+    const fixture = await processAdapterFixture('text-fails-with-stats')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JD0000000000000000000003',
+        idempotencyKey: 'process-client:text-fails-with-stats',
+        executionPlan: fixture.plan,
+      })
+      const events = []
+      for await (const event of fixture.adapter.progress(handle)) events.push(event)
+      const status = await fixture.adapter.status(handle)
+      expect(status.state).toBe('failed')
+      expectTerminalUsage(status, 11, 3)
+      await fixture.adapter.cleanup(handle)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered).toMatchObject({
+        state: 'errored',
+      })
+      expectTerminalUsage(recovered, 11, 3)
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('freezes already-observed stats if the process exits while text retrieval is pending', async () => {
+    const fixture = await processAdapterFixture('exit-with-stats-pending-text')
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JDEF0123456789ABCDEFGHJK',
+        idempotencyKey: 'process-client:exit-with-stats-pending-text',
+        executionPlan: fixture.plan,
+      })
+      const events = []
+      for await (const event of fixture.adapter.progress(handle)) events.push(event)
+      const status = await fixture.adapter.status(handle)
+      expect(status.state).toBe('failed')
+      expectTerminalUsage(status, 11, 3)
+      await fixture.adapter.cleanup(handle)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered.state).toBe('errored')
+      expectTerminalUsage(recovered, 11, 3)
+      handle = undefined
+    } finally {
+      if (handle !== undefined) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
   test('removes private prompt material when RPC startup is rejected', async () => {
     const fixture = await processAdapterFixture('reject')
     const attemptId = 'att_01JDEF0123456789ABCDEFGHJK'
@@ -415,13 +754,14 @@ describe('ManagedPiProcessClient', () => {
   })
 })
 
-async function processAdapterFixture(mode) {
+async function processAdapterFixture(mode, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-rpc-case-'))
   const executablePath = join(directory, 'pi-fixture.mjs')
   await writeManagedPiRpcFixture(executablePath)
   const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
+    ...(options.rpcTimeoutMs === undefined ? {} : { rpcTimeoutMs: options.rpcTimeoutMs }),
     environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_MODE: mode },
     inputResolver: {
       resolve: async () => ({
@@ -453,6 +793,12 @@ async function processAdapterFixture(mode) {
     }),
     cleanup: () => rm(directory, { recursive: true, force: true }),
   }
+}
+
+function expectTerminalUsage(status, inputTokens, outputTokens) {
+  expect(status.terminalUsage).toMatchObject({ inputTokens, outputTokens })
+  expect(Number.isSafeInteger(status.terminalUsage.durationMs)).toBe(true)
+  expect(status.terminalUsage.durationMs).toBeGreaterThanOrEqual(0)
 }
 
 describe('ManagedPiProcessClient spawn policy (CP-RNODE-025)', () => {

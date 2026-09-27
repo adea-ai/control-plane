@@ -7,7 +7,9 @@ import {
   RuntimeAdapterError,
   RuntimeExecutionHandleSchema,
   RuntimeInputRequestSchema,
+  RuntimeUsageSchema,
   type RuntimeExecutionHandle,
+  type RuntimeUsage,
 } from '@control-plane/runtime-sdk'
 import {
   enforceNodeProcessSpawnPolicy,
@@ -34,6 +36,7 @@ const PROTOCOL_VERSION = '1.0.0'
 const MAX_OUTPUT_BYTES = 1_000_000
 const MAX_RPC_FRAME_BYTES = 1_048_576
 const MAX_VERSION_OUTPUT_BYTES = 16_384
+const CANCEL_STATS_WAIT_MS = 500
 
 export interface ManagedPiProcessInvocation {
   readonly systemPrompt: string
@@ -71,9 +74,9 @@ interface ProcessExecution {
   readonly waiters: Set<() => void>
   state: 'running' | 'succeeded' | 'errored' | 'cancelled'
   output: string
-  inputTokens: number
-  outputTokens: number
-  durationMs: number
+  finalUsage?: RuntimeUsage
+  statsSnapshot?: Promise<RuntimeUsage | undefined>
+  terminalFinalization?: Promise<void>
   error?: Error
   persistence?: Promise<void>
 }
@@ -250,9 +253,6 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       waiters: new Set(),
       state: 'running',
       output: '',
-      inputTokens: 0,
-      outputTokens: 0,
-      durationMs: 0,
     }
     this.#executions.set(handle.handleId, execution)
     appendEvent(execution, { kind: 'status', state: 'running' }, this.#now())
@@ -326,8 +326,10 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     const execution = this.#require(handleInput)
     let cursor = afterSequence
     while (true) {
+      if (execution.terminalFinalization) await execution.terminalFinalization
       if (execution.persistence) await execution.persistence
       for (const event of execution.events) {
+        if (execution.terminalFinalization) await execution.terminalFinalization
         if (execution.persistence) await execution.persistence
         if (event.sequence <= cursor) continue
         cursor = event.sequence
@@ -360,9 +362,9 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       await execution.rpc.request({ type: 'abort' }, this.#rpcTimeoutMs)
       if (execution.state !== 'running') return this.#status(execution)
       execution.state = 'cancelled'
-      execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
       appendEvent(execution, { kind: 'status', state: 'cancelled' }, this.#now())
-      this.#persist(execution)
+      execution.terminalFinalization = this.#finalizeCancellation(execution)
+      await execution.terminalFinalization
     }
     return this.#status(execution)
   }
@@ -389,8 +391,9 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       return
     }
     const execution = this.#require(handleInput)
-    await execution.rpc.stop()
     try {
+      if (execution.terminalFinalization) await execution.terminalFinalization
+      await execution.rpc.stop()
       if (execution.persistence) await execution.persistence
     } finally {
       await rm(execution.directory, { recursive: true, force: true })
@@ -402,9 +405,6 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     if (execution.state !== 'running') return
     if (event['type'] === 'message_update') {
       const update = asRecord(event['assistantMessageEvent'])
-      const usage = asRecord(event['usage'])
-      execution.inputTokens = nonnegativeInteger(usage?.['input'])
-      execution.outputTokens = nonnegativeInteger(usage?.['output'])
       if (update?.['type'] === 'text_delta' && typeof update['delta'] === 'string') {
         const remaining = MAX_OUTPUT_BYTES - Buffer.byteLength(execution.output)
         if (remaining > 0) {
@@ -435,48 +435,87 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async #settle(execution: ProcessExecution): Promise<void> {
-    try {
-      const [textResponse, statsResponse] = await Promise.all([
-        execution.rpc.request({ type: 'get_last_assistant_text' }, this.#rpcTimeoutMs),
-        execution.rpc.request({ type: 'get_session_stats' }, this.#rpcTimeoutMs),
-      ])
-      if (execution.state !== 'running') return
-      const textData = asRecord(textResponse['data'])
-      const statsData = asRecord(statsResponse['data'])
-      const tokens = asRecord(statsData?.['tokens'])
+    const [textResult, statsResult] = await Promise.allSettled([
+      execution.rpc.request({ type: 'get_last_assistant_text' }, this.#rpcTimeoutMs),
+      this.#requestFinalUsage(execution, this.#rpcTimeoutMs),
+    ])
+    if (execution.state !== 'running') return
+
+    if (textResult.status === 'fulfilled') {
+      const textData = asRecord(textResult.value['data'])
       const output = typeof textData?.['text'] === 'string' ? textData['text'] : execution.output
       execution.output = truncateUtf8(output, MAX_OUTPUT_BYTES)
-      execution.inputTokens = nonnegativeInteger(tokens?.['input'])
-      execution.outputTokens = nonnegativeInteger(tokens?.['output'])
-      execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
-      if (execution.error !== undefined) {
-        execution.state = 'errored'
-        appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
-      } else {
-        execution.state = 'succeeded'
-        appendEvent(
-          execution,
-          {
-            kind: 'usage',
-            inputTokens: execution.inputTokens,
-            outputTokens: execution.outputTokens,
-            durationMs: execution.durationMs,
-          },
-          this.#now()
-        )
-        appendEvent(execution, { kind: 'status', state: 'succeeded' }, this.#now())
-      }
-      this.#persist(execution)
-    } catch (error) {
-      this.#fail(execution, asError(error))
+    } else if (execution.error === undefined) {
+      execution.error = asError(textResult.reason)
     }
+
+    const finalUsage = statsResult.status === 'fulfilled' ? statsResult.value : undefined
+    if (finalUsage !== undefined) execution.finalUsage = finalUsage
+    else if (execution.error === undefined) execution.error = new Error('PI_SESSION_STATS_INVALID')
+
+    if (execution.error !== undefined) {
+      execution.state = 'errored'
+      appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
+    } else {
+      // A successful result is impossible without a validated final stats snapshot.
+      if (execution.finalUsage === undefined) {
+        execution.state = 'errored'
+        execution.error = new Error('PI_SESSION_STATS_INVALID')
+        appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
+        this.#persist(execution)
+        return
+      }
+      execution.state = 'succeeded'
+      appendEvent(
+        execution,
+        {
+          kind: 'usage',
+          inputTokens: execution.finalUsage.inputTokens,
+          outputTokens: execution.finalUsage.outputTokens,
+          durationMs: execution.finalUsage.durationMs,
+        },
+        this.#now()
+      )
+      appendEvent(execution, { kind: 'status', state: 'succeeded' }, this.#now())
+    }
+    this.#persist(execution)
+  }
+
+  #requestFinalUsage(
+    execution: ProcessExecution,
+    timeoutMs: number
+  ): Promise<RuntimeUsage | undefined> {
+    if (execution.finalUsage !== undefined) return Promise.resolve(execution.finalUsage)
+    if (execution.statsSnapshot !== undefined) return execution.statsSnapshot
+
+    const request = execution.rpc
+      .request({ type: 'get_session_stats' }, timeoutMs)
+      .then((response) => {
+        const usage = parseFinalUsage(response, execution.startedAtMs, this.#now().getTime())
+        // Retain a validated observation only while the execution is still mutable.
+        // Cancellation applies its own bounded snapshot before publishing the terminal record.
+        if (usage !== undefined && execution.state === 'running') execution.finalUsage = usage
+        return usage
+      })
+      .catch(() => undefined)
+    execution.statsSnapshot = request
+    return request
+  }
+
+  async #finalizeCancellation(execution: ProcessExecution): Promise<void> {
+    const waitMs = Math.max(1, Math.min(this.#rpcTimeoutMs, CANCEL_STATS_WAIT_MS))
+    const finalUsage = await waitWithin(this.#requestFinalUsage(execution, waitMs), waitMs)
+    if (execution.state === 'cancelled' && finalUsage !== undefined) {
+      execution.finalUsage = finalUsage
+    }
+    this.#persist(execution)
+    if (execution.persistence) await execution.persistence
   }
 
   #fail(execution: ProcessExecution, error: Error): void {
     if (execution.state !== 'running') return
     execution.error = error
     execution.state = 'errored'
-    execution.durationMs = Math.max(0, this.#now().getTime() - execution.startedAtMs)
     appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
     this.#persist(execution)
   }
@@ -493,6 +532,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async #status(execution: ProcessExecution) {
+    if (execution.terminalFinalization) await execution.terminalFinalization
     if (execution.persistence) await execution.persistence
     return this.#snapshot(execution)
   }
@@ -500,16 +540,13 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   #snapshot(execution: ProcessExecution) {
     const observedAt = this.#now().toISOString()
     if (execution.state === 'succeeded') {
+      if (execution.finalUsage === undefined) throw new Error('PI_SESSION_STATS_INVALID')
       return {
         state: 'succeeded' as const,
         observedAt,
         result: {
           output: { text: execution.output },
-          usage: {
-            inputTokens: execution.inputTokens,
-            outputTokens: execution.outputTokens,
-            durationMs: execution.durationMs,
-          },
+          usage: execution.finalUsage,
           artifacts: [],
         },
       }
@@ -524,6 +561,14 @@ export class ManagedPiProcessClient implements ManagedPiClient {
           message: 'Managed Pi runtime failed',
           retryable: false,
         },
+        ...(execution.finalUsage === undefined ? {} : { terminalUsage: execution.finalUsage }),
+      }
+    }
+    if (execution.state === 'cancelled') {
+      return {
+        state: execution.state,
+        observedAt,
+        ...(execution.finalUsage === undefined ? {} : { terminalUsage: execution.finalUsage }),
       }
     }
     return { state: execution.state, observedAt }
@@ -744,8 +789,47 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-function nonnegativeInteger(value: unknown): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0
+function parseFinalUsage(
+  response: Record<string, unknown>,
+  startedAtMs: number,
+  observedAtMs: number
+): RuntimeUsage | undefined {
+  if (
+    response['type'] !== 'response' ||
+    response['command'] !== 'get_session_stats' ||
+    response['success'] !== true
+  )
+    return undefined
+  const data = asRecord(response['data'])
+  const tokens = asRecord(data?.['tokens'])
+  const inputTokens = tokens?.['input']
+  const outputTokens = tokens?.['output']
+  const durationMs = observedAtMs - startedAtMs
+  if (
+    !Number.isSafeInteger(inputTokens) ||
+    (inputTokens as number) < 0 ||
+    !Number.isSafeInteger(outputTokens) ||
+    (outputTokens as number) < 0 ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs < 0
+  )
+    return undefined
+  const parsed = RuntimeUsageSchema.safeParse({ inputTokens, outputTokens, durationMs })
+  return parsed.success ? parsed.data : undefined
+}
+
+async function waitWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise(undefined), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 function boundedValue(value: unknown): string {
