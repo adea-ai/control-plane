@@ -203,14 +203,173 @@ describe('durable Cloud execution activities', () => {
     )
     expect((await lifecycle.getExecution(ids.executionId)).state).toBe('accepted')
   })
+
+  test('denies dispatch and graph starts before effects, while cancellation and cleanup remain available', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const graphCalls = []
+    const budgetAdmission = {
+      authorize: async () => {
+        throw new Error('RUNTIME_BUDGET_ADMISSION_DENIED')
+      },
+    }
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission,
+      graph: graphPort(graphCalls),
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+
+    await expect(activity.dispatch(dispatchInput())).rejects.toThrow(
+      'RUNTIME_BUDGET_ADMISSION_DENIED'
+    )
+    const graphInput = graphSegmentInput(fixture.plan)
+    await expect(activity.runGraphSegment(graphInput)).rejects.toThrow(
+      'RUNTIME_BUDGET_ADMISSION_DENIED'
+    )
+    await expect(
+      activity.resumeGraphSegment({
+        ...graphInput,
+        checkpointId: 'checkpoint-1',
+        response: { action: 'approve' },
+      })
+    ).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
+    await expect(
+      activity.continueGraphSegment({ ...graphInput, checkpointId: 'checkpoint-1' })
+    ).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
+    expect(runtime.dispatches).toHaveLength(0)
+    expect(graphCalls).toHaveLength(0)
+
+    await activity.cancelActive({
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      workflowId: ids.workflowId,
+      effectKey: 'cancel-effect',
+      reason: 'user_request',
+    })
+    await activity.cancelActive({
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      workflowId: ids.workflowId,
+      effectKey: 'graph-cancel-effect',
+      reason: 'user_request',
+      graph: {
+        workspaceId: fixture.plan.correlation.workspaceId,
+        reference: graphInput.graph,
+        threadId: graphInput.threadId,
+      },
+    })
+    await activity.cleanup({ executionId: ids.executionId, effectKey: 'cleanup-effect' })
+    expect(runtime.cancellations).toHaveLength(1)
+    expect(runtime.cleanups).toHaveLength(1)
+    expect(graphCalls).toHaveLength(1)
+    expect(graphCalls[0]).toMatchObject({ idempotencyKey: 'graph-cancel-effect' })
+  })
+
+  test('authorizes dispatch, interaction, and graph effects with current identity and preserves graph input', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const graphCalls = []
+    const admissions = []
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: {
+        authorize: async (input) => admissions.push(input),
+      },
+      graph: graphPort(graphCalls),
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+
+    await activity.dispatch(dispatchInput())
+    await activity.applyInteraction({
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      responseId: 'rsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      action: 'approve',
+      effectKey: 'interaction-effect',
+    })
+    const graphInput = graphSegmentInput(fixture.plan)
+    await activity.runGraphSegment(graphInput)
+    const resumeInput = {
+      ...graphInput,
+      checkpointId: 'checkpoint-1',
+      response: { action: 'approve' },
+    }
+    await activity.resumeGraphSegment(resumeInput)
+    const continueInput = { ...graphInput, checkpointId: 'checkpoint-1' }
+    await activity.continueGraphSegment(continueInput)
+
+    expect(admissions).toHaveLength(5)
+    for (const input of admissions) {
+      expect(input.execution.executionId).toBe(ids.executionId)
+      expect(input.executionPlan).toEqual(fixture.plan)
+      expect(input.attemptId).toBe(ids.attemptId)
+    }
+    expect(runtime.dispatches).toHaveLength(1)
+    expect(runtime.interactions).toHaveLength(1)
+    expect(graphCalls).toHaveLength(3)
+    expect(graphCalls[0]).toBe(graphInput)
+    expect(graphCalls[1]).toBe(resumeInput)
+    expect(graphCalls[2]).toBe(continueInput)
+  })
+
+  test('reloads the current execution identity before applying an interaction', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    let authorizations = 0
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: { authorize: async () => authorizations++ },
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+
+    await expect(
+      activity.applyInteraction({
+        executionId: ids.executionId,
+        attemptId: 'att_01JBBCDEF0123456789ABCDEFG',
+        interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        responseId: 'rsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        action: 'approve',
+        effectKey: 'interaction-effect',
+      })
+    ).rejects.toThrow('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    expect(authorizations).toBe(0)
+    expect(runtime.interactions).toHaveLength(0)
+  })
 })
 
-function activities({ lifecycle, plans, runtime, runtimeRouter }) {
+async function lifecycleFixture() {
+  const repository = new InMemoryExecutionRepository()
+  const lifecycle = new ExecutionLifecycleService(repository)
+  const plans = new InMemoryExecutionPlanRepository()
+  const plan = executionPlan()
+  await plans.put(plan)
+  await lifecycle.createExecution({
+    executionId: ids.executionId,
+    correlation: plan.correlation,
+    executionPlan: {
+      executionPlanId: plan.executionPlanId,
+      contentDigest: plan.contentDigest,
+      schemaVersion: plan.schemaVersion,
+    },
+    acceptedAt: '2026-08-28T12:00:00.000Z',
+  })
+  return { lifecycle, plans, plan }
+}
+
+function activities({ lifecycle, plans, runtime, runtimeRouter, budgetAdmission, graph }) {
   return new DurableExecutionLifecycleActivities({
     lifecycle,
     plans,
     runtime,
-    graph: {
+    graph: graph ?? {
       runGraphSegment: async () => ({
         outcome: 'failed',
         failureCode: 'GRAPH_DISABLED',
@@ -226,29 +385,80 @@ function activities({ lifecycle, plans, runtime, runtimeRouter }) {
         failureCode: 'GRAPH_DISABLED',
         retryable: false,
       }),
+      cancelGraphSegment: async () => {},
     },
     commands: {
       transitionExecutionCommand: async (input) => runtime.commandTransitions.push(input),
     },
     ...(runtimeRouter === undefined ? {} : { runtimeRouter }),
+    ...(budgetAdmission === undefined ? {} : { budgetAdmission }),
     now: () => '2026-08-28T12:00:01.000Z',
   })
 }
 
 function runtimePort() {
   const dispatches = []
+  const interactions = []
+  const cancellations = []
+  const cleanups = []
   const commandTransitions = []
   return {
     dispatches,
+    interactions,
+    cancellations,
+    cleanups,
     commandTransitions,
     async dispatch(input) {
       dispatches.push(globalThis.structuredClone(input))
       return { outcome: 'completed', resultReference: ids.resultReference }
     },
-    async applyInteraction() {
+    async applyInteraction(input) {
+      interactions.push(globalThis.structuredClone(input))
       return { outcome: 'failed', failureCode: 'INTERACTION_UNEXPECTED', retryable: false }
     },
-    async cleanup() {},
+    async cancel(input) {
+      cancellations.push(globalThis.structuredClone(input))
+    },
+    async cleanup(input) {
+      cleanups.push(globalThis.structuredClone(input))
+    },
+  }
+}
+
+function graphPort(calls) {
+  return {
+    async runGraphSegment(input) {
+      calls.push(input)
+      return { outcome: 'completed' }
+    },
+    async resumeGraphSegment(input) {
+      calls.push(input)
+      return { outcome: 'completed' }
+    },
+    async continueGraphSegment(input) {
+      calls.push(input)
+      return { outcome: 'completed' }
+    },
+    async cancelGraphSegment(input) {
+      calls.push(input)
+    },
+  }
+}
+
+function graphSegmentInput(plan) {
+  return {
+    executionId: ids.executionId,
+    attemptId: ids.attemptId,
+    workspaceId: plan.correlation.workspaceId,
+    workflowId: ids.workflowId,
+    graph: {
+      graphDefinitionId: 'manager-graph',
+      graphVersion: '1.0.0',
+      contentDigest: `sha256:${'a'.repeat(64)}`,
+    },
+    threadId: 'thread-manager-1',
+    input: { objective: 'admit before starting' },
+    idempotencyKey: 'workflow:segment:1',
   }
 }
 
