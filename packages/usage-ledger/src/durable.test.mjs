@@ -194,6 +194,186 @@ describe('durable usage ledger', () => {
     })
   })
 
+  test('replays the original opening summary after later activity and rejects altered opening receipts', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    const open = rootBudget({ source: source('historical-open') })
+    const opening = await ledger.openBudget(open)
+
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'after-open',
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+      source: source('after-open-reserve'),
+    })
+    expect(await makeLedger(store).openBudget(open)).toEqual(opening)
+
+    await store.corruptEffect(ids.workspaceId, 'historical-open', (effect) => {
+      effect.result.spentMicrounits = 1
+      effect.result.availableMicrounits -= 1
+    })
+    await expect(makeLedger(store).openBudget(open)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+  })
+
+  test('replays a child opening allocation instead of recomputing from later parent availability', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget({ maximumMicrounits: 1_000, maximumTokens: 100 }))
+    const childOpen = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      parentExecutionId: ids.executionId,
+      currency: 'USD',
+      maximumMicrounits: 800,
+      maximumTokens: 80,
+      source: source('historical-child-open'),
+    }
+    const opening = await ledger.openBudget(childOpen)
+
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'after-child-open',
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+      source: source('after-child-open-parent-reserve'),
+    })
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      reservationKey: 'after-child-open-work',
+      maximumMicrounits: 50,
+      maximumTokens: 5,
+      source: source('after-child-open-reserve'),
+    })
+
+    expect(await makeLedger(store).openBudget(childOpen)).toEqual(opening)
+    await store.corruptEffect(ids.workspaceId, 'historical-child-open', (effect) => {
+      effect.result.maximumMicrounits = 801
+      effect.result.availableMicrounits = 801
+    })
+    await expect(makeLedger(store).openBudget(childOpen)).rejects.toMatchObject({
+      code: 'STORE_STATE_INVALID',
+    })
+  })
+
+  test('binds child and parent finalized summaries to settled rollups after parent activity', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = makeLedger(store)
+    await ledger.openBudget(rootBudget({ maximumMicrounits: 1_000, maximumTokens: 100 }))
+
+    const childOpen = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      parentExecutionId: ids.executionId,
+      currency: 'USD',
+      maximumMicrounits: 400,
+      maximumTokens: 40,
+      source: source('summary-child-open'),
+    }
+    await ledger.openBudget(childOpen)
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      attemptId: ids.attemptId,
+      reservationKey: 'summary-child-work',
+      maximumMicrounits: 200,
+      maximumTokens: 20,
+      source: source('summary-child-reserve'),
+    })
+    await ledger.charge({
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      attemptId: ids.attemptId,
+      reservationKey: 'summary-child-work',
+      kind: 'model_usage',
+      quantity: { unit: 'tokens', value: 4 },
+      costMicrounits: 30,
+      fundingSource: 'hq_managed',
+      source: source('summary-child-charge'),
+    })
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      reservationKey: 'summary-child-work',
+      source: source('summary-child-settle'),
+    })
+
+    const childFinalize = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.childExecutionId,
+      source: source('summary-child-finalize'),
+    }
+    const childFinalized = await ledger.finalizeBudget(childFinalize)
+
+    await ledger.reserve({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'after-child-finalize',
+      maximumMicrounits: 100,
+      maximumTokens: 10,
+      source: source('after-child-finalize-reserve'),
+    })
+    await ledger.charge({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: 'after-child-finalize',
+      kind: 'tool_charge',
+      quantity: { unit: 'tokens', value: 3 },
+      costMicrounits: 7,
+      fundingSource: 'hq_managed',
+      source: source('after-child-finalize-charge'),
+    })
+    await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: 'after-child-finalize',
+      source: source('after-child-finalize-settle'),
+    })
+
+    expect(await makeLedger(store).finalizeBudget(childFinalize)).toEqual(childFinalized)
+
+    const parentFinalize = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      source: source('summary-parent-finalize'),
+    }
+    const parentFinalized = await ledger.finalizeBudget(parentFinalize)
+    expect(parentFinalized).toMatchObject({ spentMicrounits: 37, spentTokens: 7, settled: true })
+    expect(await makeLedger(store).finalizeBudget(parentFinalize)).toEqual(parentFinalized)
+    expect(await makeLedger(store).finalizeBudget(childFinalize)).toEqual(childFinalized)
+
+    await store.corruptEffect(ids.workspaceId, 'summary-child-finalize', (effect) => {
+      effect.result.spentTokens += 1
+    })
+    const childReplayError = await makeLedger(store)
+      .finalizeBudget(childFinalize)
+      .then(
+        () => undefined,
+        (error) => error
+      )
+
+    await store.corruptEffect(ids.workspaceId, 'summary-parent-finalize', (effect) => {
+      effect.result.spentMicrounits += 1
+      effect.result.availableMicrounits -= 1
+    })
+    const parentReplayError = await makeLedger(store)
+      .finalizeBudget(parentFinalize)
+      .then(
+        () => undefined,
+        (error) => error
+      )
+    expect([childReplayError?.code, parentReplayError?.code]).toEqual([
+      'STORE_STATE_INVALID',
+      'STORE_STATE_INVALID',
+    ])
+  })
+
   test('uses workspace-global method and input fingerprints to reject changed retries', async () => {
     const store = new TransactionalMemoryStore()
     const ledger = makeLedger(store)

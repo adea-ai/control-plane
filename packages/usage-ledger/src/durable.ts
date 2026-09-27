@@ -186,6 +186,15 @@ interface LoadedBudget {
   readonly entries: readonly UsageLedgerEntry[]
 }
 
+interface ReplayIdentity {
+  operationKey: string
+  sourceId: string
+  executionId: string
+  operation: string
+  reservationKey?: string
+  kind?: string
+}
+
 /** A durable, transaction-backed usage ledger. Every mutation writes its budget,
  * immutable entry records, and workspace-scoped replay receipt in one store transaction.
  */
@@ -696,6 +705,12 @@ export class DurableUsageLedger {
             ? {}
             : { reservationKey: replayInput.reservationKey }),
           ...(replayInput.kind === undefined ? {} : { kind: replayInput.kind }),
+        })
+        assertReplaySummary(replay.data, replayBudget, {
+          operationKey: input.source.idempotencyKey,
+          sourceId: input.source.sourceId,
+          executionId: input.executionId,
+          operation: method,
         })
         return deepFreeze(replay.data)
       }
@@ -1220,14 +1235,7 @@ function assertResultExecution(result: unknown, executionId: string): void {
 function assertReplayEntries(
   result: unknown,
   immutableEntries: readonly UsageLedgerEntry[],
-  identity: {
-    operationKey: string
-    sourceId: string
-    executionId: string
-    operation: string
-    reservationKey?: string
-    kind?: string
-  }
+  identity: ReplayIdentity
 ): void {
   if (result === null || typeof result !== 'object') throw usageError('STORE_STATE_INVALID')
   const record = result as Record<string, unknown>
@@ -1293,6 +1301,96 @@ function assertReplayEntries(
     ) {
       throw usageError('STORE_STATE_INVALID')
     }
+  }
+}
+
+function assertReplaySummary(
+  result: unknown,
+  loaded: LoadedBudget,
+  identity: ReplayIdentity
+): void {
+  if (identity.operation !== 'openBudget' && identity.operation !== 'finalizeBudget') return
+  const parsed = BudgetSummarySchema.safeParse(result)
+  if (!parsed.success) throw usageError('STORE_STATE_INVALID')
+
+  const { budget, entries } = loaded
+  let expected: DurableUsageBudgetSummary
+  if (identity.operation === 'openBudget') {
+    // Opening is a historical zero-usage snapshot, not a projection of today's budget.
+    // Future extensions must preserve original opened money/token authority separately;
+    // replay must never substitute extended maxima for the opening maxima.
+    const creditKey = entryIdempotencyKey(
+      identity.operationKey,
+      identity.executionId,
+      identity.operation,
+      'credit',
+      0
+    )
+    const credits = entries.filter((entry) => entry.source.idempotencyKey === creditKey)
+    const credit = credits[0]
+    if (
+      credits.length !== 1 ||
+      !credit ||
+      credit.sequence !== 1 ||
+      credit.kind !== 'credit' ||
+      credit.source.sourceId !== identity.sourceId ||
+      credit.quantity.unit !== 'microunits' ||
+      credit.quantity.value !== budget.maximumMicrounits ||
+      credit.currency !== budget.currency ||
+      credit.fundingSource !== 'hq_managed' ||
+      credit.costMicrounits !== 0 ||
+      !credit.costExact ||
+      credit.reservationKey !== undefined
+    ) {
+      throw usageError('STORE_STATE_INVALID')
+    }
+    expected = {
+      executionId: budget.executionId,
+      currency: budget.currency,
+      maximumMicrounits: credit.quantity.value,
+      maximumTokens: budget.maximumTokens,
+      spentMicrounits: 0,
+      reservedMicrounits: 0,
+      availableMicrounits: credit.quantity.value,
+      spentTokens: 0,
+      reservedTokens: 0,
+      availableTokens: budget.maximumTokens,
+      settled: false,
+    }
+  } else {
+    if (budget.status !== 'settled') throw usageError('STORE_STATE_INVALID')
+    // A settled local budget is immutable; loading validated its ledger and child rollups,
+    // so later parent activity does not change this operation's final summary.
+    expected = calculateSummary(budget)
+    const settlementKey = entryIdempotencyKey(
+      identity.operationKey,
+      identity.executionId,
+      identity.operation,
+      'settlement',
+      0
+    )
+    const settlements = entries.filter((entry) => entry.source.idempotencyKey === settlementKey)
+    const settlement = settlements[0]
+    if (
+      settlements.length !== 1 ||
+      !settlement ||
+      settlement.sequence !== budget.nextSequence - 1 ||
+      settlement.kind !== 'settlement' ||
+      settlement.source.sourceId !== identity.sourceId ||
+      settlement.reservationKey !== undefined ||
+      settlement.quantity.unit !== 'microunits' ||
+      settlement.quantity.value !== expected.spentMicrounits ||
+      settlement.currency !== budget.currency ||
+      settlement.fundingSource !== 'hq_managed' ||
+      settlement.costMicrounits !== 0 ||
+      !settlement.costExact
+    ) {
+      throw usageError('STORE_STATE_INVALID')
+    }
+  }
+
+  if (stableStringify(parsed.data) !== stableStringify(expected)) {
+    throw usageError('STORE_STATE_INVALID')
   }
 }
 
