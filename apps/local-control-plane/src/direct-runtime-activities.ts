@@ -359,7 +359,10 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     statusInput: RuntimeExecutionStatus
   ): Promise<void> {
     const status = RuntimeExecutionStatusSchema.parse(statusInput)
-    if (status.terminalUsage === undefined) return
+    // Successful adapters report usage in their result; terminalUsage is reserved
+    // by the runtime contract for unsuccessful terminal states.
+    const usage = status.state === 'completed' ? status.result?.usage : status.terminalUsage
+    if (usage === undefined) return
     this.#assertAttempt(status.handle, attemptId)
     const value = json({
       schemaVersion: 1,
@@ -367,7 +370,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       attemptId,
       handle: status.handle,
       state: status.state,
-      usage: status.terminalUsage,
+      usage,
     })
     await this.persistence.transaction(async (transaction) => {
       const id = recordId(`${executionId}:${attemptId}`)
