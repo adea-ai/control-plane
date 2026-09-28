@@ -4951,7 +4951,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Deployment-baseline replacement is done (TDD rev 96: 'Railway/Neon/R2/Restate replaces the AWS-first reference'; profile-specific SQLite/PostgreSQL persistence per substantive change 3; #195 tranche 2 verified the deployment-topology section; docs/infrastructure.md documents Railway/Neon/R2 with AWS explicitly unsupported). Residual drift recorded in the in-repo audit doc's 'Remaining contradictions': canonical TDD rev 96 still names pnpm (project uses Bun) — the 0xPlayerOne repo-identity half of that note was fixed in #195 tranche 2, the pnpm half was not addressed in any tranche. Close by reconciling the pnpm reference Drive-side, then apply the superseded-row schema note."
+        "disposition": "The live TDD source was reconciled on 2026-09-27: Appendix C now specifies Bun 1.4 workspaces, and Appendix D marks milestone statuses as historical with GitHub authoritative; the historical revision 96 snapshot remains unchanged. The baseline implementation replacement and Local/Hosted SQLite/PostgreSQL distinctions are documented and the repo identity was corrected in the current source. This requirement remains partially verified because #195 still requires full source inventory and marketplace non-goal reconciliation; the source delta audit is not an atomic requirements extraction."
       }
     },
     {
@@ -5545,7 +5545,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The new baseline is documented in-repo (docs/infrastructure.md: Bun/Railway/Neon/R2/Restate first-party, AWS unsupported, Local/Hosted profiles; resolved CONTRA-002), but the disposition's specific ADR-record action is not evidenced: #195 tranche 5 lists 'ADR-025 (Temporal) and AWS-alternatives text = dated decision provenance — deliberately unchanged' and names a superseding ADR only for ADR-025, not for ADR-027. Close by recording an explicit supersession for ADR-027 in the Drive ADR record (a superseding deployment-baseline ADR or superseded-by annotation), then apply the superseded-row schema note."
+        "disposition": "ADR-027's live record was annotated on 2026-09-27 as partially superseded by ADR-035, retaining the server/cloud stack and portability principles, and notes Bun 1.4 supersedes the original pnpm tooling. This resolves the specific ADR-record action; the broader #195 source inventory and marketplace reconciliation remain open, so this row stays partially verified."
       }
     },
     {
@@ -7401,7 +7401,7 @@
       "id": "CONTRA-002",
       "topic": "AWS and pnpm versus Railway and Bun",
       "sources": ["Control Plane TDD Appendix C", "ADR-027", "AGENTS.md", "docs/infrastructure.md"],
-      "resolution": "Bun and Railway/Neon/R2 are current first-party choices; portable adapters preserve Hosted alternatives.",
+      "resolution": "Bun 1.4 and Railway/Neon/R2 are current first-party choices; the live TDD and ADR-027 now record the tooling reconciliation and partial supersession, while portable adapters preserve Hosted alternatives. Full #195 source inventory and marketplace reconciliation remain open.",
       "issue": 195
     },
     {

@@ -1,7 +1,7 @@
 ---
 name: security-and-hardening
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   owner: "Control Plane maintainers"
 description: Hardens code against vulnerabilities. Use when handling user input, authentication, data storage, or external integrations. Use when building any feature that accepts untrusted data, manages user sessions, or interacts with third-party services. Use when personal data or privacy compliance (GDPR, CCPA) is involved.
 ---
@@ -77,7 +77,7 @@ If you can't name the trust boundaries for a feature, you're not ready to secure
 
 ## OWASP Top 10 Prevention Patterns
 
-These are prevention patterns, not a ranking. For the 2021 ordering, see the quick-reference table in `../../references/security-checklist.md`.
+These are prevention patterns grouped by threat, not a ranked list.
 
 ### Injection (SQL, NoSQL, OS Command)
 
@@ -303,7 +303,7 @@ When you defer a fix, document the reason and set a review date.
 
 Do not assume npm or treat the nearest manifest as the install root. Apply this order:
 
-1. **Find the installation boundary and manager.** Use the workspace root that owns the lockfile, or an independent nested project only when it is outside that workspace. There, corroborate `packageManager` (when present), the lockfile, and CI; stop on disagreement or competing lockfiles. Pin the manager version and use the matrix in `../../references/security-checklist.md`.
+1. **Find the installation boundary and manager.** Use the workspace root that owns the lockfile, or an independent nested project only when it is outside that workspace. There, corroborate `packageManager` (when present), the lockfile, and CI; stop on disagreement or competing lockfiles. Pin the manager version and use that repository's frozen/immutable install and native audit commands. For this repository, follow the canonical [validation policy](../../validation.md); do not substitute a default package manager.
 2. **Block dependency scripts before first execution.** Bootstrap with scripts disabled or a documented fail-closed policy, inspect the pending script source, approve only the minimum required packages, commit the policy, then verify with a clean frozen/immutable install. Never blanket-approve scripts.
 
 Audits only find known advisories; they do not catch a newly malicious or typosquatted package. Therefore:
@@ -451,7 +451,7 @@ container.textContent = await llm.reply(userMessage);
 ```
 ## See Also
 
-For detailed security checklists and pre-commit verification steps, see `../../references/security-checklist.md`.
+Use the checklist above and the repository's [security invariants](../../../docs/security-hardening.md) and [validation policy](../../validation.md) as applicable.
 
 ## Common Rationalizations
 

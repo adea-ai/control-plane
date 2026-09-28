@@ -46,6 +46,9 @@
     "@control-plane/usage-ledger": "workspace:*",
     "drizzle-orm": "0.45.2"
   },
+  "devDependencies": {
+    "@control-plane/config": "workspace:*"
+  },
   "engines": {
     "bun": ">=1.4.0 <2",
     "node": "24.18.0"

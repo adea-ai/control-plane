@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { createHash } from 'node:crypto'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +31,7 @@ import {
   RecordingProjectStateEventPublisher,
   createQueuedContextCommandRecord,
   contextCommandSemanticHash,
+  retiredCommandKeyCandidates,
 } from '@control-plane/domain'
 import { ExecutionEventDispatcher, ExecutionEventService } from '@control-plane/events'
 import {
@@ -4162,11 +4162,14 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       .select()
       .from(retiredCommandKeys)
       .where(eq(retiredCommandKeys.commandId, input.commandId))
+    const keys = retiredCommandKeyCandidates(accepted.command)
     expect(tombstone).toEqual({
-      scopeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      scopeKey: keys.metadata.scopeKey,
       commandId: input.commandId,
       executionId: accepted.execution.executionId,
       retiredAt: new Date(retiredAt),
+      metadataVersion: 2,
+      identityDigest: keys.metadata.identityDigest,
     })
   })
 
@@ -5689,6 +5692,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         )
       }
       const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 10, dryRun: false }
+      const [commandSnapshot] = await isolated.application
+        .select()
+        .from(commandInbox)
+        .where(eq(commandInbox.commandId, accepted.command.commandId))
+      const [eventSnapshot] = await isolated.application
+        .select()
+        .from(executionEvents)
+        .where(eq(executionEvents.eventId, eventId))
+      expect(commandSnapshot).toBeDefined()
+      expect(eventSnapshot).toBeDefined()
       const inbox = await repository.deleteEligibleInbox(assessedAt, {
         ...options,
         journal: (operations) => journal('postgres', 'command-inbox', operations),
@@ -5702,23 +5715,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
       // Simulate a snapshot that predates the retirement: the identity rows are
       // gone while the payload rows would be present again after a restore.
-      const scopeKey = createHash('sha256')
-        .update(
-          [
-            scope.callerPrincipalId,
-            scope.operation,
-            scope.workspaceId,
-            scope.projectId,
-            scope.idempotencyKey,
-          ].join('\u001f')
+      const scopeKey = retiredCommandKeyCandidates(scope).metadata.scopeKey
+      await isolated.withMigrationDatabase(async (database) => {
+        await database.execute(sql`delete from retired_command_keys where scope_key = ${scopeKey}`)
+        await database.execute(
+          sql`delete from retired_execution_event_ids where event_id = ${eventId}`
         )
-        .digest('hex')
-      await isolated.application.execute(
-        sql`delete from retired_command_keys where scope_key = ${scopeKey}`
-      )
-      await isolated.application.execute(
-        sql`delete from retired_execution_event_ids where event_id = ${eventId}`
-      )
+        await database.insert(commandInbox).values(commandSnapshot)
+        await database.insert(executionEvents).values(eventSnapshot)
+      })
 
       // Reapply through the operator CLI against the isolated database.
       const base = new URL(process.env.DATABASE_URL)
@@ -5748,9 +5753,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       expect(reapplied.status).toBe(0)
       const report = JSON.parse(reapplied.stdout)
       expect(report.report).toBe('retention-reapply')
-      // The journal restates the rejection identity for both classes, so both
-      // missing identity rows come back: retirement key and retired event id.
-      expect(report).toMatchObject({ applied: 2, skipped: 2 })
+      // The journal restores both rejection identities and reapplies both
+      // payload deletions from the pre-deletion snapshot.
+      expect(report).toMatchObject({ applied: 4, skipped: 0 })
 
       // The rejection identity is back: replays fail closed again.
       const replay = await repository.get(scope).catch((thrown) => thrown)

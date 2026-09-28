@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test as runTest } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -38,7 +39,7 @@ import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 import * as schema from './schema/index.ts'
-import { retentionReapply } from '../../../scripts/retention-reapply.mjs'
+import { fileURLToPath } from 'node:url'
 
 const test = (name, operation, timeoutMs = 60_000) => runTest(name, operation, timeoutMs)
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -1767,26 +1768,55 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
       applicationUrl.pathname = `/${isolated.name}`
       const migrationUrl = new URL(credentials.migration.url)
       migrationUrl.pathname = `/${isolated.name}`
+      // Exercise the split-host shape used by pooled application and direct
+      // migration URLs when running against the local Docker fixture.
+      if (applicationUrl.hostname === '127.0.0.1') migrationUrl.hostname = 'localhost'
+      const retentionReapplyScript = fileURLToPath(
+        new URL('../../../scripts/retention-reapply.mjs', import.meta.url)
+      )
+      const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
       const runJournal = async (record, environment) => {
         await writeFile(journalPath, `${JSON.stringify(record)}\n`)
-        let stdout = ''
-        let stderr = ''
-        const status = await retentionReapply({
-          argv: [
+        const childEnvironment = { ...process.env, ...environment }
+        for (const credentialName of [
+          'DATABASE_URL',
+          'DATABASE_ADMIN_URL',
+          'DATABASE_MIGRATION_URL',
+        ]) {
+          if (!(credentialName in environment)) delete childEnvironment[credentialName]
+        }
+        const migrationRoleRequired = record.operations.some(
+          (operation) => operation.kind === 'postgres.deleteRetiredCommandKey'
+        )
+        const targetUrl = migrationRoleRequired
+          ? (environment.DATABASE_MIGRATION_URL ?? environment.DATABASE_URL)
+          : environment.DATABASE_URL
+        const result = spawnSync(
+          process.execPath,
+          [
+            retentionReapplyScript,
             '--backend',
             'postgres',
             '--database',
             isolated.name,
             '--host',
-            applicationUrl.hostname,
+            new URL(targetUrl).hostname,
             '--journal',
             journalPath,
           ],
-          environment,
-          writeOut: (value) => (stdout += value),
-          writeErr: (value) => (stderr += value),
-        })
-        return { status, stdout, stderr }
+          {
+            cwd: repositoryRoot,
+            encoding: 'utf8',
+            timeout: 30000,
+            env: childEnvironment,
+          }
+        )
+        if (result.error) throw result.error
+        return {
+          status: result.status,
+          stdout: result.stdout ?? '',
+          stderr: result.stderr ?? '',
+        }
       }
       const insertJournal = {
         version: 1,

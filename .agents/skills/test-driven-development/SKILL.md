@@ -1,7 +1,7 @@
 ---
 name: test-driven-development
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   owner: "Control Plane maintainers"
 description: Drives development with tests. Use when implementing any logic, fixing any bug, or changing any behavior. Use when you need to prove that code works, when a bug report arrives, or when you're about to modify existing functionality.
 ---
@@ -361,7 +361,7 @@ This separation ensures the test is written without knowledge of the fix, making
 
 ## See Also
 
-For JavaScript/TypeScript testing patterns illustrating these principles — Jest, React Testing Library, Supertest, Playwright — see `../../references/testing-patterns.md`. The principles transfer to any ecosystem; the syntax and tools there are JS/TS-specific.
+For this repository's current test groups, integration boundaries, and evidence limits, see the [testing guide](../../../docs/testing.md). The examples in this skill are illustrative; first use the package's documented runner and focused-test command.
 
 ## Common Rationalizations
 

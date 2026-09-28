@@ -19,11 +19,13 @@ procedures are documented."
 
 ## Review cadence
 
-| Trigger                                             | Review scope                                                   |
-| --------------------------------------------------- | -------------------------------------------------------------- |
-| Any merged change to `.agents/skills/**`            | validate + inventory refresh in the PR itself                  |
-| Each M-milestone closeout                           | full inventory re-baseline (purpose, triggers, overlaps, gaps) |
-| Ad hoc: a skill's guidance contradicts repo reality | immediate fix or deprecation, per the update process           |
+| Trigger                                                          | Review scope                                                                                                   |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Any change to `.agents/skills/**`                                | validate references/contracts + refresh inventory; update the Skill changelog                                  |
+| Change to `AGENTS.md`, `.github/CONTRIBUTING.md`, `.agents/*.md` | check skill routes and safety guidance against the canonical instruction owner; link to it rather than copying |
+| Change to Code Foundry config/runtime/workflows                  | check documented commands, runner gates, and skill validation against `.github/code-foundry.yml` and workflows |
+| Each M-milestone closeout                                        | full inventory re-baseline (purpose, triggers, overlaps, gaps, available evidence)                             |
+| Ad hoc: a skill's guidance contradicts repo reality              | immediate fix or deprecation, per the update process                                                           |
 
 ## Versioning and deprecation
 
@@ -31,6 +33,10 @@ procedures are documented."
   fails the lane if absent.
 - Substantive guidance changes bump the version (semver-style: guidance edits
   patch, workflow/process changes minor, removals major).
+- Record each Skill-library change in [`CHANGELOG.md`](./CHANGELOG.md), naming
+  affected Skills, old/new versions, the decision changed, validation performed,
+  and known compatibility or evidence limitations. Do not describe an
+  unexecuted eval or unobserved human review as completed evidence.
 - Deprecation: mark the SKILL.md frontmatter with `deprecated: true` plus a
   `superseded_by:` pointer, keep the directory for one release, then remove
   the directory and delete the inventory entry via `--refresh`.
@@ -51,7 +57,14 @@ procedures are documented."
 
 1. Branch from main; edit the skill under `.agents/skills/<name>/`.
 2. Bump `metadata.version`; keep the description's trigger boundary accurate.
-3. Run `bun scripts/validate-skills.mjs --refresh`; commit the refreshed
-   inventory with the change.
-4. Open a pull request; the smoke lane fails on inventory drift, missing
-   versions, or unsafe content.
+3. Check the canonical instruction and validation owners (`AGENTS.md`,
+   `.github/CONTRIBUTING.md`, `.agents/validation.md`, `.agents/ci.md`) and the
+   configured Code Foundry source (`.github/code-foundry.yml` plus the checked-in
+   workflows). Verify that referenced commands still exist and that the Skill
+   does not weaken or duplicate those policies. Record the compatible Code
+   Foundry version/source in the changelog when relevant; do not pin a second
+   copy of a version owned by configuration.
+4. Run `bun scripts/validate-skills.mjs --refresh`; commit the refreshed
+   inventory only when the task's commit authorization allows it.
+5. Open a pull request; the smoke lane fails on inventory drift, missing
+   versions/contracts, machine-specific paths, or broken local Markdown links.

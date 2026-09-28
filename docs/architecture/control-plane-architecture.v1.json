@@ -678,7 +678,7 @@
         "@control-plane/usage-ledger"
       ],
       "externalDependencies": ["drizzle-orm"],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/config"],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },

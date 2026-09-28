@@ -120,7 +120,12 @@ try {
     },
     connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
     freshness: { state: 'fresh', observedAt: now, expiresAt: deadlineAt },
-    versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1', protocol: '1.5.0' },
+    versions: {
+      adapter: '1.0.0',
+      driver: '1.0.0',
+      harness: '0.52.1',
+      protocol: `${GatewayProtocolManifest.current.major}.${GatewayProtocolManifest.current.minor}.0`,
+    },
     capabilities: ['filesystem.read', 'stream.output', 'interaction.approval', 'execution.cancel'],
     capabilityDetails: [
       { name: 'execution.cancel', support: 'supported' },

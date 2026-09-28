@@ -210,3 +210,28 @@ test('preserves semantic outcomes under irrelevant-summary, order and identity p
   expect((await run(compliant, complete)).report.status).toBe('complete')
   expect((await run(compliant, complete)).passed).toBe(true)
 })
+
+test('rejects contradictory V3 not-run evidence without changing V2 compatibility', async () => {
+  const makeV3Fixture = (outcome, coverage = 'complete') => ({
+    ...fixture,
+    evidenceQualityVersion: 1,
+    requirements: fixture.requirements.map((requirement, index) => ({
+      ...requirement,
+      evidence: {
+        ...requirement.evidence,
+        ...(index === 0 ? { outcome, coverage } : { outcome: 'unavailable', coverage: 'not_run' }),
+        authority: 'authoritative',
+      },
+    })),
+  })
+
+  for (const outcome of ['pass', 'fail']) {
+    await expect(run(compliant, makeV3Fixture(outcome, 'not_run'))).rejects.toThrow()
+  }
+
+  const validNotRun = makeV3Fixture('pass')
+  expect((await run(compliant, validNotRun)).passed).toBe(true)
+
+  // Existing V2 fixtures omit evidence quality fields and remain accepted.
+  expect((await run(compliant, fixture)).passed).toBe(true)
+})

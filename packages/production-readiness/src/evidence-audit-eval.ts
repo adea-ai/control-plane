@@ -61,6 +61,18 @@ export const EvidenceAuditFixtureV3Schema = z
   .superRefine((fixture, context) => {
     if (new Set(fixture.requirements.map((item) => item.id)).size !== fixture.requirements.length)
       context.addIssue({ code: 'custom', message: 'Requirement IDs must be unique' })
+    fixture.requirements.forEach((requirement, index) => {
+      if (
+        requirement.evidence.coverage === 'not_run' &&
+        requirement.evidence.outcome !== 'unavailable'
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Evidence with not-run coverage must have an unavailable outcome',
+          path: ['requirements', index, 'evidence', 'outcome'],
+        })
+      }
+    })
   })
 
 export const EvidenceAuditFixtureSchema = z.union([

@@ -4,7 +4,7 @@ async function run(
   argv,
   operation = async () => ({ state: 'paused', complete: true, canResume: true })
 ) {
-  const cli = await import('../../../scripts/admission-rollout-admin.mjs')
+  const cli = await import('../scripts/admission-rollout-admin.mjs')
   const calls = []
   let out = ''
   let err = ''
@@ -93,7 +93,7 @@ test('rollout CLI sanitizes service failures and always closes', async () => {
 })
 
 test('rollout CLI never substitutes application or admin URLs for a missing migration URL', async () => {
-  const { admissionRolloutAdmin } = await import('../../../scripts/admission-rollout-admin.mjs')
+  const { admissionRolloutAdmin } = await import('../scripts/admission-rollout-admin.mjs')
   let opened = false
   let err = ''
   const result = await admissionRolloutAdmin({
@@ -114,7 +114,7 @@ test('rollout CLI never substitutes application or admin URLs for a missing migr
 })
 
 test('rollout CLI treats close failure as a failure without exposing its cause', async () => {
-  const { admissionRolloutAdmin } = await import('../../../scripts/admission-rollout-admin.mjs')
+  const { admissionRolloutAdmin } = await import('../scripts/admission-rollout-admin.mjs')
   let err = ''
   const result = await admissionRolloutAdmin({
     argv: ['status', ...target],
