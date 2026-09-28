@@ -16,6 +16,9 @@ concurrency:
 jobs:
   core:
     name: Core
+    permissions:
+      contents: read
+      issues: read
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -41,6 +44,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Run core foundation acceptance
         run: bun scripts/run-foundation-acceptance.mjs --skip-install --skip-containers
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   containers:
     name: Containers

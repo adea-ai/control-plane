@@ -5,8 +5,8 @@ import {
   RuntimeNodeCredentialClaimsSchema,
   RuntimeNodeIdentityValidationError,
   type RuntimeNodeCredentialClaims,
-  type RuntimeNodeIdentityValidationPort,
 } from '@control-plane/runtime-gateway-protocol'
+import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
 
 export * from './synthetic-node-identity.js'
 
@@ -36,14 +36,14 @@ export class RuntimeNodeAuthenticationError extends Error {
 
 export class RuntimeNodeChannel {
   readonly claims: RuntimeNodeCredentialClaims
-  readonly #identityValidator: RuntimeNodeIdentityValidationPort
+  readonly #identityValidator: RuntimeNodeIdentityGatewayPort
   readonly #now: () => Date
   readonly #clockSkewMs: number
   #invalidationReason: RuntimeNodeChannelInvalidationReason | undefined
 
   constructor(
     claims: RuntimeNodeCredentialClaims,
-    identityValidator: RuntimeNodeIdentityValidationPort,
+    identityValidator: RuntimeNodeIdentityGatewayPort,
     options: { readonly now?: () => Date; readonly clockSkewMs?: number } = {}
   ) {
     this.claims = claims
@@ -101,7 +101,7 @@ export class RuntimeNodeChannel {
 }
 
 export interface RuntimeNodeChannelAuthenticatorOptions {
-  readonly identityValidator: RuntimeNodeIdentityValidationPort
+  readonly identityValidator: RuntimeNodeIdentityGatewayPort
   readonly logger: StructuredLogger
   readonly now?: () => Date
   readonly clockSkewMs?: number
@@ -110,7 +110,7 @@ export interface RuntimeNodeChannelAuthenticatorOptions {
 export class RuntimeNodeChannelAuthenticator {
   readonly #activeChannels = new Map<string, RuntimeNodeChannel>()
   readonly #clockSkewMs: number
-  readonly #identityValidator: RuntimeNodeIdentityValidationPort
+  readonly #identityValidator: RuntimeNodeIdentityGatewayPort
   readonly #logger: StructuredLogger
   readonly #now: () => Date
   readonly #unsubscribe: () => void
@@ -212,7 +212,7 @@ export class RuntimeNodeChannelAuthenticator {
       this.#reject('RUNTIME_NODE_CHANNEL_GENERATION_STALE', claims)
     }
 
-    let consumption: Awaited<ReturnType<RuntimeNodeIdentityValidationPort['consumeCredential']>>
+    let consumption: Awaited<ReturnType<RuntimeNodeIdentityGatewayPort['consumeCredential']>>
     try {
       consumption = await this.#identityValidator.consumeCredential(
         claims.credentialId,

@@ -95,15 +95,8 @@ export function runtimeNodeWebSocketChallenge(secWebSocketKey: string): string {
 export interface RuntimeNodeIdentityValidationPort {
   verify(attempt: RuntimeNodeAuthenticationAttempt): Promise<unknown>
   isRevoked(credentialId: string, revocationVersion: number): Promise<boolean>
-  /** Atomically burns an issued credential so two gateways cannot accept it. */
-  consumeCredential(
-    credentialId: string,
-    revocationVersion: number,
-    now: Date
-  ): Promise<RuntimeNodeCredentialConsumptionResult>
-  subscribeRevocations(
-    listener: (invalidation: RuntimeNodeIdentityInvalidation) => void
-  ): () => void
+  /** Legacy 1.x listener contract; retained for source compatibility. */
+  subscribeRevocations(listener: (credentialId: string) => void): () => void
 }
 
 /** Durable identity state changes that should immediately invalidate open channels. */

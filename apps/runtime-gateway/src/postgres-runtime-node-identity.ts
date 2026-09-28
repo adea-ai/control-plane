@@ -7,7 +7,6 @@ import {
   runtimeNodeWebSocketChallenge,
   type RuntimeNodeCredentialClaims,
   type RuntimeNodeIdentityInvalidation,
-  type RuntimeNodeIdentityValidationPort,
 } from '@control-plane/runtime-gateway-protocol'
 import type { RawEnvironment } from '@control-plane/config'
 import type { PostgresRuntimeNodeIdentityRepository } from '@control-plane/database'
@@ -16,6 +15,7 @@ import type {
   RuntimeNodeChannel,
   RuntimeNodeChannelAuthenticator,
 } from './authentication.js'
+import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
 
 const MAX_TRUSTED_ISSUER_KEYS = 16
 const MAX_PUBLIC_KEY_PEM_BYTES = 4096
@@ -125,7 +125,7 @@ export function runtimeNodeIdentityTrustConfigFromEnvironment(
  * RuntimeNode verification keys/credential records. This adapter has no
  * issuance or signing method and cannot create a credential.
  */
-export class PostgresRuntimeNodeIdentityValidationPort implements RuntimeNodeIdentityValidationPort {
+export class PostgresRuntimeNodeIdentityValidationPort implements RuntimeNodeIdentityGatewayPort {
   readonly #issuerKeys: ReadonlyMap<string, KeyObject>
   readonly #listeners = new Set<(invalidation: RuntimeNodeIdentityInvalidation) => void>()
   readonly #repository: PostgresRuntimeNodeIdentityRepository
