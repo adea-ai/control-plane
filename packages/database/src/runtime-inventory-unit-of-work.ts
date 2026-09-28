@@ -11,6 +11,7 @@ import { PostgresRuntimeConnectionRepository } from './runtime-connection-reposi
 import { PostgresRuntimeDiscoveryRepository } from './runtime-discovery-repository.js'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.js'
 import { createPostgresRuntimeHealthInTransaction } from './runtime-health-ingestion.js'
+import { assertRuntimeCredentialFence } from './runtime-credential-fence.js'
 import { runtimeChannelOwnership } from './schema/runtime-channel-ownership.js'
 
 export class PostgresRuntimeInventoryUnitOfWork {
@@ -31,7 +32,12 @@ export class PostgresRuntimeInventoryUnitOfWork {
   }
 
   async run<Result>(
-    scope: { workspaceId: string; runtimeNodeRefId: string; channel: RuntimeChannelOwnership },
+    scope: {
+      workspaceId: string
+      runtimeNodeRefId: string
+      channel: RuntimeChannelOwnership
+      credentialFence: { credentialId: string; revocationVersion: number }
+    },
     operation: (ports: {
       registry: RuntimeConnectionRegistry
       health: ReturnType<typeof createPostgresRuntimeHealthInTransaction>
@@ -74,6 +80,12 @@ export class PostgresRuntimeInventoryUnitOfWork {
         currentChannel.protocolVersion.minor !== channel.protocolVersion.minor
       )
         throw new Error('INVENTORY_CHANNEL_STALE')
+
+      await assertRuntimeCredentialFence(transaction, scope.credentialFence, {
+        nodeId,
+        workspaceId,
+      })
+
       await transaction.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-inventory:${nodeId}`}, 0))`
       )

@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
 import type { RuntimeNodeChannelAuthority } from './runtime-event-ingestion.js'
+import type { RuntimeNodeCredentialFence } from './authentication.js'
 
 type InventoryDriver = GatewayInventoryEnvelope['runtimeDrivers'][number]
 type PreparedInventory = readonly {
@@ -131,11 +132,18 @@ export class RuntimeInventoryMessageHandler {
   async handle(
     source: ActiveRuntimeNodeChannelRecord,
     envelope: GatewayEnvelope,
-    channelAuthority?: RuntimeNodeChannelAuthority
+    channelAuthority?: RuntimeNodeChannelAuthority,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<void> {
     const inventory = GatewayInventoryEnvelopeSchema.safeParse(envelope)
     if (!inventory.success) throw new Error('RUNTIME_GATEWAY_FRAME_UNSUPPORTED')
-    await this.#inventory.ingest(inventory.data, source, 'online', channelAuthority)
+    await this.#inventory.ingest(
+      inventory.data,
+      source,
+      'online',
+      channelAuthority,
+      credentialFence
+    )
   }
 }
 
@@ -163,6 +171,7 @@ export interface RuntimeInventoryUnitOfWork {
       workspaceId: string
       runtimeNodeRefId: string
       channel: ActiveRuntimeNodeChannelRecord
+      credentialFence: RuntimeNodeCredentialFence
     },
     operation: (
       ports: Pick<
@@ -181,6 +190,7 @@ export interface RuntimeInventoryIngestionResult {
 }
 
 export type RuntimeInventoryIngestionErrorCode =
+  | 'INVENTORY_CREDENTIAL_FENCE_REQUIRED'
   | 'INVENTORY_SCOPE_MISMATCH'
   | 'INVENTORY_PROTOCOL_UNSUPPORTED'
   | 'INVENTORY_VERSION_CONFLICT'
@@ -255,12 +265,14 @@ export class RuntimeInventoryIngestionService {
     inventoryValue: unknown,
     source: ActiveRuntimeNodeChannelRecord,
     nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked' = 'online',
-    channelAuthority?: RuntimeNodeChannelAuthority
+    channelAuthority?: RuntimeNodeChannelAuthority,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeInventoryIngestionResult> {
     const inventory = GatewayInventoryEnvelopeSchema.parse(inventoryValue)
     this.#assertSource(inventory, source)
     await this.#assertChannelAuthority(channelAuthority, source)
     if (this.#unitOfWork) {
+      if (credentialFence === undefined) fail('INVENTORY_CREDENTIAL_FENCE_REQUIRED')
       const prepared = await this.#normalize(inventory, nodeStatus)
       // Normalization can await host policy or artifact work; do not use
       // authority from before that asynchronous boundary to commit inventory.
@@ -274,7 +286,12 @@ export class RuntimeInventoryIngestionService {
           emissions.push(() => this.#metrics.observe(name, value, labels)),
       }
       const result = await this.#unitOfWork.run(
-        { workspaceId: inventory.workspaceId, runtimeNodeRefId: inventory.nodeId, channel: source },
+        {
+          workspaceId: inventory.workspaceId,
+          runtimeNodeRefId: inventory.nodeId,
+          channel: source,
+          credentialFence,
+        },
         (ports) =>
           new RuntimeInventoryIngestionService({
             ...ports,

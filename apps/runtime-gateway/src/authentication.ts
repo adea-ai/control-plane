@@ -21,6 +21,12 @@ export interface RuntimeNodeAuthenticationExpectation {
 
 export type RuntimeNodeChannelInvalidationReason = 'replaced' | 'revoked' | 'expired'
 
+/** Authenticated identity fields needed to fence writes against credential revocation. */
+export type RuntimeNodeCredentialFence = Pick<
+  RuntimeNodeCredentialClaims,
+  'credentialId' | 'revocationVersion'
+>
+
 export class RuntimeNodeAuthenticationError extends Error {
   constructor(readonly code: string) {
     super('RuntimeNode authentication was rejected')
@@ -107,7 +113,6 @@ export class RuntimeNodeChannelAuthenticator {
   readonly #identityValidator: RuntimeNodeIdentityValidationPort
   readonly #logger: StructuredLogger
   readonly #now: () => Date
-  readonly #usedCredentialIds = new Set<string>()
   readonly #unsubscribe: () => void
 
   constructor(options: RuntimeNodeChannelAuthenticatorOptions) {
@@ -115,14 +120,20 @@ export class RuntimeNodeChannelAuthenticator {
     this.#logger = options.logger
     this.#now = options.now ?? (() => new Date())
     this.#clockSkewMs = options.clockSkewMs ?? 30_000
-    this.#unsubscribe = this.#identityValidator.subscribeRevocations((credentialId) => {
+    this.#unsubscribe = this.#identityValidator.subscribeRevocations((invalidation) => {
       for (const channel of this.#activeChannels.values()) {
-        if (channel.claims.credentialId !== credentialId) continue
+        const matches =
+          invalidation.kind === 'credential'
+            ? channel.claims.credentialId === invalidation.credentialId
+            : channel.claims.keyId === invalidation.keyId
+        if (!matches) continue
         channel.invalidate('revoked')
         this.#audit(
           'warn',
           'runtime_node_auth.revoked',
-          'RUNTIME_NODE_CREDENTIAL_REVOKED',
+          invalidation.kind === 'credential'
+            ? 'RUNTIME_NODE_CREDENTIAL_REVOKED'
+            : 'RUNTIME_NODE_VERIFICATION_KEY_RETIRED',
           channel.claims
         )
       }
@@ -150,9 +161,11 @@ export class RuntimeNodeChannelAuthenticator {
       claimsValue = await this.#identityValidator.verify(attemptResult.data)
     } catch (error) {
       this.#reject(
-        error instanceof RuntimeNodeIdentityValidationError && error.reason === 'proof'
-          ? 'RUNTIME_NODE_PROOF_INVALID'
-          : 'RUNTIME_NODE_CREDENTIAL_MALFORMED'
+        error instanceof RuntimeNodeIdentityValidationError
+          ? error.reason === 'proof'
+            ? 'RUNTIME_NODE_PROOF_INVALID'
+            : 'RUNTIME_NODE_CREDENTIAL_MALFORMED'
+          : 'RUNTIME_NODE_IDENTITY_UNAVAILABLE'
       )
     }
     const claimsResult = RuntimeNodeCredentialClaimsSchema.safeParse(claimsValue)
@@ -182,25 +195,51 @@ export class RuntimeNodeChannelAuthenticator {
     if (Date.parse(claims.expiresAt) < now - this.#clockSkewMs) {
       this.#reject('RUNTIME_NODE_CREDENTIAL_EXPIRED', claims)
     }
-    if (this.#usedCredentialIds.has(claims.credentialId)) {
-      this.#reject('RUNTIME_NODE_CREDENTIAL_REPLAYED', claims)
+    let revoked: boolean
+    try {
+      revoked = await this.#identityValidator.isRevoked(
+        claims.credentialId,
+        claims.revocationVersion
+      )
+    } catch {
+      this.#reject('RUNTIME_NODE_IDENTITY_UNAVAILABLE', claims)
     }
-    if (await this.#identityValidator.isRevoked(claims.credentialId, claims.revocationVersion)) {
+    if (revoked) {
       this.#reject('RUNTIME_NODE_CREDENTIAL_REVOKED', claims)
     }
-
     const existing = this.#activeChannels.get(claims.nodeId)
     if (existing !== undefined && claims.channelGeneration <= existing.claims.channelGeneration) {
       this.#reject('RUNTIME_NODE_CHANNEL_GENERATION_STALE', claims)
     }
 
+    let consumption: Awaited<ReturnType<RuntimeNodeIdentityValidationPort['consumeCredential']>>
+    try {
+      consumption = await this.#identityValidator.consumeCredential(
+        claims.credentialId,
+        claims.revocationVersion,
+        this.#now()
+      )
+    } catch {
+      this.#reject('RUNTIME_NODE_IDENTITY_UNAVAILABLE', claims)
+    }
+    if (consumption !== 'consumed') {
+      this.#reject(
+        consumption === 'replayed'
+          ? 'RUNTIME_NODE_CREDENTIAL_REPLAYED'
+          : consumption === 'revoked'
+            ? 'RUNTIME_NODE_CREDENTIAL_REVOKED'
+            : consumption === 'expired'
+              ? 'RUNTIME_NODE_CREDENTIAL_EXPIRED'
+              : 'RUNTIME_NODE_CREDENTIAL_UNKNOWN',
+        claims
+      )
+    }
     const channel = new RuntimeNodeChannel(claims, this.#identityValidator, {
       now: this.#now,
       clockSkewMs: this.#clockSkewMs,
     })
     existing?.invalidate('replaced')
     this.#activeChannels.set(claims.nodeId, channel)
-    this.#usedCredentialIds.add(claims.credentialId)
     this.#audit('info', 'runtime_node_auth.succeeded', 'RUNTIME_NODE_AUTHENTICATED', claims)
     return channel
   }

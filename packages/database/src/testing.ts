@@ -22,6 +22,7 @@ export interface IsolatedTestDatabase {
   readonly name: string
   dispose(): Promise<void>
   migrate(): Promise<void>
+  waitForBlockedTransaction(): Promise<void>
   withMigrationDatabase<Result>(
     operation: (database: ControlPlaneDatabase) => Promise<Result>
   ): Promise<Result>
@@ -77,6 +78,20 @@ export async function createIsolatedTestDatabase(
       application,
       name,
       dispose,
+      async waitForBlockedTransaction() {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          const rows = await administration`
+            select pid
+            from pg_stat_activity
+            where datname = ${name}
+              and wait_event_type = 'Lock'
+              and cardinality(pg_blocking_pids(pid)) > 0
+          `
+          if (rows.length > 0) return
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        throw new TestDatabaseError('EXPECTED_BLOCKED_POSTGRES_TRANSACTION')
+      },
       async migrate() {
         await migrateDatabase({ role: 'migration', url: migrationUrl })
         await grantApplicationAccess(migrationUrl, applicationRole)

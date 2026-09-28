@@ -32,10 +32,15 @@ import { managedCloudOperationalPolicy } from '@control-plane/config'
 import { createHash } from 'node:crypto'
 import type { GatewayMetrics } from './websocket-coordination.js'
 import type { RuntimeCommandDeliveryService } from './runtime-command-delivery.js'
+import type { RuntimeNodeCredentialFence } from './authentication.js'
 
 const MAX_INLINE_EVENT_BYTES = 16_384
 const RETENTION_MS = managedCloudOperationalPolicy.retention.executionEventsMs
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled', 'timed_out'])
+const INVALID_CREDENTIAL_FENCE: RuntimeNodeCredentialFence = {
+  credentialId: '',
+  revocationVersion: -1,
+}
 
 export interface RuntimeEventSourceChannel {
   readonly nodeId: string
@@ -217,7 +222,8 @@ export class RuntimeEventIngestionService {
 
   async ingestProgress(
     frameValue: unknown,
-    source: RuntimeEventSourceChannel
+    source: RuntimeEventSourceChannel,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayProgressEnvelopeSchema.parse(frameValue)
     let context = await this.#context(frame, source, false)
@@ -240,6 +246,7 @@ export class RuntimeEventIngestionService {
     const result = await this.#effects.applyProgress({
       commandId: frame.commandId,
       eventSequence: frame.eventSequence,
+      credentialFence: credentialFence ?? INVALID_CREDENTIAL_FENCE,
       ...frameHashes(frame),
       draft: this.#draft(
         context,
@@ -254,7 +261,8 @@ export class RuntimeEventIngestionService {
 
   async ingestResult(
     frameValue: unknown,
-    source: RuntimeEventSourceChannel
+    source: RuntimeEventSourceChannel,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayResultEnvelopeSchema.parse(frameValue)
     let context = await this.#context(frame, source, true)
@@ -275,12 +283,13 @@ export class RuntimeEventIngestionService {
     if (normalized.state !== expectedState[frame.status]) {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
-    return this.#applyTerminal(frame, context, normalized)
+    return this.#applyTerminal(frame, context, normalized, credentialFence)
   }
 
   async ingestError(
     frameValue: unknown,
-    source: RuntimeEventSourceChannel
+    source: RuntimeEventSourceChannel,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayErrorEnvelopeSchema.parse(frameValue)
     if (frame.commandId === undefined || frame.payloadHash === undefined) {
@@ -301,7 +310,7 @@ export class RuntimeEventIngestionService {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
     context = await this.#context(commandFrame, source, false, true)
-    return this.#applyTerminal(commandFrame, context, normalized)
+    return this.#applyTerminal(commandFrame, context, normalized, credentialFence)
   }
 
   async dispatchControl(
@@ -396,7 +405,8 @@ export class RuntimeEventIngestionService {
       | GatewayResultEnvelope
       | (GatewayErrorEnvelope & { commandId: string; payloadHash: string }),
     context: RuntimeEventContext,
-    normalized: NormalizedRuntimeTerminal
+    normalized: NormalizedRuntimeTerminal,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeEventEffectResult> {
     validateTerminal(normalized)
     // Reserved evidence fields come from the validated wire frame and the
@@ -431,6 +441,7 @@ export class RuntimeEventIngestionService {
     const result = await this.#effects.applyTerminal({
       commandId: frame.commandId,
       messageSequence: frame.sequence,
+      credentialFence: credentialFence ?? INVALID_CREDENTIAL_FENCE,
       ...frameHashes(frame),
       execution: context.execution,
       attempt: context.attempt,

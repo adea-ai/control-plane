@@ -91,7 +91,45 @@ describe('Runtime Gateway production message routing', () => {
     ])
   })
 
-  test('rejects inventory frames when durable channel authority is revoked', async () => {
+  test('forwards the authenticated credential fence to every inbound write service', async () => {
+    const fence = { credentialId: 'rgc_test_credential_0001', revocationVersion: 4 }
+    const fences = []
+    const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => true },
+      inventory: {
+        handle: async (_source, _frame, _authority, received) => fences.push(received),
+      },
+      delivery: {
+        acknowledge: async (_frame, received) => fences.push(received),
+        recordResult: async (_frame, _reference, received) => fences.push(received),
+        recordError: async (_frame, received) => fences.push(received),
+      },
+      events: {
+        ingestProgress: async (_frame, _source, received) => {
+          fences.push(received)
+        },
+        ingestResult: async (_frame, _source, received) => {
+          fences.push(received)
+          return { outcome: 'applied' }
+        },
+        ingestError: async (_frame, _source, received) => {
+          fences.push(received)
+          return { outcome: 'applied' }
+        },
+      },
+    })
+
+    await router.handle(source, golden.inventory, fence)
+    await router.handle(source, golden.ack, fence)
+    await router.handle(source, golden.progress, fence)
+    await router.handle(source, golden.result, fence)
+    await router.handle(source, golden.error, fence)
+
+    expect(fences).toHaveLength(7)
+    expect(fences.every((received) => received === fence)).toBe(true)
+  })
+
+  test('rejects every inbound frame family when durable channel authority is revoked', async () => {
     const calls = []
     const router = new RuntimeGatewayMessageRouter({
       channelAuthority: { isActive: async () => false },
@@ -109,7 +147,13 @@ describe('Runtime Gateway production message routing', () => {
     })
 
     await expect(router.handle(source, golden.inventory)).rejects.toThrow(
-      'RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED'
+      'RUNTIME_GATEWAY_CHANNEL_AUTHORIZATION_DENIED'
+    )
+    await expect(router.handle(source, golden.ack)).rejects.toThrow(
+      'RUNTIME_GATEWAY_CHANNEL_AUTHORIZATION_DENIED'
+    )
+    await expect(router.handle(source, golden.result)).rejects.toThrow(
+      'RUNTIME_GATEWAY_CHANNEL_AUTHORIZATION_DENIED'
     )
     expect(calls).toEqual([])
   })

@@ -20,6 +20,7 @@ const nodeId = 'rnr_01JABCDEF0123456789ABCDEFG'
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const runtimeA = 'nref_01JABCDEF0123456789ABCDEFG'
 const runtimeB = 'nref_01JBBCDEF0123456789ABCDEFG'
+const credentialFence = { credentialId: 'rgc_test_credential_0001', revocationVersion: 0 }
 
 describe('Runtime Gateway inventory ingestion', () => {
   test('rejects an overflowing delta before writes and permits a same-size replacement', async () => {
@@ -86,7 +87,13 @@ describe('Runtime Gateway inventory ingestion', () => {
           },
         },
       })
-      const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+      const pending = fixture.service.ingest(
+        inventory(1, [driver(runtimeA)]),
+        source(),
+        'online',
+        undefined,
+        credentialFence
+      )
       if (commitFails) await expect(pending).rejects.toThrow('COMMIT_FAILED')
       else expect((await pending).outcome).toBe('applied')
       expect(samplesBeforeCommit).toBe(0)
@@ -115,9 +122,13 @@ describe('Runtime Gateway inventory ingestion', () => {
     })
 
     await expect(
-      fixture.service.ingest(inventory(1, [driver(runtimeA)]), source(), 'online', {
-        isActive: async () => active,
-      })
+      fixture.service.ingest(
+        inventory(1, [driver(runtimeA)]),
+        source(),
+        'online',
+        { isActive: async () => active },
+        credentialFence
+      )
     ).rejects.toThrow('RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED')
     expect(transactions).toBe(0)
     expect(await persisted.checkpoints.get(nodeId)).toBeUndefined()
@@ -134,9 +145,17 @@ describe('Runtime Gateway inventory ingestion', () => {
       metrics: { increment: failMetric, setGauge: failMetric, observe: failMetric },
       unitOfWork: { run: async (_scope, operation) => operation(scoped) },
     })
-    expect((await fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())).outcome).toBe(
-      'applied'
-    )
+    expect(
+      (
+        await fixture.service.ingest(
+          inventory(1, [driver(runtimeA)]),
+          source(),
+          'online',
+          undefined,
+          credentialFence
+        )
+      ).outcome
+    ).toBe('applied')
     expect(attempts).toBe(2)
     expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
   })
@@ -184,9 +203,9 @@ describe('Runtime Gateway inventory ingestion', () => {
       },
     })
     const frame = inventory(1, [driver(runtimeA)])
-    await expect(fixture.service.ingest(frame, source())).rejects.toThrow(
-      'INVENTORY_NORMALIZATION_FAILED'
-    )
+    await expect(
+      fixture.service.ingest(frame, source(), 'online', undefined, credentialFence)
+    ).rejects.toThrow('INVENTORY_NORMALIZATION_FAILED')
     expect(frame.nodeId).toBe(nodeId)
     expect(transactions).toBe(0)
     expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
@@ -225,7 +244,13 @@ describe('Runtime Gateway inventory ingestion', () => {
         },
       },
     })
-    const pending = fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    const pending = fixture.service.ingest(
+      inventory(1, [driver(runtimeA)]),
+      source(),
+      'online',
+      undefined,
+      credentialFence
+    )
     await started
     expect(transactions).toBe(0)
     try {
@@ -257,13 +282,39 @@ describe('Runtime Gateway inventory ingestion', () => {
     })
     const frame = inventory(1, [driver(runtimeA)])
     await expect(
-      fixture.service.ingest(frame, { ...source(), workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' })
+      fixture.service.ingest(
+        frame,
+        { ...source(), workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+        'online',
+        undefined,
+        credentialFence
+      )
     ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
     expect(scopes).toEqual([])
-    expect(await fixture.service.ingest(frame, source())).toMatchObject({ outcome: 'applied' })
-    expect(scopes).toEqual([{ workspaceId, runtimeNodeRefId: nodeId, channel: source() }])
+    expect(
+      await fixture.service.ingest(frame, source(), 'online', undefined, credentialFence)
+    ).toMatchObject({ outcome: 'applied' })
+    expect(scopes).toEqual([
+      { workspaceId, runtimeNodeRefId: nodeId, channel: source(), credentialFence },
+    ])
     expect(await fixture.checkpoints.get(nodeId)).toBeUndefined()
     expect((await scoped.checkpoints.get(nodeId)).snapshotVersion).toBe(1)
+  })
+
+  test('fails closed before a durable transaction when the authenticated credential fence is absent', async () => {
+    let transactions = 0
+    const fixture = createFixture({
+      unitOfWork: {
+        async run() {
+          transactions++
+          throw new Error('UNEXPECTED_TRANSACTION')
+        },
+      },
+    })
+    await expect(
+      fixture.service.ingest(inventory(1, [driver(runtimeA)]), source())
+    ).rejects.toThrow('INVENTORY_CREDENTIAL_FENCE_REQUIRED')
+    expect(transactions).toBe(0)
   })
   test('direct disappearance publication failure is not recovered by inventory replay', async () => {
     const fixture = createFixture()

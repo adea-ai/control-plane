@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
 import { z } from 'zod'
+import type { CredentialRevocationFence } from './runtime-credential-fence.js'
 
 const Timestamp = z.iso.datetime()
 const Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -203,7 +204,28 @@ export interface ContextCommandRepository {
   getByOperation(scope: ContextCommandScope): Promise<ContextCommandRecord | undefined>
   /** Exclusive command-ID cursor; includes expired grants so the dispatcher can settle them. */
   listPending(query: ContextCommandPendingQuery): Promise<ContextCommandRecord[]>
-  compareAndSet(expectedVersion: number, record: ContextCommandRecord): Promise<boolean>
+  /**
+   * Inbound ACK/result/error transitions supply the authenticated credential
+   * fence. Dispatch and server-owned expiry transitions may omit it.
+   */
+  compareAndSet(
+    expectedVersion: number,
+    record: ContextCommandRecord,
+    credentialFence?: CredentialRevocationFence
+  ): Promise<boolean>
+  /**
+   * Persist an external result while the durable PostgreSQL credential and
+   * command row locks are held, then commit the terminal command update.
+   * PostgreSQL implementations fail closed before invoking beforePersist when
+   * the fence is missing or invalid. The in-memory implementation is a test
+   * double and does not provide cross-process revocation guarantees.
+   */
+  compareAndSetWithCredentialFence?(
+    expectedVersion: number,
+    commandId: string,
+    credentialFence: CredentialRevocationFence | undefined,
+    prepare: (current: ContextCommandRecord) => Promise<ContextCommandRecord>
+  ): Promise<boolean>
 }
 
 export function contextCommandSemanticHash(input: unknown): string {
@@ -335,6 +357,22 @@ export class InMemoryContextCommandRepository implements ContextCommandRepositor
       !contextCommandTransitionAllowed(current, record)
     )
       return false
+    this.#records.set(record.commandId, structuredClone(record))
+    return true
+  }
+
+  async compareAndSetWithCredentialFence(
+    expectedVersion: number,
+    commandId: string,
+    _credentialFence: CredentialRevocationFence | undefined,
+    prepare: (current: ContextCommandRecord) => Promise<ContextCommandRecord>
+  ): Promise<boolean> {
+    const current = this.#records.get(commandId)
+    if (!current || current.version !== expectedVersion) return false
+    const record = ContextCommandRecordSchema.parse(await prepare(structuredClone(current)))
+    if (!contextCommandTransitionAllowed(current, record)) return false
+    const latest = this.#records.get(record.commandId)
+    if (!latest || latest.version !== expectedVersion) return false
     this.#records.set(record.commandId, structuredClone(record))
     return true
   }

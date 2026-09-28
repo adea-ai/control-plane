@@ -15,6 +15,7 @@ import {
 import type { GatewayProtocolVersion } from '@control-plane/runtime-gateway-protocol'
 import type { GatewayMetrics } from './websocket-coordination.js'
 import type { ActiveRuntimeNodeChannelRecord } from './websocket-coordination.js'
+import type { RuntimeNodeCredentialFence } from './authentication.js'
 
 export interface RuntimeCommandSender {
   send(envelope: GatewayCommandEnvelope): Promise<void>
@@ -185,7 +186,10 @@ export class RuntimeCommandDeliveryService {
     return { record: next, sent: true }
   }
 
-  async acknowledge(acknowledgementValue: unknown): Promise<{
+  async acknowledge(
+    acknowledgementValue: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
+  ): Promise<{
     readonly record: RuntimeCommandRecord
     readonly duplicate: boolean
   }> {
@@ -210,15 +214,19 @@ export class RuntimeCommandDeliveryService {
     }
     const now = this.#now()
     const status = acknowledgementStatus(acknowledgement.disposition)
-    const next = await this.#save(current, {
-      ...current,
-      status,
-      version: current.version + 1,
-      acknowledgementReference: reference,
-      acknowledgementDisposition: acknowledgement.disposition,
-      acknowledgedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    })
+    const next = await this.#save(
+      current,
+      {
+        ...current,
+        status,
+        version: current.version + 1,
+        acknowledgementReference: reference,
+        acknowledgementDisposition: acknowledgement.disposition,
+        acknowledgedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+      credentialFence
+    )
     if (current.lastDispatchedAt !== undefined) {
       this.#metrics.observe(
         'runtime_gateway.command_ack_latency_ms',
@@ -230,7 +238,8 @@ export class RuntimeCommandDeliveryService {
 
   async recordResult(
     resultValue: unknown,
-    resultReferenceValue?: unknown
+    resultReferenceValue?: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<{ readonly record: RuntimeCommandRecord; readonly duplicate: boolean }> {
     const result = GatewayResultEnvelopeSchema.parse(resultValue)
     const resultReference =
@@ -252,20 +261,25 @@ export class RuntimeCommandDeliveryService {
       fail('RUNTIME_COMMAND_RESULT_CONFLICT')
     }
     const now = this.#now().toISOString()
-    const next = await this.#save(current, {
-      ...current,
-      status: result.status,
-      version: current.version + 1,
-      ...(resultReference === undefined ? {} : { resultReference }),
-      resultStatus: result.status,
-      resultRecordedAt: now,
-      updatedAt: now,
-    })
+    const next = await this.#save(
+      current,
+      {
+        ...current,
+        status: result.status,
+        version: current.version + 1,
+        ...(resultReference === undefined ? {} : { resultReference }),
+        resultStatus: result.status,
+        resultRecordedAt: now,
+        updatedAt: now,
+      },
+      credentialFence
+    )
     return { record: next, duplicate: false }
   }
 
   async recordError(
-    errorValue: unknown
+    errorValue: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<{ readonly record: RuntimeCommandRecord; readonly duplicate: boolean }> {
     const error = GatewayErrorEnvelopeSchema.parse(errorValue)
     if (error.commandId === undefined || error.payloadHash === undefined) {
@@ -282,14 +296,18 @@ export class RuntimeCommandDeliveryService {
     }
     if (isTerminal(current.status)) fail('RUNTIME_COMMAND_RESULT_CONFLICT')
     const now = this.#now().toISOString()
-    const next = await this.#save(current, {
-      ...current,
-      status: 'failed',
-      version: current.version + 1,
-      resultStatus: 'failed',
-      resultRecordedAt: now,
-      updatedAt: now,
-    })
+    const next = await this.#save(
+      current,
+      {
+        ...current,
+        status: 'failed',
+        version: current.version + 1,
+        resultStatus: 'failed',
+        resultRecordedAt: now,
+        updatedAt: now,
+      },
+      credentialFence
+    )
     return { record: next, duplicate: false }
   }
 
@@ -331,10 +349,11 @@ export class RuntimeCommandDeliveryService {
 
   async #save(
     current: RuntimeCommandRecord,
-    nextValue: RuntimeCommandRecord
+    nextValue: RuntimeCommandRecord,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<RuntimeCommandRecord> {
     const next = RuntimeCommandRecordSchema.parse(nextValue)
-    if (!(await this.#repository.compareAndSet(current.version, next))) {
+    if (!(await this.#repository.compareAndSet(current.version, next, credentialFence))) {
       fail('RUNTIME_COMMAND_CONCURRENT_UPDATE')
     }
     return next

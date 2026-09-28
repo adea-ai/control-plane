@@ -1,6 +1,7 @@
 import {
   ExecutionLifecycleError,
   ExecutionLifecycleService,
+  type CredentialRevocationFence,
   type Execution,
   type ExecutionAttempt,
 } from '@control-plane/domain'
@@ -16,6 +17,7 @@ export type RuntimeEventEffectOutcome =
 
 export interface RuntimeProgressEffect {
   readonly commandId: string
+  readonly credentialFence: CredentialRevocationFence
   readonly eventSequence: number
   readonly frameHash: string
   /**
@@ -29,6 +31,7 @@ export interface RuntimeProgressEffect {
 
 export interface RuntimeTerminalEffect {
   readonly commandId: string
+  readonly credentialFence: CredentialRevocationFence
   readonly messageSequence: number
   readonly frameHash: string
   /** See RuntimeProgressEffect.legacyFrameHash. */

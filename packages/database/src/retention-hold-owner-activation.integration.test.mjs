@@ -22,6 +22,7 @@ import { createIsolatedTestDatabase } from './testing.ts'
 import { executionCancellations } from './schema/execution-cancellations.ts'
 import { executionAttempts } from './schema/executions.ts'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.ts'
+import { runtimeCommands } from './schema/runtime-commands.ts'
 import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
@@ -390,25 +391,28 @@ describe.skipIf(!enabled)('PostgreSQL owner-scoped retention-hold activation', (
         .outcome
     ).toBe('created')
     const runtimeSettledAt = '2026-08-24T23:05:00.000Z'
-    expect(
-      await runtimeRepository.compareAndSet(1, {
-        ...base,
-        commandId: runtimeCommandId,
+    // Seed an already-terminal legacy row directly. RuntimeNode-originated
+    // terminal writes must go through the repository fence in production.
+    const terminalRows = await database
+      .update(runtimeCommands)
+      .set({
         status: 'succeeded',
         version: 2,
         deliveryAttempts: 1,
         lastChannelGeneration: 1,
         lastSequence: 1,
-        firstDispatchedAt: runtimeSettledAt,
-        lastDispatchedAt: runtimeSettledAt,
+        firstDispatchedAt: new Date(runtimeSettledAt),
+        lastDispatchedAt: new Date(runtimeSettledAt),
         acknowledgementReference: 'ack-runtime-retention-owner-0001',
         acknowledgementDisposition: 'accepted',
-        acknowledgedAt: runtimeSettledAt,
+        acknowledgedAt: new Date(runtimeSettledAt),
         resultStatus: 'succeeded',
-        resultRecordedAt: runtimeSettledAt,
-        updatedAt: runtimeSettledAt,
+        resultRecordedAt: new Date(runtimeSettledAt),
+        updatedAt: new Date(runtimeSettledAt),
       })
-    ).toBe(true)
+      .where(eq(runtimeCommands.commandId, runtimeCommandId))
+      .returning({ commandId: runtimeCommands.commandId })
+    expect(terminalRows).toHaveLength(1)
     await database.execute(sql`
       insert into runtime_event_receipts (command_id, message_kind, message_sequence, frame_hash, outcome, recorded_at)
       values (${runtimeCommandId}, 'progress', 1, ${`s2:${'a'.repeat(64)}`}, 'applied', ${runtimeSettledAt}::timestamptz)

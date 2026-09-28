@@ -169,6 +169,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/retention-hold-owner-activation.integration.test.mjs',
     'packages/database/src/retention-hold-repository.integration.test.mjs',
     'packages/database/src/retention-reference-windows.integration.test.mjs',
+    'packages/database/src/runtime-node-identity-repository.integration.test.mjs',
     'packages/database/src/usage-store.integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',

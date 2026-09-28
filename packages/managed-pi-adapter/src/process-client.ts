@@ -37,6 +37,7 @@ const MAX_OUTPUT_BYTES = 1_000_000
 const MAX_RPC_FRAME_BYTES = 1_048_576
 const MAX_VERSION_OUTPUT_BYTES = 16_384
 const CANCEL_STATS_WAIT_MS = 500
+const VERSION_PROBE_TIMEOUT_MS = 15_000
 
 export interface ManagedPiProcessInvocation {
   readonly systemPrompt: string
@@ -117,7 +118,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       const runtimeVersion = await inspectVersion(
         this.#executablePath,
         this.#environment,
-        this.#rpcTimeoutMs
+        VERSION_PROBE_TIMEOUT_MS
       )
       return ManagedPiInspectionSchema.parse({
         driverVersion: DRIVER_VERSION,

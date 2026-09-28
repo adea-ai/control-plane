@@ -9,9 +9,11 @@ import {
   type RuntimeCommandRecord,
   type RuntimeCommandRepository,
   type RetentionHoldPolicy,
+  type CredentialRevocationFence,
 } from '@control-plane/domain'
 import { and, asc, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { assertRuntimeCredentialFence } from './runtime-credential-fence.js'
 import { executionAttempts, executions } from './schema/executions.js'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
@@ -233,35 +235,51 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
 
   async compareAndSet(
     expectedVersion: number,
-    recordValue: RuntimeCommandRecord
+    recordValue: RuntimeCommandRecord,
+    credentialFence?: CredentialRevocationFence
   ): Promise<boolean> {
     const record = RuntimeCommandRecordSchema.parse(recordValue)
-    const current = await this.get(record.commandId)
-    if (
-      current === undefined ||
-      current.version !== expectedVersion ||
-      !runtimeCommandRecordsShareIdentity(current, record)
-    ) {
-      return false
-    }
-    const updated = await this.database
-      .update(runtimeCommands)
-      .set(toRuntimeCommandRow(record))
-      .where(
-        and(
-          eq(runtimeCommands.commandId, record.commandId),
-          eq(runtimeCommands.version, expectedVersion),
-          eq(runtimeCommands.payloadHash, record.payloadHash),
-          eq(runtimeCommands.executionId, record.executionId),
-          eq(runtimeCommands.attemptId, record.attemptId),
-          eq(runtimeCommands.runtimeNodeRefId, record.nodeId),
-          eq(runtimeCommands.runtimeConnectionId, record.runtimeConnectionId),
-          eq(runtimeCommands.workspaceId, record.workspaceId),
-          eq(runtimeCommands.idempotencyKey, record.idempotencyKey)
-        )
+    return this.database.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select()
+        .from(runtimeCommands)
+        .where(eq(runtimeCommands.commandId, record.commandId))
+        .limit(1)
+        .for('update')
+      const current = row === undefined ? undefined : fromRuntimeCommandRow(row)
+      if (
+        current === undefined ||
+        current.version !== expectedVersion ||
+        !runtimeCommandRecordsShareIdentity(current, record)
       )
-      .returning({ commandId: runtimeCommands.commandId })
-    return updated.length === 1
+        return false
+
+      if (requiresCredentialFence(current, record) || credentialFence !== undefined) {
+        await assertRuntimeCredentialFence(transaction, credentialFence, {
+          nodeId: current.nodeId,
+          workspaceId: current.workspaceId,
+        })
+      }
+
+      const updated = await transaction
+        .update(runtimeCommands)
+        .set(toRuntimeCommandRow(record))
+        .where(
+          and(
+            eq(runtimeCommands.commandId, record.commandId),
+            eq(runtimeCommands.version, expectedVersion),
+            eq(runtimeCommands.payloadHash, record.payloadHash),
+            eq(runtimeCommands.executionId, record.executionId),
+            eq(runtimeCommands.attemptId, record.attemptId),
+            eq(runtimeCommands.runtimeNodeRefId, record.nodeId),
+            eq(runtimeCommands.runtimeConnectionId, record.runtimeConnectionId),
+            eq(runtimeCommands.workspaceId, record.workspaceId),
+            eq(runtimeCommands.idempotencyKey, record.idempotencyKey)
+          )
+        )
+        .returning({ commandId: runtimeCommands.commandId })
+      return updated.length === 1
+    })
   }
 
   async listDispatchable(
@@ -286,6 +304,22 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
       .limit(limit)
     return rows.map(fromRuntimeCommandRow)
   }
+}
+
+function requiresCredentialFence(
+  current: RuntimeCommandRecord,
+  next: RuntimeCommandRecord
+): boolean {
+  return (
+    next.status === 'acknowledged' ||
+    next.status === 'succeeded' ||
+    next.status === 'failed' ||
+    next.status === 'cancelled' ||
+    next.acknowledgementReference !== current.acknowledgementReference ||
+    next.resultRecordedAt !== current.resultRecordedAt ||
+    next.resultStatus !== current.resultStatus ||
+    next.resultReference !== current.resultReference
+  )
 }
 
 type RuntimeCommandRow = typeof runtimeCommands.$inferSelect

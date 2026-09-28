@@ -5,6 +5,7 @@ import {
   type ContextCommandPendingQuery,
   contextCommandOperationKey,
   contextCommandTransitionAllowed,
+  type CredentialRevocationFence,
   type ContextCommandCreateResult,
   type ContextCommandRecord,
   type ContextCommandRepository,
@@ -13,6 +14,7 @@ import {
 import { and, asc, eq, gt, inArray } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { contextCommands } from './schema/context-commands.js'
+import { assertRuntimeCredentialFence } from './runtime-credential-fence.js'
 
 export class PostgresContextCommandRepository implements ContextCommandRepository {
   constructor(readonly database: ControlPlaneDatabase) {}
@@ -75,28 +77,100 @@ export class PostgresContextCommandRepository implements ContextCommandRepositor
     return row ? fromRow(row) : undefined
   }
 
-  async compareAndSet(expectedVersion: number, input: ContextCommandRecord): Promise<boolean> {
-    const record = ContextCommandRecordSchema.parse(input)
-    const current = await this.get(record.scope.workspaceId, record.commandId)
-    if (
-      !current ||
-      current.version !== expectedVersion ||
-      !contextCommandTransitionAllowed(current, record)
-    )
-      return false
-    const updated = await this.database
-      .update(contextCommands)
-      .set(toRow(record))
-      .where(
-        and(
-          eq(contextCommands.commandId, record.commandId),
-          eq(contextCommands.workspaceId, record.scope.workspaceId),
-          eq(contextCommands.operationKey, contextCommandOperationKey(record.scope)),
-          eq(contextCommands.version, expectedVersion)
+  async compareAndSet(
+    expectedVersion: number,
+    input: ContextCommandRecord,
+    credentialFence?: CredentialRevocationFence
+  ): Promise<boolean> {
+    return this.#compareAndSet(expectedVersion, input, credentialFence)
+  }
+
+  async compareAndSetWithCredentialFence(
+    expectedVersion: number,
+    commandId: string,
+    credentialFence: CredentialRevocationFence | undefined,
+    prepare: (current: ContextCommandRecord) => Promise<ContextCommandRecord>
+  ): Promise<boolean> {
+    return this.database.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select()
+        .from(contextCommands)
+        .where(eq(contextCommands.commandId, commandId))
+        .limit(1)
+        .for('update')
+      const current = row ? fromRow(row) : undefined
+      if (!current || current.version !== expectedVersion) return false
+
+      await assertRuntimeCredentialFence(transaction, credentialFence, {
+        nodeId: current.nodeId,
+        workspaceId: current.scope.workspaceId,
+      })
+      const record = ContextCommandRecordSchema.parse(await prepare(structuredClone(current)))
+      if (!contextCommandTransitionAllowed(current, record)) return false
+
+      const updated = await transaction
+        .update(contextCommands)
+        .set(toRow(record))
+        .where(
+          and(
+            eq(contextCommands.commandId, record.commandId),
+            eq(contextCommands.workspaceId, current.scope.workspaceId),
+            eq(contextCommands.operationKey, contextCommandOperationKey(current.scope)),
+            eq(contextCommands.version, expectedVersion)
+          )
         )
+        .returning({ commandId: contextCommands.commandId })
+      return updated.length === 1
+    })
+  }
+
+  async #compareAndSet(
+    expectedVersion: number,
+    input: ContextCommandRecord,
+    credentialFence: CredentialRevocationFence | undefined
+  ): Promise<boolean> {
+    const record = ContextCommandRecordSchema.parse(input)
+    return this.database.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select()
+        .from(contextCommands)
+        .where(
+          and(
+            eq(contextCommands.commandId, record.commandId),
+            eq(contextCommands.workspaceId, record.scope.workspaceId)
+          )
+        )
+        .limit(1)
+        .for('update')
+      const current = row ? fromRow(row) : undefined
+      if (
+        !current ||
+        current.version !== expectedVersion ||
+        !contextCommandTransitionAllowed(current, record)
       )
-      .returning({ commandId: contextCommands.commandId })
-    return updated.length === 1
+        return false
+
+      if (requiresCredentialFence(current, record) || credentialFence !== undefined) {
+        await assertRuntimeCredentialFence(transaction, credentialFence, {
+          nodeId: current.nodeId,
+          workspaceId: current.scope.workspaceId,
+        })
+      }
+
+      const updated = await transaction
+        .update(contextCommands)
+        .set(toRow(record))
+        .where(
+          and(
+            eq(contextCommands.commandId, record.commandId),
+            eq(contextCommands.workspaceId, record.scope.workspaceId),
+            eq(contextCommands.operationKey, contextCommandOperationKey(record.scope)),
+            eq(contextCommands.version, expectedVersion)
+          )
+        )
+        .returning({ commandId: contextCommands.commandId })
+      return updated.length === 1
+    })
   }
 
   async listPending(input: ContextCommandPendingQuery): Promise<ContextCommandRecord[]> {
@@ -116,6 +190,17 @@ export class PostgresContextCommandRepository implements ContextCommandRepositor
       .limit(query.limit)
     return rows.map(fromRow)
   }
+}
+
+function requiresCredentialFence(
+  current: ContextCommandRecord,
+  next: ContextCommandRecord
+): boolean {
+  return (
+    next.status === 'acknowledged' ||
+    next.status === 'succeeded' ||
+    next.completionDigest !== current.completionDigest
+  )
 }
 
 function toRow(record: ContextCommandRecord): typeof contextCommands.$inferInsert {

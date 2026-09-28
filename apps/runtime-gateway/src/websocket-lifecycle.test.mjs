@@ -15,6 +15,44 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherNodeId = 'rnr_01JBBCDEF0123456789ABCDEFG'
 
 describe('Runtime Gateway WebSocket lifecycle', () => {
+  test('passes authenticated credential fences to durable Hello claim and heartbeat', async () => {
+    const base = new InMemoryRuntimeNodeCoordination()
+    const fenceCalls = []
+    const coordination = {
+      claim: async (record, credentialFence) => {
+        fenceCalls.push(['claim', credentialFence])
+        return base.claim(record, credentialFence)
+      },
+      heartbeat: async (record, credentialFence) => {
+        fenceCalls.push(['heartbeat', credentialFence])
+        return base.heartbeat(record, credentialFence)
+      },
+      lookup: base.lookup.bind(base),
+      release: base.release.bind(base),
+      subscribeReplacements: base.subscribeReplacements.bind(base),
+    }
+    const fixture = setup('credential-fence-forwarding', coordination)
+    const authenticated = channel(1)
+    const expectedFence = {
+      credentialId: authenticated.claims.credentialId,
+      revocationVersion: authenticated.claims.revocationVersion,
+    }
+    fixture.gateway.open(connection('credential-fence-channel', authenticated, new FakeSocket()))
+    try {
+      await fixture.gateway.receive('credential-fence-channel', JSON.stringify(hello(1)))
+      await fixture.gateway.receive(
+        'credential-fence-channel',
+        JSON.stringify({ ...golden.heartbeat, sentAt: '2026-08-25T12:00:02.000Z' })
+      )
+      expect(fenceCalls).toEqual([
+        ['claim', expectedFence],
+        ['heartbeat', expectedFence],
+      ])
+    } finally {
+      await fixture.gateway.close()
+    }
+  })
+
   test('checks local authenticated ownership rather than coordinated metadata alone', async () => {
     const fixture = setup('authority-check')
     const authenticated = channel(1)
@@ -67,6 +105,7 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
             return true
           },
           subscribeRevocations: () => () => undefined,
+          consumeCredential: async () => 'consumed',
           verify: async () => undefined,
         },
         { now: () => new Date('2026-08-25T12:00:01.000Z') }
@@ -580,6 +619,7 @@ function channel(channelGeneration, id = nodeId, now = () => new Date('2026-08-2
     },
     {
       isRevoked: async () => false,
+      consumeCredential: async () => 'consumed',
       subscribeRevocations: () => () => undefined,
       verify: async () => undefined,
     },

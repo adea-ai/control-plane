@@ -1,6 +1,7 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { z } from 'zod'
+import type { CredentialRevocationFence } from './runtime-credential-fence.js'
 
 const TimestampSchema = z.iso.datetime()
 const PayloadHashSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -209,7 +210,15 @@ export interface RuntimeCommandCreateResult {
 export interface RuntimeCommandRepository {
   create(record: RuntimeCommandRecord): Promise<RuntimeCommandCreateResult>
   get(commandId: string): Promise<RuntimeCommandRecord | undefined>
-  compareAndSet(expectedVersion: number, record: RuntimeCommandRecord): Promise<boolean>
+  /**
+   * Inbound ACK/result/error transitions supply the authenticated credential
+   * fence. Dispatch and server-owned settlement transitions may omit it.
+   */
+  compareAndSet(
+    expectedVersion: number,
+    record: RuntimeCommandRecord,
+    credentialFence?: CredentialRevocationFence
+  ): Promise<boolean>
   listDispatchable(nodeId: string, at: string, limit: number): Promise<RuntimeCommandRecord[]>
 }
 

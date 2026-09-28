@@ -10,7 +10,7 @@ import {
   type GatewayHelloEnvelope,
   type GatewayProtocolVersion,
 } from '@control-plane/runtime-gateway-protocol'
-import type { RuntimeNodeChannel } from './authentication.js'
+import type { RuntimeNodeChannel, RuntimeNodeCredentialFence } from './authentication.js'
 import type { RuntimeChannelSequenceRepository } from '@control-plane/runtime-sdk'
 import {
   type ActiveRuntimeNodeChannelRecord,
@@ -44,7 +44,11 @@ export interface RuntimeGatewayWebSocketLimits {
 }
 
 export interface RuntimeGatewayMessageHandler {
-  handle(record: ActiveRuntimeNodeChannelRecord, envelope: GatewayEnvelope): Promise<void>
+  handle(
+    record: ActiveRuntimeNodeChannelRecord,
+    envelope: GatewayEnvelope,
+    credentialFence?: RuntimeNodeCredentialFence
+  ): Promise<void>
 }
 
 export interface RuntimeGatewayReconnectHandler {
@@ -411,7 +415,10 @@ export class RuntimeGatewayWebSocketLifecycle {
       connectedAt: observedAt,
       lastHeartbeatAt: observedAt,
     }
-    const claim = await this.#coordination.claim(record)
+    const claim = await this.#coordination.claim(record, {
+      credentialId: claims.credentialId,
+      revocationVersion: claims.revocationVersion,
+    })
     if (!claim.accepted) {
       await this.#disconnect(connection, 4001, 'stale_channel_generation')
       return
@@ -465,7 +472,11 @@ export class RuntimeGatewayWebSocketLifecycle {
       await this.#disconnect(connection, 1003, 'unsupported_frame')
       return
     }
-    await this.#messages.handle(connection.record, envelope)
+    const { credentialId, revocationVersion } = connection.authenticatedChannel.claims
+    await this.#messages.handle(connection.record, envelope, {
+      credentialId,
+      revocationVersion,
+    })
   }
 
   async #heartbeat(connection: LocalConnection, sentAt: string): Promise<void> {
@@ -473,7 +484,8 @@ export class RuntimeGatewayWebSocketLifecycle {
     if (record === undefined) return
     const now = this.#now()
     const next = { ...record, lastHeartbeatAt: now.toISOString() }
-    if (!(await this.#coordination.heartbeat(next))) {
+    const { credentialId, revocationVersion } = connection.authenticatedChannel.claims
+    if (!(await this.#coordination.heartbeat(next, { credentialId, revocationVersion }))) {
       await this.#disconnect(connection, 4001, 'channel_ownership_lost', false)
       return
     }

@@ -7,6 +7,7 @@ import {
   ReferenceRuntimeNode,
   RuntimeNodeAuthenticationAttemptSchema,
   RuntimeNodeCredentialClaimsSchema,
+  runtimeNodeWebSocketChallenge,
   inventoryFixtures,
   negotiateGatewayProtocolVersion,
   runGatewayProtocolConformance,
@@ -23,6 +24,13 @@ const ids = {
 }
 
 describe('Runtime Gateway protocol', () => {
+  test('binds RuntimeNode proof to a canonical URL-safe WebSocket upgrade challenge', () => {
+    expect(runtimeNodeWebSocketChallenge('dGhlIHNhbXBsZSBub25jZQ==')).toBe('dGhlIHNhbXBsZSBub25jZQ')
+    expect(() => runtimeNodeWebSocketChallenge('not-a-websocket-key')).toThrow(
+      'RUNTIME_NODE_WEBSOCKET_KEY_INVALID'
+    )
+  })
+
   test('validates every golden envelope and rejects provider-native or privileged local payloads', async () => {
     const { golden, malformed } = await import('../fixtures/index.mjs')
     const node = new ReferenceRuntimeNode()
