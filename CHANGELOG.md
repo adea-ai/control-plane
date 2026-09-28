@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.0...workspace-v1.59.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **runtime-gateway:** preserve public identity port compatibility ([#748](https://github.com/adea-ai/control-plane/issues/748)) ([d94d6af](https://github.com/adea-ai/control-plane/commit/d94d6afcdb970fd8ee9fe2aa135a14649a5ec70b))
+
 ## [1.59.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.58.4...workspace-v1.59.0) (2026-09-28)
 
 

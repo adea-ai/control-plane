@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.1](https://github.com/adea-ai/control-plane/compare/database-v1.35.0...database-v1.35.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **runtime-gateway:** preserve public identity port compatibility ([#748](https://github.com/adea-ai/control-plane/issues/748)) ([d94d6af](https://github.com/adea-ai/control-plane/commit/d94d6afcdb970fd8ee9fe2aa135a14649a5ec70b))
+
 ## [1.35.0](https://github.com/adea-ai/control-plane/compare/database-v1.34.1...database-v1.35.0) (2026-09-28)
 
 
