@@ -22,7 +22,10 @@ import { contextPackages } from './schema/context-packages.ts'
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const dayMs = 24 * 60 * 60 * 1000
 const retainMs = 90 * dayMs
-const observedAt = new Date('2026-08-24T12:00:00.000Z')
+// Keep the simulated retention instant valid for physical apply even as the
+// test suite moves forward in time; retention-apply deliberately rejects a
+// future --now value.
+const observedAt = new Date(Date.now() - retainMs - dayMs)
 const projectScope = (package_) => ({
   kind: 'project',
   workspaceId: package_.projectState.workspaceId,
@@ -91,7 +94,12 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
       }
       const policyDocument = (grants, database = isolated.name) => ({
         schemaVersion: 1,
-        target: { backend: 'postgres', database, host },
+        target: {
+          backend: 'postgres',
+          database,
+          host,
+          port: baseUrl.port === '' ? 5432 : Number(baseUrl.port),
+        },
         policy: {
           'context-packages': {
             owner: 'workspace-owner',
@@ -244,9 +252,9 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
       })
       const releasedHold = await holdRepository.get(holdId)
       expect(Date.parse(releasedHold.release.releasedAt)).toBeGreaterThanOrEqual(
-        observedAt.getTime()
+        expiredAt.getTime()
       )
-      expect(Date.parse(releasedHold.release.releasedAt)).toBeLessThanOrEqual(expiredAt.getTime())
+      expect(Date.parse(releasedHold.release.releasedAt)).toBeLessThanOrEqual(Date.now())
       const replayed = await runAdmin(releaseRequest)
       expect(replayed.status).toBe(0)
       expect(JSON.parse(replayed.stdout)).toEqual({
