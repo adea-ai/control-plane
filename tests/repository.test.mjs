@@ -636,21 +636,37 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /parallel/i)
 })
 
-test('requires a dedicated Neon administration credential for remote isolated tests', async () => {
-  const workflow = await readFile(
+test('isolates credentialed Neon validation from pull-request source', async () => {
+  const neonWorkflow = await readFile(
     new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
     'utf8'
   )
+  const pullRequestWorkflow = await readFile(
+    new URL('../.github/workflows/postgres-pull-request.yml', import.meta.url),
+    'utf8'
+  )
+  const validationWorkflow = await readFile(
+    new URL('../.github/workflows/validation.yml', import.meta.url),
+    'utf8'
+  )
+  const validationJob = validationWorkflow.split('  validation:\n')[1]?.split('\n  # CodeQL')[0]
 
-  assert.match(workflow, /NEON_CI_ADMIN_PASSWORD/)
-  assert.match(workflow, /DATABASE_ADMIN_PASSWORD/)
-  assert.match(workflow, /control_plane_admin/)
-  assert.match(workflow, /DATABASE_ADMIN_URL=\$\{adminUrl\}/)
-  const verify = workflow
-    .split('      - name: Verify migrations and transactions')[1]
-    ?.split('  delete_neon_branch:')[0]
-  assert.ok(verify)
-  assert.doesNotMatch(verify, /DATABASE_ADMIN_URL:/)
+  assert.equal(
+    neonWorkflow.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd(),
+    '  push:\n    branches:\n      - main'
+  )
+  assert.match(neonWorkflow, /NEON_CI_ADMIN_PASSWORD/)
+  assert.match(neonWorkflow, /DATABASE_ADMIN_PASSWORD/)
+  assert.match(neonWorkflow, /control_plane_admin/)
+  assert.match(neonWorkflow, /"DATABASE_ADMIN_URL=" \+ adminUrl/)
+  assert.match(neonWorkflow, /preview\/main-/)
+  assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
+  assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
+  assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
+  assert.match(pullRequestWorkflow, /bun run test:integration/)
+  assert.ok(validationJob)
+  assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
+  assert.doesNotMatch(validationJob, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
 })
 
 test('scaffolds every application with an executable placeholder target', async () => {

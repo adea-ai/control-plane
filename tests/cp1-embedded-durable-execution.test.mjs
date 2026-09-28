@@ -728,8 +728,9 @@ describe('CP1 persistence-profile conformance', () => {
   // ports the hosted compositions use, over a REAL Postgres baseline (direct
   // ports path). The hosted HTTP/Restate ingress itself is exercised by the
   // hosted composition suites. Skipped locally unless
-  // RUN_M10_POSTGRES_CONFORMANCE=true; the Migrate Neon Branch CI lane runs it
-  // against the ephemeral preview Postgres.
+  // RUN_M10_POSTGRES_CONFORMANCE=true. Pull requests run it against local
+  // Compose PostgreSQL; trusted-main CI repeats it against an ephemeral Neon
+  // preview when the required Neon inputs are configured.
   const conformanceMatrix = postgresConfigured ? test : test.skip
   conformanceMatrix(
     'disposes a partially seeded PostgreSQL world when setup fails',
@@ -755,7 +756,7 @@ describe('CP1 persistence-profile conformance', () => {
   )
 
   conformanceMatrix(
-    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in the Migrate Neon Branch lane)',
+    'matches the cloud Postgres baseline through the profile conformance matrix (direct ports; runs in local PR and trusted-main Neon lanes)',
     async () =>
       withConformanceResources(async (own) => {
         const credentials = {

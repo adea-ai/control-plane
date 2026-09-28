@@ -1090,7 +1090,7 @@
         {
           "kind": "test",
           "path": "tests/cp1-embedded-durable-execution.test.mjs",
-          "scope": "Profile conformance matrix (cloud, hosted-server, local, hosted-simple) runs the same acceptance/workflow contract cases; Postgres legs execute in the Migrate Neon Branch CI lane."
+          "scope": "Profile conformance matrix (cloud, hosted-server, local, hosted-simple) runs the same acceptance/workflow contract cases; pull requests run Postgres legs against local Compose PostgreSQL without repository secrets, and trusted-main CI repeats them against an ephemeral Neon preview when required Neon inputs are configured."
         }
       ]
     },
@@ -1665,7 +1665,7 @@
         {
           "kind": "test",
           "path": "tests/cp1-embedded-durable-execution.test.mjs",
-          "scope": "'completes an accepted execution through the embedded queue with no Restate'; 'SQLite profiles run the workflow contract cases identically'; the Postgres conformance matrix ('matches the cloud Postgres baseline...') runs in the Migrate Neon Branch lane — records, not Restate history, are the queried authority."
+          "scope": "'completes an accepted execution through the embedded queue with no Restate'; 'SQLite profiles run the workflow contract cases identically'; the Postgres conformance matrix ('matches the cloud Postgres baseline...') runs against local Compose PostgreSQL for pull requests and an ephemeral Neon preview on trusted-main CI when required Neon inputs are configured — records, not Restate history, are the queried authority."
         },
         {
           "kind": "test",

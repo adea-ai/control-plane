@@ -6,8 +6,16 @@ const workflow = readFileSync(
   new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
   'utf8'
 )
+const pullRequestWorkflow = readFileSync(
+  new URL('../.github/workflows/postgres-pull-request.yml', import.meta.url),
+  'utf8'
+)
 const script = workflow.split("node <<'NODE'\n")[1]?.split('\n          NODE')[0]
 const cleanupScript = workflow.split("node <<'CLEANUP'\n")[1]?.split('\n          CLEANUP')[0]
+
+function workflowEvents(source) {
+  return source.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
+}
 
 async function findCleanupBranch(responses, overrides = {}) {
   const requests = []
@@ -20,8 +28,8 @@ async function findCleanupBranch(responses, overrides = {}) {
       env: {
         NEON_API_KEY: 'synthetic-key',
         NEON_PROJECT_ID: 'synthetic-project-123',
-        PR_NUMBER: '404',
-        PR_HEAD_REF: 'fix/example',
+        GITHUB_RUN_ID: '404',
+        GITHUB_RUN_ATTEMPT: '1',
         GITHUB_OUTPUT: '/synthetic/output',
         ...overrides,
       },
@@ -40,7 +48,7 @@ async function findCleanupBranch(responses, overrides = {}) {
 
 const previewBranch = {
   id: 'br-synthetic-preview',
-  name: 'preview/pr-404-fix/example',
+  name: 'preview/main-404-1',
   project_id: 'synthetic-project-123',
   parent_id: 'br-synthetic-parent',
   primary: false,
@@ -49,6 +57,47 @@ const previewBranch = {
 }
 
 describe('Neon preview cleanup lookup', () => {
+  test('runs Neon credentialed validation only on main pushes', () => {
+    expect(workflowEvents(workflow)).toBe('  push:\n    branches:\n      - main')
+    expect(workflow).toContain('preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}')
+    expect(workflow).toContain("date -u --date '+1 day'")
+    expect(workflow).toContain("if: always() && steps.create_neon_branch.outcome == 'success'")
+  })
+
+  test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
+    const urlSetupIndex = workflow.indexOf('      - name: Build restricted database URLs')
+    expect(workflow.indexOf('run: bun install --frozen-lockfile')).toBeLessThan(urlSetupIndex)
+    expect(workflow.indexOf('run: bun run build')).toBeLessThan(urlSetupIndex)
+
+    const cleanup = workflow.split('      - name: Find exact preview branch for cleanup')[1]
+    const deleteBranch = workflow.split('      - name: Delete Neon branch')[1]
+    expect(cleanup).toBeString()
+    expect(deleteBranch).toBeString()
+    for (const name of [
+      'DATABASE_URL',
+      'DATABASE_URL_UNPOOLED',
+      'DATABASE_MIGRATION_URL',
+      'DATABASE_ADMIN_URL',
+    ]) {
+      expect(cleanup.split('      - name: Delete Neon branch')[0]).toContain(`${name}: ''`)
+      expect(deleteBranch).toContain(`${name}: ''`)
+    }
+  })
+
+  test('runs pull-request PostgreSQL checks with local credentials and no secret references', () => {
+    expect(workflowEvents(pullRequestWorkflow)).toBe(
+      '  pull_request:\n    branches:\n      - main\n    types:\n      - opened\n      - reopened\n      - synchronize\n      - ready_for_review'
+    )
+    expect(pullRequestWorkflow).toContain('local-admin-only')
+    expect(pullRequestWorkflow).toContain('RUN_M10_POSTGRES_CONFORMANCE')
+    expect(pullRequestWorkflow).toContain('bun run test:integration')
+    expect(pullRequestWorkflow).toContain('docker compose up -d --wait postgres')
+    expect(pullRequestWorkflow.indexOf('docker compose up -d --wait postgres')).toBeLessThan(
+      pullRequestWorkflow.indexOf('bun --cwd=packages/database run db:migrate')
+    )
+    expect(pullRequestWorkflow).not.toMatch(/\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
+  })
+
   test('scopes test database ownership setup to the freshly resolved preview administrator', () => {
     const setup = workflow
       .split('      - name: Prepare isolated preview database ownership')[1]
@@ -67,9 +116,7 @@ describe('Neon preview cleanup lookup', () => {
     const result = await findCleanupBranch([{ body: { branches: [] } }])
     expect(result.writes).toEqual([])
     expect(result.requests).toHaveLength(1)
-    expect(workflow).toContain(
-      "if: github.event.action == 'closed' && steps.cleanup_branch.outputs.branch_id != ''"
-    )
+    expect(workflow).toContain("if: always() && steps.cleanup_branch.outputs.branch_id != ''")
     expect(workflow).toContain('branch: ${{ steps.cleanup_branch.outputs.branch_id }}')
   })
 
@@ -139,8 +186,9 @@ describe('Neon preview cleanup lookup', () => {
     for (const override of [
       { NEON_API_KEY: '' },
       { NEON_PROJECT_ID: '../other' },
-      { PR_NUMBER: '0' },
-      { PR_HEAD_REF: '' },
+      { GITHUB_RUN_ID: '0' },
+      { GITHUB_RUN_ATTEMPT: '0' },
+      { GITHUB_RUN_ID: '404/other' },
       { GITHUB_OUTPUT: '' },
     ]) {
       await expect(findCleanupBranch([], override)).rejects.toThrow(
