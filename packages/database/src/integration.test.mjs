@@ -2976,7 +2976,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const inboundTimestamp = '2026-08-24T23:00:02.000Z'
     const inboundCasCases = [
       {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBA',
         idempotencyKey: 'runtime-command:integration:ack-fence',
         next: {
           status: 'acknowledged',
@@ -2986,7 +2986,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         },
       },
       {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBB',
         idempotencyKey: 'runtime-command:integration:result-fence',
         next: {
           status: 'succeeded',
@@ -2996,7 +2996,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         },
       },
       {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBC',
         idempotencyKey: 'runtime-command:integration:error-fence',
         next: {
           status: 'failed',
@@ -3007,11 +3007,12 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ]
     for (const [index, testCase] of inboundCasCases.entries()) {
       const queued = {
-        ...record,
+        ...base,
         commandId: testCase.commandId,
         idempotencyKey: testCase.idempotencyKey,
+        status: 'queued',
       }
-      expect((await restarted.create(queued)).outcome).toBe('created')
+      expect((await repository.create(queued)).outcome).toBe('created')
       const dispatched = {
         ...queued,
         status: 'dispatched',
@@ -3023,18 +3024,18 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         lastDispatchedAt: inboundTimestamp,
         updatedAt: inboundTimestamp,
       }
-      expect(await restarted.compareAndSet(1, dispatched)).toBe(true)
+      expect(await repository.compareAndSet(1, dispatched)).toBe(true)
       const inbound = {
         ...dispatched,
         ...testCase.next,
         version: 3,
         updatedAt: inboundTimestamp,
       }
-      await expect(restarted.compareAndSet(2, inbound)).rejects.toMatchObject({
+      await expect(repository.compareAndSet(2, inbound)).rejects.toMatchObject({
         code: 'INVENTORY_CREDENTIAL_FENCE_INVALID',
       })
-      expect(await restarted.get(testCase.commandId)).toEqual(dispatched)
-      expect(await restarted.compareAndSet(2, inbound, runtimeFence)).toBe(true)
+      expect(await repository.get(testCase.commandId)).toEqual(dispatched)
+      expect(await repository.compareAndSet(2, inbound, runtimeFence)).toBe(true)
       await isolated.application
         .delete(runtimeCommands)
         .where(eq(runtimeCommands.commandId, testCase.commandId))
