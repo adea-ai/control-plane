@@ -12,8 +12,8 @@ import {
   type RuntimeNodeAuthenticationAttempt,
   type RuntimeNodeCredentialClaims,
   type RuntimeNodeIdentityInvalidation,
-  type RuntimeNodeIdentityValidationPort,
 } from '@control-plane/runtime-gateway-protocol'
+import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
 
 export interface SyntheticRuntimeNodeIdentityAuthorityOptions {
   readonly audience: string
@@ -115,7 +115,7 @@ export class SyntheticRuntimeNodeIdentityAuthority {
     for (const listener of this.#listeners) listener({ kind: 'credential', credentialId })
   }
 
-  validationPort(): RuntimeNodeIdentityValidationPort {
+  validationPort(): RuntimeNodeIdentityGatewayPort {
     return {
       verify: async (attempt) => this.#verify(attempt),
       isRevoked: async (credentialId) => this.#revoked.has(credentialId),
