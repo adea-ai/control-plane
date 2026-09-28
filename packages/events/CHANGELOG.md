@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/events-v1.7.4...events-v1.8.0) (2026-09-28)
+
+
+### Features
+
+* **runtime-node:** add durable identity and revocation fences ([#747](https://github.com/adea-ai/control-plane/issues/747)) ([fc7ddab](https://github.com/adea-ai/control-plane/commit/fc7ddab765a66f5f22bba4d2f61eda0c877f727f))
+
 ## [1.7.4](https://github.com/adea-ai/control-plane/compare/events-v1.7.3...events-v1.7.4) (2026-09-22)
 
 

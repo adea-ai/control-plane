@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/object-store-v1.4.1...object-store-v1.5.0) (2026-09-28)
+
+
+### Features
+
+* **m11:** harden retention, budgets and runtime delivery ([#743](https://github.com/adea-ai/control-plane/issues/743)) ([ea7ced3](https://github.com/adea-ai/control-plane/commit/ea7ced395a93ca7975a77f8b481235e893f33562))
+
 ## [1.4.1](https://github.com/adea-ai/control-plane/compare/object-store-v1.4.0...object-store-v1.4.1) (2026-09-21)
 
 

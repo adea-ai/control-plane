@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.7.2...acp-adapter-v1.8.0) (2026-09-28)
+
+
+### Features
+
+* **m11:** harden retention, budgets and runtime delivery ([#743](https://github.com/adea-ai/control-plane/issues/743)) ([ea7ced3](https://github.com/adea-ai/control-plane/commit/ea7ced395a93ca7975a77f8b481235e893f33562))
+
 ## [1.7.2](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.7.1...acp-adapter-v1.7.2) (2026-09-21)
 
 
