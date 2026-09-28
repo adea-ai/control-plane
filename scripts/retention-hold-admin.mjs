@@ -66,6 +66,7 @@ export async function retentionHoldAdmin({
         backend: 'postgres',
         database: values.database,
         host: values.host,
+        port: connectionTarget.port === '' ? 5432 : Number(connectionTarget.port),
       }
     } else {
       throw new Error('INVALID_BACKEND')

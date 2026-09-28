@@ -19,6 +19,7 @@ describe('Runtime Gateway production message routing', () => {
     async (outcome) => {
       const calls = []
       const router = new RuntimeGatewayMessageRouter({
+        channelAuthority: { isActive: async () => true },
         inventory: { handle: async () => undefined },
         delivery: {
           acknowledge: async () => undefined,
@@ -39,6 +40,7 @@ describe('Runtime Gateway production message routing', () => {
   test('routes inventory, acknowledgement, progress, result, and error frames in durable order', async () => {
     const calls = []
     const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => true },
       inventory: { handle: async () => calls.push('inventory') },
       delivery: {
         acknowledge: async () => calls.push('ack'),
@@ -89,8 +91,32 @@ describe('Runtime Gateway production message routing', () => {
     ])
   })
 
+  test('rejects inventory frames when durable channel authority is revoked', async () => {
+    const calls = []
+    const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => false },
+      inventory: { handle: async () => calls.push('inventory') },
+      delivery: {
+        acknowledge: async () => undefined,
+        recordResult: async () => undefined,
+        recordError: async () => undefined,
+      },
+      events: {
+        ingestProgress: async () => undefined,
+        ingestResult: async () => undefined,
+        ingestError: async () => undefined,
+      },
+    })
+
+    await expect(router.handle(source, golden.inventory)).rejects.toThrow(
+      'RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED'
+    )
+    expect(calls).toEqual([])
+  })
+
   test('rejects frame families owned by lifecycle or the server side', async () => {
     const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => true },
       inventory: { handle: async () => undefined },
       delivery: {
         acknowledge: async () => undefined,

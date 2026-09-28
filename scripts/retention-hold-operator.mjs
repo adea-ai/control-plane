@@ -161,13 +161,19 @@ function parseTargetShape(input) {
   }
   if (
     input.backend === 'postgres' &&
-    exactKeys(input, ['backend', 'database', 'host']) &&
+    (exactKeys(input, ['backend', 'database', 'host']) ||
+      exactKeys(input, ['backend', 'database', 'host', 'port'])) &&
     typeof input.database === 'string' &&
     input.database.length > 0 &&
     typeof input.host === 'string' &&
     input.host.length > 0
-  )
-    return { backend: 'postgres', database: input.database, host: input.host }
+  ) {
+    // Older policies omitted the port, which historically meant PostgreSQL's
+    // default. Preserve those policies only for that exact endpoint.
+    const port = input.port === undefined ? 5432 : input.port
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('INVALID_TARGET')
+    return { backend: 'postgres', database: input.database, host: input.host, port }
+  }
   throw new Error('INVALID_TARGET')
 }
 
@@ -184,7 +190,8 @@ function sameTarget(configured, actual) {
   return (
     configured.backend === actual.backend &&
     configured.database === actual.database &&
-    (configured.backend !== 'postgres' || configured.host === actual.host)
+    (configured.backend !== 'postgres' ||
+      (configured.host === actual.host && configured.port === actual.port))
   )
 }
 

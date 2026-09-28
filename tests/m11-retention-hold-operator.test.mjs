@@ -186,6 +186,48 @@ describe('retention hold operator authorization (#194)', () => {
     await expect(load(policyFixture)).rejects.toThrow()
   })
 
+  test('PostgreSQL target policies bind the service port, with legacy files scoped to 5432', async () => {
+    const policyFixture = await fixture()
+    const target = {
+      backend: 'postgres',
+      database: 'control_plane',
+      host: 'db.internal.example',
+      port: 55432,
+    }
+    policyFixture.document.target = target
+    policyFixture.target = target
+    await writeFile(policyFixture.path, JSON.stringify(policyFixture.document))
+
+    expect((await load(policyFixture)).policy).toEqual(policyFixture.document.policy)
+    await expect(load({ ...policyFixture, target: { ...target, port: 65432 } })).rejects.toThrow()
+
+    policyFixture.document.target = {
+      backend: 'postgres',
+      database: target.database,
+      host: target.host,
+    }
+    await writeFile(policyFixture.path, JSON.stringify(policyFixture.document))
+    expect(
+      (
+        await load({
+          ...policyFixture,
+          target: { backend: 'postgres', database: target.database, host: target.host, port: 5432 },
+        })
+      ).policy
+    ).toEqual(policyFixture.document.policy)
+    await expect(
+      load({
+        ...policyFixture,
+        target: { backend: 'postgres', database: target.database, host: target.host, port: 65432 },
+      })
+    ).rejects.toThrow()
+    for (const port of [0, 65536, '55432']) {
+      policyFixture.document.target = { ...target, port }
+      await writeFile(policyFixture.path, JSON.stringify(policyFixture.document))
+      await expect(load(policyFixture)).rejects.toThrow()
+    }
+  })
+
   test('configuration refuses symlinks, excess input and invented class owners', async () => {
     const policyFixture = await fixture()
     expect((await load(policyFixture)).policy).toEqual(policyFixture.document.policy)

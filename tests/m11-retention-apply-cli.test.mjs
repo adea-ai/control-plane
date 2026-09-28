@@ -282,7 +282,7 @@ describe('retention apply CLI (#194)', () => {
         '--database',
         path,
         '--now',
-        new Date(Date.now() + 1).toISOString(),
+        assessedAt,
         ...policyArgs,
       ])
       expect(removed.status).toBe(0)
@@ -313,6 +313,46 @@ describe('retention apply CLI (#194)', () => {
       expect(
         await provider.transaction((transaction) => transaction.list('retention-holds'))
       ).toEqual([])
+    } finally {
+      provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  test('apply refuses a future caller-selected time that could expire replay tombstones early', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-clock-'))
+    const path = join(directory, 'state.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      const repository = await seedTerminalCommand(provider)
+      expect(await repository.retireExpiredCommand(scope, assessedAt)).toBe(true)
+      const { path: operatorPolicy } = await writeOperatorPolicyFixture(path, {
+        classIds: ['retired-command-keys'],
+      })
+
+      const result = await apply([
+        '--backend',
+        'sqlite',
+        '--class',
+        'retired-command-keys',
+        '--database',
+        path,
+        '--apply',
+        '--confirm',
+        'retired-command-keys',
+        '--hold-policy',
+        operatorPolicy,
+        '--now',
+        new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      ])
+
+      expect(result.status).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe('RETENTION_APPLY_FAILED\n')
+      expect(
+        await provider.transaction((transaction) => transaction.list('retired-command-keys'))
+      ).toHaveLength(1)
     } finally {
       provider.close()
       await rm(directory, { recursive: true, force: true })

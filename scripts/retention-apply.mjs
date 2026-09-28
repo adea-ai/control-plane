@@ -65,8 +65,13 @@ export async function retentionApply({
     const dryRun = values.apply !== true
     if (!dryRun && values.confirm !== values.class) throw new Error('CONFIRMATION_REQUIRED')
     if (!dryRun && !values['hold-policy']) throw new Error('OPERATOR_POLICY_REQUIRED')
-    const now = values.now === undefined ? new Date() : new Date(values.now)
+    const wallClockNow = new Date()
+    const now = values.now === undefined ? wallClockNow : new Date(values.now)
     if (Number.isNaN(now.getTime())) throw new Error('INVALID_INSTANT')
+    // A future assessment instant can make replay tombstones appear expired
+    // before their retention window has actually elapsed. Keep historical
+    // backfills available, but never let a physical apply advance the clock.
+    if (!dryRun && now.getTime() > wallClockNow.getTime()) throw new Error('FUTURE_APPLY_INSTANT')
     const bound = values.bound === undefined ? undefined : Number(values.bound)
     if (bound !== undefined && (!/^[1-9]\d*$/.test(values.bound) || !Number.isSafeInteger(bound)))
       throw new Error('INVALID_BOUND')
@@ -173,7 +178,12 @@ export async function retentionApply({
           await import('./retention-hold-operator.mjs')
         const operator = await loadRetentionHoldOperatorPolicy({
           path: values['hold-policy'],
-          target: { backend: 'postgres', host: target.hostname, database: values.database },
+          target: {
+            backend: 'postgres',
+            host: target.hostname,
+            database: values.database,
+            port: target.port === '' ? 5432 : Number(target.port),
+          },
         })
         const session = await readVerifiedRetentionHoldSession({ database: connection.database })
         if (

@@ -746,6 +746,7 @@ test('router classifies context frames from the durable ledger and preserves run
   const events = []
   const router = new RuntimeGatewayMessageRouter({
     context: f.service,
+    channelAuthority: { isActive: async () => true },
     inventory: { handle: async () => {} },
     delivery: {
       acknowledge: async (frame) => runtime.push(frame),

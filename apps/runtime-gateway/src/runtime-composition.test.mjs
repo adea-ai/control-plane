@@ -441,6 +441,29 @@ test('production composition rechecks revoked authority at the socket send bound
   }
 })
 
+test('production composition rejects inventory after durable revocation when notification is missed', async () => {
+  const fixture = await createFixture({ missRevocationNotifications: true })
+  let socket
+  try {
+    fixture.composition.webSocketServer.start()
+    socket = await fixture.connect(1)
+    await fixture.waitForFrame(socket, (frame) => frame.type === 'hello')
+    fixture.revokeActiveCredential()
+    socket.send(JSON.stringify(golden.inventory))
+
+    await fixture.until(
+      () =>
+        fixture.metrics.counterValue('runtime_gateway.inbound_failures') > 0 ||
+        fixture.inventoryCalls.length > 0
+    )
+    expect(fixture.inventoryCalls).toEqual([])
+    expect(fixture.metrics.counterValue('runtime_gateway.inbound_failures')).toBe(1)
+  } finally {
+    socket?.close()
+    await fixture.close()
+  }
+})
+
 test('a queued command above the negotiated protocol version remains unsent and queued', async () => {
   const fixture = await createFixture()
   try {
@@ -468,6 +491,7 @@ async function createFixture({
   runtime = true,
   artifactDenied = false,
   revokeCredentialDuringArtifactVerification = false,
+  missRevocationNotifications = false,
   denyAtValidation,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-runtime-gateway-'))
@@ -553,16 +577,22 @@ async function createFixture({
     nodeId: expectation.nodeId,
     workspaceId: expectation.workspaceId,
   })
+  const validationPort = authority.validationPort()
   const authenticator = new RuntimeNodeChannelAuthenticator({
-    identityValidator: authority.validationPort(),
+    identityValidator: missRevocationNotifications
+      ? { ...validationPort, subscribeRevocations: () => () => undefined }
+      : validationPort,
     logger: { write() {} },
   })
   const openSockets = new Set()
   const allFrames = new WeakMap()
+  const inventoryCalls = []
+  let metrics
   let native
   let generation = 0
 
   async function compose(overrides = {}) {
+    metrics = new RecordingGatewayMetrics()
     const result = await composeRuntimeGateway({
       store: { backend: 'sqlite', path },
       objectStore: {
@@ -587,7 +617,7 @@ async function createFixture({
           channelGeneration: generation,
         })
       },
-      metrics: new RecordingGatewayMetrics(),
+      metrics,
       reachability: new RecordingRuntimeNodeReachabilityPublisher(),
       traceId: () => golden.command.traceId,
       instanceId: `composition-test-${generation || 1}`,
@@ -626,6 +656,11 @@ async function createFixture({
                   if (artifactDenied) throw new Error('artifact is not host-authorized')
                 },
               },
+              inventory: {
+                async handle(source, envelope) {
+                  inventoryCalls.push({ source, envelope })
+                },
+              },
               now: () => new Date('2026-08-25T12:00:30.000Z'),
             },
           }
@@ -656,6 +691,14 @@ async function createFixture({
     events,
     quarantine,
     artifactVerifications,
+    inventoryCalls,
+    get metrics() {
+      return metrics
+    },
+    revokeActiveCredential() {
+      if (activeCredentialId === undefined) throw new Error('NO_ACTIVE_CREDENTIAL')
+      authority.revokeCredential(activeCredentialId)
+    },
     objectStore: objectStoreStorage,
     setArtifactStoreHooks(hooks) {
       artifactStoreHooks = hooks

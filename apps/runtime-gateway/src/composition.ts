@@ -61,8 +61,8 @@ import {
   RuntimeEventIngestionService,
   DefaultRuntimeAdapterEventNormalizer,
   type RuntimeAdapterEventNormalizer,
-  type RuntimeEventSourceChannel,
   type RuntimeEventQuarantine,
+  type RuntimeNodeChannelAuthority,
 } from './runtime-event-ingestion.js'
 import {
   RuntimeReconnectReconciliationService,
@@ -287,6 +287,9 @@ export async function composeRuntimeGateway(
         ? undefined
         : createConsistencyMetricEmitter(options.metricAdapter, 'runtime-gateway')
     let lifecycle: RuntimeGatewayWebSocketLifecycle
+    const channelAuthority: RuntimeNodeChannelAuthority = {
+      isActive: (source) => lifecycle.isChannelActive(source),
+    }
     const delivery = new ContextCommandDeliveryService({
       repository,
       coordination,
@@ -397,9 +400,7 @@ export async function composeRuntimeGateway(
         quarantine: runtimeOptions.quarantine,
         metrics,
         ...(runtimeOptions.now === undefined ? {} : { now: runtimeOptions.now }),
-        channelAuthority: {
-          isActive: (source: RuntimeEventSourceChannel) => lifecycle.isChannelActive(source),
-        },
+        channelAuthority,
       })
       runtime = {
         commands: runtimeCommands,
@@ -413,6 +414,7 @@ export async function composeRuntimeGateway(
       throw new Error('RUNTIME_GATEWAY_ROUTE_NOT_COMPOSED')
     }
     const router = new RuntimeGatewayMessageRouter({
+      channelAuthority,
       context: delivery,
       // Unrelated command families stay fail-closed until their own composition exists.
       inventory: runtimeOptions?.inventory ?? { handle: notComposed },

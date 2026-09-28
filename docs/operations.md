@@ -381,7 +381,9 @@ reconciled, unreferenced and already carry their reserved rejection key are
 removed; the rejection key itself is kept, so a replay of the same scoped
 idempotency key still fails closed. `raced` counts candidates whose state moved
 between selection and deletion — those are left alone and picked up by a later
-pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
+pass. `--bound` limits a pass; `--now <instant>` selects an assessment instant
+for dry runs and historical backfills. A physical apply rejects future instants
+so replay tombstones cannot be expired ahead of the host's current clock.
 
 ### Operator policy and durable holds
 
@@ -422,8 +424,10 @@ path and encoded OS username with the actual operator's values):
 ```
 
 For PostgreSQL, the target is
-`{"backend":"postgres","database":"control_plane","host":"<neon-host>"}`;
-it must match the application credential's database and hostname exactly. The
+`{"backend":"postgres","database":"control_plane","host":"<neon-host>","port":5432}`;
+it must match the application credential's database, hostname, and effective
+port exactly. Existing policies without `port` remain scoped to the default
+PostgreSQL port 5432 only. The
 grant's authority is `authority:postgres:role:<encoded-current_user>`, read from
 the actual connection, not a role supplied in JSON or inferred from a username
 in the connection URL. The actor remains the verified encoded OS username.

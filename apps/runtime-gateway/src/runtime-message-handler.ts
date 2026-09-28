@@ -1,12 +1,16 @@
 import type { GatewayEnvelope } from '@control-plane/runtime-gateway-protocol'
 import type { RuntimeCommandDeliveryService } from './runtime-command-delivery.js'
 import type { ContextCommandDeliveryService } from './context-command-delivery.js'
-import type { RuntimeEventIngestionService } from './runtime-event-ingestion.js'
+import type {
+  RuntimeEventIngestionService,
+  RuntimeNodeChannelAuthority,
+} from './runtime-event-ingestion.js'
 import type { RuntimeInventoryMessageHandler } from './runtime-inventory-ingestion.js'
 import type { ActiveRuntimeNodeChannelRecord } from './websocket-coordination.js'
 import type { RuntimeGatewayMessageHandler } from './websocket-lifecycle.js'
 
 export interface RuntimeGatewayMessageRouterOptions {
+  readonly channelAuthority: RuntimeNodeChannelAuthority
   readonly context?: Pick<
     ContextCommandDeliveryService,
     'get' | 'acknowledge' | 'recordResult' | 'recordError'
@@ -27,8 +31,10 @@ export class RuntimeGatewayMessageRouter implements RuntimeGatewayMessageHandler
   readonly #events: RuntimeGatewayMessageRouterOptions['events']
   readonly #inventory: RuntimeGatewayMessageRouterOptions['inventory']
   readonly #context: RuntimeGatewayMessageRouterOptions['context']
+  readonly #channelAuthority: RuntimeGatewayMessageRouterOptions['channelAuthority']
 
   constructor(options: RuntimeGatewayMessageRouterOptions) {
+    this.#channelAuthority = options.channelAuthority
     this.#inventory = options.inventory
     this.#delivery = options.delivery
     this.#events = options.events
@@ -37,6 +43,9 @@ export class RuntimeGatewayMessageRouter implements RuntimeGatewayMessageHandler
 
   async handle(source: ActiveRuntimeNodeChannelRecord, envelope: GatewayEnvelope): Promise<void> {
     if (envelope.type === 'inventory') {
+      if (!(await this.#channelAuthority.isActive(source))) {
+        throw new Error('RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED')
+      }
       await this.#inventory.handle(source, envelope)
       return
     }
