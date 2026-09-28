@@ -1,6 +1,6 @@
 # Continuous integration
 
-Code Foundry v1.28.6 is the CI runtime pinned by the generated callers under
+Code Foundry v1.30.0 is the CI runtime pinned by the generated callers under
 `.github/workflows/`. Feature branches target `main`; Railway staging is an
 on-demand reference environment, not a Git promotion branch.
 
@@ -21,8 +21,8 @@ The gate covers:
 - frozen Bun lockfile installation with the pinned Node and Bun toolchain;
 - formatting, lint, package-boundary enforcement, workspace type-checking, and
   builds;
-- unit, E2E, smoke, and PostgreSQL integration groups as independent parallel jobs, including
-  isolated databases, deterministic migration replay, enforced 80% unit coverage, and LCOV upload;
+- unit, E2E, and smoke groups as independent parallel jobs, including isolated
+  databases, deterministic migration replay, enforced 80% unit coverage, and LCOV upload;
 - OpenAPI drift and Drizzle migration-schema drift through `bun run type-check`;
 - dependency auditing that does not require production or vendor credentials.
 - repository credential-pattern scanning through `bun run security:scan` without echoing matches.
@@ -48,20 +48,32 @@ enumerating their internal parallel jobs.
 
 ## Neon preview lifecycle
 
-The Neon workflow creates or migrates a PR-scoped preview when a pull request is
-marked ready for review, and attempts cleanup on close. Cleanup first performs a read-only,
-paginated exact-name lookup using the [Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
-A successfully verified absent preview is a no-op, covering previews that were
-never created or have already expired. Only a unique, unprotected, non-default
-child branch in the configured project supplies an ID to the pinned deletion
-action. HTTP failures, malformed or incomplete listings, pagination loops and
-unsafe targets fail rather than being treated as absence. The workflow does not
-check out PR code for cleanup, and passes the head ref as environment data.
+Pull requests receive database coverage through
+postgres-pull-request.yml. It uses the disposable local Compose PostgreSQL
+instance and synthetic local-only credentials; the checked-in workflow contains
+no repository-secret references and does not connect to Neon.
 
-This behavior does not grant migration-role membership, raise branch limits or
-authorize manual deletion of an existing preview. Those are separate operational
-decisions. Local workflow tests use synthetic responses; a local pass is not
-proof that a hosted cleanup job ran successfully.
+This is a source-level guard, not repository-wide secret access control:
+repository secrets can be referenced by any workflow in the repository. If the
+threat model includes untrusted contributors with branch-write access, keep the
+Neon credentials only in a GitHub environment restricted to `main` and remove
+the repository-scoped copies. See GitHub's
+[secret security guidance](https://docs.github.com/en/actions/reference/security/secrets).
+
+The credentialed Neon workflow runs only on pushes to main, after the PR
+source has been merged and when all required Neon inputs are configured. It
+creates a run-scoped preview from the staging branch, sets a one-day expiry as
+a fallback, and deletes the exact temporary branch after validation. The
+pinned delete action only receives an ID found by
+a read-only, paginated exact-name lookup using the
+[Neon branch-list API](https://api-docs.neon.tech/reference/listprojectbranches).
+A verified absent branch is a no-op; HTTP failures, malformed or incomplete
+listings, pagination loops and unsafe targets fail closed.
+
+This moves real-Neon migration/conformance verification to post-merge; the
+secretless local PostgreSQL workflow remains the pre-merge database gate.
+Local workflow tests use synthetic responses and do not prove that a hosted
+Neon run or cleanup completed successfully.
 
 ## Reversible billing pause
 

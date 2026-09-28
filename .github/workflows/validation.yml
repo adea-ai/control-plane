@@ -95,9 +95,9 @@ jobs:
       rust-shards: '["all"]'
       rust-threads: '1'
       rust-max-parallel: 1
-    secrets:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+    # This job executes PR-controlled source. Keep repository secrets out of
+    # the reusable workflow; a cold cache and its documented build placeholder
+    # are preferable to exposing credentials to pull-request tasks.
 
   # CodeQL requires a push analysis to populate default-branch code-scanning
   # alerts. Keep the full validation gate pull-request-only so main pushes do
