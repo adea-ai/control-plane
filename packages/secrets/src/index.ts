@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import { lstat, open, realpath, type FileHandle } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
+import { isPrivateFileSecretsPlatformSupported } from './private-file-platform.js'
 import type {
   DeploymentComponentHealth,
   SecretLease,
@@ -123,6 +124,9 @@ export class PrivateFileSecretsProvider implements SecretsProvider {
   #closed = false
 
   constructor(options: PrivateFileSecretsProviderOptions) {
+    if (!isPrivateFileSecretsPlatformSupported(process.platform, constants.O_NOFOLLOW)) {
+      throw new SecretsProviderError('SECRET_PROVIDER_UNSUPPORTED')
+    }
     this.#rootDirectory = resolve(options.rootDirectory)
     this.#provider = options.provider ?? 'file'
   }

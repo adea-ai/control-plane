@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { constants } from 'node:fs'
 import { chmod, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +10,7 @@ import {
   HostSecureHandleSecretsProvider,
   PrivateFileSecretsProvider,
 } from './index.ts'
+import { isPrivateFileSecretsPlatformSupported } from './private-file-platform.ts'
 
 const providers = []
 const temporaryRoots = []
@@ -18,6 +20,34 @@ afterEach(async () => {
 })
 
 describe('Local and Hosted secrets providers', () => {
+  test('fails closed when private-file platform primitives are unavailable', () => {
+    expect(isPrivateFileSecretsPlatformSupported('win32', constants.O_NOFOLLOW)).toBe(false)
+    expect(isPrivateFileSecretsPlatformSupported('linux', undefined)).toBe(false)
+    expect(isPrivateFileSecretsPlatformSupported('linux', 0)).toBe(false)
+    expect(isPrivateFileSecretsPlatformSupported('linux', Number.NaN)).toBe(false)
+    expect(isPrivateFileSecretsPlatformSupported('linux', constants.O_NOFOLLOW)).toBe(true)
+
+    const originalPlatform = process.platform
+    try {
+      process.platform = 'win32'
+      let failure
+      let unexpectedProvider
+      try {
+        unexpectedProvider = new PrivateFileSecretsProvider({
+          get rootDirectory() {
+            throw new Error('unsupported provider must fail before reading configuration')
+          },
+        })
+      } catch (error) {
+        failure = error
+      }
+      expect(unexpectedProvider).toBeUndefined()
+      expect(failure).toMatchObject({ code: 'SECRET_PROVIDER_UNSUPPORTED' })
+    } finally {
+      process.platform = originalPlatform
+    }
+  })
+
   test('resolves only explicitly mapped environment references and zeroizes leases', async () => {
     const provider = new EnvironmentSecretsProvider({
       references: { model: 'MODEL_TOKEN' },
