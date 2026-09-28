@@ -115,8 +115,12 @@ export async function retentionHoldAdmin({
       })}\n`
     )
     exitCode = 0
-  } catch {
-    writeErr('RETENTION_HOLD_ADMIN_FAILED\n')
+  } catch (error) {
+    const diagnostic =
+      environment.CONTROL_PLANE_RETENTION_HOLD_TEST_DIAGNOSTICS === '1'
+        ? ` ${retentionHoldFailureCode(error)}`
+        : ''
+    writeErr(`RETENTION_HOLD_ADMIN_FAILED${diagnostic}\n`)
   } finally {
     try {
       await close()
@@ -126,6 +130,19 @@ export async function retentionHoldAdmin({
     }
   }
   return exitCode
+}
+
+function retentionHoldFailureCode(error) {
+  if (error instanceof Error && /^[A-Z][A-Z0-9_]{0,59}$/.test(error.message)) return error.message
+  if (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    /^[0-9A-Z]{5}$/.test(error.code)
+  )
+    return `ERROR_${error.code}`
+  return 'UNKNOWN'
 }
 
 if (import.meta.main) {

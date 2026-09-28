@@ -57,7 +57,11 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
       const baseUrl = new URL(credentials.application.url)
       const isolatedUrl = new URL(credentials.application.url)
       isolatedUrl.pathname = `/${isolated.name}`
-      const environment = { ...process.env, DATABASE_URL: isolatedUrl.href }
+      const environment = {
+        ...process.env,
+        DATABASE_URL: isolatedUrl.href,
+        CONTROL_PLANE_RETENTION_HOLD_TEST_DIAGNOSTICS: '1',
+      }
       const session = {
         actorPrincipalRef: `operator:os-user:${encodeURIComponent(userInfo().username)}`,
         authorityRef: await retentionHoldDatabaseAuthority(isolated.application),
@@ -164,13 +168,13 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
         const rejected = await runAdmin(spoofed)
         expect(rejected.status).toBe(1)
         expect(rejected.stdout).toBe('')
-        expect(rejected.stderr).toBe('RETENTION_HOLD_ADMIN_FAILED\n')
+        expect(rejected.stderr).toBe('RETENTION_HOLD_ADMIN_FAILED RETENTION_HOLD_ACTOR_MISMATCH\n')
         expect(await holdRepository.get(holdId)).toBeUndefined()
       }
 
       const created = await runAdmin(holdRequest)
-      expect(created.status).toBe(0)
       expect(created.stderr).toBe('')
+      expect(created.status).toBe(0)
       expect(JSON.parse(created.stdout)).toEqual({
         status: 'applied',
         operation: 'create',
@@ -238,7 +242,7 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold operator CLI', () => {
       const mismatchedTarget = await runAdmin(releaseRequest)
       expect(mismatchedTarget.status).toBe(1)
       expect(mismatchedTarget.stdout).toBe('')
-      expect(mismatchedTarget.stderr).toBe('RETENTION_HOLD_ADMIN_FAILED\n')
+      expect(mismatchedTarget.stderr).toBe('RETENTION_HOLD_ADMIN_FAILED POLICY_TARGET_MISMATCH\n')
       expect(await holdRepository.get(holdId)).toMatchObject({ revision: 0 })
 
       await writePolicy(policyDocument([projectGrant, classSweepGrant]))
