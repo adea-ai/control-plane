@@ -182,6 +182,52 @@ describe('M11.11 skill library baseline', () => {
     })
   })
 
+  test('rejects a symlinked skills root and .agents ancestor', async () => {
+    await withSkillFixture({}, async (root) => {
+      const externalRoot = await mkdtemp(join(tmpdir(), 'control-plane-skill-library-external-'))
+      try {
+        const skillsRoot = join(root, '.agents', 'skills')
+        const externalSkillsRoot = join(externalRoot, 'skills')
+        await mkdir(externalSkillsRoot)
+        await rm(skillsRoot, { recursive: true, force: true })
+        await symlink(externalSkillsRoot, skillsRoot, 'dir')
+
+        const skillsRootResult = await discoverSkillLibrary({ repositoryRoot: root })
+        expect(skillsRootResult.errors.map((error) => error.message).join('\n')).toContain(
+          '.agents/skills must be a real directory'
+        )
+
+        await rm(join(root, '.agents'), { recursive: true, force: true })
+        const externalAgentsRoot = join(externalRoot, 'agents')
+        await mkdir(join(externalAgentsRoot, 'skills'), { recursive: true })
+        await symlink(externalAgentsRoot, join(root, '.agents'), 'dir')
+
+        const agentsRootResult = await discoverSkillLibrary({ repositoryRoot: root })
+        expect(agentsRootResult.errors.map((error) => error.message).join('\n')).toContain(
+          '.agents must be a real directory'
+        )
+      } finally {
+        await rm(externalRoot, { recursive: true, force: true })
+      }
+    })
+  })
+
+  test('rejects a symlinked skill registry', async () => {
+    await withSkillFixture({}, async (root) => {
+      const skillsRoot = join(root, '.agents', 'skills')
+      const registryPath = join(skillsRoot, 'README.md')
+      const registryTarget = join(root, 'registry-target.md')
+      await writeFile(registryTarget, await readFile(registryPath, 'utf8'))
+      await rm(registryPath)
+      await symlink(registryTarget, registryPath, 'file')
+
+      const { errors } = await discoverSkillLibrary({ repositoryRoot: root })
+      expect(errors.map((error) => error.message).join('\n')).toContain(
+        '.agents/skills/README.md must be a regular, non-symlink file'
+      )
+    })
+  })
+
   test('treats a clear path instruction as routing to a nested reference', async () => {
     await withSkillFixture(
       {

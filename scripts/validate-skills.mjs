@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { lstat, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
@@ -217,6 +217,24 @@ export async function discoverSkillLibrary(options = {}) {
   const root = resolve(options.repositoryRoot ?? repositoryRoot)
   const skillsRoot = join(root, skillsDirectory)
   const errors = []
+  for (const path of [join(root, '.agents'), skillsRoot]) {
+    try {
+      const stat = await lstat(path)
+      if (!stat.isDirectory()) {
+        errors.push({
+          skill: 'library',
+          message: `${relative(root, path)} must be a real directory; symlinks are not allowed`,
+        })
+      }
+    } catch {
+      errors.push({
+        skill: 'library',
+        message: `${relative(root, path)} is missing or unreadable`,
+      })
+    }
+  }
+  if (errors.length > 0) return { skills: [], errors }
+
   let directories
   try {
     const entries = await readdir(skillsRoot, { withFileTypes: true })
@@ -253,6 +271,14 @@ export async function discoverSkillLibrary(options = {}) {
   const registryPath = join(skillsRoot, REGISTRY_FILE)
   let registry
   try {
+    const registryStat = await lstat(registryPath)
+    if (!registryStat.isFile()) {
+      errors.push({
+        skill: 'library',
+        message: `${skillsDirectory}/${REGISTRY_FILE} must be a regular, non-symlink file`,
+      })
+      return { skills: [], errors }
+    }
     registry = parseRegistry(await readFile(registryPath, 'utf8'), errors)
   } catch {
     errors.push({ skill: 'library', message: `${skillsDirectory}/${REGISTRY_FILE} is missing` })
