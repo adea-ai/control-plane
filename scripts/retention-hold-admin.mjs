@@ -28,6 +28,7 @@ export async function retentionHoldAdmin({
 } = {}) {
   let close = async () => {}
   let exitCode = 1
+  let diagnosticPhase = 'arguments'
   try {
     const { values } = parseArgs({
       args: argv,
@@ -35,6 +36,7 @@ export async function retentionHoldAdmin({
       strict: true,
       allowPositionals: false,
     })
+    diagnosticPhase = 'target'
     if (
       !values.backend ||
       !values.database ||
@@ -72,14 +74,17 @@ export async function retentionHoldAdmin({
       throw new Error('INVALID_BACKEND')
     }
 
+    diagnosticPhase = 'policy'
     const operatorPolicy = await loadRetentionHoldOperatorPolicy({
       path: values['hold-policy'],
       target,
     })
+    diagnosticPhase = 'input'
     const request = RetentionHoldAdministrationRequestSchema.parse(
       await readBoundedRetentionHoldJson(values.input)
     )
     if (values.backend === 'postgres') {
+      diagnosticPhase = 'connection'
       const credentials = loadDatabaseCredentials(environment, 'application')
       const [{ createPostgresConnection }, postgresAdapter] = await Promise.all([
         import('../packages/database/src/connection.ts'),
@@ -100,6 +105,7 @@ export async function retentionHoldAdmin({
       repository = new sqlite.SqliteRetentionHoldRepository(provider, operatorPolicy.policy)
     }
 
+    diagnosticPhase = 'authorization'
     const result = await new RetentionHoldAdministration({
       repository,
       policy: operatorPolicy.policy,
@@ -118,7 +124,7 @@ export async function retentionHoldAdmin({
   } catch (error) {
     const diagnostic =
       environment.CONTROL_PLANE_RETENTION_HOLD_TEST_DIAGNOSTICS === '1'
-        ? ` ${retentionHoldFailureCode(error)}`
+        ? ` ${retentionHoldFailureCode(error)}_${diagnosticPhase.toUpperCase()}`
         : ''
     writeErr(`RETENTION_HOLD_ADMIN_FAILED${diagnostic}\n`)
   } finally {
@@ -134,6 +140,12 @@ export async function retentionHoldAdmin({
 
 function retentionHoldFailureCode(error) {
   if (error instanceof Error && /^[A-Z][A-Z0-9_]{0,59}$/.test(error.message)) return error.message
+  if (
+    error instanceof Error &&
+    typeof error.name === 'string' &&
+    /^[A-Z][A-Za-z0-9]{0,39}$/.test(error.name)
+  )
+    return `ERROR_${error.name.toUpperCase()}`
   if (
     error !== null &&
     typeof error === 'object' &&
