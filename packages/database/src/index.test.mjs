@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { getTableConfig } from 'drizzle-orm/pg-core'
+import { readFile } from 'node:fs/promises'
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
+import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 import * as connectionModule from './connection.ts'
 import {
   commandInbox,
@@ -24,6 +26,30 @@ import {
 } from './index.ts'
 
 describe('persistence schema', () => {
+  test('v2 retired-command metadata rejects a null digest in schema and migration', async () => {
+    const table = getTableConfig(retiredCommandKeys)
+    const metadataConstraint = table.checks.find(
+      ({ name }) => name === 'retired_command_keys_metadata_check'
+    )
+    expect(metadataConstraint).toBeDefined()
+    const schemaSql = new PgDialect().sqlToQuery(metadataConstraint.value).sql
+    expect(schemaSql).toContain('"identity_digest" is not null')
+    expect(schemaSql).toMatch(/"identity_digest" is not null.*"identity_digest" ~ /u)
+
+    const migration = await readFile(
+      new URL('../drizzle/0053_groovy_gargoyle.sql', import.meta.url),
+      'utf8'
+    )
+    expect(migration).toContain('"identity_digest" is not null')
+    const snapshot = JSON.parse(
+      await readFile(new URL('../drizzle/meta/0053_snapshot.json', import.meta.url), 'utf8')
+    )
+    expect(
+      snapshot.tables['public.retired_command_keys'].checkConstraints
+        .retired_command_keys_metadata_check.value
+    ).toContain('"identity_digest" is not null')
+  })
+
   test('defines shared PostgreSQL conventions and domain-organized messaging tables', () => {
     expect(persistenceConventions).toEqual({
       identifiers: 'uuid-v4-database-generated',

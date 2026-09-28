@@ -29,6 +29,7 @@ import { reconciliationCheckpoints } from './schema/reconciliation.js'
 import { lockExecutionPlanReference } from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
 import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.js'
+import { retiredCommandKeys } from './schema/retired-command-keys.js'
 import {
   acquirePostgresRetentionHoldClassMutex,
   countPostgresMatchingActiveRetentionHolds,
@@ -198,6 +199,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           rejectionKeyReserved: true,
           pendingReferences:
             references.commands.has(owner.executionId) ||
+            references.retiredCommandKeys.has(owner.executionId) ||
             references.events.has(owner.executionId) ||
             references.checkpoints.has(owner.executionId) ||
             references.activeAttempts.has(owner.executionId) ||
@@ -254,13 +256,16 @@ export class PostgresExecutionRepository implements ExecutionRepository {
    * Every namespace that carries execution identity, as sets of execution ids
    * among `executionIds`. Receipt references are read from their JSON identity
    * fields; interaction requests and usage entries have FKs, while delegations
-   * carry parent/child identity without FKs.
+   * carry parent/child identity without FKs. Retired command keys keep the
+   * owner alive while any tombstone row persists; TTL eligibility alone does
+   * not release the reference because audit reads every persisted tombstone.
    */
   async #referenceSets(
     executionIds: readonly string[],
     database: ExecutionReferenceReader = this.database
   ): Promise<{
     commands: Set<string>
+    retiredCommandKeys: Set<string>
     events: Set<string>
     checkpoints: Set<string>
     activeAttempts: Set<string>
@@ -274,6 +279,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     if (executionIds.length === 0) {
       return {
         commands: new Set(),
+        retiredCommandKeys: new Set(),
         events: new Set(),
         checkpoints: new Set(),
         activeAttempts: new Set(),
@@ -288,6 +294,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const ids = [...executionIds]
     const [
       commands,
+      retiredKeys,
       events,
       checkpoints,
       activeAttempts,
@@ -304,6 +311,10 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         .select({ executionId: commandInbox.executionId })
         .from(commandInbox)
         .where(inArray(commandInbox.executionId, ids)),
+      database
+        .select({ executionId: retiredCommandKeys.executionId })
+        .from(retiredCommandKeys)
+        .where(inArray(retiredCommandKeys.executionId, ids)),
       database
         .select({ executionId: executionEvents.executionId })
         .from(executionEvents)
@@ -424,6 +435,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     ])
     return {
       commands: new Set(commands.map((row) => row.executionId)),
+      retiredCommandKeys: new Set(retiredKeys.map((row) => row.executionId)),
       events: new Set(events.map((row) => row.executionId)),
       checkpoints: new Set(checkpoints.map((row) => row.executionId)),
       activeAttempts: new Set(activeAttempts.map((row) => row.executionId)),

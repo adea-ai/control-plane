@@ -176,6 +176,10 @@ SELECT 'REVOKE ALL PRIVILEGES ON TABLE public.admission_rollout_gate FROM contro
 WHERE to_regclass('public.admission_rollout_gate') IS NOT NULL \gexec
 SELECT 'GRANT SELECT ON TABLE public.admission_rollout_gate TO control_plane_app'
 WHERE to_regclass('public.admission_rollout_gate') IS NOT NULL \gexec
+SELECT 'REVOKE ALL PRIVILEGES ON TABLE public.retired_command_keys FROM control_plane_app'
+WHERE to_regclass('public.retired_command_keys') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, INSERT ON TABLE public.retired_command_keys TO control_plane_app'
+WHERE to_regclass('public.retired_command_keys') IS NOT NULL \gexec
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO control_plane_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE control_plane_migrator IN SCHEMA public
   REVOKE ALL PRIVILEGES ON TABLES FROM control_plane_app;

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CommandInboxError,
@@ -12,8 +11,12 @@ import {
   type Execution,
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
+  retiredCommandKeyCandidates,
+  retiredCommandKeyFromMetadataV2,
+  retiredCommandKeyV1,
   type RetentionAssessment,
   type RetentionDeletionResult,
+  RetentionJournalOperationSchema,
   type RetentionJournalSink,
   type RetentionHoldPolicy,
   RetentionHoldError,
@@ -29,7 +32,7 @@ import {
   type DurableUsageBudgetSummary,
 } from '@control-plane/usage-ledger'
 import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
-import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
@@ -116,7 +119,12 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
                 .where(
                   inArray(
                     retiredCommandKeys.scopeKey,
-                    candidates.map((candidate) => retirementKey(candidate))
+                    candidates.flatMap((candidate) => {
+                      const keys = retiredCommandKeyCandidates(
+                        CommandInboxScopeSchema.parse(candidate)
+                      )
+                      return [keys.legacyKey, keys.metadata.scopeKey]
+                    })
                   )
                 )
             ).map((row) => row.scopeKey)
@@ -150,7 +158,10 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           ['completed', 'failed'].includes(candidate.status) &&
           terminalExecutionStates.has(candidate.executionState),
         publicationSettled: true,
-        rejectionKeyReserved: retiredKeys.has(retirementKey(candidate)),
+        rejectionKeyReserved: (() => {
+          const keys = retiredCommandKeyCandidates(CommandInboxScopeSchema.parse(candidate))
+          return retiredKeys.has(keys.legacyKey) || retiredKeys.has(keys.metadata.scopeKey)
+        })(),
         pendingReferences: candidate.reconciliationRequiredAt === null ? 0 : 1,
         holds,
       })
@@ -235,16 +246,29 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         if (stored.workspaceId !== owner.workspaceId || stored.projectId !== owner.projectId) {
           throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
         }
-        const key = retirementKey(stored)
-        const [retirement] = await transaction
+        const keys = retiredCommandKeyCandidates(CommandInboxScopeSchema.parse(stored))
+        const retirements = await transaction
           .select({
             scopeKey: retiredCommandKeys.scopeKey,
+            commandId: retiredCommandKeys.commandId,
             executionId: retiredCommandKeys.executionId,
             retiredAt: retiredCommandKeys.retiredAt,
+            metadataVersion: retiredCommandKeys.metadataVersion,
+            identityDigest: retiredCommandKeys.identityDigest,
           })
           .from(retiredCommandKeys)
-          .where(eq(retiredCommandKeys.scopeKey, key))
-          .limit(1)
+          .where(inArray(retiredCommandKeys.scopeKey, [keys.legacyKey, keys.metadata.scopeKey]))
+        for (const retirement of retirements) {
+          if (
+            retirement.commandId !== stored.commandId ||
+            retirement.executionId !== stored.executionId ||
+            !validRetiredCommandKeyMetadata(retirement)
+          ) {
+            throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
+          }
+        }
+        const retirement =
+          retirements.find((row) => row.scopeKey === keys.metadata.scopeKey) ?? retirements[0]
         const holds = await countPostgresMatchingActiveRetentionHolds(
           transaction,
           {
@@ -268,6 +292,19 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         counter.recordVerdict(verdict)
         if (verdict.verdict !== 'eligible' || dryRun)
           return { bound: false, deleted: false, raced: false }
+        if (retirement !== undefined && retirement.scopeKey !== keys.metadata.scopeKey) {
+          await transaction
+            .insert(retiredCommandKeys)
+            .values({
+              scopeKey: keys.metadata.scopeKey,
+              commandId: stored.commandId,
+              executionId: stored.executionId,
+              retiredAt: retirement.retiredAt,
+              metadataVersion: keys.metadata.metadataVersion,
+              identityDigest: keys.metadata.identityDigest,
+            })
+            .onConflictDoNothing()
+        }
         // The rejection key is a precondition of eligibility, so the journal
         // restates it as well as the delete before the transaction applies them.
         if (options.journal !== undefined) {
@@ -277,9 +314,9 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
               : [
                   {
                     kind: 'postgres.retireCommandKey' as const,
-                    scopeKey: key,
+                    scopeKey: keys.metadata.scopeKey,
                     commandId: stored.commandId,
-                    executionId: retirement.executionId,
+                    executionId: stored.executionId,
                     retiredAt: retirement.retiredAt.toISOString(),
                   },
                 ]),
@@ -327,7 +364,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           )
         }
         await transaction.execute(
-          sql`select pg_advisory_xact_lock(hashtextextended(${retirementKey(parsedCommand)}, 0))`
+          sql`select pg_advisory_xact_lock(hashtextextended(${retiredCommandKeyV1(parsedCommand)}, 0))`
         )
         await assertNotRetired(transaction, parsedCommand)
         const [existingScope] = await transaction
@@ -481,15 +518,21 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     const timestamp = new Date(retiredAt)
     if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== retiredAt)
       throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
-    const key = retirementKey(scope)
+    const keys = retiredCommandKeyCandidates(scope)
     return this.database.transaction(async (transaction) => {
-      await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
-      const [retired] = await transaction
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${keys.legacyKey}, 0))`
+      )
+      const retiredRows = await transaction
         .select()
         .from(retiredCommandKeys)
-        .where(eq(retiredCommandKeys.scopeKey, key))
-        .limit(1)
-      if (retired) return true
+        .where(inArray(retiredCommandKeys.scopeKey, [keys.legacyKey, keys.metadata.scopeKey]))
+      const retiredV2 = retiredRows.find((row) => row.scopeKey === keys.metadata.scopeKey)
+      if (retiredV2 !== undefined) {
+        if (!validRetiredCommandKeyMetadata(retiredV2))
+          throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
+        return true
+      }
       // Discover ownership without claiming the command. Both retirement and
       // deletion lock the execution before the command, avoiding an inversion.
       const [observed] = await transaction
@@ -497,7 +540,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         .from(commandInbox)
         .where(scopeWhere(scope))
         .limit(1)
-      if (!observed) return false
+      if (!observed) return retiredRows.length > 0
       const [executionRow] = await transaction
         .select()
         .from(executions)
@@ -522,14 +565,137 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         timestamp.getTime() <= Date.parse(command.retentionExpiresAt)
       )
         return false
+      const legacyRetirement = retiredRows.find((retired) => retired.scopeKey === keys.legacyKey)
+      if (
+        legacyRetirement !== undefined &&
+        (legacyRetirement.commandId !== command.commandId ||
+          legacyRetirement.executionId !== command.executionId ||
+          !validRetiredCommandKeyMetadata(legacyRetirement))
+      ) {
+        throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
+      }
       await transaction.insert(retiredCommandKeys).values({
-        scopeKey: key,
+        scopeKey: keys.metadata.scopeKey,
         commandId: command.commandId,
         executionId: command.executionId,
-        retiredAt: timestamp,
+        retiredAt: legacyRetirement?.retiredAt ?? timestamp,
+        metadataVersion: keys.metadata.metadataVersion,
+        identityDigest: keys.metadata.identityDigest,
       })
       return true
     })
+  }
+
+  /** Deletes replay tombstones only after the explicit retention class expires. */
+  async deleteEligibleRetiredCommandKeys(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly afterId?: string
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'retired-command-keys',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId = options.afterId
+    let done = false
+    while (!done) {
+      const limit = Math.min(128, counter.remaining + 1)
+      const candidates = await this.database
+        .select({ scopeKey: retiredCommandKeys.scopeKey })
+        .from(retiredCommandKeys)
+        .where(afterId === undefined ? sql`true` : gt(retiredCommandKeys.scopeKey, afterId))
+        .orderBy(asc(retiredCommandKeys.scopeKey))
+        .limit(limit)
+      if (candidates.length === 0) break
+      for (const candidate of candidates) {
+        if (!counter.admitCandidate()) {
+          done = true
+          break
+        }
+        afterId = candidate.scopeKey
+        const outcome = await this.database.transaction(async (transaction) => {
+          await acquirePostgresRetentionHoldClassMutex(transaction, 'retired-command-keys')
+          const [stored] = await transaction
+            .select()
+            .from(retiredCommandKeys)
+            .where(eq(retiredCommandKeys.scopeKey, candidate.scopeKey))
+            .limit(1)
+            .for('update')
+          if (stored === undefined) return { verdict: undefined, deleted: false, raced: true }
+          const validMetadata =
+            (stored.metadataVersion === 1 && stored.identityDigest === null) ||
+            (stored.metadataVersion === 2 &&
+              stored.identityDigest !== null &&
+              retiredCommandKeyFromMetadataV2(stored.identityDigest) === stored.scopeKey)
+          if (
+            !validMetadata ||
+            !Number.isFinite(stored.retiredAt.getTime()) ||
+            !CommandInboxRecordSchema.shape.commandId.safeParse(stored.commandId).success ||
+            !ExecutionSchema.shape.executionId.safeParse(stored.executionId).success
+          )
+            throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
+          const holds = await countPostgresMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'retired-command-keys' },
+            options.retentionHoldPolicy
+          )
+          const expiry = new Date(stored.retiredAt.getTime() + (options.policyRetainMs ?? 0))
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null || !Number.isFinite(expiry.getTime())
+                ? undefined
+                : expiry.toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences: 0,
+            holds,
+          })
+          counter.recordVerdict(verdict)
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, deleted: false, raced: false }
+          if (options.journal !== undefined) {
+            await options.journal(
+              RetentionJournalOperationSchema.array().parse([
+                { kind: 'postgres.deleteRetiredCommandKey', scopeKey: stored.scopeKey },
+              ])
+            )
+          }
+          const removed = await transaction
+            .delete(retiredCommandKeys)
+            .where(eq(retiredCommandKeys.scopeKey, stored.scopeKey))
+            .returning({ scopeKey: retiredCommandKeys.scopeKey })
+          return { verdict, deleted: removed.length === 1, raced: removed.length !== 1 }
+        })
+        if (outcome.verdict === undefined)
+          counter.recordVerdict({ verdict: 'retained', reason: 'unconfirmed_signal' })
+        if (outcome.deleted) deleted += 1
+        if (outcome.raced) raced += 1
+      }
+      if (candidates.length < limit) break
+    }
+    const result = counter.result()
+    return {
+      dryRun,
+      deleted,
+      raced,
+      ...result,
+      ...(result.truncated && afterId !== undefined ? { nextAfterId: afterId } : {}),
+    }
   }
 
   async getByExecutionId(executionId: string): Promise<CommandInboxRecord | undefined> {
@@ -695,34 +861,26 @@ async function assertNotRetired(
   database: ControlPlaneDatabase | CommandTransaction,
   scope: CommandInboxScope
 ): Promise<void> {
+  const keys = retiredCommandKeyCandidates(scope)
   const [row] = await database
     .select()
     .from(retiredCommandKeys)
-    .where(eq(retiredCommandKeys.scopeKey, retirementKey(scope)))
+    .where(inArray(retiredCommandKeys.scopeKey, [keys.legacyKey, keys.metadata.scopeKey]))
     .limit(1)
   if (row) throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
 }
 
-// Structural input: retirement only joins the scoped identity strings, so the
-// assessment can reuse it for selected projection rows.
-function retirementKey(scope: {
-  readonly callerPrincipalId: string
-  readonly operation: string
-  readonly workspaceId: string
-  readonly projectId: string
-  readonly idempotencyKey: string
-}): string {
-  return createHash('sha256')
-    .update(
-      [
-        scope.callerPrincipalId,
-        scope.operation,
-        scope.workspaceId,
-        scope.projectId,
-        scope.idempotencyKey,
-      ].join('\u001f')
-    )
-    .digest('hex')
+function validRetiredCommandKeyMetadata(row: {
+  readonly scopeKey: string
+  readonly metadataVersion: number
+  readonly identityDigest: string | null
+}): boolean {
+  if (row.metadataVersion === 1) return row.identityDigest === null
+  return (
+    row.metadataVersion === 2 &&
+    row.identityDigest !== null &&
+    retiredCommandKeyFromMetadataV2(row.identityDigest) === row.scopeKey
+  )
 }
 
 function toCommandRow(command: CommandInboxRecord): typeof commandInbox.$inferInsert {

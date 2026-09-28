@@ -104,6 +104,8 @@ async function grantApplicationAccess(
     await migration`grant select, insert, update, delete on all tables in schema public to ${migration(applicationRole)}`
     await migration`revoke insert, update, delete on admission_rollout_gate from ${migration(applicationRole)}`
     await migration`grant select on admission_rollout_gate to ${migration(applicationRole)}`
+    await migration`revoke all privileges on retired_command_keys from ${migration(applicationRole)}`
+    await migration`grant select, insert on retired_command_keys to ${migration(applicationRole)}`
     await migration`grant usage, select on all sequences in schema public to ${migration(applicationRole)}`
     await migration`alter default privileges grant select, insert, update, delete on tables to ${migration(applicationRole)}`
     await migration`alter default privileges grant usage, select on sequences to ${migration(applicationRole)}`

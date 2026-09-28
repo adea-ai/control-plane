@@ -228,12 +228,15 @@ Hosted role re-provisioning. Production schema preflight checks effective
 table and column permissions, not a caller-supplied operator flag.
 
 **Do not promote this checkpoint as a complete rollout workflow.** Bounded
-paginated inventory, verified drain, fresh exclusive-lock resume and concurrent
-cutover acceptance are still unimplemented. There is no
-supported resume command yet. A deployment must also externally quiesce old
-API/workflow replicas that do not honor the fence before migration; the current
-automatic schema/image promotion does not establish that proof. Never restore
-intake with an arbitrary SQL update or invent historical funding authority.
+paginated inventory, drain audit and fresh exclusive-lock resume are
+implemented in the database service and operator CLI. They do not establish
+concurrent cutover acceptance or externally prove that old API/workflow
+replicas have been quiesced before migration; the current automatic schema/image
+promotion does not establish that proof. Journal provenance, commit-outcome
+reconciliation, live role/migration verification and external
+provider-settlement evidence also remain open.
+Never restore intake with an arbitrary SQL update or invent historical funding
+authority.
 
 The operator CLI now supports actual PostgreSQL `status` and `pause` operations.
 It loads only `DATABASE_MIGRATION_URL`, uses an explicit migration connection
@@ -247,10 +250,11 @@ bun run admission:admin status --host <host> --port <port> --database <database>
 bun run admission:admin pause --host <host> --port <port> --database <database> --confirm pause
 ```
 
-The `audit` and `resume` CLI dispatch paths are prepared for the bounded database
-service, but that service is not implemented at this checkpoint. Their adapter
-tests are not drain/resume acceptance. Do not use them as a supported rollout
-procedure yet. No force flag, saved-report input, automatic migration or
+The CLI also supports the bounded database service's `audit` and `resume`
+operations. Resume performs a fresh audit while holding the exclusive intake
+fence; a saved report cannot authorize it. These local service checks are not
+external rollout or replica-quiescence acceptance. Do not treat them as proof
+that the production cutover is safe. No force flag, automatic migration or
 deployment is provided. Failed operations return exit code 1 with sanitized
 stderr; a completed audit that does not permit resume returns exit code 2.
 
@@ -322,6 +326,37 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #                               compacts delivered inbox payloads, keeping the
 #                               (consumer, messageId) deduplication identity)
 ```
+
+Replay-key tombstones have their own 30-day operator retention class. The
+PostgreSQL runtime application role is limited to `SELECT` and `INSERT` on
+`retired_command_keys`; it cannot update or delete replay evidence. The
+`retired-command-keys` class therefore requires the separately configured
+`DATABASE_MIGRATION_URL` role, which is also used by schema migrations and the
+admission-rollout operator CLI. The retention command does not fall back to the
+application or administration URL. Keep the class dry-run as the default and
+record its result with the change:
+
+```sh
+bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
+  --database control_plane --host <neon-host>
+
+# Only after review; requires the explicit operator hold policy and confirmation.
+bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
+  --database control_plane --host <neon-host> \
+  --hold-policy /etc/control-plane/operator-policy.json \
+  --apply --confirm retired-command-keys
+```
+
+The 30-day clock starts at `retired_at`. Rows remain at day 29 and at the exact
+30-day instant; deletion becomes eligible only after that instant. This is an
+explicit physical-retention action, not background cleanup. Legacy v1 rows
+continue to reject matching replays while retained, but cannot prove their
+scoped identity to the admission audit; they block a safe intake resume until
+the 30-day window expires and the operator deletes them through this class.
+Execution cleanup keeps an owner reference-pinned while any tombstone row is
+persisted, even after day 30. Run the retired-command-key sweep first, then
+rerun execution-owner cleanup if it is otherwise eligible. Do not manually edit
+a tombstone to clear that diagnostic.
 
 Context packages are freed by the same bottom-up order: a package stays
 retained while a plan pins it or the authoring command that produced it still
@@ -459,6 +494,19 @@ the journal independently of the database and reconcile ambiguous outcomes
 before exposing a restored copy; without the journal a snapshot cannot be
 brought forward. External durability and outcome reconciliation remain open
 M11 gates.
+
+For a retired-command entry, reapplication derives the v2 commitment from the
+restored inbox row and compares it with the journal before inserting the
+tombstone. It fails closed when the source row is absent and no exact verified
+v2 tombstone already exists. The journal contains the opaque scope key and
+command/execution identifiers, not the original caller, operation, workspace,
+project, idempotency key, or command payload.
+
+PostgreSQL reapplication uses `DATABASE_URL` for journals that only insert
+retirement evidence. A journal containing `postgres.deleteRetiredCommandKey`
+requires the dedicated `DATABASE_MIGRATION_URL`; the command never falls back
+to the application URL for that deletion. Keep the application role
+insert-only for retired-command tombstones.
 
 Which classes can ever be swept, and which the policy keeps reference-governed,
 is one command away — it prints the decided duration, the governance mode, the

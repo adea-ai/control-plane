@@ -37,6 +37,8 @@ import {
   type RetentionJournalSink,
   type RetentionHoldPolicy,
   RetentionJournalOperationSchema,
+  retiredCommandKeyCandidates,
+  retiredCommandKeyFromMetadataV2,
 } from '@control-plane/domain'
 import { assertContextPackageIntegrity } from '@control-plane/context'
 import {
@@ -195,7 +197,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     const execution = ExecutionSchema.parse(executionInput)
     return this.provider.transaction(async (transaction) => {
       const commandId = recordId(scopeKey(command))
-      await this.#assertNotRetired(transaction, commandId)
+      await this.#assertNotRetired(transaction, command)
       const existingRecord = await transaction.get(namespaces.commands, commandId)
       if (existingRecord === undefined) {
         if (
@@ -291,7 +293,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
   async get(scopeInput: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
     const scope = CommandInboxScopeSchema.parse(scopeInput)
     return this.provider.transaction(async (transaction) => {
-      await this.#assertNotRetired(transaction, recordId(scopeKey(scope)))
+      await this.#assertNotRetired(transaction, scope)
       const record = await transaction.get(namespaces.commands, recordId(scopeKey(scope)))
       return record === undefined ? undefined : CommandInboxRecordSchema.parse(record.value)
     })
@@ -306,10 +308,17 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== retiredAt)
       throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
     return this.provider.transaction(async (transaction) => {
-      const id = recordId(scopeKey(scope))
-      if (await transaction.get(namespaces.retiredCommands, id)) return true
-      const stored = await transaction.get(namespaces.commands, id)
-      if (!stored) return false
+      const keys = retiredCommandKeyCandidates(scope)
+      const legacyId = recordId(keys.legacyScope)
+      const currentId = recordId(keys.metadata.scopeKey)
+      const legacy = await transaction.get(namespaces.retiredCommands, legacyId)
+      const current = await transaction.get(namespaces.retiredCommands, currentId)
+      if (current !== undefined) {
+        assertSqliteRetiredCommandKey(current.value, currentId, keys.metadata.scopeKey)
+        return true
+      }
+      const stored = await transaction.get(namespaces.commands, recordId(scopeKey(scope)))
+      if (!stored) return legacy !== undefined
       const command = CommandInboxRecordSchema.parse(stored.value)
       if (scopeKey(command) !== scopeKey(scope))
         throw new Error('COMMAND_RETIREMENT_SCOPE_MISMATCH')
@@ -320,10 +329,26 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         timestamp.getTime() <= Date.parse(command.retentionExpiresAt)
       )
         return false
+      if (legacy !== undefined) {
+        const legacyValue = parseLegacySqliteRetirement(legacy.value)
+        if (
+          legacyValue.commandId !== command.commandId ||
+          legacyValue.executionId !== command.executionId
+        )
+          throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+      }
       await transaction.put({
         namespace: namespaces.retiredCommands,
-        id,
-        value: { retiredAt, commandId: command.commandId, executionId: command.executionId },
+        id: currentId,
+        value: {
+          scopeKey: keys.metadata.scopeKey,
+          metadataVersion: keys.metadata.metadataVersion,
+          identityDigest: keys.metadata.identityDigest,
+          retiredAt:
+            legacy === undefined ? retiredAt : parseLegacySqliteRetirement(legacy.value).retiredAt,
+          commandId: command.commandId,
+          executionId: command.executionId,
+        },
       })
       return true
     })
@@ -368,10 +393,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       const facts = await this.provider.transaction(async (transaction) => {
         const resolved: RetentionEligibilityVerdict[] = []
         for (const command of candidates) {
-          const tombstone = await transaction.get(
-            namespaces.retiredCommands,
-            recordId(scopeKey(command))
-          )
+          const tombstone = await findSqliteRetirement(transaction, command)
           const execution = await transaction.get(
             namespaces.executions,
             recordId(command.executionId)
@@ -469,10 +491,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           if (stored === undefined)
             return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           const command = CommandInboxRecordSchema.parse(stored.value)
-          const tombstone = await transaction.get(
-            namespaces.retiredCommands,
-            recordId(scopeKey(command))
-          )
+          const tombstone = await findSqliteRetirement(transaction, command)
           const execution = await transaction.get(
             namespaces.executions,
             recordId(command.executionId)
@@ -510,23 +529,31 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           if (verdict.verdict !== 'eligible' || dryRun) {
             return { verdict, admitted: true, removed: false, conflicted: false }
           }
+          const keys = retiredCommandKeyCandidates(command)
+          const retirementId = recordId(keys.metadata.scopeKey)
+          const retirementValue =
+            tombstone?.id === retirementId
+              ? tombstone.value
+              : {
+                  scopeKey: keys.metadata.scopeKey,
+                  metadataVersion: keys.metadata.metadataVersion,
+                  identityDigest: keys.metadata.identityDigest,
+                  retiredAt: parseLegacySqliteRetirement(tombstone?.value).retiredAt,
+                  commandId: command.commandId,
+                  executionId: command.executionId,
+                }
           // Journal only after this candidate has been admitted to the bounded
           // pass. The trusted journal records an approved deletion intent for
           // restoration to replay before this transaction applies it.
           if (options.journal !== undefined) {
-            const retirementId = recordId(scopeKey(command))
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
-                ...(tombstone === undefined
-                  ? []
-                  : [
-                      {
-                        kind: 'sqlite.put' as const,
-                        namespace: namespaces.retiredCommands,
-                        id: retirementId,
-                        value: tombstone.value,
-                      },
-                    ]),
+                {
+                  kind: 'sqlite.put' as const,
+                  namespace: namespaces.retiredCommands,
+                  id: retirementId,
+                  value: retirementValue,
+                },
                 { kind: 'sqlite.delete', namespace: namespaces.commands, id: candidate.id },
                 {
                   kind: 'sqlite.delete',
@@ -535,6 +562,13 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
                 },
               ])
             )
+          }
+          if (tombstone?.id !== retirementId) {
+            await transaction.put({
+              namespace: namespaces.retiredCommands,
+              id: retirementId,
+              value: json(retirementValue),
+            })
           }
           const removed = await transaction.delete(
             namespaces.commands,
@@ -561,14 +595,124 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     return { dryRun, deleted, raced, ...counter.result() }
   }
 
+  /** Delete replay tombstones only after their explicit 30-day retention class expires. */
+  async deleteEligibleRetiredCommandKeys(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly afterId?: string
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'retired-command-keys',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId = options.afterId
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.retiredCommands, {
+          limit: Math.min(128, counter.remaining + 1),
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      for (const candidate of page) {
+        if (!counter.admitCandidate()) {
+          done = true
+          break
+        }
+        afterId = candidate.id
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const current = await transaction.get(namespaces.retiredCommands, candidate.id)
+          if (current === undefined) return { verdict: undefined, removed: false, raced: true }
+          if (current.revision !== candidate.revision)
+            return { verdict: undefined, removed: false, raced: true }
+          const fresh = parseSqliteRetiredCommandKey(current.id, current.value)
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'retired-command-keys' },
+            options.retentionHoldPolicy
+          )
+          const expiry = new Date(Date.parse(fresh.retiredAt) + (options.policyRetainMs ?? 0))
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null || !Number.isFinite(expiry.getTime())
+                ? undefined
+                : expiry.toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences: 0,
+            holds,
+          })
+          counter.recordVerdict(verdict)
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, removed: false, raced: false }
+          if (options.journal !== undefined) {
+            await options.journal([
+              {
+                kind: 'sqlite.delete',
+                namespace: namespaces.retiredCommands,
+                id: candidate.id,
+              },
+            ])
+          }
+          const removed = await transaction.delete(
+            namespaces.retiredCommands,
+            candidate.id,
+            candidate.revision
+          )
+          return { verdict, removed, raced: !removed }
+        })
+        if (outcome.verdict === undefined) {
+          // A candidate that raced still consumes its bounded slot. Record a
+          // conservative retention verdict rather than losing accounting.
+          counter.recordVerdict({ verdict: 'retained', reason: 'unconfirmed_signal' })
+        }
+        if (outcome.removed) deleted += 1
+        if (outcome.raced) raced += 1
+      }
+      if (page.length < Math.min(128, counter.remaining + 1)) break
+    }
+    return {
+      dryRun,
+      deleted,
+      raced,
+      ...counter.result(),
+      ...(counter.result().truncated && afterId !== undefined ? { nextAfterId: afterId } : {}),
+    }
+  }
+
   /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredInbox(now: Date): Promise<number> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
     throw new Error('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
   }
 
-  async #assertNotRetired(transaction: PersistenceTransaction, id: string): Promise<void> {
-    if (await transaction.get(namespaces.retiredCommands, id))
+  async #assertNotRetired(
+    transaction: PersistenceTransaction,
+    scope: CommandInboxScope
+  ): Promise<void> {
+    const keys = retiredCommandKeyCandidates(scope)
+    if (
+      (await transaction.get(namespaces.retiredCommands, recordId(keys.legacyScope))) !==
+        undefined ||
+      (await transaction.get(namespaces.retiredCommands, recordId(keys.metadata.scopeKey))) !==
+        undefined
+    )
       throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
   }
 
@@ -732,6 +876,102 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
   }
 }
 
+function parseLegacySqliteRetirement(input: unknown): {
+  readonly retiredAt: string
+  readonly commandId: string
+  readonly executionId: string
+} {
+  if (input === undefined || typeof input !== 'object' || input === null)
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  const value = input as Record<string, unknown>
+  if (
+    typeof value['retiredAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(value['retiredAt'])) ||
+    new Date(value['retiredAt']).toISOString() !== value['retiredAt']
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  const commandId = CommandInboxRecordSchema.shape.commandId.parse(value['commandId'])
+  const executionId = ExecutionSchema.shape.executionId.parse(value['executionId'])
+  return { retiredAt: value['retiredAt'], commandId, executionId }
+}
+
+function assertSqliteRetiredCommandKey(input: unknown, id: string, expectedScopeKey: string): void {
+  const parsed = parseSqliteRetiredCommandKey(id, input)
+  if (parsed.metadataVersion !== 2 || parsed.scopeKey !== expectedScopeKey)
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+}
+
+function parseSqliteRetiredCommandKey(
+  id: string,
+  input: unknown
+): {
+  readonly scopeKey: string
+  readonly metadataVersion: number
+  readonly identityDigest: string | null
+  readonly retiredAt: string
+  readonly commandId: string
+  readonly executionId: string
+} {
+  const legacy = parseLegacySqliteRetirement(input)
+  const value = input as Record<string, unknown>
+  if (
+    value['metadataVersion'] === undefined ||
+    (value['metadataVersion'] === 1 && value['identityDigest'] === null)
+  ) {
+    return {
+      scopeKey: '',
+      metadataVersion: 1,
+      identityDigest: null,
+      ...legacy,
+    }
+  }
+  if (
+    value['metadataVersion'] !== 2 ||
+    typeof value['scopeKey'] !== 'string' ||
+    typeof value['identityDigest'] !== 'string' ||
+    retiredCommandKeyFromMetadataV2(value['identityDigest']) !== value['scopeKey'] ||
+    id !== recordId(value['scopeKey'])
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  return {
+    scopeKey: value['scopeKey'],
+    metadataVersion: 2,
+    identityDigest: value['identityDigest'],
+    ...legacy,
+  }
+}
+
+async function findSqliteRetirement(
+  transaction: PersistenceTransaction,
+  command: CommandInboxRecord
+): Promise<{ readonly id: string; readonly value: unknown } | undefined> {
+  const keys = retiredCommandKeyCandidates(command)
+  const currentId = recordId(keys.metadata.scopeKey)
+  const current = await transaction.get(namespaces.retiredCommands, currentId)
+  if (current !== undefined) {
+    const parsed = parseSqliteRetiredCommandKey(current.id, current.value)
+    if (
+      parsed.metadataVersion !== 2 ||
+      parsed.scopeKey !== keys.metadata.scopeKey ||
+      parsed.commandId !== command.commandId ||
+      parsed.executionId !== command.executionId
+    )
+      throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+    return current
+  }
+  const legacyId = recordId(keys.legacyScope)
+  const legacy = await transaction.get(namespaces.retiredCommands, legacyId)
+  if (legacy === undefined) return undefined
+  const parsed = parseSqliteRetiredCommandKey(legacy.id, legacy.value)
+  if (
+    parsed.metadataVersion !== 1 ||
+    parsed.commandId !== command.commandId ||
+    parsed.executionId !== command.executionId
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  return legacy
+}
+
 export class SqliteExecutionRepository implements ExecutionRepository {
   constructor(readonly provider: PersistenceProvider) {}
 
@@ -792,6 +1032,14 @@ export class SqliteExecutionRepository implements ExecutionRepository {
           const acceptance = await transaction.get(
             namespaces.commandByExecution,
             recordId(execution.executionId)
+          )
+          const retiredCommandReference = (await transaction.list(namespaces.retiredCommands)).some(
+            (record) => {
+              const rawValue = record.value as { executionId?: unknown } | null
+              if (rawValue?.executionId !== execution.executionId) return false
+              parseSqliteRetiredCommandKey(record.id, record.value)
+              return true
+            }
           )
           const events = (await transaction.list(namespaces.events)).some(
             (record) =>
@@ -945,6 +1193,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             rejectionKeyReserved: true,
             pendingReferences:
               acceptance !== undefined ||
+              retiredCommandReference ||
               events ||
               checkpoints ||
               runtimeCommands ||

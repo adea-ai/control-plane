@@ -42,6 +42,10 @@ export const RetentionJournalOperationSchema = z.discriminatedUnion('kind', [
     retiredAt: z.string(),
   }),
   z.object({
+    kind: z.literal('postgres.deleteRetiredCommandKey'),
+    scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
     kind: z.literal('postgres.deleteCommand'),
     commandId: z.string().min(1).max(30),
   }),
@@ -113,6 +117,10 @@ const classOperations: Readonly<Record<string, readonly string[]>> = {
     'sqlite.delete:command-by-execution',
     'postgres.retireCommandKey',
     'postgres.deleteCommand',
+  ],
+  'retired-command-keys': [
+    'sqlite.delete:retired-command-keys',
+    'postgres.deleteRetiredCommandKey',
   ],
   'execution-events': [
     'sqlite.put:retired-execution-event-ids',

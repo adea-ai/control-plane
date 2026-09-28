@@ -412,8 +412,21 @@ test('packages the hosted simple profile as one hardened user-owned composition'
     databaseRoles,
     /GRANT SELECT ON TABLE public\.admission_rollout_gate TO control_plane_app/i
   )
+  assert.match(databaseRoles, /to_regclass\('public\.retired_command_keys'\) IS NOT NULL/i)
+  assert.match(
+    databaseRoles,
+    /REVOKE ALL PRIVILEGES ON TABLE public\.retired_command_keys FROM control_plane_app/i
+  )
+  assert.match(
+    databaseRoles,
+    /GRANT SELECT, INSERT ON TABLE public\.retired_command_keys TO control_plane_app/i
+  )
   assert.ok(
     databaseRoles.indexOf('REVOKE ALL PRIVILEGES ON TABLE public.admission_rollout_gate') >
+      databaseRoles.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public')
+  )
+  assert.ok(
+    databaseRoles.indexOf('REVOKE ALL PRIVILEGES ON TABLE public.retired_command_keys') >
       databaseRoles.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public')
   )
   assert.match(databaseRoles, /PostgreSQL role passwords must be distinct/)

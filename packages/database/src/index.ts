@@ -10,6 +10,9 @@ export {
   AdmissionRolloutError,
   PostgresAdmissionRolloutService,
   type AdmissionRolloutErrorCode,
+  type AdmissionRolloutAuditCounts,
+  type AdmissionRolloutAuditReport,
+  type AdmissionRolloutDiagnostic,
   type AdmissionRolloutStatus,
 } from './admission-rollout.js'
 export {

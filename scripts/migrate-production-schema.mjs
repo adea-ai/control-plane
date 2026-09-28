@@ -24,7 +24,12 @@ const RUNTIME_TARGET = Object.freeze({
 })
 const RUNTIME_CRUD_TABLES = Object.freeze(['catalog_approvals', 'retired_execution_event_ids'])
 const RUNTIME_READ_ONLY_TABLES = Object.freeze(['admission_rollout_gate'])
-const RUNTIME_TABLES = Object.freeze([...RUNTIME_CRUD_TABLES, ...RUNTIME_READ_ONLY_TABLES])
+const RUNTIME_INSERT_ONLY_TABLES = Object.freeze(['retired_command_keys'])
+const RUNTIME_TABLES = Object.freeze([
+  ...RUNTIME_CRUD_TABLES,
+  ...RUNTIME_READ_ONLY_TABLES,
+  ...RUNTIME_INSERT_ONLY_TABLES,
+])
 const ADVISORY_LOCK = Object.freeze([1_295_070_001, 11])
 const MIGRATION_TIMEOUTS = Object.freeze({
   connectTimeoutSeconds: 10,
@@ -342,7 +347,7 @@ export function createPostgresSession(url, timeouts = MIGRATION_TIMEOUTS) {
           has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'INSERT') AS has_column_insert,
           has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'UPDATE') AS has_column_update,
           has_any_column_privilege(current_user, format('public.%I', requested.table_name), 'REFERENCES') AS has_column_references
-        FROM (VALUES ('catalog_approvals'), ('retired_execution_event_ids'), ('admission_rollout_gate')) AS requested(table_name)
+        FROM (VALUES ('catalog_approvals'), ('retired_execution_event_ids'), ('admission_rollout_gate'), ('retired_command_keys')) AS requested(table_name)
         LEFT JOIN pg_class AS c ON c.relname = requested.table_name
         LEFT JOIN pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = 'public'
         LEFT JOIN pg_roles AS owner ON owner.oid = c.relowner
@@ -419,6 +424,23 @@ export function assertRuntimeCapabilities(capabilities, privileges) {
       privilege.can_update !== false ||
       privilege.can_delete !== false ||
       privilege.has_column_insert !== false ||
+      privilege.has_column_update !== false ||
+      privilege.has_column_references !== false
+    ) {
+      throw gateError('runtime database table grants are unsafe')
+    }
+  }
+
+  for (const table of RUNTIME_INSERT_ONLY_TABLES) {
+    const rows = privileges.filter((privilege) => privilege.table_name === table)
+    const privilege = rows[0]
+    if (
+      rows.length !== 1 ||
+      privilege.table_owner !== MIGRATION_TARGET.username ||
+      privilege.can_select !== true ||
+      privilege.can_insert !== true ||
+      privilege.can_update !== false ||
+      privilege.can_delete !== false ||
       privilege.has_column_update !== false ||
       privilege.has_column_references !== false
     ) {

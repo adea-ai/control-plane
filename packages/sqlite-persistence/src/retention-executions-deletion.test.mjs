@@ -4,8 +4,10 @@ import { ControlApiFixtures } from '@control-plane/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ExecutionAttemptSchema } from '@control-plane/domain'
+import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/config'
+import { ExecutionAttemptSchema, retiredCommandKeyCandidates } from '@control-plane/domain'
 import {
+  SqliteCommandAcceptanceRepository,
   SqliteExecutionRepository,
   SqliteInteractionRepository,
   SqlitePersistenceProvider,
@@ -22,6 +24,10 @@ const executionPlanId = 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const acceptedAt = '2026-05-01T10:00:00.000Z'
 const terminalAt = '2026-05-02T10:00:00.000Z'
 const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
+const retiredCommandKeysRetentionMs = retentionClassPolicy(
+  decidedRetentionPolicy,
+  'retired-command-keys'
+).retainMs
 
 // The store derives record ids by hashing the logical id, so a fixture that
 // wants to look like a stored record has to use the same derivation.
@@ -194,6 +200,70 @@ describe('SQLite execution retention deletion (#194)', () => {
       expect(await provider.transaction((t) => t.list('execution-attempts'))).toHaveLength(0)
     })
   }, 60000)
+
+  test('expired retired tombstones pin owners until physical pruning completes', async () => {
+    await withProvider(async (provider) => {
+      await seedExecution(provider)
+      const scope = {
+        callerPrincipalId: 'svc_retention-reference',
+        operation: 'execution.accept',
+        workspaceId,
+        projectId,
+        idempotencyKey: 'execution-retention-tombstone',
+      }
+      const metadata = retiredCommandKeyCandidates(scope).metadata
+      const retiredAt = new Date(Date.parse(terminalAt) + 1_000)
+      const tombstoneId = storedId(metadata.scopeKey)
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'retired-command-keys',
+          id: tombstoneId,
+          value: {
+            ...metadata,
+            retiredAt: retiredAt.toISOString(),
+            commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+            executionId,
+          },
+        })
+      )
+
+      const executionRepository = new SqliteExecutionRepository(provider)
+      const afterTombstoneExpiry = new Date(retiredAt.getTime() + retiredCommandKeysRetentionMs + 1)
+      expect(
+        await provider.transaction((transaction) => transaction.list('retired-command-keys'))
+      ).toHaveLength(1)
+      const retained = await executionRepository.deleteEligibleExecutions(afterTombstoneExpiry, {
+        policyRetainMs: 1,
+        dryRun: false,
+      })
+      expect(retained).toMatchObject({
+        deleted: 0,
+        retainedByReason: { reference_pending: 1 },
+      })
+      expect(await executionRepository.getExecution(executionId)).toBeDefined()
+
+      const afterBothRetentionWindows = new Date(
+        Math.max(
+          Date.parse(terminalAt) + ninetyDaysMs + 1,
+          retiredAt.getTime() + retiredCommandKeysRetentionMs + 1
+        )
+      )
+      const tombstones = new SqliteCommandAcceptanceRepository(provider)
+      await expect(
+        tombstones.deleteEligibleRetiredCommandKeys(afterBothRetentionWindows, {
+          policyRetainMs: retiredCommandKeysRetentionMs,
+          dryRun: false,
+        })
+      ).resolves.toMatchObject({ deleted: 1 })
+      await expect(
+        executionRepository.deleteEligibleExecutions(afterBothRetentionWindows, {
+          policyRetainMs: ninetyDaysMs,
+          dryRun: false,
+        })
+      ).resolves.toMatchObject({ deleted: 1 })
+      expect(await executionRepository.getExecution(executionId)).toBeUndefined()
+    })
+  }, 60_000)
 
   test('a terminal execution with a missing latest attempt remains ambiguous', async () => {
     await withProvider(async (provider) => {

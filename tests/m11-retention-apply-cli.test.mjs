@@ -14,7 +14,7 @@ import {
   SqliteExecutionPlanRepository,
   SqlitePersistenceProvider,
 } from '../packages/sqlite-persistence/src/index.ts'
-import { retentionApply } from '../scripts/retention-apply.mjs'
+import { retentionApply, retentionDatabaseCredentialRole } from '../scripts/retention-apply.mjs'
 import {
   sqliteOperatorSession,
   writeOperatorPolicyFixture,
@@ -125,6 +125,11 @@ async function seedTerminalCommand(provider) {
 }
 
 describe('retention apply CLI (#194)', () => {
+  test('routes tombstone physical deletion through the explicit migration credential', () => {
+    expect(retentionDatabaseCredentialRole('retired-command-keys')).toBe('migration')
+    expect(retentionDatabaseCredentialRole('command-inbox')).toBe('application')
+  })
+
   test('a storage close failure is returned as failure, not overwritten by the entrypoint', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-retention-close-'))
     const path = join(directory, 'state.sqlite')

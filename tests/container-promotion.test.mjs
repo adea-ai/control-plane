@@ -90,6 +90,17 @@ function runtimeTablePrivileges() {
       has_column_update: false,
       has_column_references: false,
     },
+    {
+      table_name: 'retired_command_keys',
+      table_owner: 'control_plane_migrator',
+      can_select: true,
+      can_insert: true,
+      can_update: false,
+      can_delete: false,
+      has_column_insert: true,
+      has_column_update: false,
+      has_column_references: false,
+    },
   ]
 }
 
@@ -767,6 +778,42 @@ describe('production schema migration gate', () => {
             privileges.map((privilege) =>
               privilege.table_name === 'admission_rollout_gate'
                 ? { ...privilege, [privilegeName]: true }
+                : privilege
+            )
+          ),
+        /table grants are unsafe/
+      )
+    }
+  })
+
+  test('allows only SELECT and INSERT on replay tombstones, including effective column grants', () => {
+    const capabilities = runtimeCapabilities()
+    const privileges = runtimeTablePrivileges()
+    assert.doesNotThrow(() => assertRuntimeCapabilities(capabilities, privileges))
+    assert.throws(
+      () =>
+        assertRuntimeCapabilities(
+          capabilities,
+          privileges.filter((privilege) => privilege.table_name !== 'retired_command_keys')
+        ),
+      /table grants are unsafe/
+    )
+    for (const patch of [
+      { can_select: false },
+      { can_insert: false },
+      { can_update: true },
+      { can_delete: true },
+      { has_column_update: true },
+      { has_column_references: true },
+      { table_owner: 'control_plane_app' },
+    ]) {
+      assert.throws(
+        () =>
+          assertRuntimeCapabilities(
+            capabilities,
+            privileges.map((privilege) =>
+              privilege.table_name === 'retired_command_keys'
+                ? { ...privilege, ...patch }
                 : privilege
             )
           ),

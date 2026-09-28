@@ -4,6 +4,8 @@ export type AdmissionRolloutErrorCode =
   | 'ADMISSION_ROLLOUT_GATE_UNAVAILABLE'
   | 'ADMISSION_ROLLOUT_STATE_INVALID'
   | 'ADMISSION_ROLLOUT_AUTHORITY_DENIED'
+  | 'ADMISSION_ROLLOUT_AUDIT_INCOMPLETE'
+  | 'ADMISSION_ROLLOUT_RESUME_BLOCKED'
 
 export class AdmissionRolloutError extends Error {
   readonly code: AdmissionRolloutErrorCode
