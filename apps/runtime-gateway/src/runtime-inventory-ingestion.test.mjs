@@ -94,6 +94,35 @@ describe('Runtime Gateway inventory ingestion', () => {
     }
   })
 
+  test('rechecks channel authority after asynchronous normalization before opening the unit of work', async () => {
+    let active = true
+    let transactions = 0
+    const persisted = createFixture()
+    const fixture = createFixture({
+      normalizer: {
+        async normalize(input) {
+          const normalized = await new DefaultRuntimeInventoryNormalizer().normalize(input)
+          active = false
+          return normalized
+        },
+      },
+      unitOfWork: {
+        async run(_scope, operation) {
+          transactions++
+          return operation(persisted)
+        },
+      },
+    })
+
+    await expect(
+      fixture.service.ingest(inventory(1, [driver(runtimeA)]), source(), 'online', {
+        isActive: async () => active,
+      })
+    ).rejects.toThrow('RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED')
+    expect(transactions).toBe(0)
+    expect(await persisted.checkpoints.get(nodeId)).toBeUndefined()
+  })
+
   test('metrics exporter failure cannot reject committed inventory', async () => {
     const scoped = createFixture()
     let attempts = 0
@@ -471,8 +500,9 @@ describe('Runtime Gateway inventory ingestion', () => {
     const handler = new RuntimeInventoryMessageHandler({
       inventory: { ingest: async (...input) => calls.push(input) },
     })
-    await handler.handle(source(), frame)
-    expect(calls).toEqual([[frame, source(), 'online']])
+    const channelAuthority = { isActive: async () => true }
+    await handler.handle(source(), frame, channelAuthority)
+    expect(calls).toEqual([[frame, source(), 'online', channelAuthority]])
     await expect(handler.handle(source(), { ...frame, type: 'heartbeat' })).rejects.toThrow(
       'RUNTIME_GATEWAY_FRAME_UNSUPPORTED'
     )

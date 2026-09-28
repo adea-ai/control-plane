@@ -46,7 +46,7 @@ export class RuntimeGatewayMessageRouter implements RuntimeGatewayMessageHandler
       if (!(await this.#channelAuthority.isActive(source))) {
         throw new Error('RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED')
       }
-      await this.#inventory.handle(source, envelope)
+      await this.#inventory.handle(source, envelope, this.#channelAuthority)
       return
     }
     // Frame type alone does not identify the command family. Classify against the

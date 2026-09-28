@@ -20,6 +20,7 @@ import {
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import type { ActiveRuntimeNodeChannelRecord, GatewayMetrics } from './websocket-coordination.js'
+import type { RuntimeNodeChannelAuthority } from './runtime-event-ingestion.js'
 
 type InventoryDriver = GatewayInventoryEnvelope['runtimeDrivers'][number]
 type PreparedInventory = readonly {
@@ -127,10 +128,14 @@ export class RuntimeInventoryMessageHandler {
     this.#inventory = options.inventory
   }
 
-  async handle(source: ActiveRuntimeNodeChannelRecord, envelope: GatewayEnvelope): Promise<void> {
+  async handle(
+    source: ActiveRuntimeNodeChannelRecord,
+    envelope: GatewayEnvelope,
+    channelAuthority?: RuntimeNodeChannelAuthority
+  ): Promise<void> {
     const inventory = GatewayInventoryEnvelopeSchema.safeParse(envelope)
     if (!inventory.success) throw new Error('RUNTIME_GATEWAY_FRAME_UNSUPPORTED')
-    await this.#inventory.ingest(inventory.data, source, 'online')
+    await this.#inventory.ingest(inventory.data, source, 'online', channelAuthority)
   }
 }
 
@@ -249,12 +254,17 @@ export class RuntimeInventoryIngestionService {
   async ingest(
     inventoryValue: unknown,
     source: ActiveRuntimeNodeChannelRecord,
-    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked' = 'online'
+    nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked' = 'online',
+    channelAuthority?: RuntimeNodeChannelAuthority
   ): Promise<RuntimeInventoryIngestionResult> {
     const inventory = GatewayInventoryEnvelopeSchema.parse(inventoryValue)
     this.#assertSource(inventory, source)
+    await this.#assertChannelAuthority(channelAuthority, source)
     if (this.#unitOfWork) {
       const prepared = await this.#normalize(inventory, nodeStatus)
+      // Normalization can await host policy or artifact work; do not use
+      // authority from before that asynchronous boundary to commit inventory.
+      await this.#assertChannelAuthority(channelAuthority, source)
       const emissions: (() => void)[] = []
       const metrics: GatewayMetrics = {
         increment: (name, labels) => emissions.push(() => this.#metrics.increment(name, labels)),
@@ -282,14 +292,15 @@ export class RuntimeInventoryIngestionService {
       }
       return result
     }
-    return this.#ingestPrepared(inventory, source, nodeStatus)
+    return this.#ingestPrepared(inventory, source, nodeStatus, undefined, channelAuthority)
   }
 
   async #ingestPrepared(
     inventory: GatewayInventoryEnvelope,
     source: ActiveRuntimeNodeChannelRecord,
     nodeStatus: 'online' | 'offline' | 'unknown' | 'revoked',
-    prepared?: PreparedInventory
+    prepared?: PreparedInventory,
+    channelAuthority?: RuntimeNodeChannelAuthority
   ): Promise<RuntimeInventoryIngestionResult> {
     this.#assertSource(inventory, source)
     const { digest: inventoryDigest, legacyDigest: legacyDigestCandidate } =
@@ -335,6 +346,7 @@ export class RuntimeInventoryIngestionService {
       revision: (current?.revision ?? 0) + 1,
     })
     const normalized = prepared ?? (await this.#normalize(inventory, nodeStatus))
+    if (prepared === undefined) await this.#assertChannelAuthority(channelAuthority, source)
     const updated: RuntimeConnection[] = []
     for (const { driver, entry } of normalized) {
       await this.#registry.register(entry.registration)
@@ -417,6 +429,15 @@ export class RuntimeInventoryIngestionService {
     if (new Set(ids).size !== ids.length || new Set(digests).size !== digests.length)
       fail('INVENTORY_CORRELATION_MISMATCH')
     return normalized
+  }
+
+  async #assertChannelAuthority(
+    channelAuthority: RuntimeNodeChannelAuthority | undefined,
+    source: ActiveRuntimeNodeChannelRecord
+  ): Promise<void> {
+    if (channelAuthority !== undefined && !(await channelAuthority.isActive(source))) {
+      throw new Error('RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED')
+    }
   }
 
   #assertSource(inventory: GatewayInventoryEnvelope, source: ActiveRuntimeNodeChannelRecord): void {

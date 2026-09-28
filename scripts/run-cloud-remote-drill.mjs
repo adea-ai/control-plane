@@ -250,21 +250,14 @@ try {
     sender: lifecycle,
     metrics,
   })
+  const channelAuthority = { isActive: (source) => lifecycle.isChannelActive(source) }
   const events = new RuntimeEventIngestionService({
     commands,
     executions,
     effects: new PostgresRuntimeEventEffectSink(database.application),
     normalizer: new DefaultRuntimeAdapterEventNormalizer(),
     metrics,
-    channelAuthority: {
-      isActive: async (source) => {
-        const active = await coordination.lookup(source.nodeId)
-        return (
-          active?.workspaceId === source.workspaceId &&
-          active?.channelGeneration === source.channelGeneration
-        )
-      },
-    },
+    channelAuthority,
     quarantine: {
       record: async (entry) => {
         quarantine.push(entry)
@@ -272,6 +265,7 @@ try {
     },
   })
   const router = new RuntimeGatewayMessageRouter({
+    channelAuthority,
     delivery,
     events,
     inventory: new RuntimeInventoryMessageHandler({ inventory: inventoryIngestion }),

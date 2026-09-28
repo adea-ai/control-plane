@@ -160,6 +160,7 @@ for (const loseFirstResult of [false, true]) {
       }
       const router = new RuntimeGatewayMessageRouter({
         context: delivery,
+        channelAuthority: { isActive: async () => true },
         inventory: { handle: unexpected },
         delivery: { acknowledge: unexpected, recordResult: unexpected, recordError: unexpected },
         events: { ingestProgress: unexpected, ingestResult: unexpected, ingestError: unexpected },
