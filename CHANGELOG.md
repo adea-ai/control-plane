@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.1...workspace-v1.59.2) (2026-09-28)
+
+
+### Bug Fixes
+
+* **ci:** isolate PR database validation from Neon credentials ([#750](https://github.com/adea-ai/control-plane/issues/750)) ([0dd1304](https://github.com/adea-ai/control-plane/commit/0dd13046b23fcc9e29761eadfe6abfd0882cd7ce))
+
 ## [1.59.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.0...workspace-v1.59.1) (2026-09-28)
 
 
