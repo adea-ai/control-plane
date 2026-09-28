@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, or, sql, type SQL } from 'drizzle-orm'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   CommandInboxRecordSchema,
@@ -24,6 +24,7 @@ const PAGE_SIZE = 128
 const MAX_INVENTORY_ROWS = 20_000
 const MAX_DIAGNOSTICS = 96
 export const ADMISSION_ROLLOUT_AUDIT_BUDGET_MS = 20_000
+const ADMISSION_ROLLOUT_SEARCH_PATH = 'pg_catalog, public, pg_temp'
 
 type AdmissionRolloutTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
 
@@ -78,9 +79,18 @@ export async function setAdmissionRolloutTransactionBounds(
   deadline: number
 ): Promise<void> {
   const remainingMs = Math.max(1, Math.floor(deadline - Date.now()))
+  await setAdmissionRolloutSearchPath(transaction)
   await transaction.execute(sql.raw("select set_config('lock_timeout', '2000ms', true)"))
   await transaction.execute(
     sql.raw("select set_config('statement_timeout', '" + remainingMs + "ms', true)")
+  )
+}
+
+export async function setAdmissionRolloutSearchPath(transaction: {
+  execute(query: SQL): Promise<unknown>
+}): Promise<void> {
+  await transaction.execute(
+    sql.raw(`select set_config('search_path', '${ADMISSION_ROLLOUT_SEARCH_PATH}', true)`)
   )
 }
 
@@ -384,6 +394,7 @@ export async function auditAdmissionRolloutInventory(
       if (
         !owner ||
         !isTerminalExecution(owner.execution.state) ||
+        owner.command !== undefined ||
         commandIds.has(row.commandId) ||
         (owner.execution.terminalAt !== undefined &&
           row.retiredAt.toISOString() < owner.execution.terminalAt) ||

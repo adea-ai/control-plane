@@ -106,8 +106,10 @@ Parent capacity and same-workspace, same-project ownership must be enforced by
 the admission repository within the command/owner transaction. Opening credits
 describe allocation, not purchased funds. Actual charges still need explicit
 funding and cost provenance; unknown costs must not become zero-cost settlement.
-These helpers are tested policy primitives; repository and production-composition
-activation remain separate, unverified gates at this checkpoint.
+SQLite and PostgreSQL acceptance now atomically records plan-bounded opening
+allocations, and Local, Hosted and Cloud runtime roots install the admission
+preflight. This does not reserve per-effect capacity or charge actual provider
+usage; trusted cost provenance and terminal settlement remain open M11 gates.
 
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion

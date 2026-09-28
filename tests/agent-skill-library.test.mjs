@@ -53,7 +53,9 @@ test('every retained skill has an owner, version, complete evidence contract, va
     const text = await read(`.agents/skills/${name}/SKILL.md`)
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)
     const metadata = Bun.YAML.parse(match[1])
-    expect(metadata.metadata?.version?.trim().length, name).toBeGreaterThan(0)
+    expect(metadata.metadata?.version, name).toMatch(
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+    )
     expect(metadata.metadata?.owner?.trim().length, name).toBeGreaterThan(0)
     expect(/^## Evidence contract$/m.test(text), name).toBe(true)
     for (const field of requiredContractFields) expect(text, `${name}: ${field}`).toContain(field)

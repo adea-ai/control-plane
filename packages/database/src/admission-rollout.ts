@@ -7,6 +7,7 @@ import {
   ADMISSION_ROLLOUT_AUDIT_BUDGET_MS,
   auditAdmissionRolloutInventory,
   lockAdmissionRolloutInventory,
+  setAdmissionRolloutSearchPath,
   setAdmissionRolloutTransactionBounds,
   type AdmissionRolloutAuditReport,
 } from './admission-rollout-audit.js'
@@ -37,6 +38,7 @@ export async function acquireAdmissionRolloutSharedLock(
   transaction: AdvisoryLockTransaction
 ): Promise<void> {
   try {
+    await setAdmissionRolloutSearchPath(transaction)
     await transaction.execute(
       sql`select pg_advisory_xact_lock_shared(${ADMISSION_ROLLOUT_ADVISORY_LOCK_ID})`
     )
@@ -51,7 +53,7 @@ export async function assertAdmissionRolloutOpen(
 ): Promise<void> {
   try {
     const result = await transaction.execute(
-      sql`select gate_key, state, schema_version, revision, updated_at, updated_by from admission_rollout_gate where gate_key = ${ADMISSION_ROLLOUT_GATE_KEY}`
+      sql`select gate_key, state, schema_version, revision, updated_at, updated_by from public.admission_rollout_gate where gate_key = ${ADMISSION_ROLLOUT_GATE_KEY}`
     )
     const row = resultRows(result)[0]
     const status = statusFromUnknownRow(row)
@@ -68,13 +70,12 @@ export class PostgresAdmissionRolloutService {
 
   async getStatus(): Promise<AdmissionRolloutStatus> {
     try {
-      const [row] = await this.database
-        .select()
-        .from(admissionRolloutGate)
-        .where(eq(admissionRolloutGate.gateKey, ADMISSION_ROLLOUT_GATE_KEY))
-        .limit(1)
+      const result = await this.database.execute(
+        sql`select gate_key, state, schema_version, revision, updated_at, updated_by from public.admission_rollout_gate where gate_key = ${ADMISSION_ROLLOUT_GATE_KEY} limit 1`
+      )
+      const row = resultRows(result)[0]
       if (!row) throw new AdmissionRolloutError('ADMISSION_ROLLOUT_GATE_UNAVAILABLE')
-      return statusFromRow(row)
+      return statusFromUnknownRow(row)
     } catch (error) {
       if (error instanceof AdmissionRolloutError) throw error
       throw new AdmissionRolloutError('ADMISSION_ROLLOUT_GATE_UNAVAILABLE')
@@ -229,7 +230,7 @@ async function readGateStatus(
   transaction: Pick<Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0], 'execute'>
 ): Promise<AdmissionRolloutStatus> {
   const result = await transaction.execute(
-    sql`select gate_key, state, schema_version, revision, updated_at, updated_by from admission_rollout_gate where gate_key = ${ADMISSION_ROLLOUT_GATE_KEY}`
+    sql`select gate_key, state, schema_version, revision, updated_at, updated_by from public.admission_rollout_gate where gate_key = ${ADMISSION_ROLLOUT_GATE_KEY}`
   )
   const row = resultRows(result)[0]
   const status = statusFromUnknownRow(row)
