@@ -126,7 +126,10 @@ test.each(['shutdown', 'replacement'])(
           connectionId: 'replacement',
           gatewayInstanceId: 'other-gateway',
         }
-        await coordination.claim(replacementRecord)
+        await coordination.claim(replacementRecord, {
+          credentialId: issued.claims.credentialId,
+          revocationVersion: issued.claims.revocationVersion,
+        })
         // Claim before revoking credentials so the timer cannot release the
         // original owner before the replacement scenario is established.
         await until(() => socket.readyState === WebSocket.OPEN)

@@ -1,10 +1,15 @@
 import {
   RuntimeChannelOwnershipSchema,
   type RuntimeChannelOwnership,
+  type RuntimeChannelOwnershipCredentialFence,
   type RuntimeChannelOwnershipRepository,
 } from '@control-plane/runtime-sdk'
 import { eq, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import {
+  assertRuntimeCredentialFence,
+  InventoryCredentialFenceInvalidError,
+} from './runtime-credential-fence.js'
 import { runtimeChannelOwnership } from './schema/runtime-channel-ownership.js'
 
 export class PostgresRuntimeChannelOwnershipRepository implements RuntimeChannelOwnershipRepository {
@@ -20,53 +25,80 @@ export class PostgresRuntimeChannelOwnershipRepository implements RuntimeChannel
   }
 
   async claim(
-    input: RuntimeChannelOwnership
+    input: RuntimeChannelOwnership,
+    credentialFence?: RuntimeChannelOwnershipCredentialFence
   ): Promise<{ accepted: boolean; previous?: RuntimeChannelOwnership }> {
     const record = RuntimeChannelOwnershipSchema.parse(input)
-    return this.database.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-channel:${record.nodeId}`}, 0))`
-      )
-      const [current] = await tx
-        .select()
-        .from(runtimeChannelOwnership)
-        .where(eq(runtimeChannelOwnership.nodeId, record.nodeId))
-        .limit(1)
-      if (current && current.workspaceId !== record.workspaceId)
-        throw new Error('RUNTIME_CHANNEL_WORKSPACE_MISMATCH')
-      const previous = current?.active
-        ? RuntimeChannelOwnershipSchema.parse(current.record)
-        : undefined
-      if (current && record.channelGeneration <= current.generation)
-        return { accepted: false, ...(previous ? { previous } : {}) }
-      await tx
-        .insert(runtimeChannelOwnership)
-        .values({
+    try {
+      return await this.database.transaction(async (tx) => {
+        await assertRuntimeCredentialFence(tx, credentialFence, {
           nodeId: record.nodeId,
           workspaceId: record.workspaceId,
-          generation: record.channelGeneration,
-          active: true,
-          record,
         })
-        .onConflictDoUpdate({
-          target: runtimeChannelOwnership.nodeId,
-          set: { generation: record.channelGeneration, active: true, record },
-        })
-      return { accepted: true, ...(previous ? { previous } : {}) }
-    })
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-channel:${record.nodeId}`}, 0))`
+        )
+        const [current] = await tx
+          .select()
+          .from(runtimeChannelOwnership)
+          .where(eq(runtimeChannelOwnership.nodeId, record.nodeId))
+          .limit(1)
+        if (current && current.workspaceId !== record.workspaceId)
+          throw new Error('RUNTIME_CHANNEL_WORKSPACE_MISMATCH')
+        const previous = current?.active
+          ? RuntimeChannelOwnershipSchema.parse(current.record)
+          : undefined
+        if (current && record.channelGeneration <= current.generation)
+          return { accepted: false, ...(previous ? { previous } : {}) }
+        await tx
+          .insert(runtimeChannelOwnership)
+          .values({
+            nodeId: record.nodeId,
+            workspaceId: record.workspaceId,
+            generation: record.channelGeneration,
+            active: true,
+            record,
+          })
+          .onConflictDoUpdate({
+            target: runtimeChannelOwnership.nodeId,
+            set: { generation: record.channelGeneration, active: true, record },
+          })
+        return { accepted: true, ...(previous ? { previous } : {}) }
+      })
+    } catch (error) {
+      if (error instanceof InventoryCredentialFenceInvalidError) return { accepted: false }
+      throw error
+    }
   }
 
-  heartbeat(record: RuntimeChannelOwnership): Promise<boolean> {
-    return this.#mutate(record, false)
+  async heartbeat(
+    record: RuntimeChannelOwnership,
+    credentialFence?: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean> {
+    try {
+      return await this.#mutate(record, false, credentialFence)
+    } catch (error) {
+      if (error instanceof InventoryCredentialFenceInvalidError) return false
+      throw error
+    }
   }
 
   release(record: RuntimeChannelOwnership): Promise<boolean> {
     return this.#mutate(record, true)
   }
 
-  async #mutate(input: RuntimeChannelOwnership, release: boolean): Promise<boolean> {
+  async #mutate(
+    input: RuntimeChannelOwnership,
+    release: boolean,
+    credentialFence?: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean> {
     const record = RuntimeChannelOwnershipSchema.parse(input)
     return this.database.transaction(async (tx) => {
+      if (!release)
+        await assertRuntimeCredentialFence(tx, credentialFence, {
+          nodeId: record.nodeId,
+          workspaceId: record.workspaceId,
+        })
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-channel:${record.nodeId}`}, 0))`
       )

@@ -1,17 +1,26 @@
 import type { GatewayProtocolVersion } from '@control-plane/runtime-gateway-protocol'
 import { compareCodePointOrder } from '@control-plane/domain'
-import type { RuntimeChannelOwnershipRepository } from '@control-plane/runtime-sdk'
+import type {
+  RuntimeChannelOwnershipCredentialFence,
+  RuntimeChannelOwnershipRepository,
+} from '@control-plane/runtime-sdk'
 
 /** Repository ownership is authoritative; lifecycle sweeps reconcile without push delivery. */
 export class RepositoryRuntimeNodeCoordination implements RuntimeNodeCoordinationPort {
   constructor(readonly repository: RuntimeChannelOwnershipRepository) {}
 
-  claim(record: ActiveRuntimeNodeChannelRecord): Promise<RuntimeNodeChannelClaimResult> {
-    return this.repository.claim(record)
+  claim(
+    record: ActiveRuntimeNodeChannelRecord,
+    credentialFence: RuntimeChannelOwnershipCredentialFence
+  ): Promise<RuntimeNodeChannelClaimResult> {
+    return this.repository.claim(record, credentialFence)
   }
 
-  heartbeat(record: ActiveRuntimeNodeChannelRecord): Promise<boolean> {
-    return this.repository.heartbeat(record)
+  heartbeat(
+    record: ActiveRuntimeNodeChannelRecord,
+    credentialFence: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean> {
+    return this.repository.heartbeat(record, credentialFence)
   }
 
   lookup(nodeId: string): Promise<ActiveRuntimeNodeChannelRecord | undefined> {
@@ -45,8 +54,14 @@ export interface RuntimeNodeChannelClaimResult {
 }
 
 export interface RuntimeNodeCoordinationPort {
-  claim(record: ActiveRuntimeNodeChannelRecord): Promise<RuntimeNodeChannelClaimResult>
-  heartbeat(record: ActiveRuntimeNodeChannelRecord): Promise<boolean>
+  claim(
+    record: ActiveRuntimeNodeChannelRecord,
+    credentialFence: RuntimeChannelOwnershipCredentialFence
+  ): Promise<RuntimeNodeChannelClaimResult>
+  heartbeat(
+    record: ActiveRuntimeNodeChannelRecord,
+    credentialFence: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean>
   lookup(nodeId: string): Promise<ActiveRuntimeNodeChannelRecord | undefined>
   release(record: ActiveRuntimeNodeChannelRecord): Promise<boolean>
   subscribeReplacements(
@@ -62,7 +77,10 @@ export class InMemoryRuntimeNodeCoordination implements RuntimeNodeCoordinationP
     Set<(record: ActiveRuntimeNodeChannelRecord) => void | Promise<void>>
   >()
 
-  async claim(record: ActiveRuntimeNodeChannelRecord): Promise<RuntimeNodeChannelClaimResult> {
+  async claim(
+    record: ActiveRuntimeNodeChannelRecord,
+    _credentialFence?: RuntimeChannelOwnershipCredentialFence
+  ): Promise<RuntimeNodeChannelClaimResult> {
     const current = this.#active.get(record.nodeId)
     if (current !== undefined && record.channelGeneration <= current.channelGeneration) {
       return { accepted: false, previous: structuredClone(current) }
@@ -78,7 +96,10 @@ export class InMemoryRuntimeNodeCoordination implements RuntimeNodeCoordinationP
     }
   }
 
-  async heartbeat(record: ActiveRuntimeNodeChannelRecord): Promise<boolean> {
+  async heartbeat(
+    record: ActiveRuntimeNodeChannelRecord,
+    _credentialFence?: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean> {
     const current = this.#active.get(record.nodeId)
     if (!sameChannel(current, record)) return false
     this.#active.set(record.nodeId, structuredClone(record))

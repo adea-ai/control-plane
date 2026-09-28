@@ -20,6 +20,11 @@ export const RuntimeChannelOwnershipSchema = z
 
 export type RuntimeChannelOwnership = z.output<typeof RuntimeChannelOwnershipSchema>
 
+export interface RuntimeChannelOwnershipCredentialFence {
+  readonly credentialId: string
+  readonly revocationVersion: number
+}
+
 export const RuntimeChannelSequenceRequestSchema = z
   .object({
     channel: RuntimeChannelOwnershipSchema,
@@ -37,9 +42,13 @@ export interface RuntimeChannelSequenceRepository {
 /** Durable fencing only; replacement notification is owned by the gateway coordinator. */
 export interface RuntimeChannelOwnershipRepository {
   claim(
-    record: RuntimeChannelOwnership
+    record: RuntimeChannelOwnership,
+    credentialFence?: RuntimeChannelOwnershipCredentialFence
   ): Promise<{ accepted: boolean; previous?: RuntimeChannelOwnership }>
   lookup(nodeId: string): Promise<RuntimeChannelOwnership | undefined>
-  heartbeat(record: RuntimeChannelOwnership): Promise<boolean>
+  heartbeat(
+    record: RuntimeChannelOwnership,
+    credentialFence?: RuntimeChannelOwnershipCredentialFence
+  ): Promise<boolean>
   release(record: RuntimeChannelOwnership): Promise<boolean>
 }

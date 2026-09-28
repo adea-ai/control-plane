@@ -415,7 +415,10 @@ export class RuntimeGatewayWebSocketLifecycle {
       connectedAt: observedAt,
       lastHeartbeatAt: observedAt,
     }
-    const claim = await this.#coordination.claim(record)
+    const claim = await this.#coordination.claim(record, {
+      credentialId: claims.credentialId,
+      revocationVersion: claims.revocationVersion,
+    })
     if (!claim.accepted) {
       await this.#disconnect(connection, 4001, 'stale_channel_generation')
       return
@@ -481,7 +484,8 @@ export class RuntimeGatewayWebSocketLifecycle {
     if (record === undefined) return
     const now = this.#now()
     const next = { ...record, lastHeartbeatAt: now.toISOString() }
-    if (!(await this.#coordination.heartbeat(next))) {
+    const { credentialId, revocationVersion } = connection.authenticatedChannel.claims
+    if (!(await this.#coordination.heartbeat(next, { credentialId, revocationVersion }))) {
       await this.#disconnect(connection, 4001, 'channel_ownership_lost', false)
       return
     }

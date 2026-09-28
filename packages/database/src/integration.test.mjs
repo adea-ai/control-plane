@@ -1872,6 +1872,27 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
   test('fences channel generations across concurrent claims, release and repository restart', async () => {
     await isolated.migrate()
+    const channelIdentity = makeRuntimeInventoryCredentialFixtures(
+      'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV',
+      'wsp_01DRZ3NDEKTSV4RRFFQ69G5FAV'
+    )
+    const channelCredential = channelIdentity.credentials[0]
+    await isolated.withMigrationDatabase(async (database) => {
+      const writer = new PostgresRuntimeNodeIdentityRepository(database)
+      await writer.registerVerificationKey(channelIdentity.key)
+      await writer.insertIssuedCredential(channelCredential)
+    })
+    expect(
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        channelCredential.credentialId,
+        channelCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    const credentialFence = {
+      credentialId: channelCredential.credentialId,
+      revocationVersion: channelCredential.revocationVersion,
+    }
     const repository = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
     const first = {
       nodeId: 'rnr_01DRZ3NDEKTSV4RRFFQ69G5FAV',
@@ -1885,7 +1906,10 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     }
     const results = await Promise.all(
       Array.from({ length: 8 }, () =>
-        new PostgresRuntimeChannelOwnershipRepository(isolated.application).claim(first)
+        new PostgresRuntimeChannelOwnershipRepository(isolated.application).claim(
+          first,
+          credentialFence
+        )
       )
     )
     expect(results.filter(({ accepted }) => accepted)).toHaveLength(1)
@@ -1895,29 +1919,188 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       gatewayInstanceId: 'gateway-b',
       connectionId: 'connection-b',
     }
-    expect(await repository.claim(second)).toEqual({ accepted: true, previous: first })
-    expect(await repository.heartbeat(first)).toBe(false)
+    expect(await repository.claim(second, credentialFence)).toEqual({
+      accepted: true,
+      previous: first,
+    })
+    expect(await repository.heartbeat(first, credentialFence)).toBe(false)
     expect(await repository.release(first)).toBe(false)
     expect(
-      await repository.heartbeat({ ...second, workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV' })
+      await repository.heartbeat(
+        { ...second, workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV' },
+        credentialFence
+      )
     ).toBe(false)
     const beat = { ...second, lastHeartbeatAt: '2026-09-08T10:00:15.000Z' }
-    expect(await repository.heartbeat(beat)).toBe(true)
-    expect(await repository.heartbeat(second)).toBe(false)
+    expect(await repository.heartbeat(beat, credentialFence)).toBe(true)
+    expect(await repository.heartbeat(second, credentialFence)).toBe(false)
     expect(await repository.lookup(first.nodeId)).toEqual(beat)
     expect(await repository.release(second)).toBe(true)
     const restarted = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
     expect(await restarted.lookup(first.nodeId)).toBeUndefined()
-    expect(await restarted.claim(second)).toEqual({ accepted: false })
-    await expect(
-      restarted.claim({
-        ...second,
-        channelGeneration: 3,
-        workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV',
-      })
-    ).rejects.toThrow('RUNTIME_CHANNEL_WORKSPACE_MISMATCH')
-    expect(await restarted.claim({ ...second, channelGeneration: 3 })).toEqual({ accepted: true })
+    expect(await restarted.claim(second, credentialFence)).toEqual({ accepted: false })
+    expect(
+      await restarted.claim(
+        {
+          ...second,
+          channelGeneration: 3,
+          workspaceId: 'wsp_01ERZ3NDEKTSV4RRFFQ69G5FAV',
+        },
+        credentialFence
+      )
+    ).toEqual({ accepted: false })
+    expect(await restarted.claim({ ...second, channelGeneration: 3 }, credentialFence)).toEqual({
+      accepted: true,
+    })
   })
+
+  test('fences durable Hello claims and heartbeats against credential revocation and key retirement', async () => {
+    const revokedIdentity = makeRuntimeInventoryCredentialFixtures(
+      'rnr_01JABCDEF0123456789ABCDEFA',
+      'wsp_01JABCDEF0123456789ABCDEFA'
+    )
+    const retiredIdentity = makeRuntimeInventoryCredentialFixtures(
+      'rnr_01JABCDEF0123456789ABCDEFB',
+      'wsp_01JABCDEF0123456789ABCDEFB'
+    )
+    const installCredential = async (identity) => {
+      const credential = identity.credentials[0]
+      await isolated.withMigrationDatabase(async (database) => {
+        const writer = new PostgresRuntimeNodeIdentityRepository(database)
+        await writer.registerVerificationKey(identity.key)
+        await writer.insertIssuedCredential(credential)
+      })
+      expect(
+        await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+          credential.credentialId,
+          credential.revocationVersion,
+          new Date()
+        )
+      ).toBe('consumed')
+      return {
+        credential,
+        fence: {
+          credentialId: credential.credentialId,
+          revocationVersion: credential.revocationVersion,
+        },
+      }
+    }
+    const revoked = await installCredential(revokedIdentity)
+    const retired = await installCredential(retiredIdentity)
+    const ownerRecord = (nodeId, workspaceId, suffix) => {
+      const now = new Date()
+      return {
+        nodeId,
+        workspaceId,
+        gatewayInstanceId: `gateway-${suffix}`,
+        connectionId: `connection-${suffix}`,
+        channelGeneration: 1,
+        protocolVersion: { major: 1, minor: 6 },
+        connectedAt: now.toISOString(),
+        lastHeartbeatAt: now.toISOString(),
+      }
+    }
+    const revokedOwner = ownerRecord(
+      revoked.credential.nodeId,
+      revoked.credential.workspaceId,
+      'revoked'
+    )
+    const revokedClaimEntered = createIntegrationBarrier()
+    const holdRevokedClaimCommit = createIntegrationBarrier()
+    let holdNextClaimCommit = true
+    const blockedClaimDatabase = new Proxy(isolated.application, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target)
+        if (property !== 'transaction')
+          return typeof value === 'function' ? value.bind(target) : value
+        return (operation, ...args) =>
+          value.call(
+            target,
+            async (transaction) => {
+              const result = await operation(transaction)
+              if (holdNextClaimCommit) {
+                holdNextClaimCommit = false
+                revokedClaimEntered.release()
+                await holdRevokedClaimCommit.promise
+              }
+              return result
+            },
+            ...args
+          )
+      },
+    })
+    const blockedClaim = new PostgresRuntimeChannelOwnershipRepository(blockedClaimDatabase).claim(
+      revokedOwner,
+      revoked.fence
+    )
+    await revokedClaimEntered.promise
+    let revocationFinished = false
+    const revocation = isolated.withMigrationDatabase((database) =>
+      new PostgresRuntimeNodeIdentityRepository(database)
+        .revokeCredential(revoked.credential.credentialId, new Date())
+        .then((result) => {
+          revocationFinished = true
+          return result
+        })
+    )
+    try {
+      await isolated.waitForBlockedTransaction()
+      expect(revocationFinished).toBe(false)
+    } finally {
+      holdRevokedClaimCommit.release()
+    }
+    expect(await blockedClaim).toEqual({ accepted: true })
+    expect((await revocation).revocationVersion).toBe(2)
+
+    const repository = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+    const revokedHeartbeat = {
+      ...revokedOwner,
+      lastHeartbeatAt: new Date(Date.parse(revokedOwner.lastHeartbeatAt) + 1_000).toISOString(),
+    }
+    expect(await repository.heartbeat(revokedHeartbeat, revoked.fence)).toBe(false)
+    expect(
+      await repository.claim(
+        {
+          ...revokedOwner,
+          channelGeneration: 2,
+          connectionId: 'connection-revoked-replacement',
+        },
+        revoked.fence
+      )
+    ).toEqual({ accepted: false })
+    expect(await repository.lookup(revokedOwner.nodeId)).toEqual(revokedOwner)
+
+    const retiredOwner = ownerRecord(
+      retired.credential.nodeId,
+      retired.credential.workspaceId,
+      'retired'
+    )
+    expect(await repository.claim(retiredOwner, retired.fence)).toEqual({ accepted: true })
+    expect(
+      await isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database).retireVerificationKey(
+          retiredIdentity.key.keyId,
+          'retired'
+        )
+      )
+    ).toBe(true)
+    const retiredHeartbeat = {
+      ...retiredOwner,
+      lastHeartbeatAt: new Date(Date.parse(retiredOwner.lastHeartbeatAt) + 1_000).toISOString(),
+    }
+    expect(await repository.heartbeat(retiredHeartbeat, retired.fence)).toBe(false)
+    expect(
+      await repository.claim(
+        {
+          ...retiredOwner,
+          channelGeneration: 2,
+          connectionId: 'connection-retired-replacement',
+        },
+        retired.fence
+      )
+    ).toEqual({ accepted: false })
+    expect(await repository.lookup(retiredOwner.nodeId)).toEqual(retiredOwner)
+  }, 60_000)
 
   test('persists inventory checkpoints across gateway restart with compare-and-set', async () => {
     await isolated.migrate()
@@ -3887,7 +4070,10 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       },
     }
     const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
-    expect((await inventoryOwnership.claim(inventoryScope.channel)).accepted).toBe(true)
+    expect(
+      (await inventoryOwnership.claim(inventoryScope.channel, inventoryScope.credentialFence))
+        .accepted
+    ).toBe(true)
     const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
     const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
       isolated.application
@@ -4005,7 +4191,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
           await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
         ).toBeUndefined()
         phase = 'heartbeat'
-        expect(await inventoryOwnership.heartbeat(inventoryScope.channel)).toBe(true)
+        expect(
+          await inventoryOwnership.heartbeat(inventoryScope.channel, inventoryScope.credentialFence)
+        ).toBe(true)
       } catch (error) {
         throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
       }
@@ -4150,7 +4338,31 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       )
     ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
     const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
-    expect((await inventoryOwnership.claim(replacement)).accepted).toBe(true)
+    const replacementIdentity = makeRuntimeInventoryCredentialFixtures(
+      inventoryScope.runtimeNodeRefId,
+      inventoryScope.workspaceId
+    )
+    await isolated.withMigrationDatabase(async (database) => {
+      const writer = new PostgresRuntimeNodeIdentityRepository(database)
+      await writer.registerVerificationKey(replacementIdentity.key)
+      await writer.insertIssuedCredential(replacementIdentity.credentials[0])
+    })
+    const replacementCredential = replacementIdentity.credentials[0]
+    expect(
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        replacementCredential.credentialId,
+        replacementCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    expect(
+      (
+        await inventoryOwnership.claim(replacement, {
+          credentialId: replacementCredential.credentialId,
+          revocationVersion: replacementCredential.revocationVersion,
+        })
+      ).accepted
+    ).toBe(true)
     let staleCallback = false
     await expect(
       unit.run(inventoryScope, async () => {
