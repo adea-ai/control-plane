@@ -1,4 +1,5 @@
 import { deepStrictEqual, strictEqual, ok, rejects } from 'node:assert/strict'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +25,7 @@ import {
   PostgresRuntimeHealthEventDispatcher,
   PostgresRuntimeChannelOwnershipRepository,
   PostgresRuntimeInventoryCheckpointRepository,
+  PostgresRuntimeNodeIdentityRepository,
   PostgresInteractionRepository,
 } from '../packages/database/src/index.ts'
 import { createManagedCloudWorkflowWorkerComposition } from '../apps/workflow-worker/src/cloud-composition.ts'
@@ -36,7 +38,8 @@ import {
   DefaultRuntimeAdapterEventNormalizer,
   RuntimeGatewayMessageRouter,
   RuntimeNodeChannelAuthenticator,
-  SyntheticRuntimeNodeIdentityAuthority,
+  PostgresRuntimeNodeIdentityValidationPort,
+  runtimeNodePublicKeyThumbprint,
   RuntimeGatewayWebSocketLifecycle,
   RuntimeGatewayWebSocketServer,
   RuntimeInventoryIngestionService,
@@ -54,7 +57,10 @@ import {
 } from '../apps/runtime-worker/src/hosted-managed-pi.ts'
 import { FilesystemObjectStore } from '../packages/object-store/dist/index.js'
 import { golden } from '../packages/runtime-gateway-protocol/fixtures/index.mjs'
-import { GatewayProtocolManifest } from '../packages/runtime-gateway-protocol/src/index.ts'
+import {
+  GatewayProtocolManifest,
+  RuntimeNodeCredentialClaimsSchema,
+} from '../packages/runtime-gateway-protocol/src/index.ts'
 import { acceptRuntimeHealthFixture } from '../packages/database/src/runtime-health-consumer-fixture.mjs'
 import { outboxEvents } from '../packages/database/src/schema/messaging.ts'
 
@@ -63,7 +69,14 @@ import { outboxEvents } from '../packages/database/src/schema/messaging.ts'
 const database = await createIsolatedPostgres({ migrate: true })
 const directory = await mkdtemp(join(tmpdir(), 'cloud-remote-drill-'))
 const store = new FilesystemObjectStore({ rootDirectory: directory, maxObjectBytes: 65536 })
-let server, native, socket, authenticator, dispatch, approval, healthDeliveryWorker
+let server,
+  native,
+  socket,
+  authenticator,
+  identityValidation,
+  dispatch,
+  approval,
+  healthDeliveryWorker
 try {
   const now = new Date().toISOString()
   const deadlineAt = new Date(Date.now() + 15000).toISOString()
@@ -174,12 +187,60 @@ try {
     effectKey: 'remote-drill:attempt',
   })
   strictEqual((await executions.getAttempt(attemptId)).runtime.runtimeNodeRefId, nodeId)
-  const authority = new SyntheticRuntimeNodeIdentityAuthority({
+  const issuerKeyId = 'operator-key-01'
+  const { privateKey: issuerPrivateKey, publicKey: issuerPublicKey } =
+    generateKeyPairSync('ed25519')
+  const { privateKey: devicePrivateKey, publicKey: devicePublicKey } =
+    generateKeyPairSync('ed25519')
+  const issuerPublicPem = issuerPublicKey.export({ format: 'pem', type: 'spki' }).toString()
+  const devicePublicPem = devicePublicKey.export({ format: 'pem', type: 'spki' }).toString()
+  const keyId = 'rgk_cloud_remote_drill_device'
+  const credentialId = 'rgc_cloud_remote_drill_0001'
+  const issuedAt = now
+  const expiresAt = new Date(Date.parse(issuedAt) + 5 * 60_000).toISOString()
+  const claims = RuntimeNodeCredentialClaimsSchema.parse({
+    schemaVersion: 1,
+    credentialKind: 'runtime_node',
+    credentialId,
     issuer: 'https://identity.test',
     audience: 'runtime-gateway',
+    nodeId,
+    workspaceId,
+    keyId,
+    proofKeyThumbprint: runtimeNodePublicKeyThumbprint(devicePublicPem),
+    revocationVersion: 1,
+    channelGeneration: 1,
+    issuedAt,
+    expiresAt,
   })
-  const device = authority.registerNode({ nodeId, workspaceId })
-  const issued = authority.issueCredential(device, { channelGeneration: 1 })
+  const identityRecords = new PostgresRuntimeNodeIdentityRepository(database.application)
+  await database.withMigrationDatabase(async (migrationDatabase) => {
+    const identityWriter = new PostgresRuntimeNodeIdentityRepository(migrationDatabase)
+    await identityWriter.registerVerificationKey({
+      keyId,
+      nodeId,
+      workspaceId,
+      publicKeyPem: devicePublicPem,
+      thumbprint: claims.proofKeyThumbprint,
+      status: 'active',
+    })
+    await identityWriter.insertIssuedCredential({
+      credentialId,
+      nodeId,
+      workspaceId,
+      keyId,
+      claims,
+      revocationVersion: claims.revocationVersion,
+      issuedAt,
+      expiresAt,
+    })
+  })
+  identityValidation = new PostgresRuntimeNodeIdentityValidationPort(
+    identityRecords,
+    new Map([[issuerKeyId, issuerPublicPem]])
+  )
+  await identityValidation.startRevocationListener()
+  const credential = issueRuntimeNodeCredential(claims, issuerKeyId, issuerPrivateKey)
   const expectation = {
     issuer: 'https://identity.test',
     audience: 'runtime-gateway',
@@ -188,9 +249,16 @@ try {
     channelGeneration: 1,
     challenge: 'cloud-remote-drill',
   }
-  const proof = device.authenticationAttempt(issued.credential, expectation.challenge)
+  const proofInput = `${createHash('sha256').update(credential).digest('base64url')}.${expectation.challenge}`
+  const proof = {
+    credential,
+    proof: {
+      challenge: expectation.challenge,
+      signature: sign(null, Buffer.from(proofInput), devicePrivateKey).toString('base64url'),
+    },
+  }
   authenticator = new RuntimeNodeChannelAuthenticator({
-    identityValidator: authority.validationPort(),
+    identityValidator: identityValidation,
     logger: { write() {} },
   })
   const ownership = new PostgresRuntimeChannelOwnershipRepository(database.application)
@@ -235,9 +303,9 @@ try {
       idleTimeoutMs: 30000,
     },
     messages: {
-      handle: async (source, envelope) => {
+      handle: async (source, envelope, credentialFence) => {
         try {
-          await router.handle(source, envelope)
+          await router.handle(source, envelope, credentialFence)
         } catch (error) {
           gatewayError = error
           throw error
@@ -326,10 +394,10 @@ try {
       sequence: command.sequence,
     })
   )
-  await until(
-    async () => (await commands.get(command.commandId)).status === 'acknowledged',
-    'command-ack'
-  )
+  await until(async () => {
+    if (gatewayError) throw gatewayError
+    return (await commands.get(command.commandId)).status === 'acknowledged'
+  }, 'command-ack')
   // Seed an authorized response to exercise the real remote command and socket
   // boundary. The fixture node does not originate a native permission request.
   const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
@@ -621,6 +689,7 @@ try {
   await healthDeliveryWorker?.close()
   await native?.stop(true)
   authenticator?.close()
+  await identityValidation?.close()
   await dispatch?.catch(() => {})
   await approval?.catch(() => {})
   await store.close()
@@ -634,4 +703,13 @@ async function until(condition, stage) {
     if (Date.now() >= deadline) throw new Error(`CLOUD_REMOTE_DRILL_TIMEOUT:${stage}`)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
+}
+
+function issueRuntimeNodeCredential(claims, issuerKeyId, issuerPrivateKey) {
+  const header = Buffer.from(
+    JSON.stringify({ alg: 'EdDSA', typ: 'RNGC', kid: issuerKeyId })
+  ).toString('base64url')
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url')
+  const signingInput = `${header}.${payload}`
+  return `${signingInput}.${sign(null, Buffer.from(signingInput), issuerPrivateKey).toString('base64url')}`
 }
