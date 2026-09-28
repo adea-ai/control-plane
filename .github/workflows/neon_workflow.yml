@@ -74,6 +74,14 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Install dependencies
+        if: steps.credentials.outputs.available == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        if: steps.credentials.outputs.available == 'true'
+        run: bun run build
+
       - name: Build restricted database URLs
         if: steps.credentials.outputs.available == 'true'
         env:
@@ -144,10 +152,6 @@ jobs:
           );
           NODE
 
-      - name: Install dependencies
-        if: steps.credentials.outputs.available == 'true'
-        run: bun install --frozen-lockfile
-
       - name: Prepare isolated preview database ownership
         if: steps.credentials.outputs.available == 'true'
         working-directory: packages/database
@@ -172,7 +176,6 @@ jobs:
         env:
           RUN_M10_POSTGRES_CONFORMANCE: 'true'
         run: |
-          bun run build
           bun test tests/cp1-embedded-durable-execution.test.mjs
 
       - name: Verify migrations and transactions
@@ -188,6 +191,10 @@ jobs:
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
         run: |
           node <<'CLEANUP'
           const { appendFileSync } = require('node:fs');
@@ -252,6 +259,11 @@ jobs:
       - name: Delete Neon branch
         if: always() && steps.cleanup_branch.outputs.branch_id != ''
         uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        env:
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch: ${{ steps.cleanup_branch.outputs.branch_id }}

@@ -64,6 +64,26 @@ describe('Neon preview cleanup lookup', () => {
     expect(workflow).toContain("if: always() && steps.create_neon_branch.outcome == 'success'")
   })
 
+  test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
+    const urlSetupIndex = workflow.indexOf('      - name: Build restricted database URLs')
+    expect(workflow.indexOf('run: bun install --frozen-lockfile')).toBeLessThan(urlSetupIndex)
+    expect(workflow.indexOf('run: bun run build')).toBeLessThan(urlSetupIndex)
+
+    const cleanup = workflow.split('      - name: Find exact preview branch for cleanup')[1]
+    const deleteBranch = workflow.split('      - name: Delete Neon branch')[1]
+    expect(cleanup).toBeString()
+    expect(deleteBranch).toBeString()
+    for (const name of [
+      'DATABASE_URL',
+      'DATABASE_URL_UNPOOLED',
+      'DATABASE_MIGRATION_URL',
+      'DATABASE_ADMIN_URL',
+    ]) {
+      expect(cleanup.split('      - name: Delete Neon branch')[0]).toContain(`${name}: ''`)
+      expect(deleteBranch).toContain(`${name}: ''`)
+    }
+  })
+
   test('runs pull-request PostgreSQL checks with local credentials and no secret references', () => {
     expect(workflowEvents(pullRequestWorkflow)).toBe(
       '  pull_request:\n    branches:\n      - main\n    types:\n      - opened\n      - reopened\n      - synchronize\n      - ready_for_review'
