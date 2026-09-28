@@ -12,6 +12,7 @@ import {
   GatewayResultEnvelopeSchema,
   type GatewayCommandEnvelope,
 } from '@control-plane/runtime-gateway-protocol'
+import type { GatewayProtocolVersion } from '@control-plane/runtime-gateway-protocol'
 import type { GatewayMetrics } from './websocket-coordination.js'
 import type { ActiveRuntimeNodeChannelRecord } from './websocket-coordination.js'
 
@@ -23,6 +24,8 @@ export interface RuntimeCommandDeliveryServiceOptions {
   readonly repository: RuntimeCommandRepository
   readonly sender: RuntimeCommandSender
   readonly metrics: GatewayMetrics
+  /** Optional for standalone legacy callers; production composition always supplies it. */
+  readonly authorize?: (command: RuntimeCommandRecord) => Promise<void>
   readonly now?: () => Date
 }
 
@@ -35,6 +38,8 @@ export type RuntimeCommandDeliveryErrorCode =
   | 'RUNTIME_COMMAND_ACK_CONFLICT'
   | 'RUNTIME_COMMAND_RESULT_CONFLICT'
   | 'RUNTIME_COMMAND_SCOPE_MISMATCH'
+  | 'RUNTIME_COMMAND_AUTHORIZATION_DENIED'
+  | 'RUNTIME_COMMAND_PROTOCOL_INCOMPATIBLE'
   | 'RUNTIME_COMMAND_CONCURRENT_UPDATE'
   | 'RUNTIME_COMMAND_SEND_FAILED'
 
@@ -50,10 +55,12 @@ export class RuntimeCommandDeliveryService {
   readonly #now: () => Date
   readonly #repository: RuntimeCommandRepository
   readonly #sender: RuntimeCommandSender
+  readonly #authorize: RuntimeCommandDeliveryServiceOptions['authorize']
 
   constructor(options: RuntimeCommandDeliveryServiceOptions) {
     this.#repository = options.repository
     this.#sender = options.sender
+    this.#authorize = options.authorize
     this.#metrics = options.metrics
     this.#now = options.now ?? (() => new Date())
   }
@@ -73,6 +80,7 @@ export class RuntimeCommandDeliveryService {
     }
     const now = this.#now().toISOString()
     const record = createQueuedRuntimeCommandRecord(command, now)
+    await this.#authorize?.(record)
     const created = await this.#repository.create(record)
     if (created.outcome === 'conflict') {
       throw new RuntimeCommandDeliveryError('RUNTIME_COMMAND_PAYLOAD_MISMATCH')
@@ -82,7 +90,11 @@ export class RuntimeCommandDeliveryService {
 
   async deliver(
     commandId: string,
-    transport: { readonly channelGeneration: number; readonly sequence: number }
+    transport: {
+      readonly channelGeneration: number
+      readonly sequence: number
+      readonly protocolVersion?: GatewayProtocolVersion
+    }
   ): Promise<{
     readonly record: RuntimeCommandRecord
     readonly sent: boolean
@@ -90,6 +102,7 @@ export class RuntimeCommandDeliveryService {
   }> {
     const current = await this.#required(commandId)
     if (isTerminalResult(current.status)) {
+      await this.#authorize?.(current)
       return {
         record: current,
         sent: false,
@@ -98,6 +111,8 @@ export class RuntimeCommandDeliveryService {
           : { terminalResultReference: current.resultReference }),
       }
     }
+    // Expiry is a local ledger transition with no outbound effect; commit it
+    // even if authority has since been revoked, avoiding reconnect retry loops.
     if (current.status === 'expired') fail('RUNTIME_COMMAND_TERMINAL')
     const now = this.#now()
     if (Date.parse(current.expiresAt) <= now.getTime()) {
@@ -109,6 +124,16 @@ export class RuntimeCommandDeliveryService {
       })
       this.#metrics.increment('runtime_gateway.command_expiries')
       return { record: expired, sent: false }
+    }
+    await this.#authorize?.(current)
+    if (
+      transport.protocolVersion !== undefined &&
+      !isProtocolCompatible(
+        GatewayCommandEnvelopeSchema.parse(current.commandEnvelope).protocolVersion,
+        transport.protocolVersion
+      )
+    ) {
+      fail('RUNTIME_COMMAND_PROTOCOL_INCOMPATIBLE')
     }
     if (
       current.lastChannelGeneration !== undefined &&
@@ -150,6 +175,9 @@ export class RuntimeCommandDeliveryService {
       sentAt: dispatchedAt,
     })
     try {
+      // The dispatch intent is durable now. Revalidate after that write so a
+      // revoked grant cannot cross the external send boundary.
+      await this.#authorize?.(next)
       await this.#sender.send(envelope)
     } catch {
       fail('RUNTIME_COMMAND_SEND_FAILED')
@@ -271,6 +299,7 @@ export class RuntimeCommandDeliveryService {
       readonly channelGeneration: number
       readonly firstSequence: number
       readonly limit: number
+      readonly protocolVersion?: GatewayProtocolVersion
     }
   ): Promise<RuntimeCommandRecord[]> {
     const records = await this.#repository.listDispatchable(
@@ -283,6 +312,7 @@ export class RuntimeCommandDeliveryService {
       const result = await this.deliver(record.commandId, {
         channelGeneration: input.channelGeneration,
         sequence: input.firstSequence + index,
+        ...(input.protocolVersion === undefined ? {} : { protocolVersion: input.protocolVersion }),
       })
       delivered.push(result.record)
     }
@@ -390,11 +420,19 @@ export class RuntimePendingCommandDispatcher {
       const outcome = await this.#delivery.deliver(command.commandId, {
         channelGeneration: source.channelGeneration,
         sequence: nextSequence ? await nextSequence() : firstSequence + delivered,
+        protocolVersion: source.protocolVersion,
       })
       if (outcome.sent) delivered += 1
     }
     return delivered
   }
+}
+
+function isProtocolCompatible(
+  command: GatewayProtocolVersion,
+  negotiated: GatewayProtocolVersion
+): boolean {
+  return command.major === negotiated.major && command.minor <= negotiated.minor
 }
 
 function acknowledgementStatus(

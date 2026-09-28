@@ -5,18 +5,7 @@ import { parseArgs } from 'node:util'
 import {
   ContextProviderAdministration,
   ContextProviderAdministrationRequestSchema,
-} from '@control-plane/domain'
-import {
-  SqlitePersistenceProvider,
-  SqliteContextCommandGrantRepository,
-  SqliteContextProviderRegistrationRepository,
-} from '@control-plane/sqlite-persistence'
-import {
-  createPostgresConnection,
-  PostgresContextCommandGrantRepository,
-  PostgresContextProviderRegistrationRepository,
-} from '@control-plane/database'
-import { loadDatabaseCredentials } from '@control-plane/config'
+} from '@control-plane/domain/context-provider-administration'
 
 let close = async () => {}
 try {
@@ -55,12 +44,20 @@ try {
     if (values.host || !isAbsolute(values.database)) throw new Error('INVALID_TARGET')
     const stat = await lstat(values.database)
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('INVALID_TARGET')
+    const [
+      { SqlitePersistenceProvider },
+      { SqliteContextCommandGrantRepository, SqliteContextProviderRegistrationRepository },
+    ] = await Promise.all([
+      import('@control-plane/sqlite-persistence/provider'),
+      import('@control-plane/sqlite-persistence/context-administration'),
+    ])
     const provider = new SqlitePersistenceProvider({ path: values.database })
     close = async () => provider.close()
     await provider.migrate()
     grants = new SqliteContextCommandGrantRepository(provider)
     registrations = new SqliteContextProviderRegistrationRepository(provider)
   } else if (values.backend === 'postgres') {
+    const { loadDatabaseCredentials } = await import('@control-plane/config')
     const credentials = loadDatabaseCredentials(process.env, 'application')
     const target = new URL(credentials.url)
     if (
@@ -69,6 +66,11 @@ try {
       decodeURIComponent(target.pathname.slice(1)) !== values.database
     )
       throw new Error('INVALID_TARGET')
+    const {
+      createPostgresConnection,
+      PostgresContextCommandGrantRepository,
+      PostgresContextProviderRegistrationRepository,
+    } = await import('@control-plane/database')
     const connection = createPostgresConnection(credentials)
     close = () => connection.close()
     grants = new PostgresContextCommandGrantRepository(connection.database)

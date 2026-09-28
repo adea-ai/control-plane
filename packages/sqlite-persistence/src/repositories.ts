@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { isDeepStrictEqual } from 'node:util'
+import {
+  DurableUsageLedger,
+  budgetOpeningEntryIdempotencyKey,
+  type DurableUsageBudgetSummary,
+} from '@control-plane/usage-ledger'
+import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
 import type {
   JsonValue,
   PersistenceProvider,
@@ -29,7 +35,10 @@ import {
   type RetentionDeletionResult,
   type RetentionEligibilityVerdict,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
   RetentionJournalOperationSchema,
+  retiredCommandKeyCandidates,
+  retiredCommandKeyFromMetadataV2,
 } from '@control-plane/domain'
 import { assertContextPackageIntegrity } from '@control-plane/context'
 import {
@@ -46,6 +55,8 @@ import {
   type ExecutionPlan,
   type ExecutionPlanReference,
   type ExecutionPlanRepository,
+  executionBudgetAdmissionSource,
+  executionPlanBudgetAllowance,
 } from '@control-plane/execution-plan'
 import { ExecutionEventSchema } from '@control-plane/events'
 import { observeReferenceRetentionWindow } from '@control-plane/domain'
@@ -54,6 +65,8 @@ import {
   getReferenceRetentionWindow,
   setReferenceRetentionWindow,
 } from './retention-reference-metadata.js'
+import { countSqliteMatchingActiveRetentionHolds } from './retention-hold-repository.js'
+import { SqliteDurableUsageStore } from './usage-store.js'
 
 const namespaces = {
   commands: 'command-inbox',
@@ -167,7 +180,14 @@ export interface SqliteReconciliationCandidateScan {
 }
 
 export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepository {
-  constructor(readonly provider: PersistenceProvider) {}
+  readonly #budgetAdmission: boolean
+
+  constructor(
+    readonly provider: PersistenceProvider,
+    options: { readonly budgetAdmission?: boolean } = {}
+  ) {
+    this.#budgetAdmission = options.budgetAdmission === true
+  }
 
   accept(
     commandInput: CommandInboxRecord,
@@ -177,7 +197,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     const execution = ExecutionSchema.parse(executionInput)
     return this.provider.transaction(async (transaction) => {
       const commandId = recordId(scopeKey(command))
-      await this.#assertNotRetired(transaction, commandId)
+      await this.#assertNotRetired(transaction, command)
       const existingRecord = await transaction.get(namespaces.commands, commandId)
       if (existingRecord === undefined) {
         if (
@@ -186,7 +206,13 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         ) {
           throw new Error('EXECUTION_ID_CONFLICT')
         }
-        await assertSqliteStoredPlanReference(transaction, execution.executionPlan)
+        const storedPlan = await assertSqliteStoredPlanReference(
+          transaction,
+          execution.executionPlan
+        )
+        const allowance = this.#budgetAdmission
+          ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
+          : undefined
         await transaction.put({
           namespace: namespaces.commands,
           id: commandId,
@@ -202,11 +228,27 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           id: recordId(execution.executionId),
           value: commandId,
         })
+        if (allowance !== undefined) {
+          await SqliteDurableUsageStore.withTransaction(
+            transaction,
+            allowance.workspaceId,
+            (store) => new DurableUsageLedger({ store }).openBudget(allowance)
+          )
+        }
         return { outcome: 'accepted', command, execution }
       }
       const existing = CommandInboxRecordSchema.parse(existingRecord.value)
       const existingExecution = await this.#execution(transaction, existing.executionId)
       if (existing.payloadHash === command.payloadHash) {
+        if (this.#budgetAdmission) {
+          await this.#verifyAdmissionInTransaction(
+            transaction,
+            existing,
+            existingExecution,
+            existing,
+            existingExecution
+          )
+        }
         return { outcome: 'duplicate', command: existing, execution: existingExecution }
       }
       const conflicted = CommandInboxRecordSchema.parse({
@@ -226,10 +268,32 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     })
   }
 
+  async verifyAdmission(
+    commandInput: CommandInboxRecord,
+    executionInput: Execution
+  ): Promise<void> {
+    if (!this.#budgetAdmission) return
+    const command = CommandInboxRecordSchema.parse(commandInput)
+    const execution = ExecutionSchema.parse(executionInput)
+    await this.provider.transaction(async (transaction) => {
+      const storedRecord = await transaction.get(namespaces.commands, recordId(scopeKey(command)))
+      if (storedRecord === undefined) throw invalidPersistedAdmission()
+      const storedCommand = CommandInboxRecordSchema.parse(storedRecord.value)
+      const storedExecution = await this.#execution(transaction, storedCommand.executionId)
+      await this.#verifyAdmissionInTransaction(
+        transaction,
+        command,
+        execution,
+        storedCommand,
+        storedExecution
+      )
+    })
+  }
+
   async get(scopeInput: CommandInboxScope): Promise<CommandInboxRecord | undefined> {
     const scope = CommandInboxScopeSchema.parse(scopeInput)
     return this.provider.transaction(async (transaction) => {
-      await this.#assertNotRetired(transaction, recordId(scopeKey(scope)))
+      await this.#assertNotRetired(transaction, scope)
       const record = await transaction.get(namespaces.commands, recordId(scopeKey(scope)))
       return record === undefined ? undefined : CommandInboxRecordSchema.parse(record.value)
     })
@@ -244,10 +308,17 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== retiredAt)
       throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
     return this.provider.transaction(async (transaction) => {
-      const id = recordId(scopeKey(scope))
-      if (await transaction.get(namespaces.retiredCommands, id)) return true
-      const stored = await transaction.get(namespaces.commands, id)
-      if (!stored) return false
+      const keys = retiredCommandKeyCandidates(scope)
+      const legacyId = recordId(keys.legacyScope)
+      const currentId = recordId(keys.metadata.scopeKey)
+      const legacy = await transaction.get(namespaces.retiredCommands, legacyId)
+      const current = await transaction.get(namespaces.retiredCommands, currentId)
+      if (current !== undefined) {
+        assertSqliteRetiredCommandKey(current.value, currentId, keys.metadata.scopeKey)
+        return true
+      }
+      const stored = await transaction.get(namespaces.commands, recordId(scopeKey(scope)))
+      if (!stored) return legacy !== undefined
       const command = CommandInboxRecordSchema.parse(stored.value)
       if (scopeKey(command) !== scopeKey(scope))
         throw new Error('COMMAND_RETIREMENT_SCOPE_MISMATCH')
@@ -258,10 +329,26 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
         timestamp.getTime() <= Date.parse(command.retentionExpiresAt)
       )
         return false
+      if (legacy !== undefined) {
+        const legacyValue = parseLegacySqliteRetirement(legacy.value)
+        if (
+          legacyValue.commandId !== command.commandId ||
+          legacyValue.executionId !== command.executionId
+        )
+          throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+      }
       await transaction.put({
         namespace: namespaces.retiredCommands,
-        id,
-        value: { retiredAt, commandId: command.commandId, executionId: command.executionId },
+        id: currentId,
+        value: {
+          scopeKey: keys.metadata.scopeKey,
+          metadataVersion: keys.metadata.metadataVersion,
+          identityDigest: keys.metadata.identityDigest,
+          retiredAt:
+            legacy === undefined ? retiredAt : parseLegacySqliteRetirement(legacy.value).retiredAt,
+          commandId: command.commandId,
+          executionId: command.executionId,
+        },
       })
       return true
     })
@@ -276,7 +363,11 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
    */
   async assessExpiredInbox(
     now: Date,
-    options: { readonly policyRetainMs: number | null; readonly bound?: number }
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
   ): Promise<RetentionAssessment> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
     const assessedAt = now.toISOString()
@@ -302,16 +393,25 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       const facts = await this.provider.transaction(async (transaction) => {
         const resolved: RetentionEligibilityVerdict[] = []
         for (const command of candidates) {
-          const tombstone = await transaction.get(
-            namespaces.retiredCommands,
-            recordId(scopeKey(command))
-          )
+          const tombstone = await findSqliteRetirement(transaction, command)
           const execution = await transaction.get(
             namespaces.executions,
             recordId(command.executionId)
           )
           const state =
             execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'command-inbox',
+              scope: {
+                kind: 'project',
+                workspaceId: command.workspaceId,
+                projectId: command.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           resolved.push(
             evaluateRetentionEligibility({
               retentionExpiresAt: command.retentionExpiresAt,
@@ -324,7 +424,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
               publicationSettled: true,
               rejectionKeyReserved: tombstone !== undefined,
               pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
-              holds: 0,
+              holds,
             })
           )
         }
@@ -361,6 +461,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
       readonly dryRun?: boolean
       /** Journal sink; called with each candidate's effects before they apply. */
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
@@ -390,16 +491,25 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           if (stored === undefined)
             return { verdict: undefined, admitted: false, removed: false, conflicted: false }
           const command = CommandInboxRecordSchema.parse(stored.value)
-          const tombstone = await transaction.get(
-            namespaces.retiredCommands,
-            recordId(scopeKey(command))
-          )
+          const tombstone = await findSqliteRetirement(transaction, command)
           const execution = await transaction.get(
             namespaces.executions,
             recordId(command.executionId)
           )
           const state =
             execution === undefined ? undefined : ExecutionSchema.parse(execution.value).state
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'command-inbox',
+              scope: {
+                kind: 'project',
+                workspaceId: command.workspaceId,
+                projectId: command.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt: command.retentionExpiresAt,
             now: assessedAt,
@@ -411,7 +521,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             publicationSettled: true,
             rejectionKeyReserved: tombstone !== undefined,
             pendingReferences: command.reconciliationRequiredAt === undefined ? 0 : 1,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) {
             return { verdict, admitted: false, removed: false, conflicted: false }
@@ -419,23 +529,31 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           if (verdict.verdict !== 'eligible' || dryRun) {
             return { verdict, admitted: true, removed: false, conflicted: false }
           }
+          const keys = retiredCommandKeyCandidates(command)
+          const retirementId = recordId(keys.metadata.scopeKey)
+          const retirementValue =
+            tombstone?.id === retirementId
+              ? tombstone.value
+              : {
+                  scopeKey: keys.metadata.scopeKey,
+                  metadataVersion: keys.metadata.metadataVersion,
+                  identityDigest: keys.metadata.identityDigest,
+                  retiredAt: parseLegacySqliteRetirement(tombstone?.value).retiredAt,
+                  commandId: command.commandId,
+                  executionId: command.executionId,
+                }
           // Journal only after this candidate has been admitted to the bounded
           // pass. The trusted journal records an approved deletion intent for
           // restoration to replay before this transaction applies it.
           if (options.journal !== undefined) {
-            const retirementId = recordId(scopeKey(command))
             await options.journal(
               RetentionJournalOperationSchema.array().parse([
-                ...(tombstone === undefined
-                  ? []
-                  : [
-                      {
-                        kind: 'sqlite.put' as const,
-                        namespace: namespaces.retiredCommands,
-                        id: retirementId,
-                        value: tombstone.value,
-                      },
-                    ]),
+                {
+                  kind: 'sqlite.put' as const,
+                  namespace: namespaces.retiredCommands,
+                  id: retirementId,
+                  value: retirementValue,
+                },
                 { kind: 'sqlite.delete', namespace: namespaces.commands, id: candidate.id },
                 {
                   kind: 'sqlite.delete',
@@ -444,6 +562,13 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
                 },
               ])
             )
+          }
+          if (tombstone?.id !== retirementId) {
+            await transaction.put({
+              namespace: namespaces.retiredCommands,
+              id: retirementId,
+              value: json(retirementValue),
+            })
           }
           const removed = await transaction.delete(
             namespaces.commands,
@@ -470,14 +595,124 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     return { dryRun, deleted, raced, ...counter.result() }
   }
 
+  /** Delete replay tombstones only after their explicit 30-day retention class expires. */
+  async deleteEligibleRetiredCommandKeys(
+    now: Date,
+    options: {
+      readonly policyRetainMs: number | null
+      readonly bound?: number
+      readonly afterId?: string
+      readonly dryRun?: boolean
+      readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
+    }
+  ): Promise<RetentionDeletionResult> {
+    if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETIREMENT_INVALID_TIMESTAMP')
+    const assessedAt = now.toISOString()
+    const dryRun = options.dryRun ?? true
+    const counter = new RetentionAssessmentCounter(
+      'retired-command-keys',
+      assessedAt,
+      options.bound ?? 64
+    )
+    let deleted = 0
+    let raced = 0
+    let afterId = options.afterId
+    let done = false
+    while (!done) {
+      const page = await this.provider.transaction((transaction) =>
+        transaction.scan(namespaces.retiredCommands, {
+          limit: Math.min(128, counter.remaining + 1),
+          ...(afterId === undefined ? {} : { afterId }),
+        })
+      )
+      if (page.length === 0) break
+      for (const candidate of page) {
+        if (!counter.admitCandidate()) {
+          done = true
+          break
+        }
+        afterId = candidate.id
+        const outcome = await this.provider.transaction(async (transaction) => {
+          const current = await transaction.get(namespaces.retiredCommands, candidate.id)
+          if (current === undefined) return { verdict: undefined, removed: false, raced: true }
+          if (current.revision !== candidate.revision)
+            return { verdict: undefined, removed: false, raced: true }
+          const fresh = parseSqliteRetiredCommandKey(current.id, current.value)
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'retired-command-keys' },
+            options.retentionHoldPolicy
+          )
+          const expiry = new Date(Date.parse(fresh.retiredAt) + (options.policyRetainMs ?? 0))
+          const verdict = evaluateRetentionEligibility({
+            retentionExpiresAt:
+              options.policyRetainMs === null || !Number.isFinite(expiry.getTime())
+                ? undefined
+                : expiry.toISOString(),
+            now: assessedAt,
+            policyRetainMs: options.policyRetainMs,
+            ownerTerminal: true,
+            publicationSettled: true,
+            rejectionKeyReserved: true,
+            pendingReferences: 0,
+            holds,
+          })
+          counter.recordVerdict(verdict)
+          if (verdict.verdict !== 'eligible' || dryRun)
+            return { verdict, removed: false, raced: false }
+          if (options.journal !== undefined) {
+            await options.journal([
+              {
+                kind: 'sqlite.delete',
+                namespace: namespaces.retiredCommands,
+                id: candidate.id,
+              },
+            ])
+          }
+          const removed = await transaction.delete(
+            namespaces.retiredCommands,
+            candidate.id,
+            candidate.revision
+          )
+          return { verdict, removed, raced: !removed }
+        })
+        if (outcome.verdict === undefined) {
+          // A candidate that raced still consumes its bounded slot. Record a
+          // conservative retention verdict rather than losing accounting.
+          counter.recordVerdict({ verdict: 'retained', reason: 'unconfirmed_signal' })
+        }
+        if (outcome.removed) deleted += 1
+        if (outcome.raced) raced += 1
+      }
+      if (page.length < Math.min(128, counter.remaining + 1)) break
+    }
+    return {
+      dryRun,
+      deleted,
+      raced,
+      ...counter.result(),
+      ...(counter.result().truncated && afterId !== undefined ? { nextAfterId: afterId } : {}),
+    }
+  }
+
   /** Temporary safety containment until atomic full eligibility is implemented. */
   async deleteExpiredInbox(now: Date): Promise<number> {
     if (Number.isNaN(now.getTime())) throw new Error('COMMAND_RETENTION_INVALID_TIMESTAMP')
     throw new Error('COMMAND_RETENTION_ELIGIBILITY_REQUIRED')
   }
 
-  async #assertNotRetired(transaction: PersistenceTransaction, id: string): Promise<void> {
-    if (await transaction.get(namespaces.retiredCommands, id))
+  async #assertNotRetired(
+    transaction: PersistenceTransaction,
+    scope: CommandInboxScope
+  ): Promise<void> {
+    const keys = retiredCommandKeyCandidates(scope)
+    if (
+      (await transaction.get(namespaces.retiredCommands, recordId(keys.legacyScope))) !==
+        undefined ||
+      (await transaction.get(namespaces.retiredCommands, recordId(keys.metadata.scopeKey))) !==
+        undefined
+    )
       throw new CommandInboxError('COMMAND_RETENTION_EXPIRED')
   }
 
@@ -526,6 +761,215 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
     if (record === undefined) throw new Error('COMMAND_EXECUTION_INVARIANT_VIOLATION')
     return ExecutionSchema.parse(record.value)
   }
+
+  async #admissionAllowance(
+    transaction: PersistenceTransaction,
+    command: CommandInboxRecord,
+    execution: Execution,
+    storedPlan: ExecutionPlan
+  ) {
+    const parentPlan = storedPlan.parentExecutionPlan
+    if (execution.parentExecutionId === undefined) {
+      if (parentPlan !== undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+    } else {
+      const parentRecord = await transaction.get(
+        namespaces.executions,
+        recordId(execution.parentExecutionId)
+      )
+      if (parentRecord === undefined)
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      const parent = ExecutionSchema.parse(parentRecord.value)
+      if (
+        parent.executionId !== execution.parentExecutionId ||
+        parent.correlation.workspaceId !== execution.correlation.workspaceId ||
+        parent.correlation.projectId !== execution.correlation.projectId ||
+        parentPlan === undefined ||
+        parent.executionPlan.executionPlanId !== parentPlan.executionPlanId ||
+        parent.executionPlan.contentDigest !== parentPlan.contentDigest
+      ) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+    }
+    return executionPlanBudgetAllowance(command, execution, storedPlan)
+  }
+
+  async #verifyAdmissionInTransaction(
+    transaction: PersistenceTransaction,
+    commandInput: CommandInboxRecord,
+    executionInput: Execution,
+    storedCommand: CommandInboxRecord,
+    storedExecution: Execution
+  ): Promise<void> {
+    const suppliedSource = executionBudgetAdmissionSource(commandInput, executionInput)
+    const storedSource = executionBudgetAdmissionSource(storedCommand, storedExecution)
+    if (!isDeepStrictEqual(suppliedSource, storedSource)) throw invalidPersistedAdmission()
+    if (
+      commandInput.status === storedCommand.status &&
+      executionInput.state === storedExecution.state &&
+      ((commandInput.status === 'completed' && executionInput.state === 'completed') ||
+        (commandInput.status === 'failed' &&
+          ['failed', 'cancelled', 'timed_out'].includes(executionInput.state)))
+    ) {
+      return
+    }
+    const verified = await SqliteDurableUsageStore.withTransaction(
+      transaction,
+      storedCommand.workspaceId,
+      async (store) => {
+        const ledger = new DurableUsageLedger({ store })
+        let summary: DurableUsageBudgetSummary
+        try {
+          summary = await ledger.summary(storedCommand.workspaceId, storedExecution.executionId)
+        } catch (error) {
+          if (error instanceof DurableUsageError && error.code === 'BUDGET_NOT_FOUND') {
+            throw invalidPersistedAdmission()
+          }
+          throw error
+        }
+        const entries = await ledger.entries(storedCommand.workspaceId, storedExecution.executionId)
+        const openingKey = budgetOpeningEntryIdempotencyKey(
+          storedSource.idempotencyKey,
+          storedExecution.executionId
+        )
+        const openingEntries = entries.filter((entry) => entry.source.idempotencyKey === openingKey)
+        const opening = openingEntries[0]
+        if (
+          openingEntries.length !== 1 ||
+          opening === undefined ||
+          opening.sequence !== 1 ||
+          opening.kind !== 'credit' ||
+          opening.source.sourceId !== storedSource.sourceId
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        const effect = await store.transaction(storedCommand.workspaceId, (usageTransaction) =>
+          usageTransaction.getEffect(storedSource.idempotencyKey)
+        )
+        const openingSummary = {
+          executionId: storedExecution.executionId,
+          currency: summary.currency,
+          maximumMicrounits: opening.quantity.value,
+          maximumTokens: summary.maximumTokens,
+          spentMicrounits: 0,
+          reservedMicrounits: 0,
+          availableMicrounits: opening.quantity.value,
+          spentTokens: 0,
+          reservedTokens: 0,
+          availableTokens: summary.maximumTokens,
+          settled: false,
+        }
+        if (
+          effect === undefined ||
+          effect.workspaceId !== storedCommand.workspaceId ||
+          effect.executionId !== storedExecution.executionId ||
+          effect.idempotencyKey !== storedSource.idempotencyKey ||
+          !isDeepStrictEqual(effect.result, openingSummary)
+        ) {
+          throw invalidPersistedAdmission()
+        }
+        return summary
+      }
+    )
+    if (verified.settled && executionStates.has(storedExecution.state)) {
+      throw invalidPersistedAdmission()
+    }
+  }
+}
+
+function parseLegacySqliteRetirement(input: unknown): {
+  readonly retiredAt: string
+  readonly commandId: string
+  readonly executionId: string
+} {
+  if (input === undefined || typeof input !== 'object' || input === null)
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  const value = input as Record<string, unknown>
+  if (
+    typeof value['retiredAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(value['retiredAt'])) ||
+    new Date(value['retiredAt']).toISOString() !== value['retiredAt']
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  const commandId = CommandInboxRecordSchema.shape.commandId.parse(value['commandId'])
+  const executionId = ExecutionSchema.shape.executionId.parse(value['executionId'])
+  return { retiredAt: value['retiredAt'], commandId, executionId }
+}
+
+function assertSqliteRetiredCommandKey(input: unknown, id: string, expectedScopeKey: string): void {
+  const parsed = parseSqliteRetiredCommandKey(id, input)
+  if (parsed.metadataVersion !== 2 || parsed.scopeKey !== expectedScopeKey)
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+}
+
+function parseSqliteRetiredCommandKey(
+  id: string,
+  input: unknown
+): {
+  readonly scopeKey: string
+  readonly metadataVersion: number
+  readonly identityDigest: string | null
+  readonly retiredAt: string
+  readonly commandId: string
+  readonly executionId: string
+} {
+  const legacy = parseLegacySqliteRetirement(input)
+  const value = input as Record<string, unknown>
+  if (
+    value['metadataVersion'] === undefined ||
+    (value['metadataVersion'] === 1 && value['identityDigest'] === null)
+  ) {
+    return {
+      scopeKey: '',
+      metadataVersion: 1,
+      identityDigest: null,
+      ...legacy,
+    }
+  }
+  if (
+    value['metadataVersion'] !== 2 ||
+    typeof value['scopeKey'] !== 'string' ||
+    typeof value['identityDigest'] !== 'string' ||
+    retiredCommandKeyFromMetadataV2(value['identityDigest']) !== value['scopeKey'] ||
+    id !== recordId(value['scopeKey'])
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  return {
+    scopeKey: value['scopeKey'],
+    metadataVersion: 2,
+    identityDigest: value['identityDigest'],
+    ...legacy,
+  }
+}
+
+async function findSqliteRetirement(
+  transaction: PersistenceTransaction,
+  command: CommandInboxRecord
+): Promise<{ readonly id: string; readonly value: unknown } | undefined> {
+  const keys = retiredCommandKeyCandidates(command)
+  const currentId = recordId(keys.metadata.scopeKey)
+  const current = await transaction.get(namespaces.retiredCommands, currentId)
+  if (current !== undefined) {
+    const parsed = parseSqliteRetiredCommandKey(current.id, current.value)
+    if (
+      parsed.metadataVersion !== 2 ||
+      parsed.scopeKey !== keys.metadata.scopeKey ||
+      parsed.commandId !== command.commandId ||
+      parsed.executionId !== command.executionId
+    )
+      throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+    return current
+  }
+  const legacyId = recordId(keys.legacyScope)
+  const legacy = await transaction.get(namespaces.retiredCommands, legacyId)
+  if (legacy === undefined) return undefined
+  const parsed = parseSqliteRetiredCommandKey(legacy.id, legacy.value)
+  if (
+    parsed.metadataVersion !== 1 ||
+    parsed.commandId !== command.commandId ||
+    parsed.executionId !== command.executionId
+  )
+    throw new Error('RETIRED_COMMAND_KEY_CORRUPT')
+  return legacy
 }
 
 export class SqliteExecutionRepository implements ExecutionRepository {
@@ -548,6 +992,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_RETENTION_INVALID_TIMESTAMP')
@@ -588,6 +1033,14 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             namespaces.commandByExecution,
             recordId(execution.executionId)
           )
+          const retiredCommandReference = (await transaction.list(namespaces.retiredCommands)).some(
+            (record) => {
+              const rawValue = record.value as { executionId?: unknown } | null
+              if (rawValue?.executionId !== execution.executionId) return false
+              parseSqliteRetiredCommandKey(record.id, record.value)
+              return true
+            }
+          )
           const events = (await transaction.list(namespaces.events)).some(
             (record) =>
               ExecutionEventSchema.parse(record.value).executionId === execution.executionId
@@ -612,6 +1065,37 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               (record.value as { executionId?: unknown } | null)?.executionId ===
               execution.executionId
           )
+          // Billing state has a separate retention lifecycle. Retaining only the
+          // runtime terminal receipt does not protect budgets or replay receipts.
+          // Positively identified references pin owners even when payloads are
+          // damaged; a failed schema parse must never authorize owner deletion.
+          let durableUsage = false
+          for (const namespace of [
+            'usage-budgets',
+            'usage-effects',
+            'usage-ledger-entries',
+            'usage-entry-sequences',
+          ]) {
+            const referenced = (await transaction.list(namespace)).some((record) => {
+              const value = record.value as {
+                executionId?: unknown
+                parentExecutionId?: unknown
+                reservations?: { childExecutionId?: unknown }[]
+              } | null
+              return (
+                value?.executionId === execution.executionId ||
+                value?.parentExecutionId === execution.executionId ||
+                (Array.isArray(value?.reservations) &&
+                  value.reservations.some(
+                    (reservation) => reservation?.childExecutionId === execution.executionId
+                  ))
+              )
+            })
+            if (referenced) {
+              durableUsage = true
+              break
+            }
+          }
           const workflowJobs = (await transaction.list('workflow-jobs')).some((record) => {
             const value = record.value as {
               workflowKey?: unknown
@@ -685,6 +1169,18 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             execution.latestAttemptId,
             attempts
           )
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'executions',
+              scope: {
+                kind: 'project',
+                workspaceId: execution.correlation.workspaceId,
+                projectId: execution.correlation.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const verdict = evaluateRetentionEligibility({
             retentionExpiresAt:
               options.policyRetainMs === null
@@ -697,10 +1193,12 @@ export class SqliteExecutionRepository implements ExecutionRepository {
             rejectionKeyReserved: true,
             pendingReferences:
               acceptance !== undefined ||
+              retiredCommandReference ||
               events ||
               checkpoints ||
               runtimeCommands ||
               terminalUsage ||
+              durableUsage ||
               workflowJobs ||
               cancellationReceipts ||
               interactionReceiptReference ||
@@ -709,7 +1207,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               !attemptsComplete
                 ? 1
                 : 0,
-            holds: 0,
+            holds,
           })
           if (!counter.add(verdict)) {
             return { verdict, admitted: false, removed: false, conflicted: false }
@@ -941,6 +1439,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
       readonly afterId?: string
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_PLAN_RETENTION_INVALID_TIMESTAMP')
@@ -1022,6 +1521,18 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
             'executionPlans',
             stored.id
           )
+          const holds = await countSqliteMatchingActiveRetentionHolds(
+            transaction,
+            {
+              classId: 'execution-plans',
+              scope: {
+                kind: 'project',
+                workspaceId: plan.correlation.workspaceId,
+                projectId: plan.correlation.projectId,
+              },
+            },
+            options.retentionHoldPolicy
+          )
           const observed = observeReferenceRetentionWindow({
             now: assessedAt,
             unreferencedSince: currentWindow,
@@ -1046,7 +1557,7 @@ export class SqliteExecutionPlanRepository implements ExecutionPlanRepository {
                   publicationSettled: true,
                   rejectionKeyReserved: true,
                   pendingReferences,
-                  holds: 0,
+                  holds,
                 })
           if (verdict.verdict !== 'eligible' || dryRun)
             return { verdict, removed: false, raced: false }
@@ -1270,6 +1781,10 @@ function scopeKey(scope: CommandInboxScope): string {
     scope.projectId,
     scope.idempotencyKey,
   ].join('\u001f')
+}
+
+function invalidPersistedAdmission(): DurableUsageError {
+  return new DurableUsageError('STORE_STATE_INVALID')
 }
 
 const canonicalInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/

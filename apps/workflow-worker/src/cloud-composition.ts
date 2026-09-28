@@ -11,6 +11,7 @@ import {
   PostgresRuntimeCommandRepository,
   PostgresRuntimeDiscoveryRepository,
   PostgresExecutionEventRepository,
+  PostgresDurableUsageStore,
   type PostgresConnection,
 } from '@control-plane/database'
 import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
@@ -25,6 +26,7 @@ import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.js'
 import { ManagedPiRemoteCommandFactory } from './managed-pi-remote-command.js'
 import { PollingRemoteRuntimeOutcomeWaiter } from './remote-runtime-waiter.js'
 import { RuntimeDiscoveryAttemptRouter } from './runtime-attempt-router.js'
+import { DurableRuntimeBudgetAdmission } from './runtime-budget-admission.js'
 
 export type PostgresConnectionFactory = typeof createPostgresConnection
 
@@ -99,7 +101,9 @@ export function createManagedCloudWorkflowWorkerComposition(
       ? undefined
       : createConsistencyMetricEmitter(metricAdapter, 'workflow-worker')
   const inbox = new CommandInboxService({
-    repository: new PostgresCommandAcceptanceRepository(connection.database),
+    repository: new PostgresCommandAcceptanceRepository(connection.database, {
+      budgetAdmission: true,
+    }),
     executionIdFactory: unavailableExecutionIdFactory,
     executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
       catalog: { profiles: catalog, skills: catalog },
@@ -146,6 +150,10 @@ export function createManagedCloudWorkflowWorkerComposition(
       ...(runtimeRouter === undefined ? {} : { runtimeRouter }),
       graph,
       commands: inbox,
+      budgetAdmission: new DurableRuntimeBudgetAdmission({
+        store: new PostgresDurableUsageStore(connection.database),
+        commands: inbox.repository,
+      }),
     }),
   }
 }

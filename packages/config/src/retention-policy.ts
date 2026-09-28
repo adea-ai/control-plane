@@ -24,6 +24,7 @@ export const RetentionClassIdSchema = z.enum([
   'executions',
   'execution-events',
   'command-inbox',
+  'retired-command-keys',
   'messaging',
   'interaction-receipts',
   'runtime-ledgers',
@@ -109,6 +110,9 @@ export const decidedRetentionPolicy: RetentionPolicyConfig = RetentionPolicySche
     { id: 'executions', retainMs: 90 * day, holdOwner: 'platform-operator' },
     { id: 'execution-events', retainMs: 30 * day, holdOwner: 'platform-operator' },
     { id: 'command-inbox', retainMs: 30 * day, holdOwner: 'platform-operator' },
+    // Replay tombstones outlive the maximum retry window and are physically
+    // removed only by an explicit platform-operator retention action.
+    { id: 'retired-command-keys', retainMs: 30 * day, holdOwner: 'platform-operator' },
     { id: 'messaging', retainMs: 30 * day, holdOwner: 'platform-operator' },
     { id: 'interaction-receipts', retainMs: 30 * day, holdOwner: 'platform-operator' },
     { id: 'runtime-ledgers', retainMs: 30 * day, holdOwner: 'runtime-owner' },

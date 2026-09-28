@@ -403,6 +403,32 @@ test('packages the hosted simple profile as one hardened user-owned composition'
   assert.match(compose, /POSTGRES_APPLICATION_PASSWORD: \$\{POSTGRES_APPLICATION_PASSWORD:-\}/)
   assert.match(databaseRoles, /ALTER DEFAULT PRIVILEGES FOR ROLE control_plane_migrator/)
   assert.match(databaseRoles, /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO control_plane_app/)
+  assert.match(databaseRoles, /to_regclass\('public\.admission_rollout_gate'\) IS NOT NULL/i)
+  assert.match(
+    databaseRoles,
+    /REVOKE ALL PRIVILEGES ON TABLE public\.admission_rollout_gate FROM control_plane_app/i
+  )
+  assert.match(
+    databaseRoles,
+    /GRANT SELECT ON TABLE public\.admission_rollout_gate TO control_plane_app/i
+  )
+  assert.match(databaseRoles, /to_regclass\('public\.retired_command_keys'\) IS NOT NULL/i)
+  assert.match(
+    databaseRoles,
+    /REVOKE ALL PRIVILEGES ON TABLE public\.retired_command_keys FROM control_plane_app/i
+  )
+  assert.match(
+    databaseRoles,
+    /GRANT SELECT, INSERT ON TABLE public\.retired_command_keys TO control_plane_app/i
+  )
+  assert.ok(
+    databaseRoles.indexOf('REVOKE ALL PRIVILEGES ON TABLE public.admission_rollout_gate') >
+      databaseRoles.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public')
+  )
+  assert.ok(
+    databaseRoles.indexOf('REVOKE ALL PRIVILEGES ON TABLE public.retired_command_keys') >
+      databaseRoles.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public')
+  )
   assert.match(databaseRoles, /PostgreSQL role passwords must be distinct/)
   assert.match(databaseRoles, /ALTER DATABASE control_plane OWNER TO control_plane_migrator/)
   assert.match(databaseRoles, /ALTER TABLE %I\.%I OWNER TO control_plane_migrator/)

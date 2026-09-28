@@ -3,6 +3,7 @@ import {
   GatewayEnvelopeSchema,
   GatewayProtocolDeprecationSchema,
   GatewayProtocolManifest,
+  GatewayResultEnvelopeSchema,
   ReferenceRuntimeNode,
   RuntimeNodeAuthenticationAttemptSchema,
   RuntimeNodeCredentialClaimsSchema,
@@ -149,7 +150,43 @@ describe('Runtime Gateway protocol', () => {
         payload: { version: 1, parameters: { action: 'resume', sessionRef: 'opaque-session' } },
       }).success
     ).toBeTrue()
-    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 6 })
+    expect(GatewayProtocolManifest.current).toEqual({ major: 1, minor: 7 })
+  })
+
+  test('carries validated terminal usage only on negotiated v1.7 results', async () => {
+    const { golden } = await import('../fixtures/index.mjs')
+    const terminalUsage = {
+      inputTokens: 12,
+      outputTokens: 4,
+      durationMs: 120,
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'hosted-source:usage-1',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 17,
+        costExact: true,
+      },
+    }
+    const result = {
+      ...golden.result,
+      protocolVersion: { major: 1, minor: 7 },
+      terminalUsage,
+    }
+    expect(GatewayResultEnvelopeSchema.parse(result)).toEqual(result)
+    expect(
+      GatewayResultEnvelopeSchema.safeParse({
+        ...result,
+        protocolVersion: { major: 1, minor: 6 },
+      }).success
+    ).toBeFalse()
+    expect(
+      GatewayResultEnvelopeSchema.safeParse({
+        ...result,
+        terminalUsage: { ...terminalUsage, inputTokens: Number.MAX_SAFE_INTEGER + 1 },
+      }).success
+    ).toBeFalse()
+    expect(GatewayProtocolManifest.supported).toContainEqual({ major: 1, minor: 7 })
   })
 
   test('fails closed instead of evicting duplicate-effect protection when its ledger is full', () => {
@@ -300,7 +337,7 @@ describe('Runtime Gateway protocol', () => {
     ).toBeTrue()
   })
 
-  test('publishes a language-neutral JSON schema without server package dependencies', async () => {
+  test('publishes terminal usage and negotiated version rules in the language-neutral JSON schema', async () => {
     const schema = await import('../schema/gateway-envelope.v1.json', { with: { type: 'json' } })
     const manifest = await import('../package.json', { with: { type: 'json' } })
 
@@ -315,7 +352,13 @@ describe('Runtime Gateway protocol', () => {
         )
       ).toBe(true)
     }
-    expect(Object.keys(manifest.default.dependencies)).toEqual(['zod'])
+    expect(schema.default.allOf[1].if.properties.type.const).toBe('result')
+    expect(schema.default.allOf[1].if.required).toEqual(['type', 'terminalUsage'])
+    expect(schema.default.allOf[1].then.properties.protocolVersion.properties.minor.minimum).toBe(7)
+    expect(Object.keys(manifest.default.dependencies)).toEqual([
+      '@control-plane/runtime-sdk',
+      'zod',
+    ])
     expect(Object.keys(manifest.default.devDependencies ?? {})).toEqual([])
   })
 })

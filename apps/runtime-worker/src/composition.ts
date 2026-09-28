@@ -116,55 +116,66 @@ export async function composeContextNode(
   let grants: ContextCommandGrantRepository
   let registrations: ContextProviderAdministration['registrations']
   let inbox: ContextNodeInboxRepository | undefined = options.inbox
-  let closeStore: () => Promise<void>
-  if (store.backend === 'sqlite') {
-    if (typeof store.path !== 'string' || store.path.length === 0)
-      throw new Error('CONTEXT_NODE_COMPOSITION_INVALID')
-    const provider = new SqlitePersistenceProvider({ path: store.path })
-    await provider.migrate()
-    grants = new SqliteContextCommandGrantRepository(provider)
-    registrations = new SqliteContextProviderRegistrationRepository(provider)
-    inbox ??= new SqliteContextNodeInboxRepository(provider)
-    closeStore = async () => provider.close()
-  } else {
-    const connection = createPostgresConnection(store.credentials)
-    grants = new PostgresContextCommandGrantRepository(connection.database)
-    registrations = new PostgresContextProviderRegistrationRepository(connection.database)
-    closeStore = () => connection.close()
-  }
-  if (inbox === undefined) throw new Error('CONTEXT_NODE_INBOX_REPOSITORY_REQUIRED')
+  let closeStore: () => Promise<void> = async () => {}
+  try {
+    if (store.backend === 'sqlite') {
+      if (typeof store.path !== 'string' || store.path.length === 0)
+        throw new Error('CONTEXT_NODE_COMPOSITION_INVALID')
+      const provider = new SqlitePersistenceProvider({ path: store.path })
+      closeStore = async () => provider.close()
+      await provider.migrate()
+      grants = new SqliteContextCommandGrantRepository(provider)
+      registrations = new SqliteContextProviderRegistrationRepository(provider)
+      inbox ??= new SqliteContextNodeInboxRepository(provider)
+    } else {
+      const connection = createPostgresConnection(store.credentials)
+      closeStore = () => connection.close()
+      grants = new PostgresContextCommandGrantRepository(connection.database)
+      registrations = new PostgresContextProviderRegistrationRepository(connection.database)
+    }
+    if (inbox === undefined) throw new Error('CONTEXT_NODE_INBOX_REPOSITORY_REQUIRED')
 
-  const authority = new ContextCommandGrantAuthority(grants)
-  // Handler authorization is grant authority only. The transport generation check
-  // stays at channel admission: enforcing it again after the driver ran would turn a
-  // mid-dispatch channel loss into an unrecoverable reconciliation state even though
-  // the outcome is already computed and is replayed safely on the next redelivery.
-  const authorize = async (record: ContextCommandRecord) => {
-    await authority.authorize(record)
-  }
-  const handler = new ContextNodeHandler({
-    workspaceId,
-    nodeId,
-    timeoutMs,
-    repository: inbox,
-    driver,
-    authorize: (record) => authorize(record),
-  })
-  const channel = new ContextNodeChannel({
-    handler,
-    assertCurrent: async (command) => {
-      await authority.authorize(createQueuedContextCommandRecord(command, command.issuedAt))
-      await transport.assertCurrent(command)
-    },
-    send: transport.send,
-    nextSequence: transport.nextSequence,
-  })
-  return {
-    channel,
-    handler,
-    grants,
-    authorize: (record) => authority.authorize(record),
-    administration: new ContextProviderAdministration(grants, registrations),
-    close: closeStore,
+    const authority = new ContextCommandGrantAuthority(grants)
+    // Handler authorization is grant authority only. The transport generation check
+    // stays at channel admission: enforcing it again after the driver ran would turn a
+    // mid-dispatch channel loss into an unrecoverable reconciliation state even though
+    // the outcome is already computed and is replayed safely on the next redelivery.
+    const authorize = async (record: ContextCommandRecord) => {
+      await authority.authorize(record)
+    }
+    const handler = new ContextNodeHandler({
+      workspaceId,
+      nodeId,
+      timeoutMs,
+      repository: inbox,
+      driver,
+      authorize: (record) => authorize(record),
+    })
+    const channel = new ContextNodeChannel({
+      handler,
+      assertCurrent: async (command) => {
+        await authority.authorize(createQueuedContextCommandRecord(command, command.issuedAt))
+        await transport.assertCurrent(command)
+      },
+      send: transport.send,
+      nextSequence: transport.nextSequence,
+    })
+    return {
+      channel,
+      handler,
+      grants,
+      authorize: (record) => authority.authorize(record),
+      administration: new ContextProviderAdministration(grants, registrations),
+      close: closeStore,
+    }
+  } catch (error) {
+    try {
+      await closeStore()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'CONTEXT_NODE_STARTUP_CLEANUP_FAILED', {
+        cause: cleanupError,
+      })
+    }
+    throw error
   }
 }

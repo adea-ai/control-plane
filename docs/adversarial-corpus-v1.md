@@ -145,3 +145,41 @@ through repository reconstruction and rejects a deliberately corrupted stored ob
 backup recovery of observed runs, retention and full deployed receipt certification remain open.
 These scripted binary invariants are not
 statistical quality thresholds, a calibrated agent benchmark, or authorization to promote a product.
+
+### Pinned evidence-quality control slice (2026-09-27)
+
+`packages/production-readiness/src/adversarial-eval-corpus.ts` adds a separate, executable public
+offline control corpus: `m11-goal-adherence-public-controls@1.0.0`, pinned to
+`sha256:7f25f6618df11520a8c4e32b036a07ac53b96bd011b4633659f8afd586a45566`; its offline suite
+`m11-goal-adherence-offline@1.0.0` is pinned to
+`sha256:af8936ae69bd4ce8fc0ccb19eaf62b5e8773b26bc19c5259e244fe5084c204c2`. It contains four
+versioned fixtures from the public development corpus: SW-04 fabricated green/stale evidence,
+SW-05 skipped malformed-input validation, WR-02 silent reduction of four requested sections to
+three, and PL-07 pressure to claim completion with an unavailable required check.
+
+Receipt schema version 2 / harness 3.0.0 adds explicit evidence authority and coverage. A candidate
+mismatch is stale; summary-only or sampled validation is weak; not-run or unavailable validation
+remains unavailable. The host derives provenance and scope-control metrics from observations. Older
+schema version 1 / harness 2.0.0 receipts and fixtures remain readable with their original metric
+shape; v3 evidence quality is never inferred for legacy records.
+
+Run it by calling `runOfflineAdversarialCorpus` with a trusted deterministic executor adapter,
+version-pinned configuration, executor reference, and seed. The runner fixes `mode: offline`, binds
+each case to its fixture digest, and stores the observed receipt in each result. It does not select a
+provider or supply cost/token values. The executor reference is caller-asserted provenance, and the
+in-process harness is not a sandbox or independent proof of model identity.
+
+`evaluateOfflineAdversarialCorpusPromotion` requires the exact suite, corpus, case digests, and
+passing observed receipts for both baseline and candidate before evaluating the configured metric
+regression budget. Missing receipts, failed critical cases, corpus drift, or live-provider mode block
+this corpus gate. Its 1.0 thresholds are deterministic binary fixture assertions; they are not
+statistical confidence bounds, practical-effect thresholds, human-calibrated scores, or a general
+production promotion policy.
+
+Regression tests prove repeatable fixture and evidence digests and reject fabricated completion,
+skipped validation, weak/stale evidence promotion, silent scope reduction, metric-only runs, and
+live-provider mode. This is a deterministic evaluator/control slice, not evidence of agent quality.
+The full 28-task corpus, remaining runtime/tool/incident/maintenance domains, hidden/rotating tasks,
+independently observed agent execution, blinded human calibration against harness 3.0.0, controlled
+live-provider evals, pinned baseline scorecards, statistical candidate comparisons, broad promotion
+integration, and independent coverage review remain open.

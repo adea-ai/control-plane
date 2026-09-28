@@ -146,6 +146,7 @@ describe('catalog approval operator CLI', () => {
     })
 
     const replay = run()
+    expect(replay.status).toBe(0)
     expect(JSON.parse(replay.stdout)).toMatchObject({ replayed: true })
 
     await writeFile(
@@ -158,6 +159,7 @@ describe('catalog approval operator CLI', () => {
       { mode: 0o600 }
     )
     const shown = run()
+    expect(shown.status).toBe(0)
     expect(JSON.parse(shown.stdout)).toMatchObject({
       status: 'applied',
       decision: { revision: 2, decision: 'approved' },
@@ -179,5 +181,7 @@ describe('catalog approval operator CLI', () => {
     )
     expect(wrongTarget.status).toBe(1)
     expect(wrongTarget.stderr).toBe('CATALOG_APPROVAL_ADMIN_FAILED\n')
-  })
+    // Five real processes share one scenario budget. Match the canonical
+    // repository lane and context operator fixture; each child remains 15s.
+  }, 30_000)
 })

@@ -79,6 +79,28 @@ function runtimeTablePrivileges() {
       can_update: true,
       can_delete: true,
     },
+    {
+      table_name: 'admission_rollout_gate',
+      table_owner: 'control_plane_migrator',
+      can_select: true,
+      can_insert: false,
+      can_update: false,
+      can_delete: false,
+      has_column_insert: false,
+      has_column_update: false,
+      has_column_references: false,
+    },
+    {
+      table_name: 'retired_command_keys',
+      table_owner: 'control_plane_migrator',
+      can_select: true,
+      can_insert: true,
+      can_update: false,
+      can_delete: false,
+      has_column_insert: true,
+      has_column_update: false,
+      has_column_references: false,
+    },
   ]
 }
 
@@ -694,6 +716,7 @@ describe('production schema migration gate', () => {
         assertRuntimeCapabilities(capabilities, [
           { ...privileges[0], can_update: false },
           privileges[1],
+          privileges[2],
         ]),
       /table grants are unsafe/
     )
@@ -702,9 +725,101 @@ describe('production schema migration gate', () => {
         assertRuntimeCapabilities(capabilities, [
           { ...privileges[0], table_owner: 'control_plane_app' },
           privileges[1],
+          privileges[2],
         ]),
       /table grants are unsafe/
     )
+  })
+
+  test('requires the admission rollout gate to exist and be read-only to the runtime role', () => {
+    const capabilities = runtimeCapabilities()
+    const privileges = runtimeTablePrivileges()
+
+    assert.doesNotThrow(() => assertRuntimeCapabilities(capabilities, privileges))
+    assert.throws(
+      () => assertRuntimeCapabilities(capabilities, privileges.slice(0, 2)),
+      /table grants are unsafe/
+    )
+    assert.throws(
+      () =>
+        assertRuntimeCapabilities(
+          capabilities,
+          privileges.map((privilege) =>
+            privilege.table_name === 'admission_rollout_gate'
+              ? { ...privilege, can_select: false }
+              : privilege
+          )
+        ),
+      /table grants are unsafe/
+    )
+    for (const privilegeName of ['can_insert', 'can_update', 'can_delete']) {
+      assert.throws(
+        () =>
+          assertRuntimeCapabilities(
+            capabilities,
+            privileges.map((privilege) =>
+              privilege.table_name === 'admission_rollout_gate'
+                ? { ...privilege, [privilegeName]: true }
+                : privilege
+            )
+          ),
+        /table grants are unsafe/
+      )
+    }
+    for (const privilegeName of [
+      'has_column_insert',
+      'has_column_update',
+      'has_column_references',
+    ]) {
+      assert.throws(
+        () =>
+          assertRuntimeCapabilities(
+            capabilities,
+            privileges.map((privilege) =>
+              privilege.table_name === 'admission_rollout_gate'
+                ? { ...privilege, [privilegeName]: true }
+                : privilege
+            )
+          ),
+        /table grants are unsafe/
+      )
+    }
+  })
+
+  test('allows only SELECT and INSERT on replay tombstones, including effective column grants', () => {
+    const capabilities = runtimeCapabilities()
+    const privileges = runtimeTablePrivileges()
+    assert.doesNotThrow(() => assertRuntimeCapabilities(capabilities, privileges))
+    assert.throws(
+      () =>
+        assertRuntimeCapabilities(
+          capabilities,
+          privileges.filter((privilege) => privilege.table_name !== 'retired_command_keys')
+        ),
+      /table grants are unsafe/
+    )
+    for (const patch of [
+      { can_select: false },
+      { can_insert: false },
+      { can_update: true },
+      { can_delete: true },
+      { has_column_update: true },
+      { has_column_references: true },
+      { table_owner: 'control_plane_app' },
+    ]) {
+      assert.throws(
+        () =>
+          assertRuntimeCapabilities(
+            capabilities,
+            privileges.map((privilege) =>
+              privilege.table_name === 'retired_command_keys'
+                ? { ...privilege, ...patch }
+                : privilege
+            )
+          ),
+        /table grants are unsafe/
+      )
+    }
   })
 
   test('rejects runtime role memberships even when membership inheritance is disabled', () => {

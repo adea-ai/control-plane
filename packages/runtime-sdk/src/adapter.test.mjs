@@ -7,6 +7,8 @@ import {
   RuntimeExecutionProgressSchema,
   RuntimeExecutionStatusSchema,
   RuntimeSessionResultSchema,
+  RuntimeUsageAccountingSchema,
+  RuntimeUsageSchema,
   runRuntimeAdapterConformance,
 } from './index.ts'
 
@@ -15,13 +17,26 @@ const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
 test('cancelled status preserves authoritative usage without a completed result', async () => {
   const adapter = createAdapter()
   const handle = await adapter.start({ attemptId, idempotencyKey: 'cancel-usage', executionPlan })
+  const terminalUsage = {
+    inputTokens: 11,
+    outputTokens: 3,
+    durationMs: 20,
+    accounting: {
+      schemaVersion: 1,
+      sourceId: 'source:usage-1',
+      fundingSource: 'hq_managed',
+      currency: 'USD',
+      chargedMicrounits: 12,
+      costExact: true,
+    },
+  }
   const status = {
     handle,
     state: 'cancelled',
     observedAt: '2026-08-24T20:00:00.000Z',
-    terminalUsage: { inputTokens: 11, outputTokens: 3, durationMs: 20 },
+    terminalUsage,
   }
-  expect(RuntimeExecutionStatusSchema.parse(status).terminalUsage).toEqual(status.terminalUsage)
+  expect(RuntimeExecutionStatusSchema.parse(status).terminalUsage).toEqual(terminalUsage)
   expect(RuntimeExecutionStatusSchema.parse(status).result).toBeUndefined()
   expect(RuntimeExecutionStatusSchema.safeParse({ ...status, state: 'running' }).success).toBe(
     false
@@ -32,6 +47,141 @@ test('cancelled status preserves authoritative usage without a completed result'
       terminalUsage: { ...status.terminalUsage, inputTokens: -1 },
     }).success
   ).toBe(false)
+})
+
+describe('runtime usage accounting provenance', () => {
+  test('keeps legacy usage unchanged and accepts exact HQ and explicit external accounting', () => {
+    const legacy = { inputTokens: 4, outputTokens: 2, durationMs: 7 }
+    expect(RuntimeUsageSchema.parse(legacy)).toEqual(legacy)
+
+    const measured = {
+      inputTokens: 4,
+      outputTokens: 6,
+      durationMs: 9,
+      cost: { amount: '0.000123', currency: 'USD' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'accepted-source:01',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 123,
+        costExact: true,
+      },
+    }
+    expect(RuntimeUsageSchema.parse(measured)).toEqual(measured)
+
+    const external = {
+      inputTokens: 1,
+      outputTokens: 2,
+      durationMs: 3,
+      cost: { amount: '1.23456789', currency: 'EUR' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'provider-record:abc',
+        fundingSource: 'external_subscription',
+        currency: 'USD',
+        chargedMicrounits: 0,
+        costExact: true,
+      },
+    }
+    expect(RuntimeUsageSchema.parse(external)).toEqual(external)
+  })
+
+  test('rejects invalid provenance, unsafe counters, and combined token overflow', () => {
+    const accounting = {
+      schemaVersion: 1,
+      sourceId: 'source:usage-2',
+      fundingSource: 'hq_managed',
+      currency: 'USD',
+      chargedMicrounits: 1,
+      costExact: true,
+    }
+    expect(RuntimeUsageAccountingSchema.safeParse(accounting).success).toBe(true)
+    for (const invalid of [
+      { ...accounting, schemaVersion: 2 },
+      { ...accounting, sourceId: '' },
+      { ...accounting, fundingSource: 'unknown' },
+      { ...accounting, chargedMicrounits: -1 },
+      { ...accounting, chargedMicrounits: Number.MAX_SAFE_INTEGER + 1 },
+      { ...accounting, costExact: false },
+      { ...accounting, fundingSource: 'external_subscription', chargedMicrounits: 1 },
+    ]) {
+      expect(RuntimeUsageAccountingSchema.safeParse(invalid).success).toBe(false)
+    }
+
+    for (const invalid of [
+      { inputTokens: -1, outputTokens: 0, durationMs: 0 },
+      { inputTokens: Number.MAX_SAFE_INTEGER + 1, outputTokens: 0, durationMs: 0 },
+      { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 1, durationMs: 0 },
+      { inputTokens: 0, outputTokens: 0, durationMs: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(RuntimeUsageSchema.safeParse(invalid).success).toBe(false)
+    }
+  })
+
+  test('requires HQ-reported cost to match exact USD microunits without rounding', () => {
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 2,
+      durationMs: 3,
+      cost: { amount: '0.000123', currency: 'USD' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'source:usage-3',
+        fundingSource: 'hq_managed',
+        currency: 'USD',
+        chargedMicrounits: 123,
+        costExact: true,
+      },
+    }
+    expect(RuntimeUsageSchema.safeParse(usage).success).toBe(true)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: '0.0001231', currency: 'USD' },
+      }).success
+    ).toBe(false)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: '0.000124', currency: 'USD' },
+      }).success
+    ).toBe(false)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: '0.000123', currency: 'EUR' },
+      }).success
+    ).toBe(false)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: '9007199255', currency: 'USD' },
+      }).success
+    ).toBe(false)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: '0.0001230000000', currency: 'USD' },
+      }).success
+    ).toBe(true)
+
+    const longExactDecimal = `0.${'0'.repeat(64)}`
+    expect(
+      RuntimeUsageSchema.safeParse({
+        inputTokens: 1,
+        outputTokens: 2,
+        durationMs: 3,
+        cost: { amount: longExactDecimal, currency: 'USD' },
+      }).success
+    ).toBe(true)
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        cost: { amount: longExactDecimal, currency: 'USD' },
+      }).success
+    ).toBe(false)
+  })
 })
 const executionPlan = Object.freeze({
   schemaVersion: 1,

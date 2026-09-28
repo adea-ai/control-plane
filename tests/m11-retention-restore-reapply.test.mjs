@@ -20,6 +20,7 @@ import {
 } from '../packages/sqlite-persistence/src/index.ts'
 import { retentionApply } from '../scripts/retention-apply.mjs'
 import { retentionReapply } from '../scripts/retention-reapply.mjs'
+import { writeOperatorPolicyFixture } from './fixtures/retention-hold-operator-fixtures.mjs'
 
 const reapplyScript = fileURLToPath(new URL('../scripts/retention-reapply.mjs', import.meta.url))
 
@@ -254,6 +255,7 @@ describe('retention restore-time reapplication (#194)', () => {
 
       // The snapshot predates the deletion — this is the hazard case.
       const snapshot = await provider.backup()
+      const { path: operatorPolicy } = await writeOperatorPolicyFixture(path)
 
       const applied = await apply([
         '--backend',
@@ -265,6 +267,8 @@ describe('retention restore-time reapplication (#194)', () => {
         '--now',
         assessedAt,
         '--apply',
+        '--hold-policy',
+        operatorPolicy,
         '--confirm',
         'command-inbox',
         '--journal',
@@ -318,34 +322,7 @@ describe('retention restore-time reapplication (#194)', () => {
       expect(error).toBeInstanceOf(CommandInboxError)
       expect(error.code).toBe('COMMAND_RETENTION_EXPIRED')
 
-      // The harder case: a snapshot that predates the retirement too. Remove
-      // the key from the copy and show that a replay would then be accepted
-      // silently (no record, no rejection) — the exact hazard the journal
-      // exists to prevent.
-      const [tombstone] = await restored.transaction((transaction) =>
-        transaction.list('retired-command-keys')
-      )
-      await restored.transaction((transaction) =>
-        transaction.delete('retired-command-keys', tombstone.id)
-      )
-      expect(await restoredRepository.get(scope)).toBeUndefined()
-
-      const restated = await reapply([
-        '--backend',
-        'sqlite',
-        '--database',
-        restoredPath,
-        '--journal',
-        journalPath,
-      ])
-      expect(restated.status).toBe(0)
-      expect(JSON.parse(restated.stdout)).toMatchObject({ applied: 1, skipped: 2 })
-      const restoredRejection = await restoredRepository.get(scope).catch((thrown) => thrown)
-      expect(restoredRejection).toBeInstanceOf(CommandInboxError)
-      expect(restoredRejection.code).toBe('COMMAND_RETENTION_EXPIRED')
-
-      // Reapplying again is a no-op: inserts are guarded and deletes are by
-      // identity, so a journal can be replayed without widening its effect.
+      // Reapplying the same journal is a no-op while its source result exists.
       const again = await reapply([
         '--backend',
         'sqlite',
@@ -357,6 +334,57 @@ describe('retention restore-time reapplication (#194)', () => {
       expect(again.status).toBe(0)
       expect(JSON.parse(again.stdout)).toMatchObject({ applied: 0, skipped: 3 })
 
+      // A pre-retirement snapshot has the inbox source row. When its tombstone
+      // is absent, reapplication recomputes v2 from that source before deleting
+      // the inbox record.
+      const sourcePath = join(directory, 'source-before-retirement.sqlite')
+      const sourceRestored = new SqlitePersistenceProvider({ path: sourcePath })
+      await sourceRestored.restore(snapshot)
+      const [sourceTombstone] = await sourceRestored.transaction((transaction) =>
+        transaction.list('retired-command-keys')
+      )
+      await sourceRestored.transaction((transaction) =>
+        transaction.delete('retired-command-keys', sourceTombstone.id)
+      )
+      const restated = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        sourcePath,
+        '--journal',
+        journalPath,
+      ])
+      expect(restated.status).toBe(0)
+      expect(JSON.parse(restated.stdout)).toMatchObject({ applied: 3, skipped: 0 })
+      const sourceRejection = await new SqliteCommandAcceptanceRepository(sourceRestored)
+        .get(scope)
+        .catch((thrown) => thrown)
+      expect(sourceRejection).toBeInstanceOf(CommandInboxError)
+      expect(sourceRejection.code).toBe('COMMAND_RETENTION_EXPIRED')
+
+      // If both source and v2 tombstone are absent, the journal alone cannot
+      // recreate the rejection identity and restore fails closed.
+      const [tombstone] = await restored.transaction((transaction) =>
+        transaction.list('retired-command-keys')
+      )
+      await restored.transaction((transaction) =>
+        transaction.delete('retired-command-keys', tombstone.id)
+      )
+      const missingSource = await reapply([
+        '--backend',
+        'sqlite',
+        '--database',
+        restoredPath,
+        '--journal',
+        journalPath,
+      ])
+      expect(missingSource.status).toBe(1)
+      expect(missingSource.stderr.trim()).toMatch(/^RETENTION_REAPPLY_FAILED/)
+      expect(
+        await restored.transaction((transaction) => transaction.list('retired-command-keys'))
+      ).toEqual([])
+
+      await sourceRestored.close()
       await restored.close()
     } finally {
       try {

@@ -185,8 +185,19 @@ export interface PutObjectInput {
   readonly metadata?: Readonly<Record<string, string>>
 }
 
+export type CreateObjectResult =
+  | { readonly outcome: 'created'; readonly object: StoredObjectDescriptor }
+  | { readonly outcome: 'exists' }
+
 export interface ObjectStore {
   put(input: PutObjectInput): Promise<StoredObjectDescriptor>
+  /**
+   * Atomically create an object without replacing an existing key. Never emulate
+   * this with HEAD followed by PUT. An existing winner must be read and verified
+   * by the caller; ambiguous provider failures must remain failures. Providers
+   * lacking this capability must not be used for immutable terminal artifacts.
+   */
+  putIfAbsent?(input: PutObjectInput): Promise<CreateObjectResult>
   get(key: string): Promise<StoredObject>
   head(key: string): Promise<StoredObjectDescriptor>
   delete(key: string): Promise<void>

@@ -193,6 +193,37 @@ describe('retention eligibility (#194)', () => {
     )
   })
 
+  test('raced candidates consume a shared budget without inventing an eligibility verdict', () => {
+    const counter = new RetentionAssessmentCounter('messaging', now, 2)
+    expect(counter.remaining).toBe(2)
+    expect(counter.admitCandidate()).toBe(true)
+    expect(counter.remaining).toBe(1)
+    // The first candidate vanished. The next table shares its consumed budget.
+    expect(counter.admitCandidate()).toBe(true)
+    counter.recordVerdict({ verdict: 'retained', reason: 'hold_recorded' })
+    expect(counter.remaining).toBe(0)
+    expect(counter.admitCandidate()).toBe(false)
+    expect(counter.result()).toMatchObject({
+      scanned: 2,
+      truncated: true,
+      eligible: 0,
+      retainedByReason: { hold_recorded: 1 },
+    })
+  })
+
+  test('a verdict must belong to one admitted candidate and may only be recorded once', () => {
+    const counter = new RetentionAssessmentCounter('messaging', now, 1)
+    expect(() => counter.recordVerdict({ verdict: 'eligible' })).toThrow(
+      'RETENTION_ASSESSMENT_CANDIDATE_REQUIRED'
+    )
+    expect(counter.admitCandidate()).toBe(true)
+    counter.recordVerdict({ verdict: 'eligible' })
+    expect(() => counter.recordVerdict({ verdict: 'eligible' })).toThrow(
+      'RETENTION_ASSESSMENT_CANDIDATE_REQUIRED'
+    )
+    expect(counter.result()).toMatchObject({ scanned: 1, eligible: 1, truncated: false })
+  })
+
   test('every declared reason is reachable and distinctly named', () => {
     const reasons = [
       'unbounded_class',

@@ -25,6 +25,7 @@ import {
 } from '@control-plane/runtime-gateway-protocol'
 import {
   RuntimeExecutionProgressSchema,
+  RuntimeUsageSchema,
   type RuntimeExecutionProgress,
 } from '@control-plane/runtime-sdk'
 import { managedCloudOperationalPolicy } from '@control-plane/config'
@@ -219,7 +220,7 @@ export class RuntimeEventIngestionService {
     source: RuntimeEventSourceChannel
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayProgressEnvelopeSchema.parse(frameValue)
-    const context = await this.#context(frame, source, false)
+    let context = await this.#context(frame, source, false)
     this.#assertInlineBound(frame.event.data)
     let normalized: RuntimeExecutionProgress
     try {
@@ -233,6 +234,9 @@ export class RuntimeEventIngestionService {
       return this.#reject(frame, 'RUNTIME_EVENT_STALE_SEQUENCE')
     }
     this.#assertInlineBound(normalized.data)
+    // Normalization may perform remote artifact/policy reads. Do not borrow
+    // channel or command authority observed before that asynchronous work.
+    context = await this.#context(frame, source, false)
     const result = await this.#effects.applyProgress({
       commandId: frame.commandId,
       eventSequence: frame.eventSequence,
@@ -253,7 +257,7 @@ export class RuntimeEventIngestionService {
     source: RuntimeEventSourceChannel
   ): Promise<RuntimeEventEffectResult> {
     const frame = GatewayResultEnvelopeSchema.parse(frameValue)
-    const context = await this.#context(frame, source, true)
+    let context = await this.#context(frame, source, true)
     if ('data' in frame.result) this.#assertInlineBound(frame.result.data)
     let normalized: NormalizedRuntimeTerminal | undefined
     try {
@@ -261,6 +265,7 @@ export class RuntimeEventIngestionService {
     } catch {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
+    context = await this.#context(frame, source, true)
     if (normalized === undefined) return { outcome: 'applied' }
     const expectedState = {
       succeeded: 'completed',
@@ -285,7 +290,7 @@ export class RuntimeEventIngestionService {
       return this.#reject(frame, 'RUNTIME_EVENT_SCOPE_MISMATCH')
     }
     const commandFrame = { ...frame, commandId: frame.commandId, payloadHash: frame.payloadHash }
-    const context = await this.#context(commandFrame, source, false, true)
+    let context = await this.#context(commandFrame, source, false, true)
     let normalized: NormalizedRuntimeTerminal
     try {
       normalized = await this.#normalizer.normalizeError({ frame: commandFrame, ...context })
@@ -295,6 +300,7 @@ export class RuntimeEventIngestionService {
     if (normalized.state !== 'failed') {
       return this.#reject(frame, 'RUNTIME_EVENT_NORMALIZATION_FAILED')
     }
+    context = await this.#context(commandFrame, source, false, true)
     return this.#applyTerminal(commandFrame, context, normalized)
   }
 
@@ -393,7 +399,27 @@ export class RuntimeEventIngestionService {
     normalized: NormalizedRuntimeTerminal
   ): Promise<RuntimeEventEffectResult> {
     validateTerminal(normalized)
-    this.#assertInlineBound(normalized.payload)
+    // Reserved evidence fields come from the validated wire frame and the
+    // authenticated command binding, never from adapter-normalized payloads.
+    // Channel attribution does not authorize a reported funding source or cost.
+    const payload = { ...normalized.payload }
+    delete payload['terminalUsage']
+    delete payload['runtimeUsageSource']
+    if ('terminalUsage' in frame && frame.terminalUsage !== undefined) {
+      Object.assign(
+        payload,
+        ExecutionEventDraftSchema.shape.payload.parse({
+          terminalUsage: RuntimeUsageSchema.parse(frame.terminalUsage),
+        })
+      )
+      payload['runtimeUsageSource'] = {
+        nodeId: context.command.nodeId,
+        runtimeConnectionId: context.command.runtimeConnectionId,
+        commandId: context.command.commandId,
+        channelGeneration: frame.channelGeneration,
+      }
+    }
+    this.#assertInlineBound(payload)
     if (
       'result' in frame &&
       'artifact' in frame.result &&
@@ -411,13 +437,7 @@ export class RuntimeEventIngestionService {
       state: normalized.state,
       ...(normalized.resultReference ? { resultReference: normalized.resultReference } : {}),
       ...(normalized.failure ? { failure: normalized.failure } : {}),
-      draft: this.#draft(
-        context,
-        frame,
-        `execution.${normalized.state}`,
-        normalized.payload,
-        occurredAt
-      ),
+      draft: this.#draft(context, frame, `execution.${normalized.state}`, payload, occurredAt),
     })
     return this.#classify(frame, result)
   }

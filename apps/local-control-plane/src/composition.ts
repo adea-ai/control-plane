@@ -40,6 +40,7 @@ import {
   SqliteExecutionCancellationRepository,
   SqliteExecutionEventRepository,
   SqlitePersistenceProvider,
+  SqliteDurableUsageStore,
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
   SqliteCatalogApprovalRepository,
@@ -65,6 +66,7 @@ import type {
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
+  DurableRuntimeBudgetAdmission,
 } from '@control-plane/workflow-worker'
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
 import type { MetricAdapter } from '@control-plane/telemetry'
@@ -435,6 +437,10 @@ export class LocalControlPlaneComposition {
               options.graphActivitiesFactory?.({ persistence: this.persistence }) ??
               new DisabledGraphSegmentActivities(),
             commands: this.commands,
+            budgetAdmission: new DurableRuntimeBudgetAdmission({
+              store: new SqliteDurableUsageStore(this.persistence),
+              commands: this.commandRepository,
+            }),
           }))
     this.executionLifecycleActivities = activities ?? new UnconfiguredLocalExecutionActivities()
     // Reconciliation scheduling is explicit composition configuration: absent

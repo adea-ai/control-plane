@@ -52,6 +52,32 @@ export interface ReleaseAuditRepository {
   list(releaseGateId?: string): Promise<readonly ReleaseAuditRecord[]>
 }
 
+const RequiredObservedEvaluationSchema = z
+  .strictObject({
+    suiteId: z.string().min(1).max(256),
+    suiteVersion: z.string().min(1).max(128),
+    suiteDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    dataset: z.strictObject({
+      id: z.string().min(1).max(256),
+      version: z.string().min(1).max(128),
+      digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    }),
+    cases: z
+      .array(
+        z.strictObject({
+          evalCaseId: z.string().min(1).max(256),
+          inputDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        })
+      )
+      .min(1),
+  })
+  .superRefine((policy, context) => {
+    if (new Set(policy.cases.map(({ evalCaseId }) => evalCaseId)).size !== policy.cases.length)
+      context.addIssue({ code: 'custom', message: 'Required evaluation case IDs must be unique' })
+  })
+
+export type RequiredObservedEvaluation = z.output<typeof RequiredObservedEvaluationSchema>
+
 export class InMemoryReleaseAuditRepository implements ReleaseAuditRepository {
   readonly #records: ReleaseAuditRecord[] = []
 
@@ -105,6 +131,7 @@ export class ReleaseGateRegistry {
     readonly candidate: EvalRun
     readonly baseline: EvalRun
     readonly maximumRegressions: EvaluationMetricValues
+    readonly requiredObservedEvaluation?: RequiredObservedEvaluation
   }): ReleaseGateDecision {
     this.#assertUpdateAvailable(input.releaseGateId)
     const candidateRun = EvalRunSchema.parse(input.candidate)
@@ -112,6 +139,44 @@ export class ReleaseGateRegistry {
     const reasons = candidateRun.results.flatMap(({ failedRequiredMetrics }) =>
       failedRequiredMetrics.map((metric) => `REQUIRED_THRESHOLD_FAILED:${metric}`)
     )
+    if (input.requiredObservedEvaluation !== undefined) {
+      const policy = RequiredObservedEvaluationSchema.parse(input.requiredObservedEvaluation)
+      for (const [role, run] of [
+        ['candidate', candidateRun],
+        ['baseline', baselineRun],
+      ] as const) {
+        const suite = run.suite
+        if (
+          suite.mode !== 'offline' ||
+          suite.evalSuiteId !== policy.suiteId ||
+          suite.version !== policy.suiteVersion ||
+          suite.digest !== policy.suiteDigest ||
+          suite.dataset.id !== policy.dataset.id ||
+          suite.dataset.version !== policy.dataset.version ||
+          suite.dataset.digest !== policy.dataset.digest ||
+          JSON.stringify(
+            suite.cases.map(({ evalCaseId, inputDigest }) => ({ evalCaseId, inputDigest }))
+          ) !== JSON.stringify(policy.cases)
+        ) {
+          reasons.push(`CRITICAL_EVALUATION_SUITE_MISMATCH:${role}`)
+          continue
+        }
+        for (const evaluationCase of policy.cases) {
+          const result = run.results.find(
+            ({ evalCaseId }) => evalCaseId === evaluationCase.evalCaseId
+          )
+          if (!result?.observation) {
+            reasons.push(
+              `CRITICAL_EVALUATION_OBSERVATION_MISSING:${role}:${evaluationCase.evalCaseId}`
+            )
+          } else if (!result.observation.passed) {
+            reasons.push(
+              `CRITICAL_EVALUATION_OBSERVATION_FAILED:${role}:${evaluationCase.evalCaseId}`
+            )
+          }
+        }
+      }
+    }
     if (JSON.stringify(candidateRun.suite) !== JSON.stringify(baselineRun.suite)) {
       reasons.push('INCOMPARABLE_BASELINE:suite')
     }

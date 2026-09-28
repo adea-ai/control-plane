@@ -26,6 +26,7 @@ export type {
   ReleaseAuditRecord,
   ReleaseAuditRepository,
   ReleaseGateDecision,
+  RequiredObservedEvaluation,
 } from './release-gates.js'
 export {
   assertCredentialPurpose,
@@ -51,6 +52,7 @@ export type { LoadProfile, LoadResult } from './load-testing.js'
 export { assessDeployment } from './deployment.js'
 export type { DeploymentAssessment } from './deployment.js'
 export {
+  EvidenceAuditFixtureV3Schema,
   EvidenceAuditFixtureSchema,
   EvidenceAuditReceiptSchema,
   evidenceAuditMetrics,
@@ -60,3 +62,10 @@ export {
 export type { EvidenceAuditExecutor } from './evidence-audit-eval.js'
 export { createEvidenceAuditMetricsExecutor } from './evidence-audit-adapter.js'
 export type { EvidenceAuditReceipt } from './evidence-audit-adapter.js'
+export {
+  evaluateOfflineAdversarialCorpusPromotion,
+  getOfflineAdversarialCorpus,
+  getOfflineAdversarialSuite,
+  runOfflineAdversarialCorpus,
+} from './adversarial-eval-corpus.js'
+export type { OfflineAdversarialCorpusRunInput } from './adversarial-eval-corpus.js'

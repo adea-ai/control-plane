@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { compareCodePointOrder } from '@control-plane/contracts'
+import { RuntimeUsageSchema } from '@control-plane/runtime-sdk'
 import type { JsonValue, PersistenceProvider, PersistenceRecord } from '@control-plane/deployment'
 import { z } from 'zod'
 import {
@@ -29,6 +30,7 @@ export const WorkflowJobOutcomeSchema = z.strictObject({
   status: z.enum(['completed', 'failed', 'cancelled', 'timed_out']),
   resultReference: z.string().min(1).optional(),
   graphCheckpointId: z.string().min(1).optional(),
+  terminalUsage: RuntimeUsageSchema.optional(),
 })
 
 export const WorkflowJobLeaseSchema = z.strictObject({

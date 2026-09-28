@@ -47,6 +47,7 @@
     "test": "bun scripts/schema.mjs --check && bun test src"
   },
   "dependencies": {
+    "@control-plane/runtime-sdk": "workspace:*",
     "zod": "4.6.5"
   },
   "engines": {

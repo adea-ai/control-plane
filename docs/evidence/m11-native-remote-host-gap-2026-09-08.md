@@ -1,5 +1,32 @@
 # M11 native remote host acceptance gap
 
+## Current topology clarification — 2026-09-27
+
+The startup observations below are historical facts about the optional separated
+Hosted worker, **not a missing Railway Cloud service**. The accepted Cloud topology
+is Control API + Workflow Worker + Restate; it explicitly excludes the former
+Runtime Worker/Gateway/Tool Gateway process split. Do not repair Cloud activation by
+enabling the bare `runtime-worker` entrypoint or substituting its reference provider.
+
+The supported Cloud `remote` selection queues commands through
+`createManagedCloudWorkflowWorkerComposition`, `DurableRemoteWorkflowRuntime` and
+`ManagedPiRemoteCommandFactory` using PostgreSQL command/outcome stores. It still
+needs an independently provisioned authenticated RuntimeNode/gateway, trusted
+discovery and scoped Artifact/usage delivery. Hosted server has the same remote
+boundary. Gateway startup currently requires an embedding application's real
+runtime ports; environment-selected stores alone do not supply a host.
+
+The actual remaining implementation target is the operator-owned host/RuntimeNode
+composition with explicit isolation, credentials/enrollment, outbound transport,
+retained outcomes and scoped Artifact authority. Production stays fail-closed until
+that supported deployment passes acceptance. Local already selects managed Pi or
+pinned Codex ACP through its explicit configuration and direct-local transport.
+See [configuration](../configuration.md) and [infrastructure](../infrastructure.md).
+
+This clarification supersedes any older guidance treating
+`apps/runtime-worker/src/start.ts` as a Cloud activation entrypoint. All original
+native execution, recovery, settlement and deployment gates remain required.
+
 Status: open; M11.3 (#188), execution-control/runtime-host ownership. Severity:
 high for milestone acceptance. This is an implementation/deployment gap, not a
 claim of an exploitable vulnerability or an authorization failure.

@@ -52,6 +52,14 @@ export type {
   ManagedPiRemoteCommandFactoryOptions,
   ManagedPiRuntimeDiscoveryReader,
 } from './managed-pi-remote-command.js'
+export {
+  DurableRuntimeBudgetAdmission,
+  RuntimeBudgetAdmissionError,
+} from './runtime-budget-admission.js'
+export type {
+  DurableRuntimeBudgetAdmissionOptions,
+  RuntimeBudgetAdmissionPort,
+} from './runtime-budget-admission.js'
 
 export const serviceName = 'workflow-worker'
 

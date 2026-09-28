@@ -21,19 +21,25 @@ completion-claim guard.
 
 The stack maps onto the M11 audit lanes as follows, one skill (or pair) per lane:
 
-- **Requirements traceability** → `code-review`
+- **Requirements traceability** → `control-plane-audit` (authoritative issue/ledger evidence) + `code-review` (diff-to-spec review)
 - **Architecture and contracts** → `control-plane-audit`
+- **Code Foundry validation** → `AGENTS.md`, `.agents/validation.md`, and `.agents/ci.md` via `control-plane-audit`; `turborepo` covers task-graph details only
 - **Security** → `security-and-hardening`
+- **Evals and agent behavior** → `control-plane-audit` routes to `docs/evaluation-dimensions.md` and `docs/evals/`; the scripted fixtures exercise the harness, not actual Skill invocation or human calibration
 - **Simplification** → `code-simplification`
+- **Performance** → `control-plane-audit` routes to `docs/performance.md`
+- **Reliability and recovery** → `control-plane-audit` routes to `docs/operations.md`
+- **Documentation reconciliation** → `control-plane-audit` compares issue criteria with current docs and evidence
 - **Verification** → `verification-before-completion`
 - **Implementation discipline** → `incremental-implementation` + `test-driven-development`
 - **Build/toolchain** → `turborepo`
 - **Type-safety reference** → `typescript-advanced-types`
 
-The eval-lane and performance/reliability-lane audit procedures are owned by
-[`docs/evals/calibration-kit.md`](../../docs/evals/calibration-kit.md) and
-[`.agents/validation.md`](../validation.md) respectively, and are deliberately
-not duplicated as skills — this list is the smallest compatible stack.
+These routed documents remain canonical references rather than duplicate Skills.
+The calibration kit defines a human procedure but does not itself constitute a
+completed calibration result; consult the current baseline for outstanding
+evidence gates. This is the smallest compatible stack only when the router and
+its referenced policy/evidence documents are available.
 
 ## Canonical policy ownership
 
@@ -49,7 +55,7 @@ Owner: Control Plane maintainers. Review this registry and every skill at each
 release, and whenever a lane mapping, validation command, or policy owner
 changes. Deprecation: a skill is removed only after its lane is covered by
 another entry in this registry, with the removal and its replacement recorded
-in the release notes. `turborepo` is vendored from Vercel upstream (pinned at
+in [`CHANGELOG.md`](../../docs/skills/CHANGELOG.md). `turborepo` is vendored from Vercel upstream (pinned at
 2.10.11-canary.4, owner: vendored/Vercel upstream): it is updated only by
 re-vendoring a new pinned upstream version, and local edits to it are limited
 to this registry's integration points (frontmatter metadata and evidence

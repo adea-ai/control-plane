@@ -151,14 +151,25 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(!unit.includes('packages/database/src/integration.test.mjs'))
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
   assert.deepEqual(integration, [
+    'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
+    'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
+    'packages/database/src/admission-rollout-admin.integration.test.mjs',
+    'packages/database/src/budget-admission.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
+    'packages/database/src/retention-claim-budget.integration.test.mjs',
+    'packages/database/src/retention-claim-lock-order.integration.test.mjs',
+    'packages/database/src/retention-hold-activation.integration.test.mjs',
+    'packages/database/src/retention-hold-operator.integration.test.mjs',
+    'packages/database/src/retention-hold-owner-activation.integration.test.mjs',
+    'packages/database/src/retention-hold-repository.integration.test.mjs',
     'packages/database/src/retention-reference-windows.integration.test.mjs',
+    'packages/database/src/usage-store.integration.test.mjs',
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
@@ -184,14 +195,21 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-context-authoring-composition.test.mjs',
     'tests/m11-context-composition.test.mjs',
     'tests/m11-context-transport-e2e.test.mjs',
+    'tests/m11-local-native-terminal-usage.test.mjs',
     'tests/m11-standalone-e2e.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ])
+  const manifest = await readJson('package.json')
+  assert.match(
+    manifest.scripts['test:m11-standalone'],
+    /tests\/m11-local-native-terminal-usage\.test\.mjs/
+  )
   assert.deepEqual(smoke, [
     'tests/agent-skill-library.test.mjs',
     'tests/container-promotion.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
+    'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
     'tests/m11-context-command-contract.test.mjs',
@@ -208,6 +226,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-recovery-rpo-rto.test.mjs',
     'tests/m11-retention-apply-cli.test.mjs',
     'tests/m11-retention-class-registry.test.mjs',
+    'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
     'tests/repository.test.mjs',
     'tests/restate-identity.test.mjs',

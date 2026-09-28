@@ -1,5 +1,10 @@
-import type { RetentionJournalOperation } from '@control-plane/domain'
-import { and, isNull, sql } from 'drizzle-orm'
+import {
+  CommandInboxScopeSchema,
+  retiredCommandKeyCandidates,
+  retiredCommandKeyFromMetadataV2,
+  type RetentionJournalOperation,
+} from '@control-plane/domain'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { commandInbox } from './schema/commands.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
@@ -49,17 +54,17 @@ export class PostgresRetentionReapplication {
     for (const operation of operations) {
       switch (operation.kind) {
         case 'postgres.retireCommandKey': {
-          const inserted = await this.database
-            .insert(retiredCommandKeys)
-            .values({
-              scopeKey: operation.scopeKey,
-              commandId: operation.commandId,
-              executionId: operation.executionId,
-              retiredAt: new Date(operation.retiredAt),
-            })
-            .onConflictDoNothing()
+          const restored = await this.#restoreCommandRetirement(operation)
+          if (restored) applied += 1
+          else skipped += 1
+          break
+        }
+        case 'postgres.deleteRetiredCommandKey': {
+          const removed = await this.database
+            .delete(retiredCommandKeys)
+            .where(eq(retiredCommandKeys.scopeKey, operation.scopeKey))
             .returning({ scopeKey: retiredCommandKeys.scopeKey })
-          if (inserted.length === 1) applied += 1
+          if (removed.length > 0) applied += 1
           else skipped += 1
           break
         }
@@ -212,5 +217,97 @@ export class PostgresRetentionReapplication {
       }
     }
     return { applied, skipped }
+  }
+
+  async #restoreCommandRetirement(
+    operation: Extract<RetentionJournalOperation, { kind: 'postgres.retireCommandKey' }>
+  ): Promise<boolean> {
+    const retiredAt = new Date(operation.retiredAt)
+    if (!Number.isFinite(retiredAt.getTime()) || retiredAt.toISOString() !== operation.retiredAt)
+      throw new Error('RETENTION_RETIRED_COMMAND_JOURNAL_INVALID')
+    return this.database.transaction(async (transaction) => {
+      const [existing] = await transaction
+        .select()
+        .from(retiredCommandKeys)
+        .where(eq(retiredCommandKeys.scopeKey, operation.scopeKey))
+        .limit(1)
+      if (existing?.metadataVersion === 2) {
+        if (
+          existing.commandId !== operation.commandId ||
+          existing.executionId !== operation.executionId ||
+          existing.retiredAt.toISOString() !== operation.retiredAt ||
+          existing.metadataVersion !== 2 ||
+          existing.identityDigest === null ||
+          retiredCommandKeyFromMetadataV2(existing.identityDigest) !== existing.scopeKey
+        )
+          throw new Error('RETENTION_RETIRED_COMMAND_STORED_MISMATCH')
+        return false
+      }
+      if (
+        existing !== undefined &&
+        (existing.metadataVersion !== 1 ||
+          existing.identityDigest !== null ||
+          existing.commandId !== operation.commandId ||
+          existing.executionId !== operation.executionId ||
+          existing.retiredAt.toISOString() !== operation.retiredAt)
+      )
+        throw new Error('RETENTION_RETIRED_COMMAND_STORED_MISMATCH')
+      const [source] = await transaction
+        .select({
+          commandId: commandInbox.commandId,
+          callerPrincipalId: commandInbox.callerPrincipalId,
+          operation: commandInbox.operation,
+          workspaceId: commandInbox.workspaceId,
+          projectId: commandInbox.projectId,
+          idempotencyKey: commandInbox.idempotencyKey,
+          executionId: commandInbox.executionId,
+        })
+        .from(commandInbox)
+        .where(eq(commandInbox.commandId, operation.commandId))
+        .limit(1)
+      if (
+        source === undefined ||
+        source.commandId !== operation.commandId ||
+        source.executionId !== operation.executionId
+      )
+        throw new Error('RETENTION_RETIRED_COMMAND_SOURCE_MISSING')
+      const keys = retiredCommandKeyCandidates(
+        CommandInboxScopeSchema.parse({
+          callerPrincipalId: source.callerPrincipalId,
+          operation: source.operation,
+          workspaceId: source.workspaceId,
+          projectId: source.projectId,
+          idempotencyKey: source.idempotencyKey,
+        })
+      )
+      if (operation.scopeKey !== keys.legacyKey && operation.scopeKey !== keys.metadata.scopeKey)
+        throw new Error('RETENTION_RETIRED_COMMAND_JOURNAL_MISMATCH')
+      const [existingV2] = await transaction
+        .select()
+        .from(retiredCommandKeys)
+        .where(eq(retiredCommandKeys.scopeKey, keys.metadata.scopeKey))
+        .limit(1)
+      if (existingV2 !== undefined) {
+        if (
+          existingV2.commandId !== operation.commandId ||
+          existingV2.executionId !== operation.executionId ||
+          existingV2.retiredAt.toISOString() !== operation.retiredAt ||
+          existingV2.metadataVersion !== keys.metadata.metadataVersion ||
+          existingV2.identityDigest !== keys.metadata.identityDigest ||
+          retiredCommandKeyFromMetadataV2(existingV2.identityDigest ?? '') !== existingV2.scopeKey
+        )
+          throw new Error('RETENTION_RETIRED_COMMAND_STORED_MISMATCH')
+        return false
+      }
+      await transaction.insert(retiredCommandKeys).values({
+        scopeKey: keys.metadata.scopeKey,
+        commandId: operation.commandId,
+        executionId: operation.executionId,
+        retiredAt,
+        metadataVersion: keys.metadata.metadataVersion,
+        identityDigest: keys.metadata.identityDigest,
+      })
+      return true
+    })
   }
 }

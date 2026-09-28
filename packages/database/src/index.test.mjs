@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { getTableConfig } from 'drizzle-orm/pg-core'
+import { readFile } from 'node:fs/promises'
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
+import { retiredCommandKeys } from './schema/retired-command-keys.ts'
+import * as connectionModule from './connection.ts'
 import {
   commandInbox,
   createPostgresConnection,
@@ -23,6 +26,30 @@ import {
 } from './index.ts'
 
 describe('persistence schema', () => {
+  test('v2 retired-command metadata rejects a null digest in schema and migration', async () => {
+    const table = getTableConfig(retiredCommandKeys)
+    const metadataConstraint = table.checks.find(
+      ({ name }) => name === 'retired_command_keys_metadata_check'
+    )
+    expect(metadataConstraint).toBeDefined()
+    const schemaSql = new PgDialect().sqlToQuery(metadataConstraint.value).sql
+    expect(schemaSql).toContain('"identity_digest" is not null')
+    expect(schemaSql).toMatch(/"identity_digest" is not null.*"identity_digest" ~ /u)
+
+    const migration = await readFile(
+      new URL('../drizzle/0053_groovy_gargoyle.sql', import.meta.url),
+      'utf8'
+    )
+    expect(migration).toContain('"identity_digest" is not null')
+    const snapshot = JSON.parse(
+      await readFile(new URL('../drizzle/meta/0053_snapshot.json', import.meta.url), 'utf8')
+    )
+    expect(
+      snapshot.tables['public.retired_command_keys'].checkConstraints
+        .retired_command_keys_metadata_check.value
+    ).toContain('"identity_digest" is not null')
+  })
+
   test('defines shared PostgreSQL conventions and domain-organized messaging tables', () => {
     expect(persistenceConventions).toEqual({
       identifiers: 'uuid-v4-database-generated',
@@ -362,6 +389,49 @@ describe('createPostgresConnection', () => {
         url: 'postgresql://migrator:secret@database/control_plane',
       })
     ).toThrow(DatabaseConnectionError)
+  })
+})
+
+describe('createPostgresMigrationConnection', () => {
+  test('provides an explicit migration connection without relabeling credentials', async () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    const connection = connectionModule.createPostgresMigrationConnection({
+      role: 'migration',
+      url: 'postgresql://migrator:local-only@127.0.0.1:1/control_plane',
+    })
+    try {
+      expect(connection.database).toBeDefined()
+      expect(typeof connection.check).toBe('function')
+    } finally {
+      await connection.close()
+    }
+  })
+
+  test('rejects application and administrator profiles', () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    for (const role of ['application', 'administration']) {
+      expect(() =>
+        connectionModule.createPostgresMigrationConnection({
+          role,
+          url: 'postgresql://operator:local-only@127.0.0.1:1/control_plane',
+        })
+      ).toThrow(DatabaseConnectionError)
+    }
+  })
+
+  test('sanitizes invalid migration URLs', () => {
+    expect(typeof connectionModule.createPostgresMigrationConnection).toBe('function')
+    try {
+      connectionModule.createPostgresMigrationConnection({
+        role: 'migration',
+        url: 'mysql://migrator:top-secret@database/control_plane',
+      })
+      throw new Error('Expected connection creation to fail')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DatabaseConnectionError)
+      expect(JSON.stringify(error)).not.toContain('top-secret')
+      expect(error.diagnostic).toEqual({ code: 'INVALID_DATABASE_URL' })
+    }
   })
 })
 

@@ -8,7 +8,7 @@ Every envelope identifies its schema and negotiated protocol version, node, work
 
 Payloads are either bounded adapter-owned JSON or a content-addressed Artifact reference. Core validation rejects native provider command types and selectors for arbitrary endpoints, local paths, executables, databases, projects, source scopes, or reusable credentials. Context-provider status/read operations are optional; writes require a separate authorization reference. Inventory may advertise zero providers without affecting runtime negotiation.
 
-The checked-in JSON Schema and golden/malformed JSON fixtures under `packages/runtime-gateway-protocol` are language-neutral. The TypeScript package depends only on Zod and includes a deterministic reference RuntimeNode plus a reusable conformance runner; consumers do not need Control Plane server, domain, or database packages.
+The checked-in JSON Schema and golden/malformed JSON fixtures under `packages/runtime-gateway-protocol` are language-neutral. The TypeScript package depends on Zod and the provider-neutral Runtime SDK usage contract, and includes a deterministic reference RuntimeNode plus a reusable conformance runner; consumers do not need Control Plane server, domain, or database packages.
 
 ## Channel authentication
 
@@ -28,7 +28,25 @@ Heartbeats refresh shared ownership and publish normalized online/degraded/offli
 
 ## Durable command delivery
 
-The gateway writes every runtime command to the PostgreSQL `runtime_commands` ledger before sending it. The record retains the semantic command, execution, attempt, node, connection, scope, payload hash, expiry, delivery generations and sequences, ACK, result reference, and compare-and-set version. Reconnect and gateway restart query this ledger and redeliver the same command ID; a new ID denotes a new semantic attempt. Queue age, ACK latency, redelivery, and expiry are recorded as gateway metrics.
+`composeRuntimeGateway` constructs the runtime command stack only when its
+explicit `runtime` options are supplied; `start` forwards those options. The
+composition owns its command store but does not own the injected host ports.
+Inventory remains a separate optional host handler and fails closed when absent.
+SQLite coordination is single-instance; the PostgreSQL mode uses durable channel
+ownership. Neither mode provisions node enrollment, credentials, an outbound
+worker connector, a sandbox host, or scoped Artifact upload credentials.
+
+Runtime-command composition is opt-in. A host must explicitly provide execution/event effects, reconnect validation and retained-outcome application, execution reconciliation, quarantine, and a scoped Artifact verifier. The verifier must establish that the authenticated command is allowed to reference the supplied Artifact; schema validity alone is not artifact ownership. Missing or malformed host ports fail before the gateway opens its store. Context-only composition keeps runtime frames fail-closed. This option does not supply node enrollment, production identity validation, or a complete executable-host deployment.
+
+For successful runtime-result Artifacts, composition also verifies the configured
+ObjectStore independently of the host authorization hook. The trusted command's
+attempt determines the stable Artifact ID and `runtime-results` key; peer-supplied
+locators and arbitrary storage paths are not used. HEAD and GET metadata, bounded
+size, media type, reference digest and actual body digest must agree. A permissive
+host hook cannot bypass these storage checks. This is not upload credential
+issuance or authorization for a node to write an arbitrary attempt's key.
+
+When enabled, the gateway writes every runtime command to the configured SQLite or PostgreSQL `runtime_commands` ledger before sending it. The record retains the semantic command, execution, attempt, node, connection, scope, payload hash, expiry, delivery generations and sequences, ACK, result reference, and compare-and-set version. Reconnect and gateway restart query this ledger and redeliver the same command ID; a new ID denotes a new semantic attempt. Queue age, ACK latency, redelivery, and expiry are recorded as gateway metrics.
 
 ACKs must match the latest dispatched channel generation and sequence. Previously recorded RuntimeNode results may come from an earlier generation after a lost connection, but they must match the command node, workspace, and payload hash. Duplicate ACKs or results return the persisted outcome only when their references and dispositions match; ambiguity and command-ID hash reuse fail closed. Commands are marked expired before send and are never revived on reconnect.
 
@@ -37,6 +55,15 @@ The RuntimeNode owns a separate bounded local result ledger for duplicate-effect
 ## Normalized event ingestion
 
 Authenticated progress, result, and command-bound error frames are correlated through the durable command to the exact execution, attempt, node, workspace, and RuntimeConnection. The gateway separately verifies the active source channel, frame generation and sequence, payload hash, inline payload bound, and Artifact reference. Rejected frames are quarantined by normalized reason and digest without retaining their raw payload.
+
+After asynchronous normalization or Artifact/policy verification, ingestion reads
+the command/execution/attempt binding and channel authority again before applying
+effects. Local channel authority checks the live authenticated connection,
+credential expiry and durable revocation, then rechecks coordinated ownership;
+it does not wait for the next sweep or treat ownership metadata as credential
+authority. Registry or coordination outages fail closed. These checks do not
+make independently administered credential revocation and effect persistence
+one distributed transaction.
 
 ## Runtime inventory synchronization
 
@@ -80,6 +107,23 @@ Concrete runtime adapters implement `RuntimeAdapterEventNormalizer`; provider or
 Terminal state, result reference or normalized failure, the required execution event, and its ingestion receipt commit through one effect sink. The first committed terminal outcome wins, so completion before cancellation remains complete and cancellation before a late result remains cancelled. Runtime cancellation, input, and approval use ordinary durable runtime commands; the gateway does not dispatch a new control command after the execution or attempt is already terminal.
 
 ## Compatibility and deprecation
+
+Protocol v1.7 adds optional `terminalUsage` to result envelopes for succeeded,
+failed and cancelled executions. It uses the Runtime SDK's validated token,
+duration and optional reported cost/accounting contract. Senders must negotiate
+v1.7 before emitting the field; older strict parsers cannot read it. The Hosted
+terminal bridge rejects known measured usage on an older protocol rather than
+silently dropping it. Upgrade both sides before activating this path. Legacy
+results without measurements remain valid and mean unknown usage, not zero.
+
+The gateway writes reported usage with command/node/connection/channel
+attribution into the winning terminal event; the Cloud/Hosted waiter verifies
+that durable binding before returning it. Adapter-normalized payloads cannot
+override those reserved fields. Neither an authenticated channel nor reported
+`accounting.sourceId` authorizes a charge. Funding authority, per-attempt
+reservations and financial settlement are separate requirements. The current
+Hosted terminal bridge still requires production startup/channel wiring; a
+fixture-tested bridge is not a live deployment certification.
 
 Peers negotiate the highest common major version and the lower supported minor within that major. No common major fails negotiation. Additive fields and envelope variants require a minor version; changed meanings, required-field removal, or incompatible validation require a new major. Deprecation must name the affected version and timestamp; an optional sunset must be later than deprecation and should name a supported replacement. A command already past expiry is never made valid by protocol negotiation or reconnect.
 

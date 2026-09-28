@@ -1,4 +1,5 @@
 import {
+  ExecutionAttemptSchema,
   ExecutionLifecycleError,
   ExecutionStateSchema,
   type Execution,
@@ -13,6 +14,7 @@ import type {
   WorkflowInteractionResponse,
   WorkflowRuntimeOutcome,
 } from './execution-workflow.js'
+import type { RuntimeBudgetAdmissionPort } from './runtime-budget-admission.js'
 
 export interface WorkflowRuntimeActivityPort {
   dispatch(input: {
@@ -55,6 +57,7 @@ export interface DurableExecutionLifecycleActivitiesOptions {
   readonly runtime: WorkflowRuntimeActivityPort
   readonly graph: GraphSegmentActivityPort
   readonly commands: ExecutionCommandLifecyclePort
+  readonly budgetAdmission?: RuntimeBudgetAdmissionPort
   readonly runtimeRouter?: RuntimeAttemptRouter
   readonly now?: () => string
 }
@@ -75,6 +78,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
   readonly #runtime: WorkflowRuntimeActivityPort
   readonly #graph: GraphSegmentActivityPort
   readonly #commands: ExecutionCommandLifecyclePort
+  readonly #budgetAdmission: RuntimeBudgetAdmissionPort | undefined
   readonly #runtimeRouter: RuntimeAttemptRouter | undefined
   readonly #now: () => string
 
@@ -84,6 +88,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     this.#runtime = options.runtime
     this.#graph = options.graph
     this.#commands = options.commands
+    this.#budgetAdmission = options.budgetAdmission
     this.#runtimeRouter = options.runtimeRouter
     this.#now = options.now ?? (() => new Date().toISOString())
   }
@@ -167,24 +172,46 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     if (plan === undefined || plan.schemaVersion !== input.executionPlan.schemaVersion) {
       throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
     }
+    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId)
     return this.#runtime.dispatch({ ...input, executionPlan: plan })
   }
 
-  applyInteraction(
+  async applyInteraction(
     input: Parameters<ExecutionLifecycleActivities['applyInteraction']>[0]
   ): Promise<WorkflowRuntimeOutcome> {
+    if (this.#budgetAdmission === undefined) return this.#runtime.applyInteraction(input)
+    const execution = await this.#lifecycle.getExecution(input.executionId)
+    if (execution.latestAttemptId !== input.attemptId) {
+      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    }
+    const plan = await this.#plans.get(execution.executionPlan)
+    if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
+      throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
+    }
+    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId)
     return this.#runtime.applyInteraction(input)
   }
 
-  runGraphSegment(input: Parameters<GraphSegmentActivityPort['runGraphSegment']>[0]) {
+  async runGraphSegment(input: Parameters<GraphSegmentActivityPort['runGraphSegment']>[0]) {
+    if (this.#budgetAdmission !== undefined) {
+      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
+    }
     return this.#graph.runGraphSegment(input)
   }
 
-  resumeGraphSegment(input: Parameters<GraphSegmentActivityPort['resumeGraphSegment']>[0]) {
+  async resumeGraphSegment(input: Parameters<GraphSegmentActivityPort['resumeGraphSegment']>[0]) {
+    if (this.#budgetAdmission !== undefined) {
+      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
+    }
     return this.#graph.resumeGraphSegment(input)
   }
 
-  continueGraphSegment(input: Parameters<GraphSegmentActivityPort['continueGraphSegment']>[0]) {
+  async continueGraphSegment(
+    input: Parameters<GraphSegmentActivityPort['continueGraphSegment']>[0]
+  ) {
+    if (this.#budgetAdmission !== undefined) {
+      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
+    }
     return this.#graph.continueGraphSegment(input)
   }
 
@@ -209,6 +236,42 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
 
   cleanup(input: Parameters<ExecutionLifecycleActivities['cleanup']>[0]): Promise<void> {
     return this.#runtime.cleanup(input)
+  }
+
+  async #authorizeGraphSegment(
+    executionId: string,
+    attemptId: string,
+    workspaceId: string
+  ): Promise<void> {
+    const execution = await this.#lifecycle.getExecution(executionId)
+    if (execution.correlation.workspaceId !== workspaceId) {
+      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    }
+    const plan = await this.#plans.get(execution.executionPlan)
+    if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
+      throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
+    }
+    await this.#authorizeBudgetAdmission(execution, plan, attemptId)
+  }
+
+  async #authorizeBudgetAdmission(
+    execution: Execution,
+    executionPlan: ExecutionPlan,
+    attemptId: string
+  ): Promise<void> {
+    if (this.#budgetAdmission === undefined) return
+    if (execution.latestAttemptId !== attemptId) {
+      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    }
+    const attemptResult = ExecutionAttemptSchema.safeParse(
+      await this.#lifecycle.repository.getAttempt(attemptId)
+    )
+    if (!attemptResult.success) throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    const attempt = attemptResult.data
+    if (attempt.attemptId !== attemptId || attempt.executionId !== execution.executionId) {
+      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    }
+    await this.#budgetAdmission.authorize({ execution, executionPlan, attemptId })
   }
 
   async #existingAttempt(

@@ -61,7 +61,9 @@ export async function runProfileConformance(
   for (const fixture of cases) {
     const normalize = fixture.normalize ?? ((value: unknown) => value)
     const baselineDigest = digestJson(normalize(await baseline.run(fixture.caseId, fixture.input)))
-    const profileResults = await Promise.all(
+    // Callers own adapter resources. Drain every started adapter before
+    // propagating a failure so their cleanup cannot race with live siblings.
+    const settled = await Promise.allSettled(
       adapters.map(async (adapter) => {
         const digest =
           adapter === baseline
@@ -74,6 +76,15 @@ export async function runProfileConformance(
           conforms: digest === baselineDigest,
         }
       })
+    )
+    const errors = settled.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1)
+      throw new AggregateError(errors, `PROFILE_CONFORMANCE_FAILED:${fixture.caseId}`)
+    const profileResults = settled.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : []
     )
     results.push({
       caseId: fixture.caseId,

@@ -201,7 +201,9 @@ export function createManagedCloudControlApiComposition(
     ),
     executionAcceptanceService: new DurableExecutionAcceptanceService({
       commands: new CommandInboxService({
-        repository: new PostgresCommandAcceptanceRepository(connection.database),
+        repository: new PostgresCommandAcceptanceRepository(connection.database, {
+          budgetAdmission: true,
+        }),
         executionIdFactory: createExecutionId,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
           catalog: { profiles: catalog, skills: catalog },

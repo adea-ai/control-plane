@@ -68,11 +68,53 @@ export const RuntimeExecutionHandleSchema = z
   })
   .strict()
 
+/**
+ * Reported runtime accounting provenance, not funding authorization. Consumers
+ * must verify `sourceId` against a trusted authority before charging.
+ */
+export const RuntimeUsageAccountingSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    sourceId: z.string().min(1).max(256),
+    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    currency: z.literal('USD'),
+    chargedMicrounits: z
+      .number()
+      .int()
+      .nonnegative()
+      .refine(Number.isSafeInteger, 'Expected a safe integer'),
+    costExact: z.literal(true),
+  })
+  .strict()
+  .superRefine((accounting, context) => {
+    if (
+      accounting.fundingSource === 'external_subscription' &&
+      accounting.chargedMicrounits !== 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chargedMicrounits'],
+        message: 'External subscriptions cannot report an HQ charge',
+      })
+    }
+  })
+  .describe(
+    'Reported accounting metadata only; consumers must verify source authority before charging.'
+  )
+
+export type RuntimeUsageAccounting = z.output<typeof RuntimeUsageAccountingSchema>
+
+const SafeNonnegativeIntegerSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .refine(Number.isSafeInteger, 'Expected a safe integer')
+
 export const RuntimeUsageSchema = z
   .object({
-    inputTokens: z.number().int().nonnegative(),
-    outputTokens: z.number().int().nonnegative(),
-    durationMs: z.number().int().nonnegative(),
+    inputTokens: SafeNonnegativeIntegerSchema,
+    outputTokens: SafeNonnegativeIntegerSchema,
+    durationMs: SafeNonnegativeIntegerSchema,
     cost: z
       .object({
         amount: z.string().regex(/^\d+(?:\.\d+)?$/),
@@ -80,8 +122,45 @@ export const RuntimeUsageSchema = z
       })
       .strict()
       .optional(),
+    accounting: RuntimeUsageAccountingSchema.optional(),
   })
   .strict()
+  .superRefine((usage, context) => {
+    if (usage.inputTokens > Number.MAX_SAFE_INTEGER - usage.outputTokens) {
+      context.addIssue({
+        code: 'custom',
+        path: ['outputTokens'],
+        message: 'Combined token usage must be a safe integer',
+      })
+    }
+
+    if (usage.accounting?.fundingSource === 'hq_managed' && usage.cost !== undefined) {
+      if (
+        usage.cost.currency !== 'USD' ||
+        exactCostMicrounits(usage.cost.amount) !== BigInt(usage.accounting.chargedMicrounits)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['cost'],
+          message: 'HQ-reported cost must exactly match charged USD microunits',
+        })
+      }
+    }
+  })
+
+export type RuntimeUsage = z.output<typeof RuntimeUsageSchema>
+
+function exactCostMicrounits(amount: string): bigint | undefined {
+  if (amount.length > 64) return undefined
+  const [wholePart = '0', fractionPart = ''] = amount.split('.')
+  const whole = wholePart.replace(/^0+(?=\d)/, '')
+  if (whole.length > 10) return undefined
+  if (fractionPart.length > 6 && /[1-9]/.test(fractionPart.slice(6))) return undefined
+
+  const microunits =
+    BigInt(whole) * 1_000_000n + BigInt(fractionPart.slice(0, 6).padEnd(6, '0') || '0')
+  return microunits <= BigInt(Number.MAX_SAFE_INTEGER) ? microunits : undefined
+}
 
 export const RuntimeArtifactReferenceSchema = ArtifactReferenceSchema.omit({
   contractVersion: true,

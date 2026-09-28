@@ -12,6 +12,21 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "node": "./dist/provider.js",
+      "default": "./dist/provider.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog-repository.d.ts",
+      "node": "./dist/catalog-repository.js",
+      "default": "./dist/catalog-repository.js"
+    },
+    "./context-administration": {
+      "types": "./dist/context-administration.d.ts",
+      "node": "./dist/context-administration.js",
+      "default": "./dist/context-administration.js"
     }
   },
   "scripts": {
@@ -28,7 +43,11 @@
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
+    "@control-plane/usage-ledger": "workspace:*",
     "drizzle-orm": "0.45.2"
+  },
+  "devDependencies": {
+    "@control-plane/config": "workspace:*"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

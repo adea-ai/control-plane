@@ -15,6 +15,11 @@ export const retentionClasses = {
     sqlite: 'SqliteCommandAcceptanceRepository',
     postgres: 'PostgresCommandAcceptanceRepository',
   },
+  'retired-command-keys': {
+    apply: 'deleteEligibleRetiredCommandKeys',
+    sqlite: 'SqliteCommandAcceptanceRepository',
+    postgres: 'PostgresCommandAcceptanceRepository',
+  },
   'execution-events': {
     apply: 'deleteEligibleEvents',
     sqlite: 'SqliteExecutionEventRepository',

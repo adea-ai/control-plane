@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { compareCodePointOrder } from '@control-plane/contracts'
+import { canonicalJsonStringify, compareCodePointOrder } from '@control-plane/contracts'
 import {
   ContextPackageReferenceSchema,
   ContextPackageSchema,
@@ -24,6 +24,11 @@ import {
   type SkillRepository,
   type SkillVersion,
   evaluateVersionApproval,
+  CommandInboxError,
+  CommandInboxRecordSchema,
+  ExecutionSchema,
+  type CommandInboxRecord,
+  type Execution,
 } from '@control-plane/domain'
 import {
   CapabilityRequirementSchema,
@@ -941,3 +946,94 @@ function fail(code: ExecutionPlanErrorCode, reference?: string): never {
 }
 
 export const packageName = 'execution-plan'
+
+/** A recorded acceptance authorizes an execution allowance, not prepaid funds
+ * or provider billing. Callers must establish trusted principal/catalog policy
+ * before accepting; request-supplied limits are never an allocation authority.
+ */
+export function executionBudgetAdmissionSource(
+  commandInput: CommandInboxRecord,
+  executionInput: Execution
+): { readonly sourceId: string; readonly idempotencyKey: string } {
+  const command = CommandInboxRecordSchema.parse(commandInput)
+  const execution = ExecutionSchema.parse(executionInput)
+  if (
+    command.operation !== 'execution.accept' ||
+    command.executionId !== execution.executionId ||
+    command.requestId !== execution.correlation.requestId ||
+    command.workspaceId !== execution.correlation.workspaceId ||
+    command.projectId !== execution.correlation.projectId ||
+    command.taskId !== execution.correlation.taskId ||
+    command.agentId !== execution.correlation.agentId ||
+    command.executionPlan.executionPlanId !== execution.executionPlan.executionPlanId ||
+    command.executionPlan.contentDigest !== execution.executionPlan.contentDigest ||
+    command.executionPlan.schemaVersion !== execution.executionPlan.schemaVersion
+  ) {
+    throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  }
+  const decision = {
+    policy: 'accepted-plan-budget-allocation.v1',
+    callerPrincipalId: command.callerPrincipalId,
+    commandId: command.commandId,
+    requestId: command.requestId,
+    idempotencyKey: command.idempotencyKey,
+    payloadHash: command.payloadHash,
+    executionId: execution.executionId,
+    correlation: execution.correlation,
+    executionPlan: execution.executionPlan,
+    parentExecutionId: execution.parentExecutionId ?? null,
+  }
+  return Object.freeze({
+    sourceId: `allocation:sha256:${createHash('sha256').update(canonicalJsonStringify(decision)).digest('hex')}`,
+    idempotencyKey: `execution-budget-open:${execution.executionId}`,
+  })
+}
+
+export function executionPlanBudgetAllowance(
+  command: CommandInboxRecord,
+  execution: Execution,
+  storedPlan: ExecutionPlan
+): {
+  readonly workspaceId: string
+  readonly executionId: string
+  readonly parentExecutionId?: string
+  readonly currency: 'USD'
+  readonly maximumMicrounits: number
+  readonly maximumTokens: number
+  readonly source: { readonly sourceId: string; readonly idempotencyKey: string }
+} {
+  const source = executionBudgetAdmissionSource(command, execution)
+  const plan = assertExecutionPlanIntegrity(storedPlan)
+  if (
+    plan.executionPlanId !== execution.executionPlan.executionPlanId ||
+    plan.contentDigest !== execution.executionPlan.contentDigest ||
+    plan.schemaVersion !== execution.executionPlan.schemaVersion ||
+    plan.correlation.workspaceId !== command.workspaceId ||
+    plan.correlation.projectId !== command.projectId ||
+    plan.correlation.taskId !== command.taskId ||
+    plan.correlation.agentId !== command.agentId
+  ) {
+    throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  }
+  const maximumMicrounits = plan.constraints.limits.budget.maximumMicrounits
+  const maximumTokens = plan.constraints.limits.tokens.maximumTotal
+  if (
+    !Number.isSafeInteger(maximumMicrounits) ||
+    maximumMicrounits <= 0 ||
+    !Number.isSafeInteger(maximumTokens) ||
+    maximumTokens <= 0
+  ) {
+    throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+  }
+  return Object.freeze({
+    workspaceId: command.workspaceId,
+    executionId: execution.executionId,
+    ...(execution.parentExecutionId === undefined
+      ? {}
+      : { parentExecutionId: execution.parentExecutionId }),
+    currency: plan.constraints.limits.budget.currency,
+    maximumMicrounits,
+    maximumTokens,
+    source,
+  })
+}

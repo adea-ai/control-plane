@@ -48,6 +48,8 @@ export class InMemoryHostedArtifactStore implements HostedArtifactStore {
 
 export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
   readonly #objectStore: ObjectStore
+  readonly #createObject: NonNullable<ObjectStore['putIfAbsent']>
+  readonly #maxResultBytes: number
   readonly #pending = new Map<
     string,
     {
@@ -56,8 +58,18 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
     }
   >()
 
-  constructor(objectStore: ObjectStore) {
+  constructor(objectStore: ObjectStore, options: { readonly maxResultBytes?: number } = {}) {
     this.#objectStore = objectStore
+    this.#maxResultBytes = options.maxResultBytes ?? 262144
+    if (
+      !Number.isSafeInteger(this.#maxResultBytes) ||
+      this.#maxResultBytes < 1 ||
+      this.#maxResultBytes > 64 * 1024 * 1024
+    )
+      throw new Error('HOSTED_ARTIFACT_LIMIT_INVALID')
+    if (typeof objectStore.putIfAbsent !== 'function')
+      throw new Error('HOSTED_ARTIFACT_CONDITIONAL_CREATE_REQUIRED')
+    this.#createObject = objectStore.putIfAbsent.bind(objectStore)
   }
 
   persist(input: {
@@ -71,6 +83,8 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
       .parse(input.attemptId)
     const mediaType = z.string().min(1).max(255).parse(input.mediaType)
     const body = new TextEncoder().encode(canonicalJson(z.json().parse(input.value)))
+    if (body.byteLength > this.#maxResultBytes)
+      return Promise.reject(new Error('HOSTED_ARTIFACT_TOO_LARGE'))
     const fingerprint = createHash('sha256')
       .update(mediaType)
       .update('\0')
@@ -81,12 +95,13 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
       if (current.fingerprint !== fingerprint) return Promise.reject(artifactConflict())
       return current.result
     }
-    const result = this.#persist({ attemptId, mediaType, body })
-    this.#pending.set(attemptId, { fingerprint, result })
-    return result.catch((error: unknown) => {
+    // Coalesce only in-flight writes. A completed promise is not evidence that
+    // the object still exists or that its bytes remain readable and intact.
+    const result = this.#persist({ attemptId, mediaType, body }).finally(() => {
       this.#pending.delete(attemptId)
-      throw error
     })
+    this.#pending.set(attemptId, { fingerprint, result })
+    return result
   }
 
   async #persist(input: {
@@ -112,17 +127,69 @@ export class ObjectStoreHostedArtifactStore implements HostedArtifactStore {
       ) {
         throw artifactConflict()
       }
-      return artifactReference(input.attemptId, existing)
+      this.#assertBinding(existing, key, input.attemptId, input.mediaType)
+      return this.#read(input, key, expectedDigest)
     }
-    const stored = await this.#objectStore.put({
+    const result = await this.#createObject({
       key,
       body: input.body,
       contentType: input.mediaType,
       metadata: { attempt: input.attemptId },
     })
+    if (result.outcome === 'exists') {
+      // Another independent writer may have won since our initial HEAD. The
+      // precondition response alone is not evidence of matching durable bytes.
+      const winner = await this.#objectStore.head(key)
+      this.#assertBinding(winner, key, input.attemptId, input.mediaType)
+      if (winner.sha256 !== expectedDigest || winner.size !== input.body.byteLength)
+        throw artifactConflict()
+      return this.#read(input, key, expectedDigest)
+    }
+    if (result.outcome !== 'created') throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
+    const stored = result.object
+    this.#assertBinding(stored, key, input.attemptId, input.mediaType)
     if (stored.sha256 !== expectedDigest || stored.size !== input.body.byteLength) {
       throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
     }
+    // PUT/HEAD metadata alone cannot prove a durable terminal artifact.
+    return this.#read(input, key, expectedDigest)
+  }
+
+  async #read(
+    input: { readonly attemptId: string; readonly mediaType: string; readonly body: Uint8Array },
+    key: string,
+    expectedDigest: string
+  ): Promise<z.output<typeof RuntimeArtifactReferenceSchema>> {
+    const head = await this.#objectStore.head(key)
+    this.#assertBinding(head, key, input.attemptId, input.mediaType)
+    if (head.sha256 !== expectedDigest || head.size !== input.body.byteLength)
+      throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
+    const stored = await this.#objectStore.get(key)
+    this.#assertBinding(stored, key, input.attemptId, input.mediaType)
+    if (
+      !(stored.body instanceof Uint8Array) ||
+      stored.body.byteLength !== input.body.byteLength ||
+      stored.size !== stored.body.byteLength ||
+      stored.sha256 !== expectedDigest ||
+      `sha256:${createHash('sha256').update(stored.body).digest('hex')}` !== expectedDigest
+    )
+      throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
     return artifactReference(input.attemptId, stored)
+  }
+
+  #assertBinding(
+    stored: StoredObjectDescriptor,
+    key: string,
+    attemptId: string,
+    mediaType: string
+  ): void {
+    if (!Number.isSafeInteger(stored.size) || stored.size < 0 || stored.size > this.#maxResultBytes)
+      throw new Error('HOSTED_ARTIFACT_TOO_LARGE')
+    if (
+      stored.key !== key ||
+      stored.metadata['attempt'] !== attemptId ||
+      stored.contentType !== mediaType
+    )
+      throw new Error('HOSTED_ARTIFACT_INTEGRITY_FAILURE')
   }
 }

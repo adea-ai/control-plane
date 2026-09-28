@@ -88,7 +88,9 @@ export class LocalControlApiComposition {
     const dispatcher: LocalWorkflowDispatcher =
       workflowDispatcher ??
       new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl })
-    this.commandRepository = new SqliteCommandAcceptanceRepository(persistence)
+    this.commandRepository = new SqliteCommandAcceptanceRepository(persistence, {
+      budgetAdmission: true,
+    })
     this.executionCancellationService = new DurableExecutionCancellationService(
       new SqliteExecutionCancellationRepository(persistence),
       this.commandRepository,

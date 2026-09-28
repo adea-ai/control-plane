@@ -1,5 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createHash } from 'node:crypto'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +31,7 @@ import {
   RecordingProjectStateEventPublisher,
   createQueuedContextCommandRecord,
   contextCommandSemanticHash,
+  retiredCommandKeyCandidates,
 } from '@control-plane/domain'
 import { ExecutionEventDispatcher, ExecutionEventService } from '@control-plane/events'
 import {
@@ -67,6 +67,8 @@ import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresExecutionEventRepository } from './execution-event-repository.ts'
 import { PostgresExternalSessionRepository } from './external-session-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
+import { PostgresDurableUsageStore } from './usage-store.ts'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   PostgresExecutionPlanRepository,
   lockExecutionPlanReference,
@@ -123,6 +125,8 @@ import {
   runtimeDiscoveryProjections,
   statePromotionProposals,
   usageLedgerEntries,
+  usageBudgetStates,
+  usageOperationReceipts,
 } from './schema/index.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresRetentionReapplication } from './retention-reapplication.ts'
@@ -152,7 +156,16 @@ async function createMigratedIsolatedDatabase() {
     await database.migrate()
     return database
   } catch (error) {
-    await database.dispose()
+    try {
+      await database.dispose()
+    } catch (cleanupError) {
+      const setupError = new AggregateError(
+        [error, cleanupError],
+        'PostgreSQL integration setup failed',
+        { cause: error }
+      )
+      throw setupError
+    }
     throw error
   }
 }
@@ -405,18 +418,16 @@ async function createExecutionOwner(database, request, executionId, attemptId) {
 describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => {
   let isolated
 
-  beforeAll(async () => {
-    isolated = await createIsolatedTestDatabase({
-      administration: loadDatabaseCredentials(process.env, 'administration'),
-      application: loadDatabaseCredentials(process.env, 'application'),
-      migration: loadDatabaseCredentials(process.env, 'migration'),
-    })
+  beforeEach(async () => {
+    // Cases intentionally corrupt rows and reuse stable fixture IDs. Isolation
+    // must be per case, not per file, including the randomized integration lane.
     // Cold remote migrations have their own setup budget, not the child probes' deadline.
-    await isolated.migrate()
+    isolated = await createMigratedIsolatedDatabase()
   }, 60_000)
 
-  afterAll(async () => {
+  afterEach(async () => {
     await isolated?.dispose()
+    isolated = undefined
   })
 
   test('reference-window metadata migrates without changing immutable plan/package contents', async () => {
@@ -3107,7 +3118,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         type: 'execution.completed',
         schemaVersion: 1,
         correlation,
-        payload: { usage: { outputTokens: 2 } },
+        payload: {
+          terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+          runtimeUsageSource: {
+            nodeId,
+            runtimeConnectionId,
+            commandId: record.commandId,
+            channelGeneration: 1,
+          },
+        },
         occurredAt: '2026-08-24T23:00:04.000Z',
         recordedAt: '2026-08-24T23:00:04.000Z',
         retentionExpiresAt: '2026-11-22T23:00:04.000Z',
@@ -3140,7 +3159,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         eventId: 'evt_01ERZ3NDEKTSV4RRFFQ69G5FAM',
         type: 'execution.cancelled',
         correlation: { ...correlation, commandId: cancelRecord.commandId },
-        payload: { reason: 'user_requested' },
+        payload: {
+          reason: 'user_requested',
+          terminalUsage: { inputTokens: 12, outputTokens: 4, durationMs: 120 },
+          runtimeUsageSource: {
+            nodeId,
+            runtimeConnectionId,
+            commandId: cancelRecord.commandId,
+            channelGeneration: 1,
+          },
+        },
       },
     }
     const effects = [terminal, cancelledTerminal]
@@ -3150,6 +3178,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       'terminal_conflict',
     ])
     const winner = effects[terminalOutcomes.findIndex(({ outcome }) => outcome === 'applied')]
+    const reopenedEvents = new PostgresExecutionEventRepository(isolated.application)
+    expect(
+      await reopenedEvents.latestTerminal(execution.executionId, attempt.attemptId)
+    ).toMatchObject({
+      type: `execution.${winner.state}`,
+      payload: winner.draft.payload,
+    })
+    expect(
+      await reopenedEvents.latestTerminal(execution.executionId, 'att_01FRZ3NDEKTSV4RRFFQ69G5FAM')
+    ).toBeUndefined()
     expect(
       await new PostgresRuntimeEventEffectSink(isolated.application).applyTerminal(winner)
     ).toMatchObject({ outcome: 'duplicate' })
@@ -4124,11 +4162,14 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       .select()
       .from(retiredCommandKeys)
       .where(eq(retiredCommandKeys.commandId, input.commandId))
+    const keys = retiredCommandKeyCandidates(accepted.command)
     expect(tombstone).toEqual({
-      scopeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      scopeKey: keys.metadata.scopeKey,
       commandId: input.commandId,
       executionId: accepted.execution.executionId,
       retiredAt: new Date(retiredAt),
+      metadataVersion: 2,
+      identityDigest: keys.metadata.identityDigest,
     })
   })
 
@@ -5380,6 +5421,184 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     }
   }, 60_000)
 
+  test('public durable usage service records and replays a real PostgreSQL lifecycle', async () => {
+    const database = await createMigratedIsolatedDatabase()
+    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+    const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+    const request = ControlApiFixtures.executionAcceptance.request
+    const workspaceId = request.workspaceId
+    const source = (idempotencyKey) => ({ sourceId: 'postgres-lifecycle', idempotencyKey })
+    const createLedger = () =>
+      new DurableUsageLedger({
+        store: new PostgresDurableUsageStore(database.application),
+      })
+    try {
+      await createExecutionOwner(database.application, request, executionId, attemptId)
+      const ledger = createLedger()
+      const opening = {
+        workspaceId,
+        executionId,
+        currency: 'USD',
+        maximumMicrounits: 1000,
+        maximumTokens: 100,
+        source: source('open'),
+      }
+      const opened = await ledger.openBudget(opening)
+      await ledger.reserve({
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'model',
+        maximumMicrounits: 800,
+        maximumTokens: 80,
+        source: source('reserve'),
+      })
+      const chargeInput = {
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey: 'model',
+        kind: 'model_usage',
+        quantity: { unit: 'tokens', value: 30 },
+        costMicrounits: 250,
+        fundingSource: 'hq_managed',
+        source: source('charge'),
+      }
+      const charged = await ledger.charge(chargeInput)
+      const settleInput = {
+        workspaceId,
+        executionId,
+        reservationKey: 'model',
+        source: source('settle'),
+      }
+      const settled = await ledger.settle(settleInput)
+      const finalizeInput = { workspaceId, executionId, source: source('finalize') }
+      const finalized = await ledger.finalizeBudget(finalizeInput)
+      const entries = await ledger.entries(workspaceId, executionId)
+      const recreated = createLedger()
+      expect(await recreated.openBudget(opening)).toEqual(opened)
+      expect(await recreated.charge(chargeInput)).toEqual(charged)
+      expect(await recreated.settle(settleInput)).toEqual(settled)
+      expect(await recreated.finalizeBudget(finalizeInput)).toEqual(finalized)
+      expect(await recreated.entries(workspaceId, executionId)).toEqual(entries)
+      expect(await recreated.summary(workspaceId, executionId)).toMatchObject({
+        spentMicrounits: 250,
+        spentTokens: 30,
+        reservedMicrounits: 0,
+        reservedTokens: 0,
+        settled: true,
+      })
+      await expect(recreated.charge({ ...chargeInput, costMicrounits: 251 })).rejects.toThrow(
+        'IDEMPOTENCY_CONFLICT'
+      )
+    } finally {
+      await database.dispose()
+    }
+  }, 60_000)
+
+  test('execution retention pins durable usage scalar and payload funding references', async () => {
+    const database = await createMigratedIsolatedDatabase()
+    const ids = Array.from({ length: 8 }, (_, index) => `exe_01CRZ3NDEKTSV4RRFFQ69G5FE${index}`)
+    const [owner, parent, payloadOwner, payloadParent, child, receiptOwner, rawParent, clean] = ids
+    const terminalAt = '2020-01-01T00:00:00.000Z'
+    const request = {
+      ...ControlApiFixtures.executionAcceptance.request,
+      issuedAt: '2019-12-31T00:00:00.000Z',
+    }
+    try {
+      for (const id of ids) {
+        await createExecutionOwner(database.application, request, id)
+        await database.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
+        )
+      }
+      const state = {
+        schemaVersion: 1,
+        workspaceId: request.workspaceId,
+        executionId: payloadOwner,
+        parentExecutionId: payloadParent,
+        currency: 'USD',
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        status: 'open',
+        nextSequence: 1,
+        reservations: [
+          {
+            reservationKey: 'child-funding',
+            childExecutionId: child,
+            maximumMicrounits: 10,
+            maximumTokens: 10,
+            chargedMicrounits: 0,
+            chargedTokens: 0,
+            status: 'open',
+          },
+        ],
+      }
+      // Valid JSON identities deliberately disagree with indexes: either side
+      // must pin its positively identified owner, even when recovery rejects it.
+      await database.application.insert(usageBudgetStates).values({
+        executionId: owner,
+        workspaceId: request.workspaceId,
+        parentExecutionId: parent,
+        schemaVersion: 1,
+        state,
+      })
+      await database.application.insert(usageOperationReceipts).values({
+        executionId: owner,
+        workspaceId: request.workspaceId,
+        idempotencyKey: 'retention-receipt-pin',
+        fingerprint: `sha256:${'a'.repeat(64)}`,
+        schemaVersion: 1,
+        receipt: {
+          schemaVersion: 1,
+          workspaceId: request.workspaceId,
+          executionId: receiptOwner,
+          idempotencyKey: 'retention-receipt-pin',
+          fingerprint: `sha256:${'a'.repeat(64)}`,
+          result: {},
+        },
+      })
+      await new PostgresUsageLedgerRepository(database.application).append({
+        entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
+        executionId: owner,
+        parentExecutionId: rawParent,
+        workspaceId: request.workspaceId,
+        sequence: 1,
+        kind: 'settlement',
+        source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
+        fundingSource: 'hq_managed',
+        quantity: { unit: 'tokens', value: 0 },
+        currency: 'USD',
+        costMicrounits: 0,
+        costExact: true,
+        recordedAt: terminalAt,
+      })
+      const repository = new PostgresExecutionRepository(database.application)
+      const now = new Date('2020-01-03T00:00:00.000Z')
+      const journal = []
+      const options = {
+        policyRetainMs: 1,
+        bound: 64,
+        dryRun: false,
+        journal: async (operations) => journal.push(...operations),
+      }
+      await database.application.update(usageBudgetStates).set({
+        state: { ...state, reservations: { damaged: true } },
+      })
+      const damaged = await repository.deleteEligibleExecutions(now, options)
+      expect(damaged).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 8 } })
+      expect(journal).toEqual([])
+      await database.application.update(usageBudgetStates).set({ state })
+      const valid = await repository.deleteEligibleExecutions(now, options)
+      expect(valid).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 7 } })
+      expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId: clean }])
+      for (const id of ids.slice(0, 7)) expect(await repository.getExecution(id)).toBeDefined()
+      expect(await repository.getExecution(clean)).toBeUndefined()
+    } finally {
+      await database.dispose()
+    }
+  }, 60_000)
+
   test('reapplying the journal restores rejection identity on a snapshot without it', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFE'
     const now = '2026-07-31T11:00:00.000Z'
@@ -5473,6 +5692,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         )
       }
       const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 10, dryRun: false }
+      const [commandSnapshot] = await isolated.application
+        .select()
+        .from(commandInbox)
+        .where(eq(commandInbox.commandId, accepted.command.commandId))
+      const [eventSnapshot] = await isolated.application
+        .select()
+        .from(executionEvents)
+        .where(eq(executionEvents.eventId, eventId))
+      expect(commandSnapshot).toBeDefined()
+      expect(eventSnapshot).toBeDefined()
       const inbox = await repository.deleteEligibleInbox(assessedAt, {
         ...options,
         journal: (operations) => journal('postgres', 'command-inbox', operations),
@@ -5486,23 +5715,15 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
 
       // Simulate a snapshot that predates the retirement: the identity rows are
       // gone while the payload rows would be present again after a restore.
-      const scopeKey = createHash('sha256')
-        .update(
-          [
-            scope.callerPrincipalId,
-            scope.operation,
-            scope.workspaceId,
-            scope.projectId,
-            scope.idempotencyKey,
-          ].join('\u001f')
+      const scopeKey = retiredCommandKeyCandidates(scope).metadata.scopeKey
+      await isolated.withMigrationDatabase(async (database) => {
+        await database.execute(sql`delete from retired_command_keys where scope_key = ${scopeKey}`)
+        await database.execute(
+          sql`delete from retired_execution_event_ids where event_id = ${eventId}`
         )
-        .digest('hex')
-      await isolated.application.execute(
-        sql`delete from retired_command_keys where scope_key = ${scopeKey}`
-      )
-      await isolated.application.execute(
-        sql`delete from retired_execution_event_ids where event_id = ${eventId}`
-      )
+        await database.insert(commandInbox).values(commandSnapshot)
+        await database.insert(executionEvents).values(eventSnapshot)
+      })
 
       // Reapply through the operator CLI against the isolated database.
       const base = new URL(process.env.DATABASE_URL)
@@ -5532,9 +5753,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       expect(reapplied.status).toBe(0)
       const report = JSON.parse(reapplied.stdout)
       expect(report.report).toBe('retention-reapply')
-      // The journal restates the rejection identity for both classes, so both
-      // missing identity rows come back: retirement key and retired event id.
-      expect(report).toMatchObject({ applied: 2, skipped: 2 })
+      // The journal restores both rejection identities and reapplies both
+      // payload deletions from the pre-deletion snapshot.
+      expect(report).toMatchObject({ applied: 4, skipped: 0 })
 
       // The rejection identity is back: replays fail closed again.
       const replay = await repository.get(scope).catch((thrown) => thrown)
@@ -5819,6 +6040,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const service = new ExecutionEventService(repository)
     const executionId = 'exe_01BRZ3NDEKTSV4RRFFQ69G5FAV'
     const executionRepository = new PostgresExecutionRepository(isolated.application)
+    await seedAcceptancePlan(isolated.application)
+    await new ExecutionLifecycleService(executionRepository).createExecution({
+      executionId,
+      correlation: acceptancePlan.correlation,
+      executionPlan: acceptancePlanReference,
+      acceptedAt: '2026-08-24T11:01:00.000Z',
+    })
     const current = await executionRepository.getExecution(executionId)
     const queued = {
       ...current,

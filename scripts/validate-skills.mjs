@@ -1,6 +1,6 @@
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -9,6 +9,65 @@ const inventoryPath = join(repositoryRoot, 'docs', 'skills', 'skill-library.json
 
 /** Machine-specific or absolute path markers that make a skill non-portable. */
 const NON_PORTABLE = [/^\/(?:Users|home)\//u, /^[A-Z]:\\/u, /\/Users\/amf\//u]
+const MARKDOWN_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+["'][^)]*["'])?\s*\)/gu
+const TEXT_FILE = /\.(?:md|ya?ml|json|m?js|ts|txt)$/iu
+
+function isInside(directory, target) {
+  const pathFromDirectory = relative(directory, target)
+  return (
+    pathFromDirectory === '' ||
+    (!pathFromDirectory.startsWith('..') && !isAbsolute(pathFromDirectory))
+  )
+}
+
+async function validateMarkdownLinks(skill, sourcePath, markdown, errors) {
+  const file = relative(repositoryRoot, sourcePath).split('\\').join('/')
+  const repositoryRealpath = await realpath(repositoryRoot)
+  const withoutFencedCode = markdown.replace(/^ {0,3}```[\s\S]*?^ {0,3}```[^\r\n]*?/gmu, '')
+
+  for (const match of withoutFencedCode.matchAll(MARKDOWN_LINK)) {
+    const rawTarget = match[1].startsWith('<') ? match[1].slice(1, -1) : match[1]
+    if (!rawTarget) continue
+    if (/^file:/iu.test(rawTarget)) {
+      errors.push({ skill, message: `${file}: file-URI links are not portable` })
+      continue
+    }
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(rawTarget)) continue
+
+    const pathPart = rawTarget.split(/[?#]/u, 1)[0]
+    let decodedPath
+    try {
+      decodedPath = decodeURIComponent(pathPart)
+    } catch {
+      errors.push({ skill, message: `${file}: local Markdown link has invalid URL encoding` })
+      continue
+    }
+
+    const targetPath = resolve(dirname(sourcePath), decodedPath || sourcePath)
+    if (!isInside(repositoryRoot, targetPath)) {
+      errors.push({
+        skill,
+        message: `${file}: local Markdown link resolves outside the repository`,
+      })
+      continue
+    }
+
+    try {
+      const targetRealpath = await realpath(targetPath)
+      if (!isInside(repositoryRealpath, targetRealpath)) {
+        errors.push({
+          skill,
+          message: `${file}: local Markdown link resolves outside the repository`,
+        })
+      }
+    } catch {
+      errors.push({
+        skill,
+        message: `${file}: local Markdown link target '${rawTarget}' does not exist`,
+      })
+    }
+  }
+}
 
 async function listSkillDirectories() {
   const entries = await readdir(skillsRoot, { withFileTypes: true })
@@ -88,13 +147,20 @@ export async function discoverSkillLibrary() {
     if (!frontmatter.description || frontmatter.description.length < 10) {
       errors.push({ skill: name, message: 'SKILL.md frontmatter is missing a usable description' })
     }
-    for (const marker of NON_PORTABLE) {
-      if (marker.test(skillMd)) {
-        errors.push({ skill: name, message: 'SKILL.md contains a machine-specific absolute path' })
-        break
+    const files = await listFiles(directory)
+    for (const file of files) {
+      if (!TEXT_FILE.test(file)) continue
+      const content = file === 'SKILL.md' ? skillMd : await readFile(join(directory, file), 'utf8')
+      for (const marker of NON_PORTABLE) {
+        if (marker.test(content)) {
+          errors.push({ skill: name, message: `${file} contains a machine-specific absolute path` })
+          break
+        }
+      }
+      if (file.endsWith('.md')) {
+        await validateMarkdownLinks(name, join(directory, file), content, errors)
       }
     }
-    const files = await listFiles(directory)
     skills.push({
       name,
       description: (frontmatter.description ?? '').slice(0, 400),
@@ -102,6 +168,17 @@ export async function discoverSkillLibrary() {
       files,
       skillMdBytes: Buffer.byteLength(skillMd, 'utf8'),
     })
+  }
+  const registryPath = join(skillsRoot, 'README.md')
+  try {
+    await validateMarkdownLinks(
+      'library-registry',
+      registryPath,
+      await readFile(registryPath, 'utf8'),
+      errors
+    )
+  } catch {
+    errors.push({ skill: 'library-registry', message: '.agents/skills/README.md is missing' })
   }
   return {
     skills: skills.toSorted((left, right) => compareCodePointOrder(left.name, right.name)),

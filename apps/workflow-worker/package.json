@@ -10,7 +10,8 @@
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
-    "test": "bun test src/*.test.mjs"
+    "test": "bun test src/*.test.mjs",
+    "test:integration": "bun test src/*.integration.test.mjs --timeout 30000"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
@@ -28,6 +29,7 @@
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
+    "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@restatedev/restate-sdk": "1.17.1"

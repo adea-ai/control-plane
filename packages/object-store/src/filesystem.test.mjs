@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import {
   chmod,
@@ -17,15 +17,33 @@ import { TextEncoder } from 'node:util'
 import { FilesystemObjectStore } from './filesystem.ts'
 
 const stores = []
-afterEach(() => {
+const createdRoots = []
+const ownedRoots = new Set()
+afterAll(async () => {
+  for (const root of createdRoots) {
+    await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+})
+afterEach(async () => {
   for (const activeStore of stores.splice(0)) activeStore.close()
+  for (const root of ownedRoots) {
+    await rm(root, { recursive: true, force: true })
+    ownedRoots.delete(root)
+  }
 })
 
 async function store() {
-  const rootDirectory = await mkdtemp(join(tmpdir(), 'control-plane-objects-'))
+  const rootDirectory = await ownedRoot()
   const instance = new FilesystemObjectStore({ rootDirectory, maxObjectBytes: 1024 })
   stores.push(instance)
   return { rootDirectory, instance }
+}
+
+async function ownedRoot() {
+  const root = await mkdtemp(join(tmpdir(), 'm11-filesystem-contract-'))
+  createdRoots.push(root)
+  ownedRoots.add(root)
+  return root
 }
 
 function objectPath(rootDirectory, key) {
@@ -76,7 +94,7 @@ describe('FilesystemObjectStore', () => {
 
   test('does not map logical key components onto filesystem directories', async () => {
     const { rootDirectory, instance } = await store()
-    const outsideDirectory = await mkdtemp(join(tmpdir(), 'control-plane-objects-outside-'))
+    const outsideDirectory = await ownedRoot()
     const outside = new FilesystemObjectStore({
       rootDirectory: outsideDirectory,
       maxObjectBytes: 1024,
@@ -104,7 +122,7 @@ describe('FilesystemObjectStore', () => {
 
   test('rejects final body and metadata symlinks without touching their targets', async () => {
     const { rootDirectory, instance } = await store()
-    const outsideDirectory = await mkdtemp(join(tmpdir(), 'control-plane-objects-targets-'))
+    const outsideDirectory = await ownedRoot()
     const outsideBody = join(outsideDirectory, 'outside-body')
     const outsideMetadata = join(outsideDirectory, 'outside-metadata')
     await writeFile(outsideBody, 'trusted', { mode: 0o600 })
@@ -139,7 +157,10 @@ describe('FilesystemObjectStore', () => {
   test('fails closed when the configured root is replaced between operations', async () => {
     const { rootDirectory, instance } = await store()
     await instance.put({ key: 'artifact', body: new TextEncoder().encode('trusted') })
-    await rename(rootDirectory, `${rootDirectory}-replaced`)
+    const replacedDirectory = `${rootDirectory}-replaced`
+    createdRoots.push(replacedDirectory)
+    ownedRoots.add(replacedDirectory)
+    await rename(rootDirectory, replacedDirectory)
     await mkdir(rootDirectory, { mode: 0o700 })
 
     await expect(instance.get('artifact')).rejects.toMatchObject({

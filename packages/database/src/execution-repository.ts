@@ -9,6 +9,7 @@ import {
   type ExecutionRepository,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -17,12 +18,23 @@ import { delegations } from './schema/delegations.js'
 import { executionEvents } from './schema/events.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import {
+  acquireAdmissionRolloutSharedLock,
+  assertAdmissionRolloutOpen,
+} from './admission-rollout.js'
 import { interactionCommands } from './schema/interaction-commands.js'
 import { interactionRequests } from './schema/interactions.js'
 import { runtimeCommands } from './schema/runtime-commands.js'
 import { reconciliationCheckpoints } from './schema/reconciliation.js'
 import { lockExecutionPlanReference } from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
+import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.js'
+import { retiredCommandKeys } from './schema/retired-command-keys.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 const MAXIMUM_SCAN_LIMIT = 1_000
 type ExecutionReferenceReader = Pick<ControlPlaneDatabase, 'select'>
@@ -91,6 +103,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       readonly bound?: number
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_RETENTION_INVALID_TIMESTAMP')
@@ -115,14 +128,21 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       )
       .orderBy(asc(executions.terminalAt))
       .limit(counter.bound + 1)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     for (const candidate of candidates) {
+      if (!counter.admitCandidate()) break
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'executions')
         const [owner] = await transaction
           .select({
             executionId: executions.executionId,
             state: executions.state,
             version: executions.version,
             terminalAt: executions.terminalAt,
+            workspaceId: executions.workspaceId,
+            projectId: executions.projectId,
             attemptCount: executions.attemptCount,
             latestAttemptId: executions.latestAttemptId,
           })
@@ -130,7 +150,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           .where(eq(executions.executionId, candidate.executionId))
           .for('update')
           .limit(1)
-        if (owner === undefined) return { kind: 'missing' as const }
+        if (owner === undefined) {
+          await countPostgresMatchingActiveRetentionHolds(
+            transaction,
+            { classId: 'executions' },
+            options.retentionHoldPolicy
+          )
+          return { kind: 'missing' as const }
+        }
 
         // The owner lock serializes new FK-backed rows and reserve writers. Lock
         // attempts next, then take every reference snapshot inside this claim.
@@ -149,6 +176,18 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           attempts
         )
         const references = await this.#referenceSets([owner.executionId], transaction)
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'executions',
+            scope: {
+              kind: 'project',
+              workspaceId: owner.workspaceId,
+              projectId: owner.projectId,
+            },
+          },
+          options.retentionHoldPolicy
+        )
         const verdict = evaluateRetentionEligibility({
           retentionExpiresAt: effectiveDeadline(owner.terminalAt, options.policyRetainMs),
           now: assessedAt,
@@ -160,6 +199,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           rejectionKeyReserved: true,
           pendingReferences:
             references.commands.has(owner.executionId) ||
+            references.retiredCommandKeys.has(owner.executionId) ||
             references.events.has(owner.executionId) ||
             references.checkpoints.has(owner.executionId) ||
             references.activeAttempts.has(owner.executionId) ||
@@ -172,9 +212,9 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             !attemptsComplete
               ? 1
               : 0,
-          holds: 0,
+          holds,
         })
-        if (!counter.add(verdict)) return { kind: 'bound' as const }
+        counter.recordVerdict(verdict)
         if (verdict.verdict !== 'eligible' || dryRun) return { kind: 'assessed' as const }
 
         if (options.journal !== undefined) {
@@ -206,9 +246,6 @@ export class PostgresExecutionRepository implements ExecutionRepository {
           .returning({ executionId: executions.executionId })
         return { kind: removed.length === 1 ? ('deleted' as const) : ('raced' as const) }
       })
-      if (outcome.kind === 'bound') {
-        break
-      }
       if (outcome.kind === 'missing' || outcome.kind === 'raced') raced += 1
       if (outcome.kind === 'deleted') deleted += 1
     }
@@ -219,13 +256,16 @@ export class PostgresExecutionRepository implements ExecutionRepository {
    * Every namespace that carries execution identity, as sets of execution ids
    * among `executionIds`. Receipt references are read from their JSON identity
    * fields; interaction requests and usage entries have FKs, while delegations
-   * carry parent/child identity without FKs.
+   * carry parent/child identity without FKs. Retired command keys keep the
+   * owner alive while any tombstone row persists; TTL eligibility alone does
+   * not release the reference because audit reads every persisted tombstone.
    */
   async #referenceSets(
     executionIds: readonly string[],
     database: ExecutionReferenceReader = this.database
   ): Promise<{
     commands: Set<string>
+    retiredCommandKeys: Set<string>
     events: Set<string>
     checkpoints: Set<string>
     activeAttempts: Set<string>
@@ -239,6 +279,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     if (executionIds.length === 0) {
       return {
         commands: new Set(),
+        retiredCommandKeys: new Set(),
         events: new Set(),
         checkpoints: new Set(),
         activeAttempts: new Set(),
@@ -253,6 +294,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const ids = [...executionIds]
     const [
       commands,
+      retiredKeys,
       events,
       checkpoints,
       activeAttempts,
@@ -262,12 +304,17 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       interactionRequestRefs,
       directInteractionRequests,
       usageLedgerRefs,
+      usageStateRefs,
       delegationRefs,
     ] = await Promise.all([
       database
         .select({ executionId: commandInbox.executionId })
         .from(commandInbox)
         .where(inArray(commandInbox.executionId, ids)),
+      database
+        .select({ executionId: retiredCommandKeys.executionId })
+        .from(retiredCommandKeys)
+        .where(inArray(retiredCommandKeys.executionId, ids)),
       database
         .select({ executionId: executionEvents.executionId })
         .from(executionEvents)
@@ -328,9 +375,51 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         .from(interactionRequests)
         .where(inArray(interactionRequests.executionId, ids)),
       database
-        .select({ executionId: usageLedgerEntries.executionId })
+        .select({
+          executionId: usageLedgerEntries.executionId,
+          parentExecutionId: usageLedgerEntries.parentExecutionId,
+        })
         .from(usageLedgerEntries)
-        .where(inArray(usageLedgerEntries.executionId, ids)),
+        .where(
+          or(
+            inArray(usageLedgerEntries.executionId, ids),
+            inArray(usageLedgerEntries.parentExecutionId, ids)
+          )
+        ),
+      // Scalar and JSON identities both pin an owner: damaged indexed fields
+      // must not hide a positively identified funding reference. An unreadable
+      // reservation collection could conceal any child, so fail closed for the
+      // entire candidate set rather than guess that no funding references exist.
+      database
+        .select({ executionId: executions.executionId })
+        .from(executions)
+        .where(
+          and(
+            inArray(executions.executionId, ids),
+            sql`(
+              exists (
+                select 1 from ${usageBudgetStates}
+                where ${usageBudgetStates.executionId} = ${executions.executionId}
+                  or ${usageBudgetStates.parentExecutionId} = ${executions.executionId}
+                  or ${usageBudgetStates.state}->>'executionId' = ${executions.executionId}
+                  or ${usageBudgetStates.state}->>'parentExecutionId' = ${executions.executionId}
+                  or jsonb_typeof(${usageBudgetStates.state}->'reservations') is distinct from 'array'
+                  or exists (
+                    select 1 from jsonb_array_elements(
+                      case when jsonb_typeof(${usageBudgetStates.state}->'reservations') = 'array'
+                        then ${usageBudgetStates.state}->'reservations' else '[]'::jsonb end
+                    ) as reservation(value)
+                    where reservation.value->>'childExecutionId' = ${executions.executionId}
+                  )
+              )
+              or exists (
+                select 1 from ${usageOperationReceipts}
+                where ${usageOperationReceipts.executionId} = ${executions.executionId}
+                  or ${usageOperationReceipts.receipt}->>'executionId' = ${executions.executionId}
+              )
+            )`
+          )
+        ),
       database
         .select({
           parentExecutionId: delegations.parentExecutionId,
@@ -346,6 +435,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     ])
     return {
       commands: new Set(commands.map((row) => row.executionId)),
+      retiredCommandKeys: new Set(retiredKeys.map((row) => row.executionId)),
       events: new Set(events.map((row) => row.executionId)),
       checkpoints: new Set(checkpoints.map((row) => row.executionId)),
       activeAttempts: new Set(activeAttempts.map((row) => row.executionId)),
@@ -356,7 +446,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         ...interactionRequestRefs.map((row) => row.executionId),
       ]),
       interactionRequests: new Set(directInteractionRequests.map((row) => row.executionId)),
-      usageLedger: new Set(usageLedgerRefs.map((row) => row.executionId)),
+      usageLedger: new Set([
+        ...usageLedgerRefs.flatMap((row) =>
+          row.parentExecutionId === null
+            ? [row.executionId]
+            : [row.executionId, row.parentExecutionId]
+        ),
+        ...usageStateRefs.map((row) => row.executionId),
+      ]),
       delegations: new Set(
         delegationRefs.flatMap((row) => [row.parentExecutionId, row.childExecutionId])
       ),
@@ -413,12 +510,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   async insertExecution(execution: Execution): Promise<boolean> {
     const parsed = ExecutionSchema.parse(execution)
     return this.database.transaction(async (transaction) => {
+      await acquireAdmissionRolloutSharedLock(transaction)
       const [existing] = await transaction
         .select({ executionId: executions.executionId })
         .from(executions)
         .where(eq(executions.executionId, parsed.executionId))
         .limit(1)
       if (existing) return false
+      await assertAdmissionRolloutOpen(transaction)
       if (!(await lockExecutionPlanReference(transaction, parsed.executionPlan))) {
         throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
       }

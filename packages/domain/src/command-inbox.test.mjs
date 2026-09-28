@@ -155,6 +155,65 @@ describe('CommandInbox execution acceptance', () => {
     })
   })
 
+  test('checks durable admission before returning an identical replay', async () => {
+    const { repository, service } = setup()
+    const accepted = await service.acceptExecution(commandInput())
+    const checks = []
+    repository.verifyAdmission = async (command, execution) => {
+      checks.push({ command, execution })
+      throw new Error('BUDGET_NOT_FOUND')
+    }
+
+    await expect(service.acceptExecution(commandInput())).rejects.toThrow('BUDGET_NOT_FOUND')
+    expect(checks).toEqual([{ command: accepted.command, execution: accepted.execution }])
+    expect(repository.executionCount).toBe(1)
+  })
+
+  test('verifies a funded replay without allocating or revalidating its historical plan', async () => {
+    const { repository, service } = setup()
+    const accepted = await service.acceptExecution(commandInput())
+    let checks = 0
+    repository.verifyAdmission = async (command, execution) => {
+      expect(command).toEqual(accepted.command)
+      expect(execution).toEqual(accepted.execution)
+      checks += 1
+    }
+    const restarted = new CommandInboxService({
+      repository,
+      executionIdFactory: () => {
+        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+      },
+      executionPlanValidator: {
+        validate: async () => {
+          throw new Error('REPLAY_MUST_NOT_VALIDATE')
+        },
+      },
+      now: () => receivedAt,
+    })
+    expect(await restarted.acceptExecution(commandInput())).toMatchObject({
+      replayed: true,
+      execution: accepted.execution,
+    })
+    expect(checks).toBe(1)
+  })
+
+  test('checks admission on the duplicate race path before returning it', async () => {
+    const { repository, service } = setup()
+    const accepted = await service.acceptExecution(commandInput())
+    // Simulate the scope being absent at the optimistic read but present at accept.
+    repository.get = async () => undefined
+    let checks = 0
+    repository.verifyAdmission = async (command, execution) => {
+      expect(command).toEqual(accepted.command)
+      expect(execution).toEqual(accepted.execution)
+      checks += 1
+      throw new Error('BUDGET_NOT_FOUND')
+    }
+    await expect(service.acceptExecution(commandInput())).rejects.toThrow('BUDGET_NOT_FOUND')
+    expect(checks).toBe(1)
+    expect(repository.executionCount).toBe(1)
+  })
+
   test('records and rejects an idempotency key reused with a different payload hash', async () => {
     const { repository, service } = setup()
     await service.acceptExecution(commandInput())

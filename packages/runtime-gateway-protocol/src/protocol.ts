@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { RuntimeUsageSchema } from '@control-plane/runtime-sdk'
 
 const canonicalId = (prefix: string, label: string) =>
   z.string().regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{26}$`), `Invalid ${label}`)
@@ -35,7 +36,7 @@ export type GatewayProtocolVersion = z.output<typeof GatewayProtocolVersionSchem
 
 export const GatewayProtocolManifest = Object.freeze({
   name: 'control-plane-runtime-gateway',
-  current: { major: 1, minor: 6 },
+  current: { major: 1, minor: 7 },
   supported: [
     { major: 1, minor: 0 },
     { major: 1, minor: 1 },
@@ -44,6 +45,7 @@ export const GatewayProtocolManifest = Object.freeze({
     { major: 1, minor: 4 },
     { major: 1, minor: 5 },
     { major: 1, minor: 6 },
+    { major: 1, minor: 7 },
   ],
 })
 
@@ -324,11 +326,22 @@ export const GatewayResultEnvelopeSchema = CommonEnvelopeSchema.extend({
   payloadHash: DigestSchema,
   status: z.enum(['succeeded', 'failed', 'cancelled']),
   completedAt: TimestampSchema,
+  terminalUsage: RuntimeUsageSchema.optional(),
   result: z.union([
     z.object({ data: z.record(z.string(), z.json()) }).strict(),
     z.object({ artifact: GatewayArtifactReferenceSchema }).strict(),
   ]),
-}).strict()
+})
+  .strict()
+  .superRefine((result, context) => {
+    if (result.terminalUsage !== undefined && result.protocolVersion.minor < 7) {
+      context.addIssue({
+        code: 'custom',
+        path: ['terminalUsage'],
+        message: 'Terminal usage requires protocol v1.7',
+      })
+    }
+  })
 
 export const GatewayCancellationEnvelopeSchema = CommonEnvelopeSchema.extend({
   type: z.literal('cancel'),

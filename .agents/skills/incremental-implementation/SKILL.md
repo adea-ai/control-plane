@@ -1,7 +1,7 @@
 ---
 name: incremental-implementation
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   owner: "Control Plane maintainers"
 description: Delivers changes incrementally. Use when implementing any feature or change that touches more than one file. Use when you're about to write a large amount of code at once, or when a task feels too big to land in one step.
 ---
@@ -28,7 +28,7 @@ Build in thin vertical slices — implement one piece, test it, verify it, then 
 │                                      │
 │   Implement ──→ Test ──→ Verify ──┐  │
 │       ▲                           │  │
-│       └───── Commit ◄─────────────┘  │
+│       └── Checkpoint/commit* ◄─────┘  │
 │              │                       │
 │              ▼                       │
 │          Next slice                  │
@@ -41,7 +41,7 @@ For each slice:
 1. **Implement** the smallest complete piece of functionality
 2. **Test** — run the test suite (or write a test if none exists)
 3. **Verify** — confirm the slice works as expected (tests pass, build succeeds, manual check)
-4. **Commit** -- save your progress with a descriptive message (see `git-workflow-and-versioning` for atomic commit guidance)
+4. **Checkpoint** — keep the slice reviewable. Commit it only when the user's/task's authorization includes a local commit; otherwise report the exact task-owned diff and leave it uncommitted.
 5. **Move to the next slice** — carry forward, don't restart
 
 ## Slicing Strategies
@@ -139,9 +139,9 @@ NOTICED BUT NOT TOUCHING:
 
 Each increment changes one logical thing. Don't mix concerns:
 
-**Bad:** One commit that adds a new component, refactors an existing one, and updates the build config.
+**Bad:** One authorized commit that adds a new component, refactors an existing one, and updates the build config.
 
-**Good:** Three separate commits — one for each change.
+**Good:** Three separately reviewable slices; when commits are authorized, keep them separate — one for each change.
 
 ### Rule 2: Keep It Compilable
 
@@ -181,7 +181,7 @@ Each increment should be independently revertable:
 - Additive changes (new files, new functions) are easy to revert
 - Modifications to existing code should be minimal and focused
 - Database migrations should have corresponding rollback migrations
-- Avoid deleting something in one commit and replacing it in the same commit — separate them
+- When commits are authorized, avoid deleting something and replacing it in the same commit — separate them
 
 ## Working with Agents
 
@@ -197,7 +197,9 @@ After implementing, run the repository's test and build commands to
 verify nothing is broken."
 ```
 
-Be explicit about what's in scope and what's NOT in scope for each increment.
+Be explicit about what's in scope and what's NOT in scope for each increment. Before editing, inspect the current branch and worktree state and follow the repository's [contribution contract](../../../.github/CONTRIBUTING.md). Preserve existing user changes; if they overlap the requested scope or cannot be distinguished safely, stop and ask before editing.
+
+Git writes are separate from file-edit authority. Do not commit, push, switch branches, or clean the worktree unless the user's/task's authorization covers that action. If a commit is authorized, stage only task-scoped paths and inspect the staged diff first.
 
 ## Increment Checklist
 
@@ -209,7 +211,7 @@ After each increment, verify with the repository's own commands (see the test-dr
 - [ ] Type checking passes, where the stack has one (`npx tsc --noEmit`, `mypy`, ...)
 - [ ] Linting passes (the repository's lint command)
 - [ ] The new functionality works as expected
-- [ ] The change is committed with a descriptive message
+- [ ] The task-owned diff is reviewable; commit only when authorized
 
 **Note:** Run each verification command after a change that could affect it. After a successful run, don't repeat the same command unless the code has changed since — re-running on unchanged code adds no information.
 
@@ -219,7 +221,7 @@ After each increment, verify with the repository's own commands (see the test-dr
 |---|---|
 | "I'll test it all at the end" | Bugs compound. A bug in Slice 1 makes Slices 2-5 wrong. Test each slice. |
 | "It's faster to do it all at once" | It *feels* faster until something breaks and you can't find which of 500 changed lines caused it. |
-| "These changes are too small to commit separately" | Small commits are free. Large commits hide bugs and make rollbacks painful. |
+| "These changes are too small to checkpoint separately" | Keep slices reviewable; only create commits when authorized. |
 | "I'll add the feature flag later" | If the feature isn't complete, it shouldn't be user-visible. Add the flag now. |
 | "This refactor is small enough to include" | Refactors mixed with features make both harder to review and debug. Separate them. |
 | "Let me run the build command again just to be sure" | After a successful run, repeating the same command adds nothing unless the code has changed since. Run it again after subsequent edits, not as reassurance. |
@@ -241,23 +243,23 @@ After each increment, verify with the repository's own commands (see the test-dr
 
 After completing all increments for a task:
 
-- [ ] Each increment was individually tested and committed
+- [ ] Each increment was individually tested; its diff or authorized commit is identified
 - [ ] The full test suite passes
 - [ ] The build is clean
 - [ ] The feature works end-to-end as specified
-- [ ] No uncommitted changes remain
+- [ ] No unintended task-owned residue remains; pre-existing or unrelated changes are preserved and identified
 
 ## See Also
 
-Per-increment verification is the local check. Before declaring a task done, apply the project-wide Definition of Done as the final gate, the standing bar every increment clears regardless of the task. See `../../references/definition-of-done.md`.
+Per-increment verification is the local check. Before declaring a task done, follow the repository's [agent and contribution contract](../../../.github/CONTRIBUTING.md) and the canonical [validation policy](../../../.agents/validation.md); do not infer additional Git authority from this skill.
 
 ## Evidence contract
 
 - **Inputs:** a multi-file implementation task broken into ordered increments, with explicit in-scope and out-of-scope surfaces per increment.
-- **Safe assumptions:** the project builds and its existing tests pass before the first increment; each slice is small enough to implement, test, and commit on its own.
-- **Allowed mutations:** source files, tests, and configs within the task scope, one increment at a time; out-of-scope improvements are noted, not touched.
-- **Outputs:** a series of compiling, tested, independently revertable increments, each committed with a descriptive message.
+- **Safe assumptions:** the project builds and its existing tests pass before the first increment; the initial branch/worktree state has been inspected; each slice is small enough to implement and test independently.
+- **Allowed mutations:** source files, tests, and configs within the task scope, one increment at a time. Git operations are allowed only when separately authorized; out-of-scope improvements are noted, not touched.
+- **Outputs:** a series of compiling, tested, independently reviewable increments, with exact task-owned diffs and any authorized commits identified.
 - **Verification commands:** after each increment run the repository's focused test/build/type/lint commands; before declaring done run the full applicable batch from `.agents/validation.md` (here: `bun run lint`, `bun run type-check`, `bun run build`, `bun run test`).
 - **Failure/skip reporting:** a failing increment stops the cycle — revert or fix before the next slice; any skipped step is reported with its reason, never silently dropped.
-- **Cleanup:** no uncommitted changes remain; feature-flag scaffolding, fixtures, and temp files from incomplete slices are removed or explicitly documented.
+- **Cleanup:** remove or document task-owned scaffolding, fixtures, and temporary files; preserve pre-existing and unrelated user changes, and report them rather than staging or cleaning them.
 - **Completion-claim guard:** the skill must not declare the task done while any increment is unstarted, failing, or skipped without a documented reason.

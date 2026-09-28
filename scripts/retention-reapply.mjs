@@ -1,8 +1,14 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { parseRetentionJournalLine } from '@control-plane/domain'
+import {
+  CommandInboxRecordSchema,
+  parseRetentionJournalLine,
+  retiredCommandKeyCandidates,
+  retiredCommandKeyFromMetadataV2,
+} from '@control-plane/domain'
 import { loadDatabaseCredentials } from '@control-plane/config'
+import { recordId } from '../packages/sqlite-persistence/src/record-storage.ts'
 
 // Restore-time reapplication (#194). A snapshot restored from before a deletion
 // pass silently resurrects compacted records and loses the rejection identities
@@ -101,6 +107,12 @@ export async function retentionReapply({
       for (const record of operations) {
         for (const operation of record.operations) {
           if (operation.kind === 'sqlite.put') {
+            if (operation.namespace === 'retired-command-keys') {
+              const tombstone = await restoreSqliteRetiredCommandKey(provider, operation)
+              if (tombstone === 'inserted') applied += 1
+              else skipped += 1
+              continue
+            }
             const existing = await provider.transaction((transaction) =>
               transaction.get(operation.namespace, operation.id)
             )
@@ -126,7 +138,14 @@ export async function retentionReapply({
         }
       }
     } else if (values.backend === 'postgres') {
-      const credentials = loadDatabaseCredentials(environment, 'application')
+      // Application credentials can insert replay tombstones but cannot delete
+      // them. Select the explicit migration role for any journal that removes
+      // one; never fall back to DATABASE_URL when that role is missing.
+      const requiresMigrationRole = operations.some((record) =>
+        record.operations.some((operation) => operation.kind === 'postgres.deleteRetiredCommandKey')
+      )
+      const credentialRole = requiresMigrationRole ? 'migration' : 'application'
+      const credentials = loadDatabaseCredentials(environment, credentialRole)
       const target = new URL(credentials.url)
       if (
         !values.host ||
@@ -137,11 +156,14 @@ export async function retentionReapply({
       // Source imports resolve relative to this script, so the command does not
       // depend on a root-level workspace symlink that a fresh install may not
       // create; the driver dependency resolves from the package itself.
-      const [{ createPostgresConnection }, { PostgresRetentionReapplication }] = await Promise.all([
+      const [connectionModule, { PostgresRetentionReapplication }] = await Promise.all([
         import('../packages/database/src/connection.ts'),
         import('../packages/database/src/retention-reapplication.ts'),
       ])
-      const connection = createPostgresConnection(credentials)
+      const connection =
+        credentialRole === 'migration'
+          ? connectionModule.createPostgresMigrationConnection(credentials)
+          : connectionModule.createPostgresConnection(credentials)
       close = () => connection.close()
       // SQL for each operation kind lives in the package that declares the
       // driver dependency; this command stays a thin operator wrapper.
@@ -179,6 +201,97 @@ export async function retentionReapply({
     }
   }
   return closeFailed ? 1 : 0
+}
+
+async function restoreSqliteRetiredCommandKey(provider, operation) {
+  const journalValue = operation.value
+  if (journalValue === null || typeof journalValue !== 'object' || Array.isArray(journalValue))
+    throw new Error('RETENTION_RETIRED_COMMAND_JOURNAL_INVALID')
+  const commandId = CommandInboxRecordSchema.shape.commandId.parse(journalValue.commandId)
+  const executionId = CommandInboxRecordSchema.shape.executionId.parse(journalValue.executionId)
+  if (
+    journalValue.metadataVersion === 2 &&
+    typeof journalValue.scopeKey === 'string' &&
+    typeof journalValue.identityDigest === 'string' &&
+    operation.id === recordId(journalValue.scopeKey) &&
+    retiredCommandKeyFromMetadataV2(journalValue.identityDigest) === journalValue.scopeKey
+  ) {
+    const existing = await provider.transaction((transaction) =>
+      transaction.get('retired-command-keys', operation.id)
+    )
+    if (existing !== undefined) {
+      const stored = existing.value
+      if (
+        stored === null ||
+        typeof stored !== 'object' ||
+        stored.scopeKey !== journalValue.scopeKey ||
+        stored.metadataVersion !== 2 ||
+        stored.identityDigest !== journalValue.identityDigest ||
+        stored.retiredAt !== journalValue.retiredAt ||
+        stored.commandId !== commandId ||
+        stored.executionId !== executionId ||
+        retiredCommandKeyFromMetadataV2(stored.identityDigest) !== stored.scopeKey
+      )
+        throw new Error('RETENTION_RETIRED_COMMAND_STORED_MISMATCH')
+      return 'existing'
+    }
+  }
+  const restored = await provider.transaction(async (transaction) => {
+    const index = await transaction.get('command-by-execution', recordId(executionId))
+    if (index === undefined || typeof index.value !== 'string') return undefined
+    const source = await transaction.get('command-inbox', index.value)
+    return source === undefined ? undefined : CommandInboxRecordSchema.parse(source.value)
+  })
+  if (
+    restored === undefined ||
+    restored.commandId !== commandId ||
+    restored.executionId !== executionId
+  )
+    throw new Error('RETENTION_RETIRED_COMMAND_SOURCE_MISSING')
+  const keys = retiredCommandKeyCandidates(restored)
+  const legacyId = recordId(keys.legacyScope)
+  const currentId = recordId(keys.metadata.scopeKey)
+  if (operation.id !== legacyId && operation.id !== currentId)
+    throw new Error('RETENTION_RETIRED_COMMAND_JOURNAL_MISMATCH')
+  if (
+    typeof journalValue.retiredAt !== 'string' ||
+    !Number.isFinite(Date.parse(journalValue.retiredAt)) ||
+    new Date(journalValue.retiredAt).toISOString() !== journalValue.retiredAt ||
+    (journalValue.metadataVersion !== undefined && journalValue.metadataVersion !== 2) ||
+    (journalValue.scopeKey !== undefined && journalValue.scopeKey !== keys.metadata.scopeKey) ||
+    (journalValue.identityDigest !== undefined &&
+      journalValue.identityDigest !== keys.metadata.identityDigest)
+  )
+    throw new Error('RETENTION_RETIRED_COMMAND_JOURNAL_MISMATCH')
+  const value = {
+    scopeKey: keys.metadata.scopeKey,
+    metadataVersion: keys.metadata.metadataVersion,
+    identityDigest: keys.metadata.identityDigest,
+    retiredAt: journalValue.retiredAt,
+    commandId,
+    executionId,
+  }
+  return provider.transaction(async (transaction) => {
+    const existing = await transaction.get('retired-command-keys', currentId)
+    if (existing !== undefined) {
+      const stored = existing.value
+      if (
+        stored === null ||
+        typeof stored !== 'object' ||
+        stored.scopeKey !== value.scopeKey ||
+        stored.metadataVersion !== value.metadataVersion ||
+        stored.identityDigest !== value.identityDigest ||
+        stored.retiredAt !== value.retiredAt ||
+        stored.commandId !== value.commandId ||
+        stored.executionId !== value.executionId ||
+        retiredCommandKeyFromMetadataV2(stored.identityDigest) !== stored.scopeKey
+      )
+        throw new Error('RETENTION_RETIRED_COMMAND_STORED_MISMATCH')
+      return 'existing'
+    }
+    await transaction.put({ namespace: 'retired-command-keys', id: currentId, value })
+    return 'inserted'
+  })
 }
 
 if (import.meta.main) {

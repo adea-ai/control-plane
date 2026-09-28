@@ -212,6 +212,52 @@ Railway build/readiness results, Restate registration/restart evidence, resource
 sanitized harness record together in the M9.6 evidence attachment. The harness is not by itself
 proof of rollback, restart recovery, load, isolation, secret-canary, or cost acceptance.
 
+## M11 intake rollout fence — incomplete operator workflow
+
+The development candidate adds migration 0052 and a durable PostgreSQL intake
+gate. A newly empty database starts open; any retained execution, attempt,
+command, runtime command or delegation rows conservatively seed it paused.
+Both command acceptance and bare/delegated owner insertion respect the gate.
+Existing replay and already-accepted work are not cancelled by an intake pause.
+New valid API intake while paused returns a sanitized 503
+`EXECUTION_INTAKE_UNAVAILABLE`, without new owner or accounting records.
+
+`PostgresAdmissionRolloutService.pause()` requires actual database update
+authority. The application role has only SELECT on the gate, including after
+Hosted role re-provisioning. Production schema preflight checks effective
+table and column permissions, not a caller-supplied operator flag.
+
+**Do not promote this checkpoint as a complete rollout workflow.** Bounded
+paginated inventory, drain audit and fresh exclusive-lock resume are
+implemented in the database service and operator CLI. They do not establish
+concurrent cutover acceptance or externally prove that old API/workflow
+replicas have been quiesced before migration; the current automatic schema/image
+promotion does not establish that proof. Journal provenance, commit-outcome
+reconciliation, live role/migration verification and external
+provider-settlement evidence also remain open.
+Never restore intake with an arbitrary SQL update or invent historical funding
+authority.
+
+The operator CLI now supports actual PostgreSQL `status` and `pause` operations.
+It loads only `DATABASE_MIGRATION_URL`, uses an explicit migration connection
+factory, and verifies the target host, port and database before connecting. The
+connection profile does not grant authority: the service checks the authenticated
+database role's actual privileges. Do not put credentials in command arguments.
+After building the workspace, use the exact intended target:
+
+```sh
+bun run admission:admin status --host <host> --port <port> --database <database>
+bun run admission:admin pause --host <host> --port <port> --database <database> --confirm pause
+```
+
+The CLI also supports the bounded database service's `audit` and `resume`
+operations. Resume performs a fresh audit while holding the exclusive intake
+fence; a saved report cannot authorize it. These local service checks are not
+external rollout or replica-quiescence acceptance. Do not treat them as proof
+that the production cutover is safe. No force flag, automatic migration or
+deployment is provided. Failed operations return exit code 1 with sanitized
+stderr; a completed audit that does not permit resume returns exit code 2.
+
 ## Catalog approval gate (#188)
 
 Approval is a version-bound decision separate from publication: a catalog profile or skill version is
@@ -281,6 +327,37 @@ bun scripts/retention-apply.mjs --backend postgres --class command-inbox \
 #                               (consumer, messageId) deduplication identity)
 ```
 
+Replay-key tombstones have their own 30-day operator retention class. The
+PostgreSQL runtime application role is limited to `SELECT` and `INSERT` on
+`retired_command_keys`; it cannot update or delete replay evidence. The
+`retired-command-keys` class therefore requires the separately configured
+`DATABASE_MIGRATION_URL` role, which is also used by schema migrations and the
+admission-rollout operator CLI. The retention command does not fall back to the
+application or administration URL. Keep the class dry-run as the default and
+record its result with the change:
+
+```sh
+bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
+  --database control_plane --host <neon-host>
+
+# Only after review; requires the explicit operator hold policy and confirmation.
+bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
+  --database control_plane --host <neon-host> \
+  --hold-policy /etc/control-plane/operator-policy.json \
+  --apply --confirm retired-command-keys
+```
+
+The 30-day clock starts at `retired_at`. Rows remain at day 29 and at the exact
+30-day instant; deletion becomes eligible only after that instant. This is an
+explicit physical-retention action, not background cleanup. Legacy v1 rows
+continue to reject matching replays while retained, but cannot prove their
+scoped identity to the admission audit; they block a safe intake resume until
+the 30-day window expires and the operator deletes them through this class.
+Execution cleanup keeps an owner reference-pinned while any tombstone row is
+persisted, even after day 30. Run the retired-command-key sweep first, then
+rerun execution-owner cleanup if it is otherwise eligible. Do not manually edit
+a tombstone to clear that diagnostic.
+
 Context packages are freed by the same bottom-up order: a package stays
 retained while a plan pins it or the authoring command that produced it still
 exists.
@@ -295,14 +372,109 @@ they remain a durable reference until that lifecycle is defined. Running
 until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
-are eligible, and why the rest are retained. Deleting requires
-`--apply --confirm <class>`, where the class is `command-inbox` or
-`execution-events`. Only records that are expired, terminal,
+are eligible, and why the rest are retained. Deleting any supported class requires
+`--apply --confirm <class> --hold-policy /absolute/path/operator-policy.json`.
+The protected policy must bind the exact target and grant the verified operator
+class-wide `sweep` authority. Confirmation alone is not authorization, even when
+the database has no holds. Only records that are expired, terminal,
 reconciled, unreferenced and already carry their reserved rejection key are
 removed; the rejection key itself is kept, so a replay of the same scoped
 idempotency key still fails closed. `raced` counts candidates whose state moved
 between selection and deletion — those are left alone and picked up by a later
-pass. `--bound` limits a pass; `--now <instant>` backfills a specific instant.
+pass. `--bound` limits a pass; `--now <instant>` selects an assessment instant
+for dry runs and historical backfills. A physical apply rejects future instants
+so replay tombstones cannot be expired ahead of the host's current clock.
+
+### Operator policy and durable holds
+
+The host operator adapter is `scripts/retention-hold-admin.mjs`. Its policy is an
+explicit UTF-8 JSON file, not request-body policy, environment identity claims, or
+an implicit administrator grant. Keep it under the trusted operator's control:
+an absolute regular file owned by the current process UID, with no group/world
+write permission (for example `0600`). Symlinks, files over 256 KiB, unconfigured
+classes, unknown fields, target mismatches, and owners that differ from the decided
+retention policy are refused. Parent directories must also remain operator-controlled.
+This adapter fails closed where Unix UID/no-follow checks are unavailable; it is
+not Windows certification or a hosted product-user authorization endpoint.
+
+A SQLite policy for one class looks like this (replace the canonical database
+path and encoded OS username with the actual operator's values):
+
+```json
+{
+  "schemaVersion": 1,
+  "target": { "backend": "sqlite", "database": "/var/lib/control-plane/state.sqlite" },
+  "policy": {
+    "command-inbox": {
+      "owner": "platform-operator",
+      "scopes": ["class", "workspace", "project"],
+      "reasonCodes": ["legal-case"]
+    }
+  },
+  "grants": [
+    {
+      "actorPrincipalRef": "operator:os-user:alice",
+      "authorityRef": "authority:sqlite:local-os",
+      "classId": "command-inbox",
+      "scope": { "kind": "class" },
+      "actions": ["create", "release", "assess", "sweep"]
+    }
+  ]
+}
+```
+
+For PostgreSQL, the target is
+`{"backend":"postgres","database":"control_plane","host":"<neon-host>","port":5432}`;
+it must match the application credential's database, hostname, and effective
+port exactly. Existing policies without `port` remain scoped to the default
+PostgreSQL port 5432 only. The
+grant's authority is `authority:postgres:role:<encoded-current_user>`, read from
+the actual connection, not a role supplied in JSON or inferred from a username
+in the connection URL. The actor remains the verified encoded OS username.
+Provision individual trusted operator accounts and least-privilege database
+credentials; shared accounts give shared attribution. Database access alone is
+not an implicit owner grant.
+
+Include explicit class policies for all stored holds that a pass validates. A
+missing policy for a stored hold fails closed. Class owners remain those printed
+by `retention-report --classes`. Grant only necessary actions: `create` and
+`release` administer holds; `assess` and `sweep` authorize configured dry-run and
+physical passes. Workspace/project grants cannot authorize the current unscoped
+whole-class passes, even if they list `sweep`. There is no implicit widening to
+another workspace, project, or class.
+
+Create input is a strict JSON object with `operation: "create"`, a UUID-v4
+`holdId`, `classId`, canonical `scope`, configured `reasonCode`, and the verified
+session's `actorPrincipalRef` and `authorityRef`. Release input uses
+`operation: "release"`, the existing `holdId`, a UUID-v4 `requestId`,
+`expectedRevision: 0`, and the same matching session claims. Claims are compared
+with the real host session; the adapter never overwrites spoofed attribution.
+Release is explicit and revision-checked; retrying a create after release does
+not reactivate the hold. Output contains only status, operation, hold ID and
+revision, not the reason or principal.
+
+```sh
+bun scripts/retention-hold-admin.mjs --backend sqlite \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json --input /secure/hold-request.json
+
+bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json
+
+# Only after reviewing the dry run:
+bun scripts/retention-apply.mjs --backend sqlite --class command-inbox \
+  --database /var/lib/control-plane/state.sqlite \
+  --hold-policy /etc/control-plane/operator-policy.json --apply --confirm command-inbox
+```
+
+PostgreSQL administration uses the same flags plus `--host <neon-host>` and
+`--database control_plane`. An unconfigured dry run remains possible only when
+the existing storage guards can prove there are no holds. An active matching
+hold prevents deletion and produces no deletion-journal entry; releasing it
+does not restart the retention/reference clock. This host path does not prove
+full application/profile wiring, hold-event backup durability, provider TTL
+coordination, or restore-time outcome reconciliation.
 
 Restoring a snapshot that predates a deletion pass brings the compacted records
 back and can lose the rejection identities that keep replays failing closed. Every
@@ -326,6 +498,19 @@ the journal independently of the database and reconcile ambiguous outcomes
 before exposing a restored copy; without the journal a snapshot cannot be
 brought forward. External durability and outcome reconciliation remain open
 M11 gates.
+
+For a retired-command entry, reapplication derives the v2 commitment from the
+restored inbox row and compares it with the journal before inserting the
+tombstone. It fails closed when the source row is absent and no exact verified
+v2 tombstone already exists. The journal contains the opaque scope key and
+command/execution identifiers, not the original caller, operation, workspace,
+project, idempotency key, or command payload.
+
+PostgreSQL reapplication uses `DATABASE_URL` for journals that only insert
+retirement evidence. A journal containing `postgres.deleteRetiredCommandKey`
+requires the dedicated `DATABASE_MIGRATION_URL`; the command never falls back
+to the application URL for that deletion. Keep the application role
+insert-only for retired-command tombstones.
 
 Which classes can ever be swept, and which the policy keeps reference-governed,
 is one command away — it prints the decided duration, the governance mode, the

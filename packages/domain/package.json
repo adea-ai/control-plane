@@ -13,6 +13,31 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./catalog-models": {
+      "types": "./dist/catalog-models.d.ts",
+      "node": "./dist/catalog-models.js",
+      "default": "./dist/catalog-models.js"
+    },
+    "./catalog-approval": {
+      "types": "./dist/catalog-approval.d.ts",
+      "node": "./dist/catalog-approval.js",
+      "default": "./dist/catalog-approval.js"
+    },
+    "./context-provider-administration": {
+      "types": "./dist/context-provider-administration.d.ts",
+      "node": "./dist/context-provider-administration.js",
+      "default": "./dist/context-provider-administration.js"
+    },
+    "./context-command-grant": {
+      "types": "./dist/context-command-grant.d.ts",
+      "node": "./dist/context-command-grant.js",
+      "default": "./dist/context-command-grant.js"
+    },
+    "./context-provider-registration": {
+      "types": "./dist/context-provider-registration.d.ts",
+      "node": "./dist/context-provider-registration.js",
+      "default": "./dist/context-provider-registration.js"
     }
   },
   "scripts": {

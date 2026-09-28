@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type {
+  CreateObjectResult,
   ObjectStore,
   ObjectStoreErrorCode,
   PutObjectInput,
@@ -24,6 +25,7 @@ const MAX_METADATA_BYTES = 8_192
 const CHECKSUM_METADATA_KEY = 'control-plane-sha256'
 
 export type {
+  CreateObjectResult,
   ObjectStore,
   ObjectStoreErrorCode,
   PutObjectInput,
@@ -139,6 +141,23 @@ export class R2ObjectStore implements ObjectStore {
   }
 
   async put(input: PutObjectInput): Promise<StoredObjectDescriptor> {
+    return this.#write(input, false)
+  }
+
+  async putIfAbsent(input: PutObjectInput): Promise<CreateObjectResult> {
+    try {
+      return { outcome: 'created', object: await this.#write(input, true) }
+    } catch (error) {
+      if (error instanceof ObjectStoreError) throw error
+      const status = asRecord(asRecord(error)['$metadata'])['httpStatusCode']
+      if (status === 412) return { outcome: 'exists' }
+      // A concurrent delete/write conflict is not proof that a winner exists.
+      if (status === 409) throw new ObjectStoreError('OBJECT_STORE_PROVIDER_FAILURE', true)
+      throw normalizeProviderError(error)
+    }
+  }
+
+  async #write(input: PutObjectInput, onlyIfAbsent: boolean): Promise<StoredObjectDescriptor> {
     const visibleKey = validKey(input.key)
     const key = this.#address(visibleKey)
     if (!(input.body instanceof Uint8Array)) invalidInput()
@@ -154,6 +173,7 @@ export class R2ObjectStore implements ObjectStore {
             Key: key,
             Body: input.body,
             ContentLength: input.body.byteLength,
+            ...(onlyIfAbsent ? { IfNoneMatch: '*' } : {}),
             ...(contentType === undefined ? {} : { ContentType: contentType }),
             Metadata: { ...metadata, [CHECKSUM_METADATA_KEY]: sha256.slice('sha256:'.length) },
           })
@@ -169,6 +189,9 @@ export class R2ObjectStore implements ObjectStore {
         metadata,
       })
     } catch (error) {
+      // The create-only operation needs the provider status to distinguish an
+      // existing object from ambiguous failure, without retrying the write.
+      if (onlyIfAbsent) throw error
       throw normalizeProviderError(error)
     }
   }
@@ -180,10 +203,16 @@ export class R2ObjectStore implements ObjectStore {
       const output = asRecord(
         await this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key }))
       )
-      const body = await readBody(output['Body'])
-      if (body.byteLength > this.#maxObjectBytes) tooLarge()
-      const result = descriptorFromProvider(visibleKey, output)
-      if (result.size !== body.byteLength) integrityFailure()
+      const providerBody = output['Body']
+      let result: StoredObjectDescriptor
+      try {
+        result = descriptorFromProvider(visibleKey, output)
+        if (result.size > this.#maxObjectBytes) tooLarge()
+      } catch (error) {
+        await disposeProviderBody(providerBody)
+        throw error
+      }
+      const body = await readBody(providerBody, this.#maxObjectBytes, result.size)
       if (result.sha256 !== digest(body)) integrityFailure()
       return { ...result, body }
     } catch (error) {
@@ -264,17 +293,161 @@ function descriptor(input: {
   }
 }
 
-async function readBody(value: unknown): Promise<Uint8Array> {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    typeof Reflect.get(value, 'transformToByteArray') !== 'function'
-  ) {
-    integrityFailure()
+interface AsyncByteIterator {
+  next(): Promise<unknown> | unknown
+  return?(): Promise<unknown> | unknown
+}
+
+interface ByteStreamReader {
+  read(): Promise<unknown>
+  cancel?(): Promise<unknown> | unknown
+  releaseLock?(): void
+}
+
+async function readBody(
+  value: unknown,
+  maxBytes: number,
+  expectedBytes: number
+): Promise<Uint8Array> {
+  let iterator: AsyncByteIterator | undefined
+  let reader: ByteStreamReader | undefined
+  let readerReleased = false
+  let totalBytes = 0
+  try {
+    const body = new Uint8Array(expectedBytes)
+    if (isObject(value) && typeof Reflect.get(value, 'getReader') === 'function') {
+      reader = Reflect.apply(Reflect.get(value, 'getReader'), value, []) as ByteStreamReader
+      while (true) {
+        const next = asRecord(await reader.read())
+        if (next['done'] === true) break
+        totalBytes = appendBoundedChunk(next['value'], body, totalBytes, maxBytes)
+      }
+    } else if (isObject(value) && typeof Reflect.get(value, Symbol.asyncIterator) === 'function') {
+      iterator = Reflect.apply(
+        Reflect.get(value, Symbol.asyncIterator),
+        value,
+        []
+      ) as AsyncByteIterator
+      while (true) {
+        const next = asRecord(await iterator.next())
+        if (next['done'] === true) break
+        totalBytes = appendBoundedChunk(next['value'], body, totalBytes, maxBytes)
+      }
+    } else {
+      integrityFailure()
+    }
+
+    if (totalBytes !== expectedBytes) integrityFailure()
+    return body
+  } catch (error) {
+    await disposeProviderBody(value, iterator, reader)
+    readerReleased = reader !== undefined
+    throw error
+  } finally {
+    if (reader !== undefined && !readerReleased) safelyReleaseReader(reader)
   }
-  const transformed = await Reflect.apply(Reflect.get(value, 'transformToByteArray'), value, [])
-  if (!(transformed instanceof Uint8Array)) integrityFailure()
-  return transformed
+}
+
+function appendBoundedChunk(
+  value: unknown,
+  body: Uint8Array,
+  currentBytes: number,
+  maxBytes: number
+): number {
+  if (!(value instanceof Uint8Array)) integrityFailure()
+  if (value.byteLength > maxBytes - currentBytes) tooLarge()
+  if (value.byteLength > body.byteLength - currentBytes) integrityFailure()
+  // Copy directly into one exact-size owned buffer; provider chunks are not retained.
+  body.set(value, currentBytes)
+  return currentBytes + value.byteLength
+}
+
+async function disposeProviderBody(
+  value: unknown,
+  iterator?: AsyncByteIterator,
+  reader?: ByteStreamReader
+): Promise<void> {
+  if (reader !== undefined) {
+    try {
+      await reader.cancel?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+    safelyReleaseReader(reader)
+    return
+  }
+
+  if (iterator !== undefined) {
+    try {
+      await iterator.return?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+  }
+
+  if (!isObject(value)) return
+  let destroy: unknown
+  try {
+    destroy = Reflect.get(value, 'destroy')
+  } catch {
+    // A broken cleanup accessor does not mask the original operation failure.
+  }
+  if (typeof destroy === 'function') {
+    try {
+      Reflect.apply(destroy, value, [])
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+    return
+  }
+
+  if (iterator !== undefined) return
+  let getReader: unknown
+  try {
+    getReader = Reflect.get(value, 'getReader')
+  } catch {
+    // Continue to any other available best-effort cleanup path.
+  }
+  if (typeof getReader === 'function') {
+    let acquired: ByteStreamReader | undefined
+    try {
+      acquired = Reflect.apply(getReader, value, []) as ByteStreamReader
+      await acquired.cancel?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    } finally {
+      if (acquired !== undefined) safelyReleaseReader(acquired)
+    }
+    return
+  }
+
+  let getAsyncIterator: unknown
+  try {
+    getAsyncIterator = Reflect.get(value, Symbol.asyncIterator)
+  } catch {
+    // No remaining best-effort cleanup path is available.
+  }
+  if (typeof getAsyncIterator === 'function') {
+    let acquired: AsyncByteIterator | undefined
+    try {
+      acquired = Reflect.apply(getAsyncIterator, value, []) as AsyncByteIterator
+      await acquired.return?.()
+    } catch {
+      // Cleanup must not mask the original validation or stream failure.
+    }
+  }
+}
+
+function safelyReleaseReader(reader: ByteStreamReader): void {
+  try {
+    reader.releaseLock?.()
+  } catch {
+    // A failed read/cancel may already have released the provider lock.
+  }
+}
+
+function isObject(value: unknown): value is object {
+  return typeof value === 'object' && value !== null
 }
 
 function validKey(value: string): string {

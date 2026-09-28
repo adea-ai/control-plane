@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import { canonicalJsonStringify } from '@control-plane/domain'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
@@ -1109,6 +1110,59 @@ describe('deployment profile conformance reporting', () => {
     'domain-contract': 'control-plane-v1',
     telemetry: 'content-redacted-v1',
   })
+
+  test.each([false, true])(
+    'drains started adapters before reporting failure (multiple=%s)',
+    async (multiple) => {
+      const gate = Promise.withResolvers()
+      const entered = Promise.withResolvers()
+      const firstFailure = new Error('LOCAL_FAILED')
+      const siblingFailure = new Error('HOSTED_FAILED')
+      let finished = false
+      let siblingFinished = false
+      const adapters = ['cloud', 'local', 'hosted-simple', 'hosted-server'].map((profile) => ({
+        profile,
+        ports: ports('fixture', 'fixture', 'fixture'),
+        run: async () => {
+          if (profile === 'local') throw firstFailure
+          if (profile === 'hosted-simple') {
+            entered.resolve()
+            await gate.promise
+            siblingFinished = true
+            if (multiple) throw siblingFailure
+          }
+          return { logicalState: 'completed' }
+        },
+      }))
+      const observed = runProfileConformance(adapters, [
+        { caseId: 'failure-drain-v1', owner: 'persistence', input: {} },
+      ])
+        .then(
+          (result) => ({ result }),
+          (error) => ({ error })
+        )
+        .finally(() => {
+          finished = true
+        })
+      try {
+        await entered.promise
+        await nextTurn()
+        expect(finished).toBe(false)
+        expect(siblingFinished).toBe(false)
+      } finally {
+        gate.resolve()
+        await observed
+      }
+      const { error } = await observed
+      expect(siblingFinished).toBe(true)
+      if (multiple) {
+        expect(error).toBeInstanceOf(AggregateError)
+        expect(error.errors).toEqual([firstFailure, siblingFailure])
+      } else {
+        expect(error).toBe(firstFailure)
+      }
+    }
+  )
 
   test('compares every required profile and attributes divergence to the exact port', async () => {
     const output = { logicalState: 'completed', executionId: 'exe_1' }

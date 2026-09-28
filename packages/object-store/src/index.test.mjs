@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
+import { Readable } from 'node:stream'
 import { TextEncoder } from 'node:util'
 import {
   ObjectStoreError,
@@ -14,6 +15,14 @@ const configuration = {
   region: 'auto',
   accessKeyId: 'access-key-id',
   secretAccessKey: 'secret-access-key',
+}
+
+function readableBody(body) {
+  const stream = Readable.from([body])
+  stream.transformToByteArray = async () => {
+    throw new Error('unbounded transform should not be used')
+  }
+  return stream
 }
 
 describe('R2ObjectStore', () => {
@@ -72,7 +81,7 @@ describe('R2ObjectStore', () => {
         if (command.constructor.name === 'PutObjectCommand') return { ETag: '"etag-1"' }
         if (command.constructor.name === 'GetObjectCommand') {
           return {
-            Body: { transformToByteArray: async () => body },
+            Body: readableBody(body),
             ContentLength: body.byteLength,
             ContentType: 'application/json',
             ETag: '"etag-1"',
@@ -191,7 +200,7 @@ describe('R2ObjectStore', () => {
       bucket: configuration.bucket,
       client: {
         send: async () => ({
-          Body: { transformToByteArray: async () => body },
+          Body: readableBody(body),
           ContentLength: body.byteLength,
           Metadata: { 'control-plane-sha256': '0'.repeat(64) },
         }),

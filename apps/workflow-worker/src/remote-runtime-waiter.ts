@@ -1,6 +1,11 @@
 import type { Execution, RuntimeCommandRecord } from '@control-plane/domain'
-import type { ExecutionEvent } from '@control-plane/events'
+import {
+  ExecutionEventSchema,
+  hashExecutionEventPayloadV2,
+  type ExecutionEvent,
+} from '@control-plane/events'
 import { GatewayCommandEnvelopeSchema } from '@control-plane/runtime-gateway-protocol'
+import { RuntimeUsageSchema, type RuntimeUsage } from '@control-plane/runtime-sdk'
 import type { RemoteRuntimeOutcomeWaiter } from './remote-workflow-runtime.js'
 import type { WorkflowRuntimeOutcome } from './execution-workflow.js'
 
@@ -14,6 +19,7 @@ export interface RemoteRuntimeCommandReader {
 
 export interface RemoteRuntimeEventReader {
   latestInteraction(executionId: string, attemptId: string): Promise<ExecutionEvent | undefined>
+  latestTerminal?(executionId: string, attemptId: string): Promise<ExecutionEvent | undefined>
 }
 
 export interface PollingRemoteRuntimeOutcomeWaiterOptions {
@@ -55,6 +61,9 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
     readonly attemptId: string
   }): Promise<WorkflowRuntimeOutcome> {
     const envelope = GatewayCommandEnvelopeSchema.parse(input.command.commandEnvelope)
+    if (envelope.executionId !== input.executionId || envelope.attemptId !== input.attemptId) {
+      throw new Error('REMOTE_RUNTIME_COMMAND_SCOPE_INVALID')
+    }
     const operation = envelope.operation
     const parameters = 'parameters' in envelope.payload ? envelope.payload.parameters : undefined
     const respondedInteractionId =
@@ -74,7 +83,13 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
         operation === 'runtime.cancel',
         respondedInteractionId
       )
-      if (outcome !== undefined) return outcome
+      if (outcome !== undefined) {
+        if (['completed', 'failed', 'cancelled'].includes(execution.state)) {
+          const terminalUsage = await this.#terminalUsage(execution, input.attemptId, envelope)
+          if (terminalUsage !== undefined) return { ...outcome, terminalUsage }
+        }
+        return outcome
+      }
       const command = await this.#commands.get(input.command.commandId)
       if (command === undefined) throw new Error('REMOTE_RUNTIME_COMMAND_MISSING')
       if (command.status === 'failed') {
@@ -100,6 +115,49 @@ export class PollingRemoteRuntimeOutcomeWaiter implements RemoteRuntimeOutcomeWa
       }
       await this.#sleep(this.#pollIntervalMs)
     }
+  }
+
+  async #terminalUsage(
+    execution: Execution,
+    attemptId: string,
+    envelope: ReturnType<typeof GatewayCommandEnvelopeSchema.parse>
+  ): Promise<RuntimeUsage | undefined> {
+    const value = await this.#events.latestTerminal?.(execution.executionId, attemptId)
+    if (value === undefined || value.payload['terminalUsage'] === undefined) return undefined
+    const event = ExecutionEventSchema.parse(value)
+    const source = event.payload['runtimeUsageSource']
+    const commandId = event.correlation.commandId
+    const command = commandId === undefined ? undefined : await this.#commands.get(commandId)
+    if (
+      event.archivedAt !== undefined ||
+      event.type !== `execution.${execution.state}` ||
+      execution.correlation.workspaceId !== envelope.workspaceId ||
+      event.executionId !== execution.executionId ||
+      event.attemptId !== attemptId ||
+      event.payloadHash !== hashExecutionEventPayloadV2(event.payload) ||
+      (['workspaceId', 'projectId', 'taskId', 'agentId'] as const).some(
+        (key) => event.correlation[key] !== execution.correlation[key]
+      ) ||
+      typeof source !== 'object' ||
+      source === null ||
+      Array.isArray(source) ||
+      source['nodeId'] !== envelope.nodeId ||
+      source['runtimeConnectionId'] !== envelope.runtimeConnectionId ||
+      source['commandId'] !== commandId ||
+      !Number.isSafeInteger(source['channelGeneration']) ||
+      (source['channelGeneration'] as number) < 1 ||
+      command === undefined ||
+      command.executionId !== execution.executionId ||
+      command.attemptId !== attemptId ||
+      command.workspaceId !== execution.correlation.workspaceId ||
+      command.nodeId !== source['nodeId'] ||
+      command.runtimeConnectionId !== source['runtimeConnectionId'] ||
+      command.lastChannelGeneration === undefined ||
+      command.lastChannelGeneration < (source['channelGeneration'] as number)
+    )
+      throw new Error('REMOTE_RUNTIME_TERMINAL_USAGE_SCOPE_INVALID')
+    // This is attributed reported evidence, not a price/funding authorization.
+    return RuntimeUsageSchema.parse(event.payload['terminalUsage'])
   }
 
   async #executionOutcome(

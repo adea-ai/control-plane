@@ -21,6 +21,7 @@ export * from './context-result-store.js'
 export * from './context-result-integrity.js'
 export * from './reconnect-reconciliation.js'
 export * from './runtime-event-ingestion.js'
+export * from './runtime-artifact-verifier.js'
 export * from './runtime-inventory-ingestion.js'
 export * from './runtime-inventory-maintenance.js'
 export * from './runtime-health-delivery-worker.js'
@@ -40,6 +41,7 @@ export interface RuntimeGatewayStartOptions extends ServiceStartOptions {
   readonly traceId?: RuntimeGatewayCompositionOptions['traceId']
   /** Explicit metric adapter; when absent the gateway emits no consistency metrics. */
   readonly metricAdapter?: RuntimeGatewayCompositionOptions['metricAdapter']
+  readonly runtime?: RuntimeGatewayCompositionOptions['runtime']
   readonly instanceId?: RuntimeGatewayCompositionOptions['instanceId']
   readonly hostname?: RuntimeGatewayCompositionOptions['hostname']
 }
@@ -70,6 +72,7 @@ export const start = ({
           reachability: options.reachability,
           traceId: options.traceId,
           metricAdapter: options.metricAdapter,
+          ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
         })
         server = composed.webSocketServer
       }

@@ -1,4 +1,5 @@
 export { commandInbox, commandInboxStatus } from './commands.js'
+export { admissionRolloutGate, admissionRolloutState } from './admission-rollout.js'
 export {
   agentProfileVersions,
   agentProfiles,
@@ -70,6 +71,7 @@ export {
   runtimeDiscoveryResourceKind,
 } from './runtime-discovery-projections.js'
 export { usageFundingSource, usageLedgerEntries, usageLedgerEntryKind } from './usage-ledger.js'
+export { usageBudgetStates, usageOperationReceipts } from './usage-budget-state.js'
 export {
   marketplaceInstallationState,
   marketplaceInstallations,
@@ -83,6 +85,7 @@ export {
 export { interactionCommands } from './interaction-commands.js'
 export { executionCancellations } from './execution-cancellations.js'
 export { retiredCommandKeys } from './retired-command-keys.js'
+export { retentionHolds } from './retention-holds.js'
 export { runtimeChannelOwnership } from './runtime-channel-ownership.js'
 export { contextCommands } from './context-commands.js'
 export { runtimeChannelSequences } from './runtime-channel-sequences.js'

@@ -4,17 +4,23 @@ import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
-import { CommandInboxService, InMemoryCommandAcceptanceRepository } from '@control-plane/domain'
+import {
+  CommandInboxService,
+  InMemoryCommandAcceptanceRepository,
+  retiredCommandKeyCandidates,
+} from '@control-plane/domain'
 import {
   ContextPackageAuthoringService,
   contextPackageSerializationFixtures,
 } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   REFERENCE_RETENTION_NAMESPACES,
   SqliteCommandAcceptanceRepository,
   SqliteContextPackageRepository,
   SqliteContextAuthoringCommandRepository,
+  SqliteDurableUsageStore,
   SqliteExecutionPlanRepository,
   SqliteExecutionRepository,
   SqlitePersistenceProvider,
@@ -70,9 +76,9 @@ async function seedDefaultPlan(provider) {
   await new SqliteExecutionPlanRepository(provider).put(defaultPlan)
 }
 
-function service(provider, now = receivedAt) {
+function service(provider, now = receivedAt, repositoryOptions) {
   return new CommandInboxService({
-    repository: new SqliteCommandAcceptanceRepository(provider),
+    repository: new SqliteCommandAcceptanceRepository(provider, repositoryOptions),
     executionIdFactory: () => ids.executionId,
     executionPlanValidator: { validate: async () => true },
     now: () => now,
@@ -80,6 +86,58 @@ function service(provider, now = receivedAt) {
 }
 
 describe('SQLite domain repositories', () => {
+  test('budget admission commits the owner and initial funded ledger together', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-budget-admission-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
+    try {
+      await provider.migrate()
+      await seedDefaultPlan(provider)
+
+      const accepted = await service(provider, receivedAt, {
+        budgetAdmission: true,
+      }).acceptExecution(
+        commandInput({
+          requestId: defaultPlan.correlation.requestId,
+          correlation: {
+            workspaceId: defaultPlan.correlation.workspaceId,
+            projectId: defaultPlan.correlation.projectId,
+            taskId: defaultPlan.correlation.taskId,
+            agentId: defaultPlan.correlation.agentId,
+          },
+        })
+      )
+      const ledger = new DurableUsageLedger({ store: new SqliteDurableUsageStore(provider) })
+      const summary = await ledger.summary(
+        defaultPlan.correlation.workspaceId,
+        accepted.execution.executionId
+      )
+      const entries = await ledger.entries(
+        defaultPlan.correlation.workspaceId,
+        accepted.execution.executionId
+      )
+
+      expect(summary).toMatchObject({
+        executionId: accepted.execution.executionId,
+        currency: defaultPlan.constraints.limits.budget.currency,
+        maximumMicrounits: defaultPlan.constraints.limits.budget.maximumMicrounits,
+        maximumTokens: defaultPlan.constraints.limits.tokens.maximumTotal,
+        spentMicrounits: 0,
+        reservedMicrounits: 0,
+        availableMicrounits: defaultPlan.constraints.limits.budget.maximumMicrounits,
+        spentTokens: 0,
+        reservedTokens: 0,
+        availableTokens: defaultPlan.constraints.limits.tokens.maximumTotal,
+        settled: false,
+      })
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({ executionId: accepted.execution.executionId, sequence: 1 })
+      expect(entries[0].kind).toBe('credit')
+    } finally {
+      await provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('new acceptance requires its persisted plan while accepted replay survives plan cleanup', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-plan-acceptance-'))
     const provider = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
@@ -341,6 +399,9 @@ describe('SQLite domain repositories', () => {
         await transaction.delete(command.namespace, command.id, command.revision)
         const [tombstone] = await transaction.list('retired-command-keys')
         expect(tombstone.value).toEqual({
+          scopeKey: retiredCommandKeyCandidates(accepted.command).metadata.scopeKey,
+          metadataVersion: 2,
+          identityDigest: retiredCommandKeyCandidates(accepted.command).metadata.identityDigest,
           retiredAt,
           commandId: ids.commandId,
           executionId: ids.executionId,
@@ -387,6 +448,77 @@ describe('SQLite domain repositories', () => {
       ).toEqual([])
     } finally {
       provider.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('operator retention keeps v1 and v2 tombstones through day 30 and journals expiry deletion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-retired-retention-'))
+    const path = join(directory, 'control-plane.sqlite')
+    const provider = new SqlitePersistenceProvider({ path })
+    try {
+      await provider.migrate()
+      await seedDefaultPlan(provider)
+      const accepted = await service(provider).acceptExecution(commandInput())
+      const repository = new SqliteCommandAcceptanceRepository(provider)
+      await repository.compareAndSet(1, {
+        ...accepted.command,
+        status: 'failed',
+        terminalAt: receivedAt,
+        errorReference: 'error://test/retired-retention',
+        version: 2,
+      })
+      await provider.transaction(async (transaction) => {
+        const [execution] = await transaction.list('executions')
+        await transaction.put({
+          namespace: execution.namespace,
+          id: execution.id,
+          expectedRevision: execution.revision,
+          value: { ...execution.value, state: 'cancelled', terminalAt: receivedAt },
+        })
+      })
+      const retiredAt = '2026-09-24T10:00:00.000Z'
+      expect(await repository.retireExpiredCommand(accepted.command, retiredAt)).toBe(true)
+      await provider.transaction((transaction) =>
+        transaction.put({
+          namespace: 'retired-command-keys',
+          id: 'legacy-unverifiable-row',
+          value: {
+            retiredAt,
+            commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+            executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+          },
+        })
+      )
+      const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 10 }
+      const at29Days = new Date(Date.parse(retiredAt) + 29 * 24 * 60 * 60 * 1_000)
+      const at30Days = new Date(Date.parse(retiredAt) + 30 * 24 * 60 * 60 * 1_000)
+      const after30Days = new Date(at30Days.getTime() + 1)
+      await expect(
+        repository.deleteEligibleRetiredCommandKeys(at29Days, options)
+      ).resolves.toMatchObject({ eligible: 0, scanned: 2 })
+      await expect(
+        repository.deleteEligibleRetiredCommandKeys(at30Days, options)
+      ).resolves.toMatchObject({ eligible: 0, scanned: 2 })
+      const dryRun = await repository.deleteEligibleRetiredCommandKeys(after30Days, options)
+      expect(dryRun).toMatchObject({ dryRun: true, eligible: 2, deleted: 0, scanned: 2 })
+      expect(
+        await provider.transaction((transaction) => transaction.list('retired-command-keys'))
+      ).toHaveLength(2)
+      const journal = []
+      const applied = await repository.deleteEligibleRetiredCommandKeys(after30Days, {
+        ...options,
+        dryRun: false,
+        journal: async (operations) => journal.push(...operations),
+      })
+      expect(applied).toMatchObject({ dryRun: false, eligible: 2, deleted: 2 })
+      expect(journal).toHaveLength(2)
+      expect(journal.every((operation) => operation.kind === 'sqlite.delete')).toBe(true)
+      expect(
+        await provider.transaction((transaction) => transaction.list('retired-command-keys'))
+      ).toEqual([])
+    } finally {
+      await provider.close()
       await rm(directory, { recursive: true, force: true })
     }
   })

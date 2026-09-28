@@ -6,7 +6,10 @@ import type {
   RuntimeExecutionStatus,
   RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
-import { RuntimeExecutionStatusSchema } from '@control-plane/runtime-sdk'
+import {
+  RuntimeExecutionResultSchema,
+  RuntimeExecutionStatusSchema,
+} from '@control-plane/runtime-sdk'
 import type {
   WorkflowInteractionValue,
   WorkflowRuntimeOutcome,
@@ -130,7 +133,19 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       if (cancellation !== undefined) {
         this.#assertAttempt(handle, cancellation.attemptId)
         await this.#cancelHandle(input.executionId, handle, cancellation)
-        return { outcome: 'cancelled' }
+        // A cancellation request is not the terminal winner: completion or
+        // failure may have won the race. Preserve the confirmed state and its
+        // measurements instead of synthesizing an unmeasured cancellation.
+        const status = RuntimeExecutionStatusSchema.parse(await this.runtime.status(handle))
+        if (
+          status.handle.handleId !== handle.handleId ||
+          status.handle.attemptId !== handle.attemptId ||
+          status.handle.startedAt !== handle.startedAt
+        )
+          throw new Error('RUNTIME_CANCEL_HANDLE_MISMATCH')
+        if (!['completed', 'failed', 'cancelled', 'timed_out'].includes(status.state))
+          throw new Error('RUNTIME_CANCEL_UNCONFIRMED')
+        return this.#outcome(input.executionId, input.attemptId, status)
       }
       return this.#observe(input.executionId, input.attemptId, handle)
     })
@@ -242,6 +257,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   ): Promise<WorkflowRuntimeOutcome> {
     await this.#recordTerminalUsage(executionId, attemptId, status)
     if (status.state === 'completed') {
+      const result = RuntimeExecutionResultSchema.parse(status.result)
       const key = `executions/${executionId}/attempts/${attemptId}/result.json`
       const artifactId = `art_${executionId.slice(4)}`
       await this.objectStore.put({
@@ -250,16 +266,25 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
         contentType: 'application/json',
         metadata: { execution: executionId, attempt: attemptId },
       })
-      return { outcome: 'completed', resultReference: artifactId }
+      return {
+        outcome: 'completed',
+        resultReference: artifactId,
+        terminalUsage: result.usage,
+      }
     }
     if (status.state === 'failed' || status.state === 'timed_out') {
       return {
         outcome: 'failed',
         failureCode: status.error?.code ?? 'RUNTIME_FAILED',
         retryable: status.error?.retryable ?? false,
+        ...(status.terminalUsage === undefined ? {} : { terminalUsage: status.terminalUsage }),
       }
     }
-    if (status.state === 'cancelled') return { outcome: 'cancelled' }
+    if (status.state === 'cancelled')
+      return {
+        outcome: 'cancelled',
+        ...(status.terminalUsage === undefined ? {} : { terminalUsage: status.terminalUsage }),
+      }
     if (status.state === 'awaiting_input' && interactionId !== undefined) {
       return { outcome: 'awaiting_input', interactionId }
     }
@@ -359,7 +384,10 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     statusInput: RuntimeExecutionStatus
   ): Promise<void> {
     const status = RuntimeExecutionStatusSchema.parse(statusInput)
-    if (status.terminalUsage === undefined) return
+    // Successful adapters report usage in their result; terminalUsage is reserved
+    // by the runtime contract for unsuccessful terminal states.
+    const usage = status.state === 'completed' ? status.result?.usage : status.terminalUsage
+    if (usage === undefined) return
     this.#assertAttempt(status.handle, attemptId)
     const value = json({
       schemaVersion: 1,
@@ -367,7 +395,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       attemptId,
       handle: status.handle,
       state: status.state,
-      usage: status.terminalUsage,
+      usage,
     })
     await this.persistence.transaction(async (transaction) => {
       const id = recordId(`${executionId}:${attemptId}`)
@@ -412,7 +440,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     if (handle.attemptId !== attemptId) throw new Error('RUNTIME_HANDLE_ATTEMPT_MISMATCH')
   }
 
-  async #effect<Result extends JsonValue>(
+  async #effect<Result extends JsonValue | WorkflowRuntimeOutcome>(
     effectKey: string,
     operation: () => Promise<Result>
   ): Promise<Result> {
@@ -425,7 +453,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
     return this.persistence.transaction(async (transaction) => {
       const concurrent = await transaction.get(namespaces.effects, id)
       if (concurrent !== undefined) return concurrent.value as Result
-      await transaction.put({ namespace: namespaces.effects, id, value: result })
+      await transaction.put({ namespace: namespaces.effects, id, value: json(result) })
       return result
     })
   }

@@ -579,3 +579,6 @@ function deepFreeze<T>(value: T): T {
   }
   return value
 }
+
+export * from './durable-contract.js'
+export * from './durable.js'

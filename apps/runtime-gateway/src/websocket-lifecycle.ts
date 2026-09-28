@@ -99,6 +99,7 @@ export class RuntimeGatewayOutboundError extends Error {
       | 'RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE'
       | 'RUNTIME_GATEWAY_CHANNEL_BACKPRESSURED'
       | 'RUNTIME_GATEWAY_COMMAND_TOO_LARGE'
+      | 'RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE'
   ) {
     super(code)
     this.name = 'RuntimeGatewayOutboundError'
@@ -229,6 +230,43 @@ export class RuntimeGatewayWebSocketLifecycle {
     this.#metrics.increment('runtime_gateway.inbound_failures')
   }
 
+  /** Current local channel authority, including durable credential revocation. */
+  async isChannelActive(
+    source: Pick<ActiveRuntimeNodeChannelRecord, 'nodeId' | 'workspaceId' | 'channelGeneration'>
+  ): Promise<boolean> {
+    if (this.#draining) return false
+    try {
+      const owner = await this.#coordination.lookup(source.nodeId)
+      const connection =
+        owner?.gatewayInstanceId === this.#instanceId
+          ? this.#connections.get(owner.connectionId)
+          : undefined
+      if (
+        !owner ||
+        owner.nodeId !== source.nodeId ||
+        owner.workspaceId !== source.workspaceId ||
+        owner.channelGeneration !== source.channelGeneration ||
+        connection?.state !== 'active' ||
+        !connection.record ||
+        !sameChannel(connection.record, owner)
+      )
+        return false
+      await connection.authenticatedChannel.assertActive()
+      // Revocation reads can yield while another instance replaces ownership.
+      const current = await this.#coordination.lookup(source.nodeId)
+      return (
+        !this.#draining &&
+        connection.state === 'active' &&
+        connection.authenticatedChannel.active &&
+        current !== undefined &&
+        sameChannel(owner, current)
+      )
+    } catch {
+      // Registry/coordination outages cannot confer credential authority.
+      return false
+    }
+  }
+
   async disconnect(connectionId: string, reason = 'peer_disconnected'): Promise<void> {
     const connection = this.#connections.get(connectionId)
     if (connection !== undefined) await this.#disconnect(connection, 1000, reason)
@@ -250,6 +288,12 @@ export class RuntimeGatewayWebSocketLifecycle {
       !sameChannel(connection.record, coordinated)
     ) {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE')
+    }
+    if (
+      command.protocolVersion.major !== coordinated.protocolVersion.major ||
+      command.protocolVersion.minor > coordinated.protocolVersion.minor
+    ) {
+      throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE')
     }
     await connection.authenticatedChannel.assertCommandAllowed(command)
     signal?.throwIfAborted()
@@ -589,6 +633,7 @@ function sameChannel(
 ): boolean {
   return (
     left.nodeId === right.nodeId &&
+    left.workspaceId === right.workspaceId &&
     left.gatewayInstanceId === right.gatewayInstanceId &&
     left.connectionId === right.connectionId &&
     left.channelGeneration === right.channelGeneration

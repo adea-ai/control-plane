@@ -13,6 +13,7 @@ import {
   observeReferenceRetentionWindow,
   type RetentionDeletionResult,
   type RetentionJournalSink,
+  type RetentionHoldPolicy,
 } from '@control-plane/domain'
 import { and, asc, eq, gt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
@@ -22,6 +23,11 @@ import { executionPlans } from './schema/execution-plans.js'
 import { executions } from './schema/executions.js'
 import { delegations } from './schema/delegations.js'
 import { lockAndResetReferenceRetentionWindows } from './context-package-repository.js'
+import {
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+  validatePostgresRetentionHoldPolicy,
+} from './retention-hold-repository.js'
 
 const RETRY_EXECUTION_PLAN_REFERENCE_PUT = Symbol('RETRY_EXECUTION_PLAN_REFERENCE_PUT')
 
@@ -185,6 +191,7 @@ export class PostgresExecutionPlanRetention {
       readonly dryRun?: boolean
       readonly journal?: RetentionJournalSink
       readonly afterId?: string
+      readonly retentionHoldPolicy?: RetentionHoldPolicy
     }
   ): Promise<RetentionDeletionResult> {
     if (Number.isNaN(now.getTime())) throw new Error('EXECUTION_PLAN_RETENTION_INVALID_TIMESTAMP')
@@ -216,17 +223,24 @@ export class PostgresExecutionPlanRetention {
       .orderBy(asc(executionPlans.executionPlanId))
       .limit(counter.bound + 1)
     const page = candidates.slice(0, counter.bound)
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     const truncated = candidates.length > page.length
     let scanned = 0
     for (const candidate of page) {
       scanned += 1
       const outcome = await this.database.transaction(async (transaction) => {
+        await acquirePostgresRetentionHoldClassMutex(transaction, 'execution-plans')
         // The target lock serializes this fresh reference scan with writers,
         // which take the same lifetime lock before recording references.
         const [stored] = await transaction
           .select({
             contentDigest: executionPlans.contentDigest,
             unreferencedSince: executionPlans.unreferencedSince,
+            workspaceId: executionPlans.workspaceId,
+            projectId: executionPlans.projectId,
+            plan: executionPlans.plan,
           })
           .from(executionPlans)
           .where(
@@ -238,9 +252,30 @@ export class PostgresExecutionPlanRetention {
           .limit(1)
           .for('update')
         if (!stored) return { verdict: undefined, removed: false, raced: true }
+        const canonicalPlan = assertExecutionPlanIntegrity(stored.plan)
+        if (
+          canonicalPlan.executionPlanId !== candidate.executionPlanId ||
+          canonicalPlan.contentDigest !== stored.contentDigest ||
+          canonicalPlan.correlation.workspaceId !== stored.workspaceId ||
+          canonicalPlan.correlation.projectId !== stored.projectId
+        ) {
+          return { verdict: undefined, removed: false, raced: true }
+        }
         const pendingReference = await this.#isReferencedPlan(
           transaction,
           candidate.executionPlanId
+        )
+        const holds = await countPostgresMatchingActiveRetentionHolds(
+          transaction,
+          {
+            classId: 'execution-plans',
+            scope: {
+              kind: 'project',
+              workspaceId: canonicalPlan.correlation.workspaceId,
+              projectId: canonicalPlan.correlation.projectId,
+            },
+          },
+          options.retentionHoldPolicy
         )
         const observation = observeReferenceRetentionWindow({
           now: assessedAt,
@@ -259,7 +294,7 @@ export class PostgresExecutionPlanRetention {
                 publicationSettled: true,
                 rejectionKeyReserved: true,
                 pendingReferences: pendingReference ? 1 : 0,
-                holds: 0,
+                holds,
               })
         if (
           !dryRun &&

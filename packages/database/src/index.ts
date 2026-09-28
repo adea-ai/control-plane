@@ -1,10 +1,20 @@
 export {
   assertPostgresUrl,
   createPostgresConnection,
+  createPostgresMigrationConnection,
   DatabaseConnectionError,
   databaseReadinessProbe,
 } from './connection.js'
 export { PostgresCommandAcceptanceRepository } from './command-inbox-repository.js'
+export {
+  AdmissionRolloutError,
+  PostgresAdmissionRolloutService,
+  type AdmissionRolloutErrorCode,
+  type AdmissionRolloutAuditCounts,
+  type AdmissionRolloutAuditReport,
+  type AdmissionRolloutDiagnostic,
+  type AdmissionRolloutStatus,
+} from './admission-rollout.js'
 export {
   lockAndResetReferenceRetentionWindows,
   PostgresContextPackageRepository,
@@ -67,6 +77,7 @@ export { PostgresRuntimeCommandRepository } from './runtime-command-repository.j
 export { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.js'
 export { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.js'
 export { PostgresUsageLedgerRepository } from './usage-ledger-repository.js'
+export { PostgresDurableUsageStore } from './usage-store.js'
 export type {
   ControlPlaneDatabase,
   PostgresConnection,
@@ -75,6 +86,8 @@ export type {
 export {
   commandInbox,
   commandInboxStatus,
+  admissionRolloutGate,
+  admissionRolloutState,
   contextPackages,
   contextAuthoringCommands,
   executionValidationCommands,
@@ -137,6 +150,8 @@ export {
   usageFundingSource,
   usageLedgerEntries,
   usageLedgerEntryKind,
+  usageBudgetStates,
+  usageOperationReceipts,
   skillVersions,
   skills,
   marketplaceInstallationState,
@@ -146,6 +161,13 @@ export { withDomainTransaction } from './transaction.js'
 export type { DomainTransaction } from './transaction.js'
 export { PostgresInteractionCommandRepository } from './interaction-command-repository.js'
 export { PostgresExecutionCancellationRepository } from './execution-cancellation-repository.js'
+export {
+  PostgresRetentionHoldRepository,
+  retentionHoldDatabaseAuthority,
+  acquirePostgresRetentionHoldClassMutex,
+  countPostgresMatchingActiveRetentionHolds,
+} from './retention-hold-repository.js'
+export { retentionHolds } from './schema/retention-holds.js'
 export { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.js'
 export { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.js'
 export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'

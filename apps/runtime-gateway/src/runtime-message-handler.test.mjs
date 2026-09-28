@@ -14,9 +14,33 @@ const source = {
 }
 
 describe('Runtime Gateway production message routing', () => {
+  test.each(['terminal_conflict', 'out_of_order', 'conflict'])(
+    'does not settle the command ledger for %s terminal effects',
+    async (outcome) => {
+      const calls = []
+      const router = new RuntimeGatewayMessageRouter({
+        channelAuthority: { isActive: async () => true },
+        inventory: { handle: async () => undefined },
+        delivery: {
+          acknowledge: async () => undefined,
+          recordResult: async () => calls.push('result'),
+          recordError: async () => calls.push('error'),
+        },
+        events: {
+          ingestProgress: async () => ({ outcome }),
+          ingestResult: async () => ({ outcome }),
+          ingestError: async () => ({ outcome }),
+        },
+      })
+      await router.handle(source, golden.result)
+      await router.handle(source, golden.error)
+      expect(calls).toEqual([])
+    }
+  )
   test('routes inventory, acknowledgement, progress, result, and error frames in durable order', async () => {
     const calls = []
     const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => true },
       inventory: { handle: async () => calls.push('inventory') },
       delivery: {
         acknowledge: async () => calls.push('ack'),
@@ -25,8 +49,14 @@ describe('Runtime Gateway production message routing', () => {
       },
       events: {
         ingestProgress: async () => calls.push('progress'),
-        ingestResult: async () => calls.push('result'),
-        ingestError: async () => calls.push('error'),
+        ingestResult: async () => {
+          calls.push('result')
+          return { outcome: 'applied' }
+        },
+        ingestError: async () => {
+          calls.push('error')
+          return { outcome: 'applied' }
+        },
       },
     })
     const artifactResult = {
@@ -61,8 +91,32 @@ describe('Runtime Gateway production message routing', () => {
     ])
   })
 
+  test('rejects inventory frames when durable channel authority is revoked', async () => {
+    const calls = []
+    const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => false },
+      inventory: { handle: async () => calls.push('inventory') },
+      delivery: {
+        acknowledge: async () => undefined,
+        recordResult: async () => undefined,
+        recordError: async () => undefined,
+      },
+      events: {
+        ingestProgress: async () => undefined,
+        ingestResult: async () => undefined,
+        ingestError: async () => undefined,
+      },
+    })
+
+    await expect(router.handle(source, golden.inventory)).rejects.toThrow(
+      'RUNTIME_GATEWAY_INVENTORY_AUTHORIZATION_DENIED'
+    )
+    expect(calls).toEqual([])
+  })
+
   test('rejects frame families owned by lifecycle or the server side', async () => {
     const router = new RuntimeGatewayMessageRouter({
+      channelAuthority: { isActive: async () => true },
       inventory: { handle: async () => undefined },
       delivery: {
         acknowledge: async () => undefined,

@@ -120,7 +120,12 @@ try {
     },
     connection: { status: 'connected', health: 'healthy', availability: 'healthy' },
     freshness: { state: 'fresh', observedAt: now, expiresAt: deadlineAt },
-    versions: { adapter: '1.0.0', driver: '1.0.0', harness: '0.52.1', protocol: '1.5.0' },
+    versions: {
+      adapter: '1.0.0',
+      driver: '1.0.0',
+      harness: '0.52.1',
+      protocol: `${GatewayProtocolManifest.current.major}.${GatewayProtocolManifest.current.minor}.0`,
+    },
     capabilities: ['filesystem.read', 'stream.output', 'interaction.approval', 'execution.cancel'],
     capabilityDetails: [
       { name: 'execution.cancel', support: 'supported' },
@@ -245,21 +250,14 @@ try {
     sender: lifecycle,
     metrics,
   })
+  const channelAuthority = { isActive: (source) => lifecycle.isChannelActive(source) }
   const events = new RuntimeEventIngestionService({
     commands,
     executions,
     effects: new PostgresRuntimeEventEffectSink(database.application),
     normalizer: new DefaultRuntimeAdapterEventNormalizer(),
     metrics,
-    channelAuthority: {
-      isActive: async (source) => {
-        const active = await coordination.lookup(source.nodeId)
-        return (
-          active?.workspaceId === source.workspaceId &&
-          active?.channelGeneration === source.channelGeneration
-        )
-      },
-    },
+    channelAuthority,
     quarantine: {
       record: async (entry) => {
         quarantine.push(entry)
@@ -267,6 +265,7 @@ try {
     },
   })
   const router = new RuntimeGatewayMessageRouter({
+    channelAuthority,
     delivery,
     events,
     inventory: new RuntimeInventoryMessageHandler({ inventory: inventoryIngestion }),

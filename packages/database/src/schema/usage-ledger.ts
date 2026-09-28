@@ -2,7 +2,6 @@ import {
   bigint,
   boolean,
   index,
-  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -33,7 +32,7 @@ export const usageLedgerEntries = pgTable(
   'usage_ledger_entries',
   {
     entryId: varchar('entry_id', { length: 30 }).primaryKey(),
-    sequence: integer('sequence').notNull(),
+    sequence: bigint('sequence', { mode: 'number' }).notNull(),
     workspaceId: varchar('workspace_id', { length: 30 }).notNull(),
     executionId: varchar('execution_id', { length: 30 })
       .notNull()

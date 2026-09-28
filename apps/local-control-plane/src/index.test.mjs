@@ -372,11 +372,9 @@ describe('Local Control Plane composition', () => {
       }),
       cancel: async (runtimeHandle, request) => {
         cancellations.push(request)
-        return {
-          handle: runtimeHandle,
-          state: 'cancelled',
-          observedAt: request.requestedAt,
-        }
+        // This fixture finishes immediately; cancellation must preserve its
+        // completed terminal winner rather than contradicting status().
+        return driver.status(runtimeHandle)
       },
       cleanup: async () => undefined,
     }
@@ -433,7 +431,10 @@ describe('Local Control Plane composition', () => {
         effectKey: `${preCancelled.effectKey}:cancel`,
         reason: 'deadline',
       })
-      await expect(activities.dispatch(preCancelled)).resolves.toEqual({ outcome: 'cancelled' })
+      await expect(activities.dispatch(preCancelled)).resolves.toMatchObject({
+        outcome: 'completed',
+        terminalUsage: { inputTokens: 1, outputTokens: 1, durationMs: 10 },
+      })
       expect(cancellations).toHaveLength(2)
       expect(
         (

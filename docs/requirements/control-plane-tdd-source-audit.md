@@ -43,17 +43,22 @@ requirement count. SHA-256 of retrieved text normalized to LF with a final newli
     standalone implementation gate must not be confused with live M12 product composition,
     nor may fixtures replace a requirement that specifically calls for native or deployed proof.
 
-## Remaining contradictions and acceptance boundary
+## Follow-up and acceptance boundary
 
-Revision 96 still names `pnpm` and the former `0xPlayerOne/control-plane` repository, while
-the checked-in project uses Bun and `adea-ai/control-plane`. Record and reconcile these
-through documentation governance; do not change implementation or reinterpret scope silently.
-Its marketplace non-goal wording also needs reconciliation against later approved marketplace
+Follow-up reviewed September 27, 2026: the live TDD source was updated with a revision-guarded
+write. Appendix C now identifies Bun 1.4 workspaces, and Appendix D describes its milestone
+statuses as a historical planning baseline with GitHub as the current authority instead of
+claiming M1-M11 are complete. The live ADR-027 record now says it is partially superseded by
+ADR-035 and records that Bun 1.4 supersedes the original pnpm workspace tooling. Both edits
+were verified by read-back. No Drive permissions changed. Revision 96 remains a historical
+snapshot and still contains the earlier pnpm/repository-identity wording; the newer canonical
+source is what was reconciled.
+
+The marketplace non-goal wording still needs reconciliation against later approved marketplace
 plans and implementation, distinguishing runtime-native plugin installation from canonical
-Skill ingestion rather than treating them as the same product surface.
-
-This is a revision-delta audit, not a full atomic extraction or a claim that any listed
-implementation requirement passes. The ledger's historical source timestamp remains unchanged
-until its requirement mappings are re-audited. High-severity reconciliation remains owned by
-documentation governance under #186 and #195, with behavior and operational proof under #188
-and #194 as applicable. No canonical Drive content or permissions were changed.
+Skill ingestion rather than treating them as the same product surface. This is a revision-delta
+audit, not a full atomic extraction or a claim that any listed implementation requirement passes.
+The ledger's historical source timestamp remains unchanged until its requirement mappings are
+re-audited. High-severity reconciliation remains owned by documentation governance under #186
+and #195, with behavior and operational proof under #188 and #194 as applicable. The #195
+source inventory and marketplace reconciliation remain open.
