@@ -24,12 +24,13 @@ const productionEnvironment = {
   INSTANCE_ID: 'runtime-gateway-production-test',
   SERVICE_VERSION: '1.3.0',
 }
+const testEnvironment = { ...productionEnvironment, APP_ENV: 'test' }
 
 describe('Runtime Gateway production startup', () => {
   test('starts delivery independently and drains channels before the delivery worker', async () => {
     const order = []
     const runtime = await start({
-      environment: productionEnvironment,
+      environment: testEnvironment,
       logger: { write: () => undefined },
       processAdapter: new FakeProcessAdapter(),
       webSocketServer: {
@@ -54,7 +55,7 @@ describe('Runtime Gateway production startup', () => {
     const closed = []
     await expect(
       start({
-        environment: productionEnvironment,
+        environment: testEnvironment,
         logger: { write: () => undefined },
         processAdapter: new FakeProcessAdapter(),
         webSocketServer: {
@@ -91,12 +92,12 @@ describe('Runtime Gateway production startup', () => {
     expect(processAdapter.listeners.size).toBe(0)
   })
 
-  test('starts and drains an injected production WebSocket server', async () => {
+  test('starts and drains an injected test WebSocket server', async () => {
     const processAdapter = new FakeProcessAdapter()
     let starts = 0
     let closes = 0
     const runtime = await start({
-      environment: productionEnvironment,
+      environment: testEnvironment,
       logger: { write: () => undefined },
       processAdapter,
       webSocketServer: {
@@ -112,5 +113,32 @@ describe('Runtime Gateway production startup', () => {
     await runtime.shutdown('test')
     expect(closes).toBe(1)
     expect(processAdapter.listeners.size).toBe(0)
+  })
+
+  test('production startup rejects injected servers and non-PostgreSQL gateway storage', async () => {
+    await expect(
+      start({
+        environment: productionEnvironment,
+        logger: { write: () => undefined },
+        processAdapter: new FakeProcessAdapter(),
+        webSocketServer: { start() {}, close: async () => {} },
+      })
+    ).rejects.toMatchObject({ name: 'ServiceStartupError' })
+
+    await expect(
+      start({
+        environment: {
+          ...productionEnvironment,
+          RUNTIME_GATEWAY_STORE_BACKEND: 'sqlite',
+          RUNTIME_GATEWAY_SQLITE_PATH: '/tmp/runtime-gateway-production.sqlite',
+        },
+        logger: { write: () => undefined },
+        processAdapter: new FakeProcessAdapter(),
+        objectStore: {},
+        metrics: {},
+        reachability: {},
+        traceId: () => 'trc_01JABCDEF0123456789ABCDEFG',
+      })
+    ).rejects.toMatchObject({ name: 'ServiceStartupError' })
   })
 })

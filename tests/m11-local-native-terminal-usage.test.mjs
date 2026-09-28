@@ -69,7 +69,6 @@ test.each([
               executablePath,
               dataDirectory: join(directory, 'native'),
               environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_MODE: mode },
-              rpcTimeoutMs: 1_000,
               inputResolver: {
                 resolve: async () => ({
                   systemPrompt: 'Fixture authority',

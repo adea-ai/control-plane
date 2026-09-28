@@ -67,6 +67,7 @@ describe('Runtime Gateway WebSocket lifecycle', () => {
             return true
           },
           subscribeRevocations: () => () => undefined,
+          consumeCredential: async () => 'consumed',
           verify: async () => undefined,
         },
         { now: () => new Date('2026-08-25T12:00:01.000Z') }
@@ -580,6 +581,7 @@ function channel(channelGeneration, id = nodeId, now = () => new Date('2026-08-2
     },
     {
       isRevoked: async () => false,
+      consumeCredential: async () => 'consumed',
       subscribeRevocations: () => () => undefined,
       verify: async () => undefined,
     },

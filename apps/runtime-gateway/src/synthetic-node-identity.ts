@@ -11,6 +11,7 @@ import {
   RuntimeNodeWorkspaceIdSchema,
   type RuntimeNodeAuthenticationAttempt,
   type RuntimeNodeCredentialClaims,
+  type RuntimeNodeIdentityInvalidation,
   type RuntimeNodeIdentityValidationPort,
 } from '@control-plane/runtime-gateway-protocol'
 
@@ -49,9 +50,10 @@ export class SyntheticRuntimeNodeIdentityAuthority {
   readonly #issuer: string
   #keySequence = 0
   readonly #keys = new Map<string, RegisteredVerificationKey>()
-  readonly #listeners = new Set<(credentialId: string) => void>()
+  readonly #listeners = new Set<(invalidation: RuntimeNodeIdentityInvalidation) => void>()
   readonly #now: () => Date
   readonly #revoked = new Set<string>()
+  readonly #consumed = new Set<string>()
 
   constructor(options: SyntheticRuntimeNodeIdentityAuthorityOptions) {
     this.#audience = options.audience
@@ -73,7 +75,8 @@ export class SyntheticRuntimeNodeIdentityAuthority {
   }
 
   retireVerificationKey(keyId: string): void {
-    this.#keys.delete(keyId)
+    if (!this.#keys.delete(keyId)) return
+    for (const listener of this.#listeners) listener({ kind: 'key', keyId })
   }
 
   issueCredential(
@@ -109,13 +112,19 @@ export class SyntheticRuntimeNodeIdentityAuthority {
 
   revokeCredential(credentialId: string): void {
     this.#revoked.add(credentialId)
-    for (const listener of this.#listeners) listener(credentialId)
+    for (const listener of this.#listeners) listener({ kind: 'credential', credentialId })
   }
 
   validationPort(): RuntimeNodeIdentityValidationPort {
     return {
       verify: async (attempt) => this.#verify(attempt),
       isRevoked: async (credentialId) => this.#revoked.has(credentialId),
+      consumeCredential: async (credentialId) => {
+        if (this.#revoked.has(credentialId)) return 'revoked'
+        if (this.#consumed.has(credentialId)) return 'replayed'
+        this.#consumed.add(credentialId)
+        return 'consumed'
+      },
       subscribeRevocations: (listener) => {
         this.#listeners.add(listener)
         return () => this.#listeners.delete(listener)

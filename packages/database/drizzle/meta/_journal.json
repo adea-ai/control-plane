@@ -379,6 +379,13 @@
       "when": 1790547220219,
       "tag": "0053_groovy_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790581128295,
+      "tag": "0054_funny_santa_claus",
+      "breakpoints": true
     }
   ]
 }

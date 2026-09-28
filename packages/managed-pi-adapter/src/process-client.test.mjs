@@ -313,6 +313,27 @@ describe('ManagedPiProcessClient', () => {
     })
   })
 
+  test('keeps runtime version probing independent from the RPC deadline', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-version-probe-'))
+    const executablePath = join(directory, 'pi-fixture.mjs')
+    try {
+      await writeManagedPiRpcFixture(executablePath)
+      const client = new ManagedPiProcessClient({
+        executablePath,
+        dataDirectory: join(directory, 'executions'),
+        environment: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        rpcTimeoutMs: 1,
+        inputResolver: { resolve: async () => undefined },
+      })
+      expect(await client.inspect()).toMatchObject({
+        health: 'healthy',
+        runtimeVersion: '0.84.2',
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('converges a post-start process crash to one bounded terminal failure', async () => {
     const fixture = await processAdapterFixture('crash')
     let handle

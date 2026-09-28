@@ -18,8 +18,13 @@ import {
   toAttemptUpdate,
   toExecutionUpdate,
 } from './execution-repository.js'
+import {
+  InventoryCredentialFenceInvalidError,
+  assertRuntimeCredentialFence,
+} from './runtime-credential-fence.js'
 import { executionEvents } from './schema/events.js'
 import { executionAttempts, executions } from './schema/executions.js'
+import { runtimeCommands } from './schema/runtime-commands.js'
 import { runtimeEventReceipts } from './schema/runtime-event-receipts.js'
 
 export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
@@ -28,6 +33,7 @@ export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyProgress(effect: RuntimeProgressEffect): Promise<RuntimeEventEffectResult> {
     return this.database.transaction(async (transaction) => {
       await lockCommand(transaction, effect.commandId)
+      await lockEffectCredential(transaction, effect.commandId, effect.credentialFence)
       const replay = await replayReceipt(
         transaction,
         effect.commandId,
@@ -80,6 +86,7 @@ export class PostgresRuntimeEventEffectSink implements RuntimeEventEffectSink {
   applyTerminal(effect: RuntimeTerminalEffect): Promise<RuntimeEventEffectResult> {
     return this.database.transaction(async (transaction) => {
       await lockCommand(transaction, effect.commandId)
+      await lockEffectCredential(transaction, effect.commandId, effect.credentialFence)
       await lockExecution(transaction, effect.execution.executionId)
       const replay = await replayReceipt(
         transaction,
@@ -242,4 +249,22 @@ async function lockExecution(transaction: DatabaseTransaction, executionId: stri
   await transaction.execute(
     sql`select pg_advisory_xact_lock(hashtext(${`execution:${executionId}`}))`
   )
+}
+
+async function lockEffectCredential(
+  transaction: DatabaseTransaction,
+  commandId: string,
+  credentialFence: RuntimeProgressEffect['credentialFence']
+): Promise<void> {
+  const [command] = await transaction
+    .select({
+      nodeId: runtimeCommands.runtimeNodeRefId,
+      workspaceId: runtimeCommands.workspaceId,
+    })
+    .from(runtimeCommands)
+    .where(eq(runtimeCommands.commandId, commandId))
+    .limit(1)
+    .for('share')
+  if (!command) throw new InventoryCredentialFenceInvalidError()
+  await assertRuntimeCredentialFence(transaction, credentialFence, command)
 }

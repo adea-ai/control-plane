@@ -22,6 +22,7 @@ import type {
   ActiveRuntimeNodeChannelRecord,
   RuntimeNodeCoordinationPort,
 } from './websocket-coordination.js'
+import type { RuntimeNodeCredentialFence } from './authentication.js'
 
 export interface ContextCommandDeliveryOptions {
   readonly repository: ContextCommandRepository
@@ -178,7 +179,8 @@ export class ContextCommandDeliveryService {
 
   async acknowledge(
     sourceInput: ActiveRuntimeNodeChannelRecord,
-    input: unknown
+    input: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<{ record: ContextCommandRecord; duplicate: boolean }> {
     const source = structuredClone(sourceInput)
     const ack = GatewayAcknowledgementEnvelopeSchema.parse(input)
@@ -201,28 +203,33 @@ export class ContextCommandDeliveryService {
     }
     const now = this.#now().toISOString()
     await this.#active(source)
-    const record = await this.#save(current, {
-      ...current,
-      version: current.version + 1,
-      updatedAt: now,
-      status: accepted ? 'acknowledged' : ack.disposition === 'expired' ? 'expired' : 'failed',
-      ...(!accepted
-        ? {
-            terminalAt: now,
-            completionDigest: digest,
-            errorCode:
-              ack.disposition === 'expired'
-                ? 'CONTEXT_COMMAND_EXPIRED'
-                : 'CONTEXT_COMMAND_REJECTED',
-          }
-        : {}),
-    })
+    const record = await this.#save(
+      current,
+      {
+        ...current,
+        version: current.version + 1,
+        updatedAt: now,
+        status: accepted ? 'acknowledged' : ack.disposition === 'expired' ? 'expired' : 'failed',
+        ...(!accepted
+          ? {
+              terminalAt: now,
+              completionDigest: digest,
+              errorCode:
+                ack.disposition === 'expired'
+                  ? 'CONTEXT_COMMAND_EXPIRED'
+                  : 'CONTEXT_COMMAND_REJECTED',
+            }
+          : {}),
+      },
+      credentialFence
+    )
     return { record, duplicate: false }
   }
 
   async recordResult(
     sourceInput: ActiveRuntimeNodeChannelRecord,
-    input: unknown
+    input: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<{ record: ContextCommandRecord; duplicate: boolean }> {
     const source = structuredClone(sourceInput)
     const result = GatewayResultEnvelopeSchema.parse(input)
@@ -233,40 +240,90 @@ export class ContextCommandDeliveryService {
       if (current.completionDigest === digest) return { record: current, duplicate: true }
       fail('RESULT_CONFLICT')
     }
-    let resultReference: ContextCommandRecord['resultReference']
-    if (result.status === 'succeeded') {
-      try {
-        resultReference = ContextCommandRecordSchema.shape.resultReference
-          .unwrap()
-          .parse(
-            await this.options.results.persist(
-              structuredClone(current),
-              structuredClone(result),
-              digest
-            )
-          )
-      } catch {
-        fail('RESULT_STORE_FAILED')
-      }
-    }
     await this.#active(source)
     const now = this.#now().toISOString()
-    const record = await this.#save(current, {
+    const nextValue = {
       ...current,
       status: result.status,
       version: current.version + 1,
       updatedAt: now,
       terminalAt: now,
       completionDigest: digest,
-      ...(resultReference ? { resultReference } : {}),
       ...(result.status === 'failed' ? { errorCode: 'CONTEXT_PROVIDER_FAILED' } : {}),
-    })
+    }
+    let record: ContextCommandRecord
+    if (result.status === 'succeeded') {
+      const fencedCompareAndSet = this.options.repository.compareAndSetWithCredentialFence
+      if (fencedCompareAndSet !== undefined) {
+        let prepared: ContextCommandRecord | undefined
+        const persisted = await fencedCompareAndSet.call(
+          this.options.repository,
+          current.version,
+          current.commandId,
+          credentialFence,
+          async (lockedCurrent) => {
+            let resultReference: ContextCommandRecord['resultReference']
+            try {
+              resultReference = ContextCommandRecordSchema.shape.resultReference
+                .unwrap()
+                .parse(
+                  await this.options.results.persist(
+                    structuredClone(lockedCurrent),
+                    structuredClone(result),
+                    digest
+                  )
+                )
+            } catch {
+              fail('RESULT_STORE_FAILED')
+            }
+            await this.#active(source)
+            prepared = ContextCommandRecordSchema.parse({
+              ...lockedCurrent,
+              status: result.status,
+              version: lockedCurrent.version + 1,
+              updatedAt: now,
+              terminalAt: now,
+              completionDigest: digest,
+              ...(resultReference ? { resultReference } : {}),
+            })
+            return prepared
+          }
+        )
+        if (!persisted || !prepared) fail('CONCURRENT_UPDATE')
+        record = prepared
+      } else {
+        // Local repositories without a transactional fence remain useful for
+        // offline/test composition. PostgreSQL always exposes the fenced path.
+        let resultReference: ContextCommandRecord['resultReference']
+        try {
+          resultReference = ContextCommandRecordSchema.shape.resultReference
+            .unwrap()
+            .parse(
+              await this.options.results.persist(
+                structuredClone(current),
+                structuredClone(result),
+                digest
+              )
+            )
+        } catch {
+          fail('RESULT_STORE_FAILED')
+        }
+        record = await this.#save(
+          current,
+          { ...nextValue, ...(resultReference ? { resultReference } : {}) },
+          credentialFence
+        )
+      }
+    } else {
+      record = await this.#save(current, nextValue, credentialFence)
+    }
     return { record, duplicate: false }
   }
 
   async recordError(
     sourceInput: ActiveRuntimeNodeChannelRecord,
-    input: unknown
+    input: unknown,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<{ record: ContextCommandRecord; duplicate: boolean }> {
     const source = structuredClone(sourceInput)
     const error = GatewayErrorEnvelopeSchema.parse(input)
@@ -288,15 +345,19 @@ export class ContextCommandDeliveryService {
     }
     const now = this.#now().toISOString()
     await this.#active(source)
-    const record = await this.#save(current, {
-      ...current,
-      status: 'failed',
-      errorCode: error.code,
-      version: current.version + 1,
-      updatedAt: now,
-      terminalAt: now,
-      completionDigest: digest,
-    })
+    const record = await this.#save(
+      current,
+      {
+        ...current,
+        status: 'failed',
+        errorCode: error.code,
+        version: current.version + 1,
+        updatedAt: now,
+        terminalAt: now,
+        completionDigest: digest,
+      },
+      credentialFence
+    )
     return { record, duplicate: false }
   }
 
@@ -344,10 +405,11 @@ export class ContextCommandDeliveryService {
   }
   async #save(
     current: ContextCommandRecord,
-    input: ContextCommandRecord
+    input: ContextCommandRecord,
+    credentialFence?: RuntimeNodeCredentialFence
   ): Promise<ContextCommandRecord> {
     const next = ContextCommandRecordSchema.parse(input)
-    if (!(await this.options.repository.compareAndSet(current.version, next)))
+    if (!(await this.options.repository.compareAndSet(current.version, next, credentialFence)))
       fail('CONCURRENT_UPDATE')
     return next
   }

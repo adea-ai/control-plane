@@ -12,11 +12,15 @@ The checked-in JSON Schema and golden/malformed JSON fixtures under `packages/ru
 
 ## Channel authentication
 
-The WebSocket upgrade uses a separate short-lived `runtime_node` credential and a proof signed by the registered device key. The public package owns only normalized credential claims, the bounded authentication-attempt schema, and the replaceable `RuntimeNodeIdentityValidationPort`; a consuming application remains responsible for node registration, pairing, key custody, and credential issuance. User-session, provider, and reusable device credentials are not command envelopes.
+The WebSocket upgrade uses a short-lived `runtime_node` credential signed by an operator-controlled Ed25519 issuer and a proof signed by the registered device key. In this repository's Hosted/server PostgreSQL composition, the gateway receives only issuer public keys and reads registered device public keys plus issued-credential claims from PostgreSQL. The operator-only CLI holds issuer private-key authority outside the gateway process; the database never stores private keys, compact credentials, or proof signatures. Live Agent HQ/Cortana enrollment remains outside M11. User-session, provider, and reusable device credentials are not command envelopes.
 
-The gateway checks the exact issuer, gateway audience, node, workspace, revocation version, expiry, proof challenge, and monotonically increasing channel generation. A credential ID may establish only one channel. Re-authentication requires a newly issued credential and a higher channel generation; it replaces the prior logical channel. Revocation notifications invalidate the active channel immediately, and command authorization rechecks the revocation port before allowing another command. Audit events contain normalized codes and scope IDs, never compact credentials, signatures, or private key material.
+The RuntimeNode sends `Authorization: RuntimeNode <credential>` and `X-Runtime-Node-Proof: <base64url-signature>` on the upgrade request. It signs the SHA-256 digest of the compact credential plus a challenge derived from that request's RFC 6455 `Sec-WebSocket-Key` (base64url alphabet, padding removed). This binds proof to one handshake without placing credentials in the URL. The gateway checks the operator signature/key ID, registered device proof key and thumbprint, exact issuer/audience/node/workspace/revocation version, expiry, and monotonically increasing channel generation. PostgreSQL atomically consumes each credential once across gateway instances; consumption is irreversible for the lifetime of the credential. Re-authentication requires a newly issued credential and a higher channel generation; it replaces the prior logical channel. Revocation and key-retirement notifications promptly invalidate active channels, but are only wake-up hints: every PostgreSQL-backed inbound write carries the authenticated credential ID/version into the same transaction as its state change. That transaction holds shared credential/key locks through commit, so revocation or key retirement either serializes after an already-authorized write or causes the write to fail closed. Audit events contain normalized codes and scope IDs, never compact credentials, signatures, or private key material.
 
-The synthetic authority in the private Runtime Gateway app exists only for standalone conformance tests. Its generated Ed25519 private keys model RuntimeNode-owned test material and are never passed to `RuntimeNodeChannelAuthenticator`; production deployments replace its validation port with the consuming application's registry and verifier.
+For operator key registration and issuance commands, migration-role requirements,
+key handling, and the one-use credential lifecycle, see
+[`runtime-node-identity-operations.md`](runtime-node-identity-operations.md).
+
+`RUNTIME_NODE_IDENTITY_ISSUER_PUBLIC_KEYS_JSON` is a bounded JSON object mapping operator key IDs to Ed25519 public-key PEM. The gateway rejects private PEM, unknown keys, missing registry rows, mismatched stored claims, retired device keys, and any database/notification failure that would confer authority. The synthetic authority in the private Runtime Gateway app exists only for standalone conformance tests and is never a production fallback. Local execution continues to use direct runtime transport and does not start a Runtime Gateway.
 
 ## WebSocket lifecycle and horizontal scale
 
@@ -33,10 +37,13 @@ explicit `runtime` options are supplied; `start` forwards those options. The
 composition owns its command store but does not own the injected host ports.
 Inventory remains a separate optional host handler and fails closed when absent.
 SQLite coordination is single-instance; the PostgreSQL mode uses durable channel
-ownership. Neither mode provisions node enrollment, credentials, an outbound
-worker connector, a sandbox host, or scoped Artifact upload credentials.
+ownership and the operator-issued RuntimeNode identity registry. Production
+PostgreSQL composition rejects injected upgrade authenticators and requires
+explicit public issuer trust. Neither mode provides a live product enrollment
+API, outbound runtime-agent package, sandbox host, or scoped Artifact upload
+credentials.
 
-Runtime-command composition is opt-in. A host must explicitly provide execution/event effects, reconnect validation and retained-outcome application, execution reconciliation, quarantine, and a scoped Artifact verifier. The verifier must establish that the authenticated command is allowed to reference the supplied Artifact; schema validity alone is not artifact ownership. Missing or malformed host ports fail before the gateway opens its store. Context-only composition keeps runtime frames fail-closed. This option does not supply node enrollment, production identity validation, or a complete executable-host deployment.
+Runtime-command composition is opt-in. A host must explicitly provide execution/event effects, reconnect validation and retained-outcome application, execution reconciliation, quarantine, and a scoped Artifact verifier. The verifier must establish that the authenticated command is allowed to reference the supplied Artifact; schema validity alone is not artifact ownership. Missing or malformed host ports fail before the gateway opens its store. Context-only composition keeps runtime frames fail-closed. Production PostgreSQL identity validation authenticates the channel, but does not supply live product enrollment or a complete executable-host deployment.
 
 For successful runtime-result Artifacts, composition also verifies the configured
 ObjectStore independently of the host authorization hook. The trusted command's

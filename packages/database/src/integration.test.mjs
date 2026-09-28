@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +10,7 @@ import { rejects } from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { ControlApiFixtures } from '@control-plane/contracts'
+import { RuntimeNodeCredentialClaimsSchema } from '@control-plane/runtime-gateway-protocol'
 import {
   contextPackageSerializationFixtures,
   composeProviderContextPackage,
@@ -96,6 +98,7 @@ import { PostgresRuntimeEventEffectSink } from './runtime-event-effect-sink.ts'
 import { PostgresRuntimeInventoryCheckpointRepository } from './runtime-inventory-checkpoint-repository.ts'
 import { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.ts'
 import { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.ts'
+import { PostgresRuntimeNodeIdentityRepository } from './runtime-node-identity-repository.ts'
 import { PostgresContextCommandGrantRepository } from './context-command-grant-repository.ts'
 import { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.ts'
 import { PostgresUsageLedgerRepository } from './usage-ledger-repository.ts'
@@ -719,10 +722,94 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       terminalAt: now,
       resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV',
     }
-    expect(await restarted.compareAndSet(2, completed)).toBe(true)
+    const contextIdentity = makeRuntimeInventoryCredentialFixtures(
+      first.nodeId,
+      first.scope.workspaceId
+    )
+    await isolated.withMigrationDatabase(async (database) => {
+      const writer = new PostgresRuntimeNodeIdentityRepository(database)
+      await writer.registerVerificationKey(contextIdentity.key)
+      await writer.insertIssuedCredential(contextIdentity.credentials[0])
+    })
+    const contextCredential = contextIdentity.credentials[0]
+    expect(
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        contextCredential.credentialId,
+        contextCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    const contextFence = {
+      credentialId: contextCredential.credentialId,
+      revocationVersion: contextCredential.revocationVersion,
+    }
+    const writeEntered = createIntegrationBarrier()
+    const finishWrite = createIntegrationBarrier()
+    const fencedWrite = restarted.compareAndSetWithCredentialFence(
+      2,
+      first.commandId,
+      contextFence,
+      async (current) => {
+        writeEntered.release()
+        await finishWrite.promise
+        return { ...current, ...completed }
+      }
+    )
+    await writeEntered.promise
+    let revocationFinished = false
+    const revoke = isolated.withMigrationDatabase((database) =>
+      new PostgresRuntimeNodeIdentityRepository(database)
+        .revokeCredential(contextCredential.credentialId, new Date())
+        .then((result) => {
+          revocationFinished = true
+          return result
+        })
+    )
+    try {
+      await isolated.waitForBlockedTransaction()
+      expect(revocationFinished).toBe(false)
+    } finally {
+      finishWrite.release()
+    }
+    expect(await fencedWrite).toBe(true)
+    expect((await revoke).revocationVersion).toBe(2)
     expect(await restarted.compareAndSet(3, { ...dispatched, version: 4 })).toBe(false)
     expect(await restarted.get(first.scope.workspaceId, first.commandId)).toEqual(completed)
     expect(await restarted.listPending(query)).toEqual([])
+
+    const revokedCommand = queued({
+      commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAX',
+      idempotencyKey: 'context-read:postgres-test-revoked',
+      payload: {
+        version: 1,
+        parameters: {
+          ...envelope.payload.parameters,
+          operationId: 'context-author:postgres-test-revoked',
+        },
+      },
+    })
+    expect((await restarted.create(revokedCommand)).outcome).toBe('created')
+    const revokedDispatched = {
+      ...revokedCommand,
+      status: 'dispatched',
+      version: 2,
+      deliveryAttempts: 1,
+      lastDelivery: { channelGeneration: 2, sequence: 2, at: now },
+    }
+    expect(await restarted.compareAndSet(1, revokedDispatched)).toBe(true)
+    let revokedPrepareCalled = false
+    await expect(
+      restarted.compareAndSetWithCredentialFence(
+        2,
+        revokedCommand.commandId,
+        contextFence,
+        async (current) => {
+          revokedPrepareCalled = true
+          return { ...current, status: 'succeeded', version: 3, terminalAt: now }
+        }
+      )
+    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+    expect(revokedPrepareCalled).toBe(false)
   })
 
   test('survives backend transaction timeouts without late driver crashes or committed writes', async () => {
@@ -2868,24 +2955,112 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBe('created')
     // The settled shape needs complete dispatch, acknowledgement and result
     // metadata; the record schema rejects partial sets.
+    const runtimeIdentity = makeRuntimeInventoryCredentialFixtures(nodeId, workspaceId)
+    await isolated.withMigrationDatabase(async (database) => {
+      const writer = new PostgresRuntimeNodeIdentityRepository(database)
+      await writer.registerVerificationKey(runtimeIdentity.key)
+      await writer.insertIssuedCredential(runtimeIdentity.credentials[0])
+    })
+    const runtimeCredential = runtimeIdentity.credentials[0]
     expect(
-      await repository.compareAndSet(1, {
-        ...base,
-        commandId: settledId,
-        status: 'succeeded',
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        runtimeCredential.credentialId,
+        runtimeCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    const runtimeFence = {
+      credentialId: runtimeCredential.credentialId,
+      revocationVersion: runtimeCredential.revocationVersion,
+    }
+    const inboundTimestamp = '2026-08-24T23:00:02.000Z'
+    const inboundCasCases = [
+      {
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+        idempotencyKey: 'runtime-command:integration:ack-fence',
+        next: {
+          status: 'acknowledged',
+          acknowledgementReference: 'ack-runtime-fence-0001',
+          acknowledgementDisposition: 'accepted',
+          acknowledgedAt: inboundTimestamp,
+        },
+      },
+      {
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        idempotencyKey: 'runtime-command:integration:result-fence',
+        next: {
+          status: 'succeeded',
+          resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+          resultStatus: 'succeeded',
+          resultRecordedAt: inboundTimestamp,
+        },
+      },
+      {
+        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        idempotencyKey: 'runtime-command:integration:error-fence',
+        next: {
+          status: 'failed',
+          resultStatus: 'failed',
+          resultRecordedAt: inboundTimestamp,
+        },
+      },
+    ]
+    for (const [index, testCase] of inboundCasCases.entries()) {
+      const queued = {
+        ...record,
+        commandId: testCase.commandId,
+        idempotencyKey: testCase.idempotencyKey,
+      }
+      expect((await restarted.create(queued)).outcome).toBe('created')
+      const dispatched = {
+        ...queued,
+        status: 'dispatched',
         version: 2,
         deliveryAttempts: 1,
         lastChannelGeneration: 1,
-        lastSequence: 1,
-        firstDispatchedAt: settledAt,
-        lastDispatchedAt: settledAt,
-        acknowledgementReference: 'ack-runtime-integration-0001',
-        acknowledgementDisposition: 'accepted',
-        acknowledgedAt: settledAt,
-        resultStatus: 'succeeded',
-        resultRecordedAt: settledAt,
-        updatedAt: settledAt,
+        lastSequence: index + 1,
+        firstDispatchedAt: inboundTimestamp,
+        lastDispatchedAt: inboundTimestamp,
+        updatedAt: inboundTimestamp,
+      }
+      expect(await restarted.compareAndSet(1, dispatched)).toBe(true)
+      const inbound = {
+        ...dispatched,
+        ...testCase.next,
+        version: 3,
+        updatedAt: inboundTimestamp,
+      }
+      await expect(restarted.compareAndSet(2, inbound)).rejects.toMatchObject({
+        code: 'INVENTORY_CREDENTIAL_FENCE_INVALID',
       })
+      expect(await restarted.get(testCase.commandId)).toEqual(dispatched)
+      expect(await restarted.compareAndSet(2, inbound, runtimeFence)).toBe(true)
+      await isolated.application
+        .delete(runtimeCommands)
+        .where(eq(runtimeCommands.commandId, testCase.commandId))
+    }
+    expect(
+      await repository.compareAndSet(
+        1,
+        {
+          ...base,
+          commandId: settledId,
+          status: 'succeeded',
+          version: 2,
+          deliveryAttempts: 1,
+          lastChannelGeneration: 1,
+          lastSequence: 1,
+          firstDispatchedAt: settledAt,
+          lastDispatchedAt: settledAt,
+          acknowledgementReference: 'ack-runtime-integration-0001',
+          acknowledgementDisposition: 'accepted',
+          acknowledgedAt: settledAt,
+          resultStatus: 'succeeded',
+          resultRecordedAt: settledAt,
+          updatedAt: settledAt,
+        },
+        runtimeFence
+      )
     ).toBe(true)
     await isolated.application.execute(
       sql`insert into runtime_event_receipts (command_id, message_kind, message_sequence, frame_hash, outcome, recorded_at) values (${settledId}, 'progress', 1, ${`s2:${'a'.repeat(64)}`}, 'applied', ${settledAt}::timestamptz)`
@@ -3001,6 +3176,25 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect((await repository.create(record)).outcome).toBe('created')
     expect((await repository.create(record)).outcome).toBe('duplicate')
 
+    const runtimeIdentity = makeRuntimeInventoryCredentialFixtures(nodeId, workspaceId)
+    await isolated.withMigrationDatabase(async (database) => {
+      const identityRepository = new PostgresRuntimeNodeIdentityRepository(database)
+      await identityRepository.registerVerificationKey(runtimeIdentity.key)
+      await identityRepository.insertIssuedCredential(runtimeIdentity.credentials[0])
+    })
+    const runtimeCredential = runtimeIdentity.credentials[0]
+    expect(
+      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+        runtimeCredential.credentialId,
+        runtimeCredential.revocationVersion,
+        new Date()
+      )
+    ).toBe('consumed')
+    const runtimeFence = {
+      credentialId: runtimeCredential.credentialId,
+      revocationVersion: runtimeCredential.revocationVersion,
+    }
+
     const restarted = new PostgresRuntimeCommandRepository(isolated.application)
     expect(await restarted.listDispatchable(nodeId, '2026-08-24T23:00:02.000Z', 10)).toEqual([
       record,
@@ -3049,6 +3243,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const sink = new PostgresRuntimeEventEffectSink(isolated.application)
     const progress = {
       commandId: record.commandId,
+      credentialFence: runtimeFence,
       eventSequence: 1,
       frameHash: `sha256:${'5'.repeat(64)}`,
       draft: {
@@ -3105,6 +3300,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toEqual({ outcome: 'conflict' })
     const terminal = {
       commandId: record.commandId,
+      credentialFence: runtimeFence,
       messageSequence: 2,
       frameHash: `sha256:${'4'.repeat(64)}`,
       execution: currentExecution,
@@ -3209,6 +3405,25 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         publishedAt: '2026-08-24T23:00:05.000Z',
       })
     }
+    await isolated.withMigrationDatabase((database) =>
+      new PostgresRuntimeNodeIdentityRepository(database).revokeCredential(
+        runtimeCredential.credentialId,
+        new Date()
+      )
+    )
+    await expect(
+      sink.applyProgress({
+        ...progress,
+        eventSequence: 4,
+        frameHash: `sha256:${'0'.repeat(64)}`,
+        draft: {
+          ...progress.draft,
+          eventId: 'evt_01GRZ3NDEKTSV4RRFFQ69G5FAM',
+          payload: { state: 'running', checkpoint: 4 },
+        },
+      })
+    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+    expect(await isolated.application.select().from(runtimeEventReceipts)).toHaveLength(5)
   })
 
   test('persists versioned health ingestion and freshness across service restarts', async () => {
@@ -3630,9 +3845,35 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
       )
     ).toHaveLength(1)
+    const inventoryIdentity = makeRuntimeInventoryCredentialFixtures(
+      removal.runtimeNodeRefId,
+      'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
+    )
+    await isolated.withMigrationDatabase(async (database) => {
+      const identityRepositoryWriter = new PostgresRuntimeNodeIdentityRepository(database)
+      await identityRepositoryWriter.registerVerificationKey(inventoryIdentity.key)
+      for (const credential of inventoryIdentity.credentials)
+        await identityRepositoryWriter.insertIssuedCredential(credential)
+    })
+    const inventoryIdentityRepository = new PostgresRuntimeNodeIdentityRepository(
+      isolated.application
+    )
+    for (const credential of inventoryIdentity.credentials)
+      expect(
+        await inventoryIdentityRepository.consumeCredential(
+          credential.credentialId,
+          credential.revocationVersion,
+          new Date()
+        )
+      ).toBe('consumed')
+
     const inventoryScope = {
       workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
       runtimeNodeRefId: removal.runtimeNodeRefId,
+      credentialFence: {
+        credentialId: inventoryIdentity.credentials[0].credentialId,
+        revocationVersion: inventoryIdentity.credentials[0].revocationVersion,
+      },
       channel: {
         nodeId: removal.runtimeNodeRefId,
         workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
@@ -3793,11 +4034,6 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       )
     )
     expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
-    await expect(
-      unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
-        throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
-      })
-    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
     await unit.run(inventoryScope, async () => {
       await isolated.application.transaction(async (transaction) => {
         const lock = await transaction.execute(
@@ -3806,6 +4042,104 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         expect(lock[0].acquired).toBe(false)
       })
     })
+
+    const revocationFenceScope = inventoryScope
+    const revocationWriteEntered = createIntegrationBarrier()
+    const holdRevocationWrite = createIntegrationBarrier()
+    const revocationWrite = unit.run(revocationFenceScope, async (ports) => {
+      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+      expect(
+        await ports.checkpoints.compareAndSet(checkpoint.revision, {
+          ...checkpoint,
+          revision: checkpoint.revision + 1,
+          snapshotVersion: checkpoint.snapshotVersion + 1,
+        })
+      ).toBe(true)
+      revocationWriteEntered.release()
+      await holdRevocationWrite.promise
+    })
+    await revocationWriteEntered.promise
+    let revocationFinished = false
+    const revoke = isolated.withMigrationDatabase((database) =>
+      new PostgresRuntimeNodeIdentityRepository(database)
+        .revokeCredential(inventoryIdentity.credentials[0].credentialId, new Date())
+        .then((result) => {
+          revocationFinished = true
+          return result
+        })
+    )
+    try {
+      await isolated.waitForBlockedTransaction()
+      expect(revocationFinished).toBe(false)
+    } finally {
+      holdRevocationWrite.release()
+    }
+    await revocationWrite
+    expect((await revoke).revocationVersion).toBe(2)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+    let revokedFenceCallbackReached = false
+    await expect(
+      unit.run(revocationFenceScope, async () => {
+        revokedFenceCallbackReached = true
+      })
+    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+    expect(revokedFenceCallbackReached).toBe(false)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+
+    const retirementFenceScope = {
+      ...inventoryScope,
+      credentialFence: {
+        credentialId: inventoryIdentity.credentials[1].credentialId,
+        revocationVersion: inventoryIdentity.credentials[1].revocationVersion,
+      },
+    }
+    const retirementWriteEntered = createIntegrationBarrier()
+    const holdRetirementWrite = createIntegrationBarrier()
+    const retirementWrite = unit.run(retirementFenceScope, async (ports) => {
+      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+      expect(
+        await ports.checkpoints.compareAndSet(checkpoint.revision, {
+          ...checkpoint,
+          revision: checkpoint.revision + 1,
+          snapshotVersion: checkpoint.snapshotVersion + 1,
+        })
+      ).toBe(true)
+      retirementWriteEntered.release()
+      await holdRetirementWrite.promise
+    })
+    await retirementWriteEntered.promise
+    let retirementFinished = false
+    const retire = isolated.withMigrationDatabase((database) =>
+      new PostgresRuntimeNodeIdentityRepository(database)
+        .retireVerificationKey(inventoryIdentity.key.keyId, 'retired')
+        .then((result) => {
+          retirementFinished = true
+          return result
+        })
+    )
+    try {
+      await isolated.waitForBlockedTransaction()
+      expect(retirementFinished).toBe(false)
+    } finally {
+      holdRetirementWrite.release()
+    }
+    await retirementWrite
+    expect(await retire).toBe(true)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+    let retiredKeyFenceCallbackReached = false
+    await expect(
+      unit.run(retirementFenceScope, async () => {
+        retiredKeyFenceCallbackReached = true
+      })
+    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+    expect(retiredKeyFenceCallbackReached).toBe(false)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+
+    await expect(
+      unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
+        throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
+      })
+    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
     await expect(
       unit.run(
         { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
@@ -3823,7 +4157,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       })
     ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
     expect(staleCallback).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
+    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
     expect(await inventoryOwnership.release(replacement)).toBe(true)
     await expect(
       unit.run({ ...inventoryScope, channel: replacement }, async () => {
@@ -6356,6 +6690,58 @@ function runtimeDiscoveryProjection() {
     observedAt,
     limitations: [],
   }
+}
+
+function createIntegrationBarrier() {
+  let release
+  const promise = new Promise((resolve) => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+function makeRuntimeInventoryCredentialFixtures(nodeId, workspaceId) {
+  const { publicKey } = generateKeyPairSync('ed25519')
+  const publicKeyDer = publicKey.export({ format: 'der', type: 'spki' })
+  const key = {
+    keyId: `rgk_${randomUUID().replaceAll('-', '')}`,
+    nodeId,
+    workspaceId,
+    publicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+    thumbprint: `sha256:${createHash('sha256').update(publicKeyDer).digest('hex')}`,
+    status: 'active',
+  }
+  const issuedAt = new Date(Date.now() - 1_000).toISOString()
+  const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString()
+  const credentials = Array.from({ length: 2 }, () => {
+    const credentialId = `rgc_${randomUUID().replaceAll('-', '')}`
+    const claims = RuntimeNodeCredentialClaimsSchema.parse({
+      schemaVersion: 1,
+      credentialKind: 'runtime_node',
+      credentialId,
+      issuer: 'https://identity.example.test/runtime-nodes',
+      audience: 'control-plane-runtime-gateway',
+      nodeId,
+      workspaceId,
+      keyId: key.keyId,
+      proofKeyThumbprint: key.thumbprint,
+      revocationVersion: 1,
+      channelGeneration: 1,
+      issuedAt,
+      expiresAt,
+    })
+    return {
+      credentialId: claims.credentialId,
+      nodeId: claims.nodeId,
+      workspaceId: claims.workspaceId,
+      keyId: claims.keyId,
+      claims,
+      revocationVersion: claims.revocationVersion,
+      issuedAt: claims.issuedAt,
+      expiresAt: claims.expiresAt,
+    }
+  })
+  return { key, credentials }
 }
 
 function externalSessionDiscoveryProjection() {

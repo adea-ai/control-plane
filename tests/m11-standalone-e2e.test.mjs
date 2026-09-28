@@ -72,6 +72,7 @@ import {
   RecordingGatewayMetrics,
   RecordingRuntimeNodeReachabilityPublisher,
   RuntimeGatewayWebSocketLifecycle,
+  RuntimeGatewayMessageRouter,
   RuntimeInventoryIngestionService,
   RuntimeInventoryMessageHandler,
   RuntimeNodeChannelAuthenticator,
@@ -885,12 +886,30 @@ describe('M11 standalone execution composition', () => {
       }),
     })
     const socket = new RecordingGatewaySocket()
-    const lifecycle = new RuntimeGatewayWebSocketLifecycle({
+    let lifecycle
+    const channelAuthority = {
+      isActive: (source) => lifecycle?.isChannelActive(source) ?? false,
+    }
+    const messages = new RuntimeGatewayMessageRouter({
+      channelAuthority,
+      inventory: new RuntimeInventoryMessageHandler({ inventory }),
+      delivery: {
+        acknowledge: async () => undefined,
+        recordResult: async () => undefined,
+        recordError: async () => undefined,
+      },
+      events: {
+        ingestProgress: async () => ({ outcome: 'applied' }),
+        ingestResult: async () => ({ outcome: 'applied' }),
+        ingestError: async () => ({ outcome: 'applied' }),
+      },
+    })
+    lifecycle = new RuntimeGatewayWebSocketLifecycle({
       instanceId: 'm11-live-gateway',
       coordination: new InMemoryRuntimeNodeCoordination(),
       reachability: new RecordingRuntimeNodeReachabilityPublisher(),
       metrics,
-      messages: new RuntimeInventoryMessageHandler({ inventory }),
+      messages,
       limits: {
         maxConnections: 8,
         maxConnectionsPerWorkspace: 4,

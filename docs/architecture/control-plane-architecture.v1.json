@@ -180,6 +180,7 @@
         "@control-plane/memory-writeback",
         "@control-plane/orchestration",
         "@control-plane/production-readiness",
+        "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk",
         "@control-plane/usage-ledger"
       ],

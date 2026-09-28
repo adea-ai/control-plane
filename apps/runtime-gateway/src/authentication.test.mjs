@@ -106,9 +106,21 @@ describe('RuntimeNode channel authentication', () => {
 
     const current = fixture.authority.issueCredential(fixture.device, { channelGeneration: 2 })
     await authenticate(fixture, current, 'challenge-current-0002')
-    await expect(authenticate(fixture, current, 'challenge-replay-0003')).rejects.toMatchObject({
+    const replayAuthenticator = new RuntimeNodeChannelAuthenticator({
+      identityValidator: fixture.authority.validationPort(),
+      logger: { write() {} },
+      now: () => new Date(now.getTime()),
+    })
+    await expect(
+      authenticate(
+        { ...fixture, authenticator: replayAuthenticator },
+        current,
+        'challenge-replay-0003'
+      )
+    ).rejects.toMatchObject({
       code: 'RUNTIME_NODE_CREDENTIAL_REPLAYED',
     })
+    replayAuthenticator.close()
 
     const stale = fixture.authority.issueCredential(fixture.device, { channelGeneration: 1 })
     await expect(authenticate(fixture, stale, 'challenge-stale-0004')).rejects.toMatchObject({
@@ -156,6 +168,39 @@ describe('RuntimeNode channel authentication', () => {
     expect(logs).toContain('runtime_node_auth.revoked')
     expect(logs).not.toContain(issued.credential)
     expect(logs).not.toContain(fixture.device.privateKey)
+  })
+
+  test('immediately invalidates active channels when a verification key is retired', async () => {
+    const fixture = setup()
+    const issued = fixture.authority.issueCredential(fixture.device, { channelGeneration: 1 })
+    const channel = await authenticate(fixture, issued, 'challenge-key-retirement-0001')
+    const otherDevice = fixture.authority.registerNode({
+      nodeId: otherNodeId,
+      workspaceId: otherWorkspaceId,
+    })
+    const otherIssued = fixture.authority.issueCredential(otherDevice, { channelGeneration: 1 })
+    const otherChallenge = 'challenge-unrelated-key-0001'
+    const otherChannel = await fixture.authenticator.authenticate(
+      otherDevice.authenticationAttempt(otherIssued.credential, otherChallenge),
+      {
+        audience,
+        issuer,
+        nodeId: otherNodeId,
+        workspaceId: otherWorkspaceId,
+        channelGeneration: otherIssued.claims.channelGeneration,
+        challenge: otherChallenge,
+      }
+    )
+
+    fixture.authority.retireVerificationKey(fixture.device.keyId)
+
+    expect(channel.active).toBe(false)
+    expect(channel.invalidatedReason).toBe('revoked')
+    expect(otherChannel.active).toBe(true)
+    await expect(channel.assertCommandAllowed(golden.command)).rejects.toMatchObject({
+      code: 'RUNTIME_NODE_CREDENTIAL_REVOKED',
+    })
+    expect(JSON.stringify(fixture.entries)).toContain('RUNTIME_NODE_VERIFICATION_KEY_RETIRED')
   })
 })
 

@@ -7,6 +7,7 @@ import {
   PostgresRuntimeCommandRepository,
   PostgresRuntimeChannelOwnershipRepository,
   PostgresRuntimeChannelSequenceRepository,
+  PostgresRuntimeNodeIdentityRepository,
   type PostgresConnection,
 } from '@control-plane/database'
 import {
@@ -42,7 +43,12 @@ import {
   type MetricAdapter,
   type StructuredLogger,
 } from '@control-plane/telemetry'
-import type { RuntimeNodeChannel } from './authentication.js'
+import { RuntimeNodeChannelAuthenticator, type RuntimeNodeChannel } from './authentication.js'
+import {
+  authenticateRuntimeNodeUpgrade,
+  PostgresRuntimeNodeIdentityValidationPort,
+  type RuntimeNodeIdentityTrustConfig,
+} from './postgres-runtime-node-identity.js'
 import { ContextCommandDeliveryService } from './context-command-delivery.js'
 import { ContextCommandRecoveryService } from './context-command-recovery.js'
 import {
@@ -145,6 +151,8 @@ export interface RuntimeGatewayCompositionOptions {
    */
   readonly objectStore: ObjectStore | undefined
   readonly authenticateUpgrade: ((request: Request) => Promise<RuntimeNodeChannel>) | undefined
+  /** Required for PostgreSQL/server composition; contains only issuer public keys. */
+  readonly runtimeNodeIdentity?: RuntimeNodeIdentityTrustConfig | undefined
   readonly metrics: GatewayMetrics | undefined
   readonly reachability: RuntimeNodeReachabilityPublisher | undefined
   /** Supplied from the host's tracing context; never invented by the composition. */
@@ -195,17 +203,7 @@ export interface RuntimeGatewayComposition {
 export async function composeRuntimeGateway(
   options: RuntimeGatewayCompositionOptions
 ): Promise<RuntimeGatewayComposition> {
-  const {
-    store,
-    objectStore,
-    authenticateUpgrade,
-    metrics,
-    reachability,
-    traceId,
-    instanceId,
-    hostname,
-    port,
-  } = options
+  const { store, objectStore, metrics, reachability, traceId, instanceId, hostname, port } = options
   if (typeof instanceId !== 'string' || instanceId.length === 0)
     throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
   if (typeof hostname !== 'string' || hostname.length === 0)
@@ -214,12 +212,19 @@ export async function composeRuntimeGateway(
     throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
   if (
     objectStore === undefined ||
-    authenticateUpgrade === undefined ||
     metrics === undefined ||
     reachability === undefined ||
     traceId === undefined
   )
     throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
+  if (
+    (store.backend === 'postgres' &&
+      (options.runtimeNodeIdentity === undefined || options.authenticateUpgrade !== undefined)) ||
+    (store.backend === 'sqlite' &&
+      (options.runtimeNodeIdentity !== undefined || options.authenticateUpgrade === undefined))
+  ) {
+    throw new Error('RUNTIME_GATEWAY_IDENTITY_AUTHORITY_REQUIRED')
+  }
   if (options.runtime !== undefined) assertRuntimePorts(options.runtime)
 
   const limits = options.limits ?? defaultLifecycleLimits
@@ -232,6 +237,7 @@ export async function composeRuntimeGateway(
   let sequences: RuntimeChannelSequenceRepository
   let coordination: RuntimeNodeCoordinationPort
   let closeStore: () => Promise<void>
+  let postgresIdentityRepository: PostgresRuntimeNodeIdentityRepository | undefined
   if (store.backend === 'sqlite') {
     if (typeof store.path !== 'string' || store.path.length === 0)
       throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
@@ -268,6 +274,7 @@ export async function composeRuntimeGateway(
     coordination = new RepositoryRuntimeNodeCoordination(
       new PostgresRuntimeChannelOwnershipRepository(connection.database)
     )
+    postgresIdentityRepository = new PostgresRuntimeNodeIdentityRepository(connection.database)
     closeStore = () => connection.close()
   }
 
@@ -278,7 +285,28 @@ export async function composeRuntimeGateway(
     await closeStore()
   }
 
+  let identityValidation: PostgresRuntimeNodeIdentityValidationPort | undefined
+  let channelAuthenticator: RuntimeNodeChannelAuthenticator | undefined
   try {
+    let authenticateUpgrade = options.authenticateUpgrade
+    if (store.backend === 'postgres') {
+      const trust = options.runtimeNodeIdentity
+      if (trust === undefined || postgresIdentityRepository === undefined)
+        throw new Error('RUNTIME_GATEWAY_IDENTITY_AUTHORITY_REQUIRED')
+      identityValidation = new PostgresRuntimeNodeIdentityValidationPort(
+        postgresIdentityRepository,
+        trust.issuerPublicKeys
+      )
+      await identityValidation.startRevocationListener()
+      channelAuthenticator = new RuntimeNodeChannelAuthenticator({
+        identityValidator: identityValidation,
+        logger: options.logger ?? runtimeGatewayAuthenticationLogger,
+      })
+      authenticateUpgrade = (request) =>
+        authenticateRuntimeNodeUpgrade(request, channelAuthenticator!, trust)
+    }
+    if (authenticateUpgrade === undefined)
+      throw new Error('RUNTIME_GATEWAY_IDENTITY_AUTHORITY_REQUIRED')
     const artifacts = new ContextCommandArtifactStore(objectStore)
     // Consistency metrics flow through the telemetry redaction pipeline with bounded
     // label cardinality; without an injected metric adapter nothing is emitted.
@@ -522,6 +550,7 @@ export async function composeRuntimeGateway(
       ...(runtime === undefined ? {} : { runtime }),
       close: async () => {
         let serverFailure: unknown
+        let identityFailure: unknown
         let storeFailure: unknown
         try {
           await webSocketServer.close()
@@ -529,26 +558,47 @@ export async function composeRuntimeGateway(
           serverFailure = error
         }
         try {
+          channelAuthenticator?.close()
+          await identityValidation?.close()
+        } catch (error) {
+          identityFailure = error
+        }
+        try {
           await closeOwnedStore()
         } catch (error) {
           storeFailure = error
         }
-        if (serverFailure !== undefined && storeFailure !== undefined)
+        const closeFailures = [serverFailure, identityFailure, storeFailure].filter(
+          (error) => error !== undefined
+        )
+        if (closeFailures.length > 1)
           throw new Error('RUNTIME_GATEWAY_CLOSE_FAILED', {
-            cause: new AggregateError([serverFailure, storeFailure]),
+            cause: new AggregateError(closeFailures),
           })
         if (serverFailure !== undefined) throw serverFailure
+        if (identityFailure !== undefined) throw identityFailure
         if (storeFailure !== undefined) throw storeFailure
       },
     }
   } catch (error) {
+    let identityCloseError: unknown
+    try {
+      // Partial composition can establish LISTEN before a later route/server
+      // validation fails; always close the subscriber before its DB pool.
+      channelAuthenticator?.close()
+      await identityValidation?.close()
+    } catch (closeError) {
+      identityCloseError = closeError
+    }
     try {
       await closeOwnedStore()
     } catch (closeError) {
-      throw new AggregateError([error, closeError], 'RUNTIME_GATEWAY_COMPOSITION_FAILED', {
-        cause: closeError,
-      })
+      identityCloseError ??= closeError
     }
+    if (identityCloseError !== undefined)
+      throw new AggregateError([error, identityCloseError], 'RUNTIME_GATEWAY_COMPOSITION_FAILED', {
+        cause: error,
+      })
     throw error
   }
 }
@@ -596,4 +646,15 @@ function assertLifecycleLimits(limits: RuntimeGatewayWebSocketLimits): void {
     limits.heartbeatTimeoutMs >= limits.idleTimeoutMs
   )
     throw new Error('RUNTIME_GATEWAY_COMPOSITION_INVALID')
+}
+
+const runtimeGatewayAuthenticationLogger: StructuredLogger = {
+  write(entry) {
+    // The authenticator emits only normalized outcome codes and node/workspace
+    // scope. Never serialize request headers, compact credentials or proofs.
+    const message = JSON.stringify(entry)
+    if (entry.level === 'error') console.error(message)
+    else if (entry.level === 'warn') console.warn(message)
+    else console.info(message)
+  },
 }

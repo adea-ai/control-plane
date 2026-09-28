@@ -72,8 +72,41 @@ export class RuntimeNodeIdentityValidationError extends Error {
   }
 }
 
+/** Result of the durable, atomic one-time credential-consumption fence. */
+export type RuntimeNodeCredentialConsumptionResult =
+  | 'consumed'
+  | 'replayed'
+  | 'revoked'
+  | 'expired'
+  | 'unknown'
+
+/**
+ * Produces the proof challenge bound to one RFC 6455 upgrade request. Both the
+ * RuntimeNode client and gateway derive this from the client-generated 128-bit
+ * `Sec-WebSocket-Key`; the result is URL-safe for the bounded proof schema.
+ */
+export function runtimeNodeWebSocketChallenge(secWebSocketKey: string): string {
+  if (!/^[A-Za-z0-9+/]{22}==$/.test(secWebSocketKey)) {
+    throw new Error('RUNTIME_NODE_WEBSOCKET_KEY_INVALID')
+  }
+  return secWebSocketKey.slice(0, -2).replaceAll('+', '-').replaceAll('/', '_')
+}
+
 export interface RuntimeNodeIdentityValidationPort {
   verify(attempt: RuntimeNodeAuthenticationAttempt): Promise<unknown>
   isRevoked(credentialId: string, revocationVersion: number): Promise<boolean>
-  subscribeRevocations(listener: (credentialId: string) => void): () => void
+  /** Atomically burns an issued credential so two gateways cannot accept it. */
+  consumeCredential(
+    credentialId: string,
+    revocationVersion: number,
+    now: Date
+  ): Promise<RuntimeNodeCredentialConsumptionResult>
+  subscribeRevocations(
+    listener: (invalidation: RuntimeNodeIdentityInvalidation) => void
+  ): () => void
 }
+
+/** Durable identity state changes that should immediately invalidate open channels. */
+export type RuntimeNodeIdentityInvalidation =
+  | { readonly kind: 'credential'; readonly credentialId: string }
+  | { readonly kind: 'key'; readonly keyId: string }

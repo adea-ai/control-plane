@@ -145,6 +145,8 @@ export {
   runtimeEventReceiptOutcome,
   runtimeEventReceipts,
   runtimeInventoryCheckpoints,
+  runtimeNodeIssuedCredentials,
+  runtimeNodeVerificationKeys,
   softDeleteColumns,
   timestampColumns,
   usageFundingSource,
@@ -170,5 +172,15 @@ export {
 export { retentionHolds } from './schema/retention-holds.js'
 export { PostgresRuntimeChannelOwnershipRepository } from './runtime-channel-ownership-repository.js'
 export { PostgresRuntimeChannelSequenceRepository } from './runtime-channel-sequence-repository.js'
+export {
+  PostgresRuntimeNodeIdentityRepository,
+  RuntimeNodeIdentityRepositoryError,
+  type RuntimeNodeCredentialConsumeResult,
+  type RuntimeNodeIdentityRepositoryErrorCode,
+  type RuntimeNodeIssuedCredentialInput,
+  type RuntimeNodeIssuedCredentialRecord,
+  type RuntimeNodeVerificationKeyRecord,
+  type RuntimeNodeVerificationKeyStatus,
+} from './runtime-node-identity-repository.js'
 export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'
 export { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.js'

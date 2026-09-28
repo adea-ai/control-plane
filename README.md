@@ -45,6 +45,7 @@ Key documentation:
 - [`docs/contracts.md`](docs/contracts.md): service authentication, canonical identifiers, envelopes, and compatibility policy.
 - [`docs/profiles-and-skills.md`](docs/profiles-and-skills.md): immutable AgentProfile/Skill ownership and lifecycle.
 - [`docs/runtime-capabilities.md`](docs/runtime-capabilities.md): runtime capabilities, RuntimeNode references, and compatibility states.
+- [`docs/runtime-node-identity-operations.md`](docs/runtime-node-identity-operations.md): operator-owned RuntimeNode key registration, one-use credential issuance, and revocation.
 - [`docs/execution-constraints.md`](docs/execution-constraints.md): provider-neutral tool/model/policy/limit contracts.
 - [`docs/project-state.md`](docs/project-state.md), [`docs/context-packages.md`](docs/context-packages.md), and [`docs/execution-plans.md`](docs/execution-plans.md): durable state and immutable execution authority.
 - [`docs/sdk.md`](docs/sdk.md): public contracts/SDK and deterministic integration fixtures.
