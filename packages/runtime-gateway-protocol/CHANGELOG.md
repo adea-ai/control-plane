@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.6.0...runtime-gateway-protocol-v1.6.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **runtime-gateway:** preserve public identity port compatibility ([#748](https://github.com/adea-ai/control-plane/issues/748)) ([d94d6af](https://github.com/adea-ai/control-plane/commit/d94d6afcdb970fd8ee9fe2aa135a14649a5ec70b))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.5.0...runtime-gateway-protocol-v1.6.0) (2026-09-28)
 
 
