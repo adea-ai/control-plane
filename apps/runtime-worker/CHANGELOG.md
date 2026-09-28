@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.3...runtime-worker-v1.9.0) (2026-09-28)
+
+
+### Features
+
+* **m11:** harden retention, budgets and runtime delivery ([#743](https://github.com/adea-ai/control-plane/issues/743)) ([ea7ced3](https://github.com/adea-ai/control-plane/commit/ea7ced395a93ca7975a77f8b481235e893f33562))
+
 ## [1.8.3](https://github.com/adea-ai/control-plane/compare/runtime-worker-v1.8.2...runtime-worker-v1.8.3) (2026-09-23)
 
 

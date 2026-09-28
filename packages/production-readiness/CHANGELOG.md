@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.3.2...production-readiness-v1.4.0) (2026-09-28)
+
+
+### Features
+
+* **m11:** harden retention, budgets and runtime delivery ([#743](https://github.com/adea-ai/control-plane/issues/743)) ([ea7ced3](https://github.com/adea-ai/control-plane/commit/ea7ced395a93ca7975a77f8b481235e893f33562))
+* **runtime-node:** add durable identity and revocation fences ([#747](https://github.com/adea-ai/control-plane/issues/747)) ([fc7ddab](https://github.com/adea-ai/control-plane/commit/fc7ddab765a66f5f22bba4d2f61eda0c877f727f))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.3.1...production-readiness-v1.3.2) (2026-09-22)
 
 

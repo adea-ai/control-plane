@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.5.4...managed-pi-adapter-v1.6.0) (2026-09-28)
+
+
+### Features
+
+* **m11:** harden retention, budgets and runtime delivery ([#743](https://github.com/adea-ai/control-plane/issues/743)) ([ea7ced3](https://github.com/adea-ai/control-plane/commit/ea7ced395a93ca7975a77f8b481235e893f33562))
+* **runtime-node:** add durable identity and revocation fences ([#747](https://github.com/adea-ai/control-plane/issues/747)) ([fc7ddab](https://github.com/adea-ai/control-plane/commit/fc7ddab765a66f5f22bba4d2f61eda0c877f727f))
+
 ## [1.5.4](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.5.3...managed-pi-adapter-v1.5.4) (2026-09-22)
 
 
