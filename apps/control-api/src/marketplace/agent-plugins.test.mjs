@@ -110,16 +110,53 @@ function snapshotFixture() {
 }
 
 describe('Agent Plugins installation planning', () => {
-  test('rejects a workspace identity that does not match the request scope', () => {
-    expect(() =>
+  test('accepts distinct Control Plane and Adea workspace namespaces', () => {
+    expect(
       assertMarketplacePlanRequest({
-        workspaceId: 'workspace-a',
+        workspaceId: 'wsp_control-plane',
         payload: {
           pluginId: 'plugin:example:demo',
           releaseId: `release:${'b'.repeat(64)}`,
           instanceId: 'instance-1',
           requestedHarness: 'codex',
-          workspaceIdentity: { workspaceId: 'workspace-b', userId: 'user-1' },
+          workspaceIdentity: { workspaceId: 'adea_workspace', userId: 'user-1' },
+        },
+      })
+    ).toMatchObject({
+      workspaceIdentity: { workspaceId: 'adea_workspace', userId: 'user-1' },
+    })
+  })
+
+  test('rejects external workspace and user identifiers beyond the contract limit', () => {
+    const request = {
+      workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+      payload: {
+        pluginId: 'plugin:example:demo',
+        releaseId: `release:${'b'.repeat(64)}`,
+        instanceId: 'instance-1',
+        requestedHarness: 'codex',
+        workspaceIdentity: { workspaceId: 'adea_workspace', userId: 'user-1' },
+      },
+    }
+
+    expect(() =>
+      assertMarketplacePlanRequest({
+        ...request,
+        payload: {
+          ...request.payload,
+          workspaceIdentity: {
+            ...request.payload.workspaceIdentity,
+            workspaceId: 'w'.repeat(129),
+          },
+        },
+      })
+    ).toThrow()
+    expect(() =>
+      assertMarketplacePlanRequest({
+        ...request,
+        payload: {
+          ...request.payload,
+          workspaceIdentity: { ...request.payload.workspaceIdentity, userId: 'u'.repeat(129) },
         },
       })
     ).toThrow()
