@@ -179,6 +179,34 @@ describe('M11.11 skill library baseline', () => {
     )
   })
 
+  test('scans malformed destinations without losing bracketed link labels', async () => {
+    const malformedAngleDestinations = '[x](<'.repeat(4096)
+    const malformedBareDestinations = '[x](a'.repeat(4096)
+    const overlappingValidSuffix = '[x](a'.repeat(2048) + ')'
+    const startedAt = performance.now()
+    await withSkillFixture(
+      {
+        body: [
+          malformedAngleDestinations,
+          malformedBareDestinations,
+          overlappingValidSuffix,
+          '[link [foo [bar]]](references/nested-label-missing.md)',
+          String.raw`[link \] label](references/escaped-close-missing.md)`,
+          String.raw`[link \[bar](references/escaped-open-missing.md)`,
+        ].join('\n'),
+        resources: {},
+      },
+      async (root) => {
+        const { errors } = await discoverSkillLibrary({ repositoryRoot: root })
+        const messages = errors.map((error) => error.message).join('\n')
+        expect(messages).toContain('references/nested-label-missing.md')
+        expect(messages).toContain('references/escaped-close-missing.md')
+        expect(messages).toContain('references/escaped-open-missing.md')
+      }
+    )
+    expect(performance.now() - startedAt).toBeLessThan(1000)
+  })
+
   test('rejects unreferenced nested resources', async () => {
     await withSkillFixture(
       {

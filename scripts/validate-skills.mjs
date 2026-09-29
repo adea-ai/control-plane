@@ -9,11 +9,9 @@ const inventoryFile = 'docs/skills/skill-library.json'
 const REGISTRY_FILE = 'README.md'
 const TEXT_FILE = /\.(?:md|ya?ml|json|m?js|ts|txt|sh|toml)$/iu
 const RESOURCE_DIRECTORY = /(?:^|\/)references\//u
+const WHITESPACE = /\s/u
 const SEMANTIC_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u
-// Bound label scanning and make repeated destination units disjoint for untrusted Markdown.
-const MARKDOWN_LINK =
-  /!?\[[^\x5b\x5d]*\]\(\s*(<[^>]+>|(?:\\.|[^)\\\s])+)(?:\s+["'][^)]*["'])?\s*\)/gu
 const MARKDOWN_REFERENCE = /^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|[^\s]+)(?:\s+.*)?$/gmu
 
 /** Machine-specific or absolute path markers that make skill text non-portable. */
@@ -84,10 +82,146 @@ function stripCode(markdown) {
   return output.join('\n')
 }
 
+function isLineTerminator(character) {
+  return (
+    character === '\n' || character === '\r' || character === '\u2028' || character === '\u2029'
+  )
+}
+
+// Pre-index delimiters once so malformed PR Markdown cannot trigger repeated suffix scans.
+function indexMarkdownLinkSyntax(markdown) {
+  const length = markdown.length
+  const escaped = new Uint8Array(length)
+  const matchingBrackets = new Int32Array(length)
+  matchingBrackets.fill(-1)
+  const openingBrackets = []
+
+  for (let index = 0; index < length; index++) {
+    const character = markdown[index]
+    if (character === '\\' && index + 1 < length && !isLineTerminator(markdown[index + 1])) {
+      escaped[index + 1] = 1
+      index++
+      continue
+    }
+    if (character === '[') openingBrackets.push(index)
+    else if (character === ']' && openingBrackets.length > 0) {
+      const openingBracket = openingBrackets.pop()
+      matchingBrackets[openingBracket] = index
+    }
+  }
+
+  const nextNonWhitespace = new Int32Array(length + 1)
+  nextNonWhitespace.fill(-1)
+  const previousNonWhitespace = new Int32Array(length + 1)
+  previousNonWhitespace.fill(-1)
+  const nextCloseParenthesis = new Int32Array(length + 1)
+  nextCloseParenthesis.fill(-1)
+  const nextUnquotedBoundary = new Int32Array(length + 1)
+  nextUnquotedBoundary.fill(-1)
+  const nextAngleClose = new Int32Array(length + 1)
+  nextAngleClose.fill(-1)
+
+  let nextNonWhitespaceIndex = -1
+  let nextCloseParenthesisIndex = -1
+  let nextUnquotedBoundaryIndex = -1
+  let nextAngleCloseIndex = -1
+  for (let index = length - 1; index >= 0; index--) {
+    const character = markdown[index]
+    if (!WHITESPACE.test(character)) nextNonWhitespaceIndex = index
+    if (character === ')' && !escaped[index]) nextCloseParenthesisIndex = index
+    if (character === '>') nextAngleCloseIndex = index
+    if (
+      (!escaped[index] && (character === ')' || WHITESPACE.test(character))) ||
+      (character === '\\' &&
+        !escaped[index] &&
+        (index + 1 === length || isLineTerminator(markdown[index + 1])))
+    ) {
+      nextUnquotedBoundaryIndex = index
+    }
+    nextNonWhitespace[index] = nextNonWhitespaceIndex
+    nextCloseParenthesis[index] = nextCloseParenthesisIndex
+    nextUnquotedBoundary[index] = nextUnquotedBoundaryIndex
+    nextAngleClose[index] = nextAngleCloseIndex
+  }
+
+  let previousNonWhitespaceIndex = -1
+  for (let index = 0; index < length; index++) {
+    if (!WHITESPACE.test(markdown[index])) previousNonWhitespaceIndex = index
+    previousNonWhitespace[index + 1] = previousNonWhitespaceIndex
+  }
+
+  return {
+    escaped,
+    matchingBrackets,
+    nextNonWhitespace,
+    previousNonWhitespace,
+    nextCloseParenthesis,
+    nextUnquotedBoundary,
+    nextAngleClose,
+  }
+}
+
+function markdownInlineTargets(markdown) {
+  const {
+    escaped,
+    matchingBrackets,
+    nextNonWhitespace,
+    previousNonWhitespace,
+    nextCloseParenthesis,
+    nextUnquotedBoundary,
+    nextAngleClose,
+  } = indexMarkdownLinkSyntax(markdown)
+  const targets = new Set()
+
+  for (let openingBracket = 0; openingBracket < markdown.length; openingBracket++) {
+    if (markdown[openingBracket] !== '[' || escaped[openingBracket]) continue
+    const closingBracket = matchingBrackets[openingBracket]
+    if (closingBracket < 0 || markdown[closingBracket + 1] !== '(') continue
+
+    const targetStart = nextNonWhitespace[closingBracket + 2]
+    if (targetStart < 0) continue
+
+    let targetEnd
+    if (markdown[targetStart] === '<') {
+      const closingAngle = nextAngleClose[targetStart + 1]
+      if (closingAngle <= targetStart + 1) continue
+      targetEnd = closingAngle + 1
+    } else {
+      const boundary = nextUnquotedBoundary[targetStart]
+      if (boundary <= targetStart || markdown[boundary] === '\\') continue
+      targetEnd = boundary
+    }
+
+    const suffixStart = nextNonWhitespace[targetEnd]
+    if (suffixStart < 0) continue
+    if (markdown[suffixStart] === ')' && !escaped[suffixStart]) {
+      targets.add(markdown.slice(targetStart, targetEnd))
+      openingBracket = suffixStart
+      continue
+    }
+
+    const closingParenthesis = nextCloseParenthesis[suffixStart]
+    if (closingParenthesis < 0) continue
+    const titleStart = suffixStart
+    const titleEnd = previousNonWhitespace[closingParenthesis]
+    if (
+      (markdown[titleStart] === '"' || markdown[titleStart] === "'") &&
+      !escaped[titleStart] &&
+      titleEnd > titleStart &&
+      markdown[titleEnd] === markdown[titleStart] &&
+      !escaped[titleEnd]
+    ) {
+      targets.add(markdown.slice(targetStart, targetEnd))
+      openingBracket = closingParenthesis
+    }
+  }
+
+  return targets
+}
+
 function markdownTargets(markdown) {
   const body = stripCode(markdown)
-  const targets = new Set()
-  for (const match of body.matchAll(MARKDOWN_LINK)) targets.add(match[1])
+  const targets = markdownInlineTargets(body)
   for (const match of body.matchAll(MARKDOWN_REFERENCE)) targets.add(match[1])
   return targets
 }
