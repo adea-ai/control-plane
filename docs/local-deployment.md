@@ -104,8 +104,9 @@ provider endpoints in the explicitly selected native Codex home. Only the select
 is under the Local data directory. Arbitrary parent environment variables are not forwarded.
 Published profile/Skill pins and model-route eligibility are checked before the prompt is sent.
 Native harness instructions and tool permissions retain their native ownership.
-The preset retains upstream workspace-write sandbox behavior but routes permission requests to
-the authenticated Control Plane interaction flow rather than the upstream automatic reviewer.
+The `read-only` preset maps to Codex native `readOnly` sandbox policy with network access disabled,
+while keeping `on-request` approval routed through the authenticated Control Plane interaction
+flow rather than the upstream automatic reviewer. It does not grant workspace-write access.
 
 The native certification covers completion through this runtime selector with SQLite and real
 Restate, including configured model/provider override of conflicting native defaults. It is not

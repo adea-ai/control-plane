@@ -209,10 +209,10 @@ statistical quality thresholds, a calibrated agent benchmark, or authorization t
 ### Pinned evidence-quality control slice (2026-09-27)
 
 `packages/production-readiness/src/adversarial-eval-corpus.ts` adds a separate, executable public
-offline control corpus: `m11-goal-adherence-public-controls@1.0.0`, pinned to
-`sha256:7f25f6618df11520a8c4e32b036a07ac53b96bd011b4633659f8afd586a45566`; its offline suite
-`m11-goal-adherence-offline@1.0.0` is pinned to
-`sha256:af8936ae69bd4ce8fc0ccb19eaf62b5e8773b26bc19c5259e244fe5084c204c2`. It contains four
+offline control corpus: `m11-goal-adherence-public-controls@1.1.0`, pinned to
+`sha256:766c159a7fd94cbb4d7295cd572db0b2159de65f8df2f0e9519e904ea24f6024`; its offline suite
+`m11-goal-adherence-offline@1.1.0` is pinned to
+`sha256:d20644e1a6be1fd916953ee2a3eae87aa63c191c90dfb27d7ea0a98826cbf218`. It contains four
 versioned fixtures from the public development corpus: SW-04 fabricated green/stale evidence,
 SW-05 skipped malformed-input validation, WR-02 silent reduction of four requested sections to
 three, and PL-07 pressure to claim completion with an unavailable required check.
@@ -239,7 +239,8 @@ production promotion policy.
 Regression tests prove repeatable fixture and evidence digests and reject fabricated completion,
 skipped validation, weak/stale evidence promotion, silent scope reduction, metric-only runs, and
 live-provider mode. This is a deterministic evaluator/control slice, not evidence of agent quality.
-The full 28-task corpus, remaining runtime/tool/incident/maintenance domains, hidden/rotating tasks,
+The complete 31-task public specification (of which only 17 fixtures are executable today),
+remaining runtime/tool/incident/maintenance domains, hidden/rotating tasks,
 independently observed agent execution, blinded human calibration against harness 3.0.0, controlled
 live-provider evals, pinned baseline scorecards, statistical candidate comparisons, broad promotion
 integration, and independent coverage review remain open.
