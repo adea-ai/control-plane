@@ -610,6 +610,9 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
     let raced = 0
     let afterId = options.afterId
     let done = false
+    await this.database.transaction((transaction) =>
+      validatePostgresRetentionHoldPolicy(transaction, options.retentionHoldPolicy)
+    )
     while (!done) {
       const limit = Math.min(128, counter.remaining + 1)
       const candidates = await this.database
