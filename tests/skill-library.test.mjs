@@ -158,6 +158,27 @@ describe('M11.11 skill library baseline', () => {
     )
   })
 
+  test('keeps escaped and angle-bracket Markdown destinations intact', async () => {
+    const escapedTarget = String.raw`references/not\)found.md`
+    const unmatchedLabels = '['.repeat(4096)
+    await withSkillFixture(
+      {
+        body: `${unmatchedLabels}\n${String.raw`Read [the guide](references/guide.md), [a file with spaces](<references/guide with spaces.md>), and [the escaped destination](${escapedTarget}).`}`,
+        resources: {
+          'references/guide.md': '# Guide\n',
+          'references/guide with spaces.md': '# Guide with spaces\n',
+        },
+      },
+      async (root) => {
+        const { errors } = await discoverSkillLibrary({ repositoryRoot: root })
+        expect(errors).toHaveLength(1)
+        expect(errors[0].message).toContain(
+          `local Markdown link target '${escapedTarget}' does not exist`
+        )
+      }
+    )
+  })
+
   test('rejects unreferenced nested resources', async () => {
     await withSkillFixture(
       {

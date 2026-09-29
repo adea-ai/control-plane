@@ -11,7 +11,9 @@ const TEXT_FILE = /\.(?:md|ya?ml|json|m?js|ts|txt|sh|toml)$/iu
 const RESOURCE_DIRECTORY = /(?:^|\/)references\//u
 const SEMANTIC_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u
-const MARKDOWN_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|(?:\\.|[^)\s])+)(?:\s+["'][^)]*["'])?\s*\)/gu
+// Bound label scanning and make repeated destination units disjoint for untrusted Markdown.
+const MARKDOWN_LINK =
+  /!?\[[^\x5b\x5d]*\]\(\s*(<[^>]+>|(?:\\.|[^)\\\s])+)(?:\s+["'][^)]*["'])?\s*\)/gu
 const MARKDOWN_REFERENCE = /^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|[^\s]+)(?:\s+.*)?$/gmu
 
 /** Machine-specific or absolute path markers that make skill text non-portable. */
