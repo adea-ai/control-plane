@@ -7,6 +7,16 @@ import { discoverSkillLibrary, validateSkillLibrary } from '../scripts/validate-
 const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
 const read = (path) => readFile(resolve(root, path), 'utf8')
+const bunRunCommands = (markdown) =>
+  [...markdown.matchAll(/`bun run ([^\s`]+)/gu)].map((command) => command[1])
+
+test('skill command extraction preserves the full command token for validation', () => {
+  expect(bunRunCommands('`bun run build` `bun run test --timeout 1` `bun run build.foo`')).toEqual([
+    'build',
+    'test',
+    'build.foo',
+  ])
+})
 
 test('the shared skill lock matches discoverable skill directories and valid identities', async () => {
   const lock = JSON.parse(await read('.agents/.skill-lock.json'))
@@ -49,7 +59,8 @@ test('every retained skill has an owner, version, complete evidence contract, va
 
   await validateSkillLibrary()
 
-  for (const name of lock.skills) {
+  for (const skill of skills) {
+    const { name } = skill
     const text = await read(`.agents/skills/${name}/SKILL.md`)
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)
     const metadata = Bun.YAML.parse(match[1])
@@ -60,11 +71,12 @@ test('every retained skill has an owner, version, complete evidence contract, va
     expect(/^## Evidence contract$/m.test(text), name).toBe(true)
     for (const field of requiredContractFields) expect(text, `${name}: ${field}`).toContain(field)
 
-    const commands = [...text.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)`/gu)].map(
-      (command) => command[1]
-    )
-    for (const command of commands) {
-      expect(typeof scripts[command], `${name}: bun run ${command}`).toBe('string')
+    for (const file of skill.files.filter((path) => path.endsWith('.md'))) {
+      const markdown = await read(`.agents/skills/${name}/${file}`)
+      const commands = bunRunCommands(markdown)
+      for (const command of commands) {
+        expect(typeof scripts[command], `${name}/${file}: bun run ${command}`).toBe('string')
+      }
     }
   }
 })

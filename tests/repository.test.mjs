@@ -215,6 +215,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-architecture-audit.test.mjs',
     'tests/m11-context-command-contract.test.mjs',
     'tests/m11-graph-composition.test.mjs',
+    'tests/m11-injection-eval.test.mjs',
     'tests/m11-native-packaging.test.mjs',
     'tests/m11-prd-principle-crosswalk.test.mjs',
     'tests/m11-requirements-ledger.test.mjs',

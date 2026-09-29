@@ -13,9 +13,12 @@ procedures are documented."
 - **Changes to skills** follow the standard flow: branch, pull request with the
   `tests/skill-library.test.mjs` lane green, independent review for substantive
   rewrites, squash merge to main.
-- **Validation:** `bun scripts/validate-skills.mjs` (invoked by the smoke-lane
-  test) must pass — frontmatter name/description/version present, directory
-  match, no machine-specific absolute paths, inventory in sync.
+- **Validation:** `bun scripts/validate-skills.mjs` plus the smoke-lane skill
+  tests must pass — frontmatter name/description/version present, directory
+  match, no machine-specific absolute paths, inventory in sync, and every
+  inline `bun run <script>` reference in bundled Markdown must name a script
+  in the repository's `package.json`. This checks declared command names; it
+  does not execute the referenced commands or prove their described results.
 
 ## Review cadence
 

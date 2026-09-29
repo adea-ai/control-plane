@@ -4,6 +4,13 @@ Record changes that alter Skill routing, behavior, or supporting validation.
 Each entry should name the affected Skills, old/new versions, the decision
 changed, validation performed, and any evidence or compatibility limits.
 
+## Unreleased — 2026-09-29
+
+- Extended the smoke-lane command-reference check from each `SKILL.md` to every
+  bundled Markdown file, including progressive-disclosure resources. It checks
+  names against `package.json`; it does not execute commands or produce Skill
+  behavior, human-calibration, cold-audit, or before/after efficiency evidence.
+
 ## Unreleased — 2026-09-27
 
 - `security-and-hardening` 1.0.0 → 1.0.1: removed absent-reference paths and
