@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.6.0...managed-pi-adapter-v1.6.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden marketplace and package publishing ([#759](https://github.com/adea-ai/control-plane/issues/759)) ([96d8224](https://github.com/adea-ai/control-plane/commit/96d8224ac9ef9b2f57d544f04e5358ac617da044))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.5.4...managed-pi-adapter-v1.6.0) (2026-09-28)
 
 

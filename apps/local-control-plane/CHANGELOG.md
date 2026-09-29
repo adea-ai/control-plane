@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.0...local-control-plane-v1.19.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden recovery evidence and Local ACP policy ([#760](https://github.com/adea-ai/control-plane/issues/760)) ([021194a](https://github.com/adea-ai/control-plane/commit/021194ad19691f332e934d1c5450577ee27a4163))
+
 ## [1.19.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.18.1...local-control-plane-v1.19.0) (2026-09-28)
 
 

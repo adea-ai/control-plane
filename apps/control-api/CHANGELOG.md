@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.1...control-api-v1.16.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden marketplace and package publishing ([#759](https://github.com/adea-ai/control-plane/issues/759)) ([96d8224](https://github.com/adea-ai/control-plane/commit/96d8224ac9ef9b2f57d544f04e5358ac617da044))
+
 ## [1.16.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.0...control-api-v1.16.1) (2026-09-29)
 
 
