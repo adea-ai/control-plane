@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.59.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.3...workspace-v1.59.4) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden marketplace and package publishing ([#759](https://github.com/adea-ai/control-plane/issues/759)) ([96d8224](https://github.com/adea-ai/control-plane/commit/96d8224ac9ef9b2f57d544f04e5358ac617da044))
+* **m11:** harden recovery evidence and Local ACP policy ([#760](https://github.com/adea-ai/control-plane/issues/760)) ([021194a](https://github.com/adea-ai/control-plane/commit/021194ad19691f332e934d1c5450577ee27a4163))
+
+
+### Tests
+
+* **m11:** add injection controls and skill validation ([#757](https://github.com/adea-ai/control-plane/issues/757)) ([8e108a4](https://github.com/adea-ai/control-plane/commit/8e108a49a0e001debb55e1a1f6a27fad1e4e0b5b))
+
 ## [1.59.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.2...workspace-v1.59.3) (2026-09-29)
 
 
