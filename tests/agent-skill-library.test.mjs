@@ -8,12 +8,13 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
 const read = (path) => readFile(resolve(root, path), 'utf8')
 const bunRunCommands = (markdown) =>
-  [...markdown.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)(?=[\s`])/gu)].map((command) => command[1])
+  [...markdown.matchAll(/`bun run ([^\s`]+)/gu)].map((command) => command[1])
 
-test('skill command extraction rejects malformed command prefixes', () => {
+test('skill command extraction preserves the full command token for validation', () => {
   expect(bunRunCommands('`bun run build` `bun run test --timeout 1` `bun run build.foo`')).toEqual([
     'build',
     'test',
+    'build.foo',
   ])
 })
 
