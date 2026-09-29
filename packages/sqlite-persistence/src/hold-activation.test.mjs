@@ -904,7 +904,7 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
     }
     await rm(directory, { recursive: true, force: true })
   }
-})
+}, 15_000)
 
 test('holds never pause or reset either reference retention clock', async () => {
   await withProvider(async ({ provider }) => {

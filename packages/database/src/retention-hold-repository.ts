@@ -1,5 +1,6 @@
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import {
+  RetentionHoldClassIdSchema,
   RetentionHoldError,
   RetentionHoldIdSchema,
   RetentionHoldReleaseSchema,
@@ -164,27 +165,74 @@ export async function acquirePostgresRetentionHoldClassMutex(
   await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
 }
 
-/** Read using the caller's transaction; deletion callers must already hold the class mutex. */
+/**
+ * Count only active holds that can match this target. Deletion callers must
+ * validate the full namespace once per pass and hold the class mutex here.
+ */
 export async function countPostgresMatchingActiveRetentionHolds(
   transaction: DomainTransaction,
   target: PostgresRetentionHoldTarget,
   policyInput?: RetentionHoldPolicy
 ): Promise<number> {
-  const holds = await readPostgresRetentionHolds(transaction, policyInput)
-  let canonicalTarget: RetentionHoldTarget = { classId: target.classId }
+  if (policyInput === undefined) {
+    await readPostgresRetentionHolds(transaction)
+    if (target.scope !== undefined && !RetentionHoldScopeSchema.safeParse(target.scope).success)
+      throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+    return 0
+  }
+
+  const policy = parseRetentionHoldPolicy(policyInput)
+  const parsedClassId = RetentionHoldClassIdSchema.safeParse(target.classId)
+  if (!parsedClassId.success) throw new RetentionHoldError('RETENTION_HOLD_CLASS_UNCONFIGURED')
+  let canonicalTarget: RetentionHoldTarget = { classId: parsedClassId.data }
   if (target.scope !== undefined) {
     const parsedScope = RetentionHoldScopeSchema.safeParse(target.scope)
     if (!parsedScope.success) throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
-    canonicalTarget = { classId: target.classId, scope: parsedScope.data }
+    canonicalTarget = { classId: parsedClassId.data, scope: parsedScope.data }
   }
-  if (policyInput === undefined) return 0
-  const policy = parseRetentionHoldPolicy(policyInput)
+
+  // The full namespace is validated once at the start of each retention pass.
+  // Under the class mutex, candidate claims only need active records that can
+  // match this target; use the scope index instead of rescanning every hold for
+  // every candidate.
+  const scopePredicate = matchingHoldScopePredicate(target.scope)
+  const rows = await transaction
+    .select()
+    .from(retentionHolds)
+    .where(
+      and(
+        eq(retentionHolds.classId, parsedClassId.data),
+        isNull(retentionHolds.releasedAt),
+        ...(scopePredicate === undefined ? [] : [scopePredicate])
+      )
+    )
+  const holds = rows.map((row) => parseRow(row, policy))
   return countMatchingActiveRetentionHolds({
     holds,
     target: canonicalTarget,
     policy,
     recordIds: holds.map((hold) => hold.holdId),
   })
+}
+
+function matchingHoldScopePredicate(targetScope: PostgresRetentionHoldTarget['scope']) {
+  if (targetScope === undefined || targetScope.kind === 'class') return undefined
+  const workspaceScope = and(
+    eq(retentionHolds.scopeKind, 'workspace'),
+    eq(retentionHolds.workspaceId, targetScope.workspaceId)
+  )
+  const projectScope =
+    targetScope.kind === 'project'
+      ? and(
+          eq(retentionHolds.scopeKind, 'project'),
+          eq(retentionHolds.workspaceId, targetScope.workspaceId),
+          eq(retentionHolds.projectId, targetScope.projectId)
+        )
+      : and(
+          eq(retentionHolds.scopeKind, 'project'),
+          eq(retentionHolds.workspaceId, targetScope.workspaceId)
+        )
+  return or(eq(retentionHolds.scopeKind, 'class'), workspaceScope, projectScope)
 }
 
 /** Validate the host policy and every stored record even when a sweep has no candidates. */

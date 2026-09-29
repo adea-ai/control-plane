@@ -6,6 +6,7 @@ import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-p
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { sql } from 'drizzle-orm'
+import { PostgresCommandAcceptanceRepository } from './command-inbox-repository.ts'
 import { createIsolatedTestDatabase } from './testing.ts'
 import {
   PostgresContextPackageRepository,
@@ -22,6 +23,7 @@ import { PostgresRetentionHoldRepository } from './retention-hold-repository.ts'
 import { contextPackages } from './schema/context-packages.ts'
 import { executionPlans } from './schema/execution-plans.ts'
 import { inboxMessages, outboxEvents } from './schema/messaging.ts'
+import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const retentionMs = 1_000
@@ -55,6 +57,14 @@ const holdPolicy = {
   },
   messaging: {
     owner: 'platform-operator',
+    scopes: ['class'],
+    reasonCodes: ['legal-case'],
+  },
+}
+const retiredKeyHoldPolicy = {
+  ...holdPolicy,
+  'retired-command-keys': {
+    owner: 'release-owner',
     scopes: ['class'],
     reasonCodes: ['legal-case'],
   },
@@ -383,6 +393,63 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
     expect(
       await new PostgresContextPackageRepository(database).getById(package_.contextPackageId)
     ).toBeDefined()
+  }, 30_000)
+
+  test('class holds protect retired command keys until the hold is released', async () => {
+    const isolated = await createDatabase()
+    const scopeKey = randomUUID().replaceAll('-', '').repeat(2).slice(0, 64)
+    const application = isolated.application
+    const holds = new PostgresRetentionHoldRepository(application, retiredKeyHoldPolicy)
+    const hold = makeHold('retired-command-keys', 'release-owner', { kind: 'class' })
+    await isolated.withMigrationDatabase(async (migrationDatabase) => {
+      // The operator retention path uses the migration role for tombstones;
+      // hold administration follows the application-role path used by the CLI.
+      await migrationDatabase.insert(retiredCommandKeys).values({
+        scopeKey,
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        retiredAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadataVersion: 1,
+        identityDigest: null,
+      })
+    })
+
+    await holds.create(hold)
+    const journal = []
+    const options = {
+      policyRetainMs: retentionMs,
+      dryRun: false,
+      retentionHoldPolicy: retiredKeyHoldPolicy,
+      journal: async (operations) => journal.push(...operations),
+    }
+
+    const heldPass = await isolated.withMigrationDatabase(async (migrationDatabase) => {
+      const retention = new PostgresCommandAcceptanceRepository(migrationDatabase)
+      const pass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
+      expect(await migrationDatabase.select().from(retiredCommandKeys)).toHaveLength(1)
+      return pass
+    })
+    expect(heldPass).toMatchObject({ deleted: 0, retainedByReason: { hold_recorded: 1 } })
+    expect(journal).toEqual([])
+
+    await holds.release({
+      holdId: hold.holdId,
+      expectedRevision: 0,
+      release: {
+        requestId: randomUUID(),
+        releasedAt: observedAt.toISOString(),
+        releasedBy: provenance,
+      },
+    })
+
+    const releasedPass = await isolated.withMigrationDatabase(async (migrationDatabase) => {
+      const retention = new PostgresCommandAcceptanceRepository(migrationDatabase)
+      const pass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
+      expect(await migrationDatabase.select().from(retiredCommandKeys)).toHaveLength(0)
+      return pass
+    })
+    expect(releasedPass.deleted).toBe(1)
+    expect(journal).toEqual([{ kind: 'postgres.deleteRetiredCommandKey', scopeKey }])
   }, 30_000)
 
   test('a committing hold writer wins a waiting real context-package deletion claim', async () => {
