@@ -399,14 +399,16 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
     const isolated = await createDatabase()
     const database = isolated.application
     const scopeKey = randomUUID().replaceAll('-', '').repeat(2).slice(0, 64)
-    await database.insert(retiredCommandKeys).values({
-      scopeKey,
-      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      retiredAt: new Date('2026-01-01T00:00:00.000Z'),
-      metadataVersion: 1,
-      identityDigest: null,
-    })
+    await isolated.withMigrationDatabase((migrationDatabase) =>
+      migrationDatabase.insert(retiredCommandKeys).values({
+        scopeKey,
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        retiredAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadataVersion: 1,
+        identityDigest: null,
+      })
+    )
     const holds = new PostgresRetentionHoldRepository(database, retiredKeyHoldPolicy)
     const hold = makeHold('retired-command-keys', 'release-owner', { kind: 'class' })
     await holds.create(hold)
