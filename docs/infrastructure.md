@@ -35,17 +35,15 @@ before the selected service.
 
 ## Current external-resource state
 
-As of the M9 certification and local-first standby baseline:
+The 2026-09-29 12:21 UTC Railway readback is recorded in [M11.10 evidence](evidence/m11-railway-readback-2026-09-29.md). It supersedes the prior standby snapshot for current Railway deployment status; it does not certify an M11 profile or production availability.
 
-- a Railway `control-plane` project with isolated staging and production environments exists;
-- dependency-aware monorepo builds are fixed and the active Cloud application topology is `control-api` plus `workflow-worker`;
-- the private Restate runtime is separately pinned in `restate.json`; staging retains its persistent volume while all three Cloud services are stopped by default;
-- Railway staging deploys from Git `main` (on demand) and the dedicated Neon `staging` branch; production maps to Git `main` and the Neon `production` branch, but its application sources remain disconnected while cloud availability is disabled;
-- existing `neon_auth` tables in that Neon project are not Control Plane identity authority and must not become an application dependency;
-- a Cloudflare R2 bucket named **`ctrl-plane`** already exists for the Control Plane managed-cloud ObjectStore, with logical Wrangler binding **`ctrl_plane`**;
-- an authenticated Wrangler CLI is available to implementation agents for non-destructive R2 inspection/configuration and synthetic smoke tests;
-- staging has completed the live Neon, R2, Restate, restart, and bounded concurrency checks recorded in the M9.6 evidence;
-- production remains configured but intentionally unavailable and is not certified by the staging evidence.
+- A Railway `control-plane` project with isolated staging and production environments exists. The active Cloud application topology is `control-api` plus `workflow-worker`, with a separately pinned Restate runtime.
+- Production `control-api` and `workflow-worker` deployments last reported `SUCCESS` at 08:39 UTC; runtime logs re-read at 12:41 UTC identify commit `61700f346663fbb9fb62d1fc27c859362ae2d4f1`. This predates current `main` (`96d8224ac9ef9b2f57d544f04e5358ac617da044`); it is not evidence that current `main` is deployed or accepted.
+- Production Restate reported `SUCCESS` on Restate 1.7.7, with one replica and a 500 MB `/restate-data` volume. The Control API has a configured `/ready` healthcheck and public Railway domain; `workflow-worker` is private.
+- The API runtime logs record a direct `/ready` HTTP 200 at 08:39:17 UTC, immediately after deployment. Hourly retention sweeps still warn that command-inbox and execution-event eligibility is required; this remains an operational gap.
+- Staging had no successful active deployment in the readback: API/worker historical status was failed (2026-09-16), Restate's last success was 2026-08-28, and later attempts through 2026-09-28 were removed. Staging remains on-demand; keep compute stopped between qualification runs and retain its Restate volume.
+- The existing `neon_auth` tables in the Control Plane Neon project are not Control Plane identity authority and must not become an application dependency. The Cloudflare R2 bucket and Wrangler binding remain the configured managed-cloud storage resources.
+- Staging's M9.6 Neon, R2, Restate, restart, and bounded-concurrency results remain historical evidence. Neither that evidence nor these live deployment statuses constitute current M11 profile acceptance.
 
 Configuration shape or resource existence is not deployment evidence. M9.6 requires an actual successful staging deployment, migrations, health/readiness, representative durable execution, restart/recovery, rollback/forward repair, R2 operations, and measured operational evidence.
 
@@ -99,14 +97,14 @@ must never use the CLI option that reveals variable values. The deprecated per-s
 `railway.json`/`railway.toml` format is not used.
 
 The definition represents the explicit one-replica **activation** shape because Railway's
-Infrastructure as Code schema does not accept zero replicas. The local-first MVP baseline keeps
-Railway staging and production at zero running replicas by disconnecting application sources and
-removing active deployment revisions through the guarded command versioned in
-`scripts/railway-standby.mjs`. The command also removes queued, building, and other reactivatable
-revisions before proving standby. Service definitions, provider configuration, and volumes remain.
-Thus the Cloud profile is configured without being running or available. Staging is activated only
-for Cloud integration/certification; production activation additionally requires reviewed release,
-secrets, migrations, dependency readiness, health, smoke, and rollback gates.
+Infrastructure as Code schema does not accept zero replicas. Staging is on-demand: use the guarded
+command versioned in `scripts/railway-standby.mjs` to remove active and reactivatable deployment
+revisions between qualification runs while retaining the Restate volume. The 2026-09-29 readback
+found no successful active staging deployment. Production had successful application deployment
+statuses and one successful Restate replica, so the earlier zero-compute standby description is not
+its current observed state. Production availability still requires the reviewed release, secrets,
+migrations, dependency readiness, direct health/readiness, smoke, recovery, and rollback gates; the
+readback does not establish those gates.
 
 M9.7 established dependency-aware, reproducible monorepo builds for Railway. The existing
 `infrastructure/containers` build pipeline remains available for Hosted/server composition. AWS/ECS-

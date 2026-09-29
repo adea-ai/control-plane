@@ -128,9 +128,9 @@ jobs:
             exit 1
           fi
 
-          docker compose stop restate
+          docker compose --profile server stop restate
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:33300/ready)" = 503
-          docker compose start restate
+          docker compose --profile server up --detach --wait --wait-timeout 120 restate
           for _ in {1..60}; do
             server_status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:33300/ready || true)"
             [[ "$server_status" == 200 ]] && break
@@ -138,9 +138,9 @@ jobs:
           done
           test "$server_status" = 200
 
-          docker compose stop postgres
+          docker compose --profile server stop postgres
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:33300/ready)" = 503
-          docker compose start postgres
+          docker compose --profile server up --detach --wait --wait-timeout 120 postgres
           for _ in {1..60}; do
             server_status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:33300/ready || true)"
             [[ "$server_status" == 200 ]] && break

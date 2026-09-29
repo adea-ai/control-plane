@@ -29,10 +29,13 @@ Keep runtime database credentials separate from migration/admin authority. Keep 
 
 The Railway project has isolated `staging` and `production` environments. The Cloud activation
 topology is the public `control-api`, private `workflow-worker`, and separately pinned `restate`
-runtime. The local-first MVP baseline keeps Railway application compute at zero **running** replicas
-in both environments by removing active deployments. Staging retains the certified Restate volume
-and can be activated on demand; production remains deliberately unavailable and disconnected from
-automatic Git deployment.
+runtime. The live-state readback from 2026-09-29 12:21 UTC is recorded in
+[`evidence/m11-railway-readback-2026-09-29.md`](evidence/m11-railway-readback-2026-09-29.md) and
+supersedes the previous current-state description below. Staging remains on-demand, with compute
+stopped between qualification runs and its Restate volume retained. Production's latest API and
+worker deployments reported `SUCCESS` at 08:39 UTC, and its Restate service reported `SUCCESS` with
+one replica and a retained volume. Their observed source revision predates current `main`. These
+deployment statuses do not establish production availability or M11 profile acceptance.
 
 Use these terms precisely:
 
@@ -83,10 +86,12 @@ the null-source configuration-patch route was observed to leave the source uncha
 
 The baseline is:
 
-| Environment | Git source                       | Running replicas                       | Persistent state                                         |
-| ----------- | -------------------------------- | -------------------------------------- | -------------------------------------------------------- |
-| staging     | application sources disconnected | 0 for each of the three Cloud services | Restate volume retained; Neon/R2 remain provider-managed |
-| production  | application sources disconnected | 0 for each of the three Cloud services | Restate volume retained; Neon/R2 remain provider-managed |
+| Environment | 2026-09-29 observed state                                                                                                                                                 | Operating intent                                           | Persistent state                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
+| staging     | No successful active deployment; API/worker status failed 2026-09-16, Restate last success 2026-08-28; later attempts removed through 2026-09-28                          | On-demand qualification; stop compute between runs         | Retain Restate volume; Neon/R2 remain provider-managed          |
+| production  | API/worker deployments `SUCCESS` at 08:39 UTC on commit `61700f346663fbb9fb62d1fc27c859362ae2d4f1`; post-deploy API `/ready` returned 200; Restate `SUCCESS`, one replica | Availability remains gated; deployed commit is behind main | 500 MB Restate volume retained; Neon/R2 remain provider-managed |
+
+Production API logs also continue to report retention sweeps blocked on command-inbox and execution-event eligibility. Treat retention policy and its operational evidence as an open M11 gate; deployment health does not close it.
 
 Railway Serverless remains disabled. Control API first-request failures/cold starts and the
 worker/Restate long-lived connection and registration behavior have not been accepted under a sleep

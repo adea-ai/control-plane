@@ -93,7 +93,16 @@ test('launches both Hosted profiles on a fresh Linux CI host', async () => {
   assert.match(workflow, /pg_auth_members/)
   assert.match(workflow, /unexpectedly accepted duplicate passwords/)
   assert.match(workflow, /runtime_role_must_not_create_objects/)
-  assert.match(workflow, /docker compose stop restate/)
-  assert.match(workflow, /docker compose stop postgres/)
+  assert.match(workflow, /docker compose --profile server stop restate/)
+  assert.match(
+    workflow,
+    /docker compose --profile server up --detach --wait --wait-timeout 120 restate/
+  )
+  assert.match(workflow, /docker compose --profile server stop postgres/)
+  assert.match(
+    workflow,
+    /docker compose --profile server up --detach --wait --wait-timeout 120 postgres/
+  )
   assert.match(workflow, /write-out '%\{http_code\}'.*503/s)
+  assert.equal((workflow.match(/test \"\$server_status\" = 200/g) ?? []).length, 3)
 })
