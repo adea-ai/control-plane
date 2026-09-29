@@ -10,9 +10,11 @@ import {
 } from '@control-plane/contracts'
 import { ExecutionPlanSchema } from '@control-plane/execution-plan'
 import {
+  createCertificationObjectStore,
   createCertificationPlan,
   createCertificationRequest,
   createSignedServiceCredential,
+  requiredEnvironment,
   runCloudCertification,
 } from '../scripts/certify-m9-cloud.mjs'
 
@@ -25,6 +27,38 @@ describe('M9 live cloud certification harness', () => {
 
     expect(rootPackage.devDependencies['@control-plane/database']).toBe('workspace:*')
     expect(rootPackage.devDependencies['@control-plane/object-store']).toBe('workspace:*')
+  })
+
+  test('requires and applies the environment prefix to cloud certification objects', () => {
+    const rawEnvironment = {
+      M9_CONTROL_API_URL: 'https://control-api.example.invalid',
+      M9_SERVICE_AUTH_ISSUER: 'https://certification.example.invalid',
+      M9_SERVICE_AUTH_KEY_ID: 'm11-staging-test',
+      M9_SERVICE_AUTH_PRIVATE_KEY_FILE: '/tmp/m11-staging-key.pem',
+      DATABASE_URL: 'postgresql://app:fake-secret@example.invalid/database',
+      R2_ENDPOINT: 'https://objects.example.invalid',
+      R2_BUCKET: 'control-plane',
+      R2_PREFIX: 'staging/',
+      R2_ACCESS_KEY_ID: 'test-access-key',
+      R2_SECRET_ACCESS_KEY: 'fake-secret',
+    }
+    const environment = requiredEnvironment(rawEnvironment)
+    let storeConfiguration
+    const store = { close() {} }
+
+    expect(
+      createCertificationObjectStore(environment, (configuration) => {
+        storeConfiguration = configuration
+        return store
+      })
+    ).toBe(store)
+    expect(storeConfiguration).toMatchObject({ bucket: 'control-plane', prefix: 'staging/' })
+
+    const withoutPrefix = { ...rawEnvironment }
+    delete withoutPrefix.R2_PREFIX
+    expect(() => requiredEnvironment(withoutPrefix)).toThrow(
+      'M9_CERTIFICATION_CONFIGURATION_MISSING:R2_PREFIX'
+    )
   })
 
   test('creates a current, scope-consistent certification plan and acceptance request', () => {
@@ -86,6 +120,7 @@ describe('M9 live cloud certification harness', () => {
         plan,
         request,
         credential: 'signed-secret-value',
+        objectPrefix: 'staging/',
         pollIntervalMs: 0,
         timeoutMs: 1_000,
       },
@@ -142,6 +177,7 @@ describe('M9 live cloud certification harness', () => {
       executionState: 'completed',
       attemptCount: 1,
       replayed: true,
+      objectPrefix: 'staging/',
     })
     expect(JSON.stringify(evidence)).not.toContain('signed-secret-value')
   })
