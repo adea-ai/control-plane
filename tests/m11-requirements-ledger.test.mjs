@@ -217,6 +217,59 @@ describe('M11.1 requirements ledger', () => {
     }
   })
 
+  test('ties checked-in partial source-audit ranges to their ledger rows', async () => {
+    const auditedSources = ledger.sources.filter(({ sourceAudit }) => sourceAudit !== undefined)
+    expect(auditedSources.map(({ id }) => id).toSorted()).toEqual([
+      'execution-consistency-spec',
+      'runtime-node-spec',
+    ])
+    for (const source of auditedSources) {
+      expect(source.sourceAudit.coverage, source.id).toBe('partial')
+    }
+
+    const report = await renderRequirementsReport(ledger)
+    expect(report).toContain(
+      '[execution-consistency-source-audit.md](./execution-consistency-source-audit.md)'
+    )
+    expect(report).toContain('[runtime-node-source-audit.md](./runtime-node-source-audit.md)')
+    expect(report.match(/partial extraction/g)).toHaveLength(2)
+
+    const missingRequirement = clone(ledger)
+    missingRequirement.requirements = missingRequirement.requirements.filter(
+      ({ id }) => id !== 'CP-CONS-032'
+    )
+    missingRequirement.requirementInventory = missingRequirement.requirementInventory.filter(
+      ({ id }) => id !== 'CP-CONS-032'
+    )
+    const missingResult = await validateRequirementsLedger(missingRequirement, {
+      repositoryRoot: new URL('..', import.meta.url),
+    })
+    expect(missingResult.errors.join('\n')).toContain(
+      'execution-consistency-spec: source-audit requirement IDs do not match ledger'
+    )
+    expect(missingResult.errors.join('\n')).toContain('missing from ledger: CP-CONS-032')
+
+    const falselyComplete = clone(ledger)
+    falselyComplete.sources.find(({ id }) => id === 'runtime-node-spec').sourceAudit.coverage =
+      'complete'
+    const incompleteResult = await validateRequirementsLedger(falselyComplete, {
+      repositoryRoot: new URL('..', import.meta.url),
+    })
+    expect(incompleteResult.errors).toContain(
+      'runtime-node-spec: checked-in source audit coverage must remain partial'
+    )
+
+    const escapingPath = clone(ledger)
+    escapingPath.sources.find(({ id }) => id === 'runtime-node-spec').sourceAudit.path =
+      'docs/requirements/../../package.json'
+    const escapingPathResult = await validateRequirementsLedger(escapingPath, {
+      repositoryRoot: new URL('..', import.meta.url),
+    })
+    expect(escapingPathResult.errors).toContain(
+      'runtime-node-spec: source-audit path must be under docs/requirements'
+    )
+  })
+
   test('fails closed when authoritative inventory or provenance disappears', async () => {
     const pendingReview = clone(ledger)
     pendingReview.reviewerSamples[0].result = 'pending independent rerun'

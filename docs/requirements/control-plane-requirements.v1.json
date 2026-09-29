@@ -115,6 +115,11 @@
       "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
       "updatedAt": "2026-08-28T07:21:06.166Z",
       "retrievalStatus": "retrieved",
+      "sourceAudit": {
+        "path": "docs/requirements/runtime-node-source-audit.md",
+        "requirementIdPrefix": "CP-RNODE",
+        "coverage": "partial"
+      },
       "gap": {
         "issue": 195,
         "severity": "high",
@@ -130,6 +135,11 @@
       "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
       "updatedAt": "2026-08-28T07:21:17.702Z",
       "retrievalStatus": "retrieved",
+      "sourceAudit": {
+        "path": "docs/requirements/execution-consistency-source-audit.md",
+        "requirementIdPrefix": "CP-CONS",
+        "coverage": "partial"
+      },
       "gap": {
         "issue": 195,
         "severity": "high",
