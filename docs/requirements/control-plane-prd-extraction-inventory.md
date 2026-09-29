@@ -45,28 +45,32 @@ Google Docs bookmarks. The implementation baseline for this inventory is
 | 18. Open Product Decisions                   | P00203–P00210 | Unresolved product decisions, not permission to invent authority, pricing, signing policy, data residency or automatic memory writes. P00210 preserves default proposal/approval behavior and evaluation-gated future automation. Keep decisions visible under #195 and relevant owners.                                                                                                                                                           |
 | 19. Canonical References                     | P00212–P00220 | Reference inventory; each linked source has its own retrieval/revision/coverage gate. Reviewing this PRD does not certify those documents.                                                                                                                                                                                                                                                                                                         |
 
-## Explicit unresolved source contradictions
+## Source contradictions from the September 22 snapshot and current disposition
 
 The [principles crosswalk](control-plane-prd-principle-crosswalk.md) compares
 P00055 and P00057–P00066 against exact existing requirement text. It distinguishes
 joint mappings from still-unmapped clauses; it does not certify implementation or
 complete extraction of any other section.
 
-1. **Default Local durability.** P00136 lists Restate in the desktop bundle; P00169 says
-   Local/Self-hosted Restate; P00185 names Restate restart in its acceptance matrix.
-   Owner-approved #548 makes embedded SQLite the default Local durability implementation,
-   with equivalent recovery semantics still required. Hosted/cloud Restate and explicit
-   Local compatibility mode remain distinct. Reconcile only the superseded Local wording;
-   do not remove restart/replay acceptance.
-2. **Roadmap ownership and numbering.** P00036 reserves live first-party composition for
-   M12, while P00169 assigns Control Plane M12 to Local/Hosted substrate, M13 to runtime
-   audit and M14 to effect migration, aligning cross-product gates with the adea roadmap.
-   Issue #195 still describes M12 as Cross-Product Integration & Release. Live GitHub adds
-   another inconsistency: milestone database number 12 is closed and titled `M10: Local &
-Hosted Portability`, while its description calls that substrate `CP-M12`. Milestone 11's
-   description contains both the earlier cross-product wording and the later CP-local mapping.
-   Database milestone numbers are not reliable product milestone labels. Owner clarification
-   has been requested. No interpretation here silently defers an existing M11 obligation.
+1. **Default Local durability (decision accepted; source reconciliation remains partial).**
+   In the PRD revision captured on September 22, P00136 listed Restate in the desktop bundle;
+   P00169 said Local/Self-hosted Restate; P00185 named Restate restart in its acceptance
+   matrix. Owner-approved #548 makes embedded SQLite the default Local durability
+   implementation, with equivalent recovery semantics still required. Hosted/cloud Restate
+   and explicit Local compatibility mode remain distinct. Preserve restart/replay acceptance;
+   the later Drive/repository edits do not certify the full inventory, packaged behavior, or
+   profile acceptance.
+2. **Roadmap ownership and numbering (resolved by the 2026-09-24 owner decision).** At the
+   September 22 snapshot, P00036 reserved live first-party composition for M12 while P00169
+   assigned Control Plane M12 to Local/Hosted substrate, M13 to runtime audit, and M14 to
+   effect migration. The owner decision recorded in [issue #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459)
+   resolves CP-M12 as one milestone combining the Local/Hosted deployment-profile substrate
+   with the cross-product certification/release built on it. GitHub database milestone
+   numbers are not product milestone labels; issue #74 is the cross-product certification gate
+   under database milestone 10, titled `M12: Cross-Product Integration & Release`. The
+   decision changed no milestone titles/scopes and waived no acceptance requirement. This
+   resolves the roadmap mapping only; it does not complete this PRD extraction, the M11.10
+   source inventory, or any profile acceptance gate.
 
 ## Completion gate
 

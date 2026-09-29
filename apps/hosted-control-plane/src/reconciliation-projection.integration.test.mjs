@@ -289,9 +289,16 @@ describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreS
 
       // Replays are idempotent: one checkpoint, and the billable runtime
       // command record is never re-issued or mutated by reconciliation.
+      await waitFor(async () => {
+        const checkpoints = await readCheckpoints()
+        return checkpoints.some(
+          (checkpoint) =>
+            checkpoint.action === 'apply_runtime_terminal' &&
+            checkpoint.state === 'remediated' &&
+            checkpoint.resolvedAt !== undefined
+        )
+      }, 'CHECKPOINT_CONVERGENCE')
       const checkpointsAfterConvergence = await readCheckpoints()
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      expect(await readCheckpoints()).toHaveLength(checkpointsAfterConvergence.length)
       expect(checkpointsAfterConvergence).toHaveLength(1)
       const [checkpoint] = checkpointsAfterConvergence
       expect(checkpoint).toMatchObject({
@@ -301,6 +308,13 @@ describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreS
         action: 'apply_runtime_terminal',
         state: 'remediated',
       })
+      expect(checkpoint.resolvedAt).toBeInstanceOf(Date)
+      expect(await composition.reconciliationService.runBatch({ limit: 10 })).toMatchObject({
+        examined: 0,
+        reconciled: 0,
+        remediated: 0,
+      })
+      expect(await readCheckpoints()).toHaveLength(1)
       const runtimeCommand = await runtimeCommands.get('cmd_01DRZ3NDEKTSV4RRFFQ69G5FAW')
       expect(runtimeCommand.status).toBe('succeeded')
       expect(runtimeCommand.version).toBe(2)
