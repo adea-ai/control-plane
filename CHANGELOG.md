@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.4...workspace-v1.59.5) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** preserve staging prefix in cloud certification ([#761](https://github.com/adea-ai/control-plane/issues/761)) ([443be3b](https://github.com/adea-ai/control-plane/commit/443be3b7015202cb33c7317f28883b151bea3071))
+
 ## [1.59.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.3...workspace-v1.59.4) (2026-09-29)
 
 
