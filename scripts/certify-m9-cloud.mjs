@@ -5,7 +5,13 @@ import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { URL } from 'node:url'
 import { TextEncoder } from 'node:util'
-import { ContextPackageCompiler } from '@control-plane/context'
+import { ContextPackageCompiler, ContextPackageSchema } from '@control-plane/context'
+import {
+  AgentProfileDefinitionSchema,
+  AgentProfileSchema,
+  AgentProfileVersionSchema,
+  canonicalJsonStringify,
+} from '@control-plane/domain'
 import {
   ExecutionAcceptanceRequestSchema,
   ExecutionAcceptanceResponseSchema,
@@ -16,10 +22,10 @@ import { ExecutionPlanCompiler, ExecutionPlanSchema } from '@control-plane/execu
 const certificationContract = 'contract://control-plane/m9-cloud-certification/v1'
 const crockfordAlphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
-export function createCertificationPlan({ runSuffix, compiledAt }) {
+export function createCertificationContextPackage({ runSuffix, compiledAt }) {
   assertRunSuffix(runSuffix)
   const ids = certificationIds(runSuffix)
-  const contextPackage = new ContextPackageCompiler('1.0.0').compile({
+  return new ContextPackageCompiler('1.0.0').compile({
     objective: 'Certify the managed-cloud execution lifecycle and retained result.',
     projectState: {
       schemaVersion: 1,
@@ -44,6 +50,61 @@ export function createCertificationPlan({ runSuffix, compiledAt }) {
     budgets: { maximumBytes: 1_024, maximumTokens: 256 },
     compiledAt,
   })
+}
+
+export function createCertificationProfileSeed({ runSuffix, compiledAt }) {
+  assertRunSuffix(runSuffix)
+  const ids = certificationIds(runSuffix)
+  const profile = AgentProfileSchema.parse({
+    profileId: ids.profileId,
+    displayName: 'M9 Cloud Certification',
+    ownership: { scope: 'system' },
+    createdAt: compiledAt,
+  })
+  const definition = AgentProfileDefinitionSchema.parse({
+    schemaVersion: 1,
+    roleInstructions: 'Execute only the bounded M9 cloud certification contract.',
+    skills: [],
+    capabilityRequirements: [],
+    executionConstraints: certificationConstraints(),
+    outputContractRefs: [certificationContract],
+  })
+  const profileVersion = AgentProfileVersionSchema.parse({
+    profileVersionId: ids.profileVersionId,
+    profileId: ids.profileId,
+    version: 1,
+    revision: 1,
+    lifecycle: 'published',
+    contentDigest: `sha256:${createHash('sha256').update(canonicalJsonStringify(definition)).digest('hex')}`,
+    definition,
+    createdAt: compiledAt,
+    lifecycleMetadata: { publishedAt: compiledAt },
+  })
+  return { profile, profileVersion }
+}
+
+export function createCertificationPlan({
+  runSuffix,
+  compiledAt,
+  contextPackage: contextInput,
+  profileVersion: profileVersionInput,
+}) {
+  assertRunSuffix(runSuffix)
+  const ids = certificationIds(runSuffix)
+  const contextPackage = ContextPackageSchema.parse(
+    contextInput ?? createCertificationContextPackage({ runSuffix, compiledAt })
+  )
+  const profileVersion = AgentProfileVersionSchema.parse(
+    profileVersionInput ?? createCertificationProfileSeed({ runSuffix, compiledAt }).profileVersion
+  )
+  if (
+    contextPackage.projectState.workspaceId !== ids.workspaceId ||
+    contextPackage.projectState.projectId !== ids.projectId ||
+    profileVersion.profileId !== ids.profileId ||
+    profileVersion.profileVersionId !== ids.profileVersionId
+  ) {
+    throw new Error('M9_CERTIFICATION_PLAN_REFERENCE_SCOPE_MISMATCH')
+  }
   const constraints = certificationConstraints()
   return new ExecutionPlanCompiler('1.0.0').compile({
     correlation: {
@@ -53,24 +114,7 @@ export function createCertificationPlan({ runSuffix, compiledAt }) {
       agentId: ids.agentId,
       requestId: ids.requestId,
     },
-    profile: {
-      profileVersionId: ids.profileVersionId,
-      profileId: ids.profileId,
-      version: 1,
-      revision: 1,
-      lifecycle: 'published',
-      contentDigest: digest(`m9-certification-profile:${runSuffix}`),
-      definition: {
-        schemaVersion: 1,
-        roleInstructions: 'Execute only the bounded M9 cloud certification contract.',
-        skills: [],
-        capabilityRequirements: [],
-        executionConstraints: constraints,
-        outputContractRefs: [certificationContract],
-      },
-      createdAt: compiledAt,
-      lifecycleMetadata: { publishedAt: compiledAt },
-    },
+    profile: profileVersion,
     skills: [],
     contextPackage,
     constraints,
@@ -336,7 +380,15 @@ async function main() {
   const environment = requiredEnvironment(process.env)
   const runSuffix = createRunSuffix()
   const now = new Date()
-  const plan = createCertificationPlan({ runSuffix, compiledAt: now.toISOString() })
+  const compiledAt = now.toISOString()
+  const contextPackage = createCertificationContextPackage({ runSuffix, compiledAt })
+  const profileSeed = createCertificationProfileSeed({ runSuffix, compiledAt })
+  const plan = createCertificationPlan({
+    runSuffix,
+    compiledAt,
+    contextPackage,
+    profileVersion: profileSeed.profileVersion,
+  })
   const request = createCertificationRequest({ plan, runSuffix, now })
   const privateKey = createPrivateKey(await readFile(environment.privateKeyFile))
   const credential = createSignedServiceCredential({
@@ -349,7 +401,9 @@ async function main() {
   const [
     {
       createPostgresConnection,
+      PostgresCatalogRepository,
       PostgresCommandAcceptanceRepository,
+      PostgresContextPackageRepository,
       PostgresExecutionPlanRepository,
       PostgresExecutionRepository,
     },
@@ -359,11 +413,15 @@ async function main() {
     { role: 'application', url: environment.databaseUrl },
     { maxConnections: 1 }
   )
+  const contextPackages = new PostgresContextPackageRepository(connection.database)
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const commands = new PostgresCommandAcceptanceRepository(connection.database)
   const executions = new PostgresExecutionRepository(connection.database)
   const objects = createCertificationObjectStore(environment, createR2ObjectStore)
   try {
+    await connection.database.transaction(async (transaction) => {
+      await seedCertificationProfile(profileSeed, new PostgresCatalogRepository(transaction))
+    })
     const evidence = await runCloudCertification(
       {
         plan,
@@ -374,7 +432,8 @@ async function main() {
         timeoutMs: 120_000,
       },
       {
-        seedPlan: (value) => plans.put(value),
+        seedPlan: (value) =>
+          seedCertificationPlan(value, contextPackage, { contextPackages, plans }),
         acceptExecution: (input, bearer) => acceptExecution(environment.apiUrl, input, bearer),
         readAuthoritativeState: async (scope) => ({
           command: await commands.get(scope),
@@ -457,6 +516,40 @@ export function createCertificationObjectStore(environment, createR2ObjectStore)
     },
     { maxObjectBytes: 1_048_576 }
   )
+}
+
+export async function seedCertificationPlan(planInput, contextPackageInput, repositories) {
+  const plan = ExecutionPlanSchema.parse(planInput)
+  const contextPackage = ContextPackageSchema.parse(contextPackageInput)
+  if (
+    plan.contextPackage.contextPackageId !== contextPackage.contextPackageId ||
+    plan.contextPackage.contentDigest !== contextPackage.contentDigest ||
+    plan.contextPackage.schemaVersion !== contextPackage.schemaVersion ||
+    plan.contextPackage.compilerVersion !== contextPackage.compiler.version
+  ) {
+    throw new Error('M9_CERTIFICATION_CONTEXT_REFERENCE_MISMATCH')
+  }
+  await repositories.contextPackages.put(contextPackage)
+  await repositories.plans.put(plan)
+}
+
+export async function seedCertificationProfile(profileSeedInput, catalog) {
+  const profileSeed = {
+    profile: AgentProfileSchema.parse(profileSeedInput.profile),
+    profileVersion: AgentProfileVersionSchema.parse(profileSeedInput.profileVersion),
+  }
+  if (
+    profileSeed.profileVersion.profileId !== profileSeed.profile.profileId ||
+    profileSeed.profileVersion.lifecycle !== 'published'
+  ) {
+    throw new Error('M9_CERTIFICATION_PROFILE_SEED_INVALID')
+  }
+  if (!(await catalog.insertAgentProfile(profileSeed.profile))) {
+    throw new Error('M9_CERTIFICATION_PROFILE_SEED_CONFLICT')
+  }
+  if (!(await catalog.insertAgentProfileVersion(profileSeed.profileVersion))) {
+    throw new Error('M9_CERTIFICATION_PROFILE_VERSION_SEED_CONFLICT')
+  }
 }
 
 if (import.meta.main) await main()
