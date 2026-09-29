@@ -104,5 +104,5 @@ test('launches both Hosted profiles on a fresh Linux CI host', async () => {
     /docker compose --profile server up --detach --wait --wait-timeout 120 postgres/
   )
   assert.match(workflow, /write-out '%\{http_code\}'.*503/s)
-  assert.equal((workflow.match(/test \"\$server_status\" = 200/g) ?? []).length, 3)
+  assert.equal((workflow.match(/test "\$server_status" = 200/g) ?? []).length, 3)
 })
