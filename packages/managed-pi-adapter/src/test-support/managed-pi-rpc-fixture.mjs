@@ -59,10 +59,7 @@ function handle(command) {
       return
     }
     if (process.env.MOCK_MODE === 'exit-with-stats-pending-text') {
-      queueMicrotask(() => {
-        send({ type: 'agent_settled' })
-        setTimeout(() => process.exit(17), 50)
-      })
+      queueMicrotask(() => send({ type: 'agent_settled' }))
       return
     }
     if (process.env.MOCK_MODE === 'crash') {
@@ -104,7 +101,12 @@ function handle(command) {
     if (process.env.MOCK_MODE === 'stats-malformed') data = { tokens: { input: 1.5, output: 3 } }
     if (process.env.MOCK_MODE === 'stats-unsafe') data = { tokens: { input: Number.MAX_SAFE_INTEGER + 1, output: 0 } }
     if (process.env.MOCK_MODE === 'stats-total-overflow') data = { tokens: { input: Number.MAX_SAFE_INTEGER, output: 1 } }
-    const respond = () => send({ id: command.id, type: 'response', command: command.type, success: true, data })
+    const respond = () => {
+      const response = { id: command.id, type: 'response', command: command.type, success: true, data }
+      if (process.env.MOCK_MODE === 'exit-with-stats-pending-text') {
+        process.stdout.write(JSON.stringify(response) + '\\n', () => setTimeout(() => process.exit(17), 100))
+      } else send(response)
+    }
     if (process.env.MOCK_MODE === 'cancel-stats-hang') return
     if (process.env.MOCK_MODE === 'cancel-stats-delayed') setTimeout(respond, 150)
     else if (process.env.MOCK_MODE === 'cancel-race') setTimeout(respond, 20)
