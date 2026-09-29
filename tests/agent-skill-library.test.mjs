@@ -49,7 +49,8 @@ test('every retained skill has an owner, version, complete evidence contract, va
 
   await validateSkillLibrary()
 
-  for (const name of lock.skills) {
+  for (const skill of skills) {
+    const { name } = skill
     const text = await read(`.agents/skills/${name}/SKILL.md`)
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)
     const metadata = Bun.YAML.parse(match[1])
@@ -60,11 +61,14 @@ test('every retained skill has an owner, version, complete evidence contract, va
     expect(/^## Evidence contract$/m.test(text), name).toBe(true)
     for (const field of requiredContractFields) expect(text, `${name}: ${field}`).toContain(field)
 
-    const commands = [...text.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)`/gu)].map(
-      (command) => command[1]
-    )
-    for (const command of commands) {
-      expect(typeof scripts[command], `${name}: bun run ${command}`).toBe('string')
+    for (const file of skill.files.filter((path) => path.endsWith('.md'))) {
+      const markdown = await read(`.agents/skills/${name}/${file}`)
+      const commands = [...markdown.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)/gu)].map(
+        (command) => command[1]
+      )
+      for (const command of commands) {
+        expect(typeof scripts[command], `${name}/${file}: bun run ${command}`).toBe('string')
+      }
     }
   }
 })
