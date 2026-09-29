@@ -362,7 +362,7 @@ describe('Service lifecycle E2E composition', () => {
     }
   })
 
-  test('marketplace install-plan rejects unauthenticated, cross-workspace, and unconfigured requests', async () => {
+  test('marketplace install-plan rejects unauthenticated and unconfigured requests', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-e2e-marketplace-auth-'))
     let application
     let unconfiguredApplication
@@ -399,20 +399,25 @@ describe('Service lifecycle E2E composition', () => {
       expect(impostor.statusCode).toBe(401)
       expect(impostor.json().error.code).toBe('PRIVATE_API_CALLER_INVALID')
 
-      // The envelope workspace must match the payload workspace identity.
-      const crossWorkspace = await post(
+      // Control Plane and Adea workspace identifiers use separate namespaces.
+      // Service authentication scopes the envelope; Adea owns identity mapping.
+      const distinctNamespaces = await post(
         planEnvelope({
           payload: {
             ...planEnvelope().payload,
             workspaceIdentity: {
               userId: 'user-e2e',
-              workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+              workspaceId: 'adea-workspace-e2e',
             },
           },
         })
       )
-      expect(crossWorkspace.statusCode).toBe(400)
-      expect(crossWorkspace.json().error.code).toBe('MARKETPLACE_REQUEST_INVALID')
+      expect(distinctNamespaces.statusCode).toBe(200)
+      expect(distinctNamespaces.json().data).toMatchObject({
+        allowedToActivate: false,
+        approvalRequired: true,
+        planVersion: 2,
+      })
 
       // Unknown plugins are a validated client error, not a server fault.
       const missing = await post(

@@ -382,16 +382,19 @@ export function assertMarketplacePlanRequest(value: unknown): MarketplaceAgentPl
       message: 'Marketplace installation-plan request is invalid',
     })
   const workspaceIdentity = payload['workspaceIdentity']
+  const externalWorkspaceId = stringValue(workspaceIdentity['workspaceId'])
+  const externalUserId = stringValue(workspaceIdentity['userId'])
   if (
     !stringValue(value['workspaceId']) ||
-    stringValue(value['workspaceId']) !== stringValue(workspaceIdentity['workspaceId']) ||
     !stringValue(payload['pluginId']) ||
     !releasePattern.test(stringValue(payload['releaseId'])) ||
     !stringValue(payload['instanceId']) ||
     stringValue(payload['instanceId']).length > 256 ||
     !stringValue(payload['requestedHarness']) ||
-    !stringValue(workspaceIdentity['workspaceId']) ||
-    !stringValue(workspaceIdentity['userId'])
+    !externalWorkspaceId ||
+    externalWorkspaceId.length > 128 ||
+    !externalUserId ||
+    externalUserId.length > 128
   )
     throw new BadRequestException({
       code: 'MARKETPLACE_REQUEST_INVALID',
@@ -403,8 +406,8 @@ export function assertMarketplacePlanRequest(value: unknown): MarketplaceAgentPl
     releaseId: stringValue(payload['releaseId']),
     requestedHarness: stringValue(payload['requestedHarness']),
     workspaceIdentity: {
-      userId: stringValue(workspaceIdentity['userId']),
-      workspaceId: stringValue(workspaceIdentity['workspaceId']),
+      userId: externalUserId,
+      workspaceId: externalWorkspaceId,
     },
   }
 }
