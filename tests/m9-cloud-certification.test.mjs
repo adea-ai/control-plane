@@ -11,11 +11,15 @@ import {
 import { ExecutionPlanSchema } from '@control-plane/execution-plan'
 import {
   createCertificationObjectStore,
+  createCertificationContextPackage,
   createCertificationPlan,
+  createCertificationProfileSeed,
   createCertificationRequest,
   createSignedServiceCredential,
   requiredEnvironment,
   runCloudCertification,
+  seedCertificationPlan,
+  seedCertificationProfile,
 } from '../scripts/certify-m9-cloud.mjs'
 
 const runSuffix = '01JZBCDEF0123456789ABCDEFG'
@@ -59,6 +63,97 @@ describe('M9 live cloud certification harness', () => {
     expect(() => requiredEnvironment(withoutPrefix)).toThrow(
       'M9_CERTIFICATION_CONFIGURATION_MISSING:R2_PREFIX'
     )
+  })
+
+  test('persists the context package before the execution plan that references it', async () => {
+    const contextPackage = createCertificationContextPackage({
+      runSuffix,
+      compiledAt: now.toISOString(),
+    })
+    const plan = createCertificationPlan({
+      runSuffix,
+      compiledAt: now.toISOString(),
+      contextPackage,
+    })
+    const writes = []
+
+    await seedCertificationPlan(plan, contextPackage, {
+      contextPackages: {
+        put: async (packageToPersist) => {
+          writes.push({ type: 'context-package', value: packageToPersist })
+        },
+      },
+      plans: {
+        put: async (executionPlan) => {
+          writes.push({ type: 'execution-plan', value: executionPlan })
+        },
+      },
+    })
+
+    expect(writes).toEqual([
+      { type: 'context-package', value: contextPackage },
+      { type: 'execution-plan', value: plan },
+    ])
+  })
+
+  test('seeds the published profile version pinned by the certification plan', async () => {
+    const profileSeed = createCertificationProfileSeed({
+      runSuffix,
+      compiledAt: now.toISOString(),
+    })
+    const plan = createCertificationPlan({
+      runSuffix,
+      compiledAt: now.toISOString(),
+      profileVersion: profileSeed.profileVersion,
+    })
+    const writes = []
+
+    await seedCertificationProfile(profileSeed, {
+      insertAgentProfile: async (profile) => {
+        writes.push({ type: 'profile', value: profile })
+        return true
+      },
+      insertAgentProfileVersion: async (profileVersion) => {
+        writes.push({ type: 'profile-version', value: profileVersion })
+        return true
+      },
+    })
+
+    expect(writes).toEqual([
+      { type: 'profile', value: profileSeed.profile },
+      { type: 'profile-version', value: profileSeed.profileVersion },
+    ])
+    expect(plan.profile).toMatchObject({
+      profileId: profileSeed.profile.profileId,
+      profileVersionId: profileSeed.profileVersion.profileVersionId,
+      contentDigest: profileSeed.profileVersion.contentDigest,
+      revision: profileSeed.profileVersion.revision,
+    })
+  })
+
+  test('rejects a context package that differs from the execution plan pin before writing', async () => {
+    const contextPackage = createCertificationContextPackage({
+      runSuffix,
+      compiledAt: now.toISOString(),
+    })
+    const plan = createCertificationPlan({
+      runSuffix,
+      compiledAt: now.toISOString(),
+      contextPackage,
+    })
+    const mismatchedContextPackage = createCertificationContextPackage({
+      runSuffix,
+      compiledAt: new Date(now.getTime() + 1).toISOString(),
+    })
+    const writes = []
+
+    await expect(
+      seedCertificationPlan(plan, mismatchedContextPackage, {
+        contextPackages: { put: async () => writes.push('context-package') },
+        plans: { put: async () => writes.push('execution-plan') },
+      })
+    ).rejects.toThrow('M9_CERTIFICATION_CONTEXT_REFERENCE_MISMATCH')
+    expect(writes).toEqual([])
   })
 
   test('creates a current, scope-consistent certification plan and acceptance request', () => {
