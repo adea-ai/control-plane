@@ -60,3 +60,23 @@ test('Local ACP rejects unpinned manifests and changed executables before launch
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('Local ACP requires reinstallation when the pinned sandbox policy bundle changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'm11-acp-stale-policy-'))
+  try {
+    await writeFile(
+      join(directory, 'installation.json'),
+      JSON.stringify({
+        ...pinnedAcpBuild,
+        bundleSha256: '6c6da8939e3c5e835f939850451074b84359e0fddb87ab48872e2a68b9a94529',
+        status: 'built',
+        executable: 'source/dist/index.js',
+      })
+    )
+    await expect(verifyLocalAcpInstallation(directory)).rejects.toThrow(
+      'ACP_INSTALL_MANIFEST_MISMATCH'
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -394,3 +394,62 @@ index 0000000..dffcb89
 +    assert.equal(result.usage?.outputTokens, 3, 'resumed prompt must exclude historical usage');
 +    console.log(JSON.stringify({ beforePromptUsageEvents: before, usageEvents: resumed.events, resumedPromptUsage: result.usage }));
 +} finally { await resumed.close(); }
+diff --git a/src/AgentMode.ts b/src/AgentMode.ts
+--- a/src/AgentMode.ts
++++ b/src/AgentMode.ts
+@@ -45,7 +45,4 @@
+-        {
+-            type: "workspaceWrite",
+-            writableRoots: [],
+-            networkAccess: false,
+-            excludeTmpdirEnvVar: false,
+-            excludeSlashTmp: false,
+-        },
++        {
++            type: "readOnly",
++            networkAccess: false,
++        },
+@@ -52 +49 @@
+-        "workspace-write",
++        "read-only",
+diff --git a/src/__tests__/CodexACPAgent/CodexAcpClient.test.ts b/src/__tests__/CodexACPAgent/CodexAcpClient.test.ts
+--- a/src/__tests__/CodexACPAgent/CodexAcpClient.test.ts
++++ b/src/__tests__/CodexACPAgent/CodexAcpClient.test.ts
+@@ -960,0 +961,37 @@
++    it('routes the configured read-only mode as a native read-only sandbox', async () => {
++        vi.stubEnv("INITIAL_AGENT_MODE", "read-only");
++
++        const mockFixture = createCodexMockTestFixture();
++        const codexAcpAgent = mockFixture.getCodexAcpAgent();
++        const codexAppServerClient = mockFixture.getCodexAppServerClient();
++        vi.spyOn(codexAppServerClient, "listSkills").mockResolvedValue({data: []});
++        const turnStartSpy = vi.spyOn(codexAppServerClient, "turnStart").mockResolvedValue({
++            turn: { id: "turn-id", items: [], status: "inProgress", error: null }
++        } as any);
++        vi.spyOn(codexAppServerClient, "awaitTurnCompleted").mockResolvedValue({
++            threadId: "session-id",
++            turn: { id: "turn-id", items: [], status: "completed", error: null }
++        } as any);
++
++        const agentMode = AgentMode.getInitialAgentMode();
++        expect(agentMode.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false });
++        expect(agentMode.sandboxMode).toBe("read-only");
++
++        vi.spyOn(codexAcpAgent, "getSessionState").mockReturnValue(createTestSessionState({
++            sessionId: "session-id",
++            cwd: "/workspace",
++            agentMode,
++        }));
++
++        await codexAcpAgent.prompt({
++            sessionId: "session-id",
++            prompt: [{ type: "text", text: "Hello" }],
++        });
++
++        expect(turnStartSpy.mock.calls[0]![0].sandboxPolicy).toEqual({
++            type: "readOnly",
++            networkAccess: false,
++        });
++        expect(turnStartSpy.mock.calls[0]![0].approvalPolicy).toBe("on-request");
++        expect(turnStartSpy.mock.calls[0]![0].approvalsReviewer).toBe("user");
++    });
