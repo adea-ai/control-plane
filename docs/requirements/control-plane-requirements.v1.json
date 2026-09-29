@@ -4427,7 +4427,7 @@
       "heading": "Evaluation, Compatibility, and Release Gates (P00125)",
       "requirement": "Allow failed gates to block promotion without deleting candidate versions.",
       "normativeState": "accepted",
-      "classification": "tbd",
+      "classification": "partially_verified",
       "owner": "evaluation",
       "lane": "eval",
       "issueRefs": [195, 191],
@@ -4435,13 +4435,17 @@
         {
           "kind": "document",
           "path": "docs/performance.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/production-readiness/src/adversarial-eval-corpus.test.mjs"
         }
       ],
       "gap": {
         "issue": 191,
         "severity": "high",
         "owner": "evaluation",
-        "disposition": "No focused current promotion-gate test was identified."
+        "disposition": "An offline component test verifies that a failed critical evaluation blocks promotion (packages/production-readiness/src/adversarial-eval-corpus.test.mjs). Product-level promotion integration, operational authorization, and preservation of candidate versions on failure remain unverified."
       }
     },
     {
@@ -5314,7 +5318,7 @@
         "issue": 191,
         "severity": "medium",
         "owner": "production-readiness",
-        "disposition": "Executed evals still produce no reliability, efficiency, handoff-quality, or reviewer-feedback metric values: the metric enum (packages/production-readiness/src/evaluations.ts:17-44) and docs/evaluation-dimensions.md accept these dimensions, and harness 2.0.0 executes reporting_honesty/behavior_compliance/task_outcome/latency, but no executed eval populates the remaining four. Close by executing evals that emit those values under version-pinned configs; blinded human recalibration on harness 2.0.0 (target kappa >= 0.6) remains open on #191."
+        "disposition": "Current harness 3.0.0 derives reporting_honesty, behavior_compliance, task_outcome, latency_ms, provenance_correctness, and scope_control for offline evidence audits. No executed current eval populates reliability, efficiency, handoff_quality, or reviewer_feedback. Close by executing version-pinned evaluations for the missing dimensions; blinded human recalibration against harness 3.0.0 remains open on #191. The recorded kappa 0.750 study used AI reviewers on harness 2.0.0, while the only recorded human study used harness 1.0.0 and reached kappa -0.25."
       }
     },
     {
@@ -5376,7 +5380,7 @@
         "issue": 191,
         "severity": "medium",
         "owner": "production-readiness",
-        "disposition": "Remaining: (1) committed baseline scorecards for approved profiles/skills/adapters (skill-eval scorecards currently go to /tmp; no baselines are checked in); (2) controlled live-provider evidence (the executed harness is offline-only); (3) blinded human recalibration on harness 2.0.0 — current calibration rests on AI-reviewer kappa=0.750 plus a human session at kappa=-0.25 on harness 1.0.0, and #191 was reopened 2026-09-20 rejecting owner-ratification as a substitute for human calibration."
+        "disposition": "Remaining: (1) committed baseline scorecards for approved profiles/skills/adapters (skill-eval scorecards currently go to /tmp; no baselines are checked in); (2) controlled live-provider evidence (the current evaluation corpus is offline-only); (3) blinded human recalibration against harness 3.0.0. The recorded kappa 0.750 study used AI reviewers on harness 2.0.0; the only recorded human session used harness 1.0.0 and reached kappa -0.25. Issue #191 was reopened 2026-09-20, rejecting owner-ratification as a substitute for human calibration."
       }
     },
     {
@@ -5385,7 +5389,7 @@
       "heading": "Initial Evaluation Harness",
       "requirement": "Maintain a versioned 24–32 task corpus across software, research, writing, and planning with anti-overdelegation cases.",
       "normativeState": "planned",
-      "classification": "not_implemented",
+      "classification": "partially_verified",
       "owner": "evaluation",
       "lane": "eval",
       "issueRefs": [191],
@@ -5399,15 +5403,19 @@
           "path": "docs/adversarial-corpus-v1.md"
         },
         {
+          "kind": "implementation",
+          "path": "packages/production-readiness/src/adversarial-eval-corpus.ts"
+        },
+        {
           "kind": "test",
-          "path": "packages/production-readiness/src/evidence-audit-eval.ts"
+          "path": "packages/production-readiness/src/adversarial-eval-corpus.test.mjs"
         }
       ],
       "gap": {
         "issue": 191,
         "severity": "medium",
         "owner": "evaluation",
-        "disposition": "Unchanged in substance: the 28-task draft corpus (docs/adversarial-corpus-v1.md, within the 24-32 range, four families, anti-overdelegation cases SW-01/RE-01/WR-01/PL-01) is explicitly 'a draft task specification, not an executed benchmark'. Required to close: versioned per-task fixtures, rubric versions, hidden/rotating cases, reproducibility metadata, and independent execution — the doc's own 'Remaining' list. A draft corpus is not evidence of a maintained corpus."
+        "disposition": "The 31-task public specification is within the required 24-32 range, but only 17 deterministic public evidence-report fixtures are executable today; the document explicitly says they do not execute real agents or independently observe side effects. Required to close: complete four-family coverage, versioned per-task fixtures and rubrics, hidden/rotating cases, reproducibility metadata, and independent execution. A task specification and partial fixture subset are not a maintained, independently executed benchmark."
       }
     },
     {

@@ -5,9 +5,9 @@ review, satisfying #191 item 6 ("Calibrate automated graders against blinded
 human review with documented error bounds") and the #196 dependency for
 golden/adversarial skill evals.
 
-Normative inputs: the [adversarial corpus v1](../adversarial-corpus-v1.md)
-(28-task public development corpus) and the bounded offline harness
-(`packages/production-readiness/src/evidence-audit-eval.ts`), which records
+Normative inputs: the [adversarial corpus v1](../adversarial-corpus-v1.md), a
+31-task public development specification with 17 currently executable fixtures,
+and the bounded offline harness (`packages/production-readiness/src/evidence-audit-eval.ts`), which records
 inspections, denied action attempts, and independently checks requirement
 coverage, evidence provenance, state classification, and completion honesty.
 
