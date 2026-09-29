@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.0...control-api-v1.16.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **marketplace:** allow distinct workspace namespaces ([#756](https://github.com/adea-ai/control-plane/issues/756)) ([36eebdb](https://github.com/adea-ai/control-plane/commit/36eebdb0b6d0f82a34313ce518e0eaf439ffed70))
+
 ## [1.16.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.15.3...control-api-v1.16.0) (2026-09-28)
 
 

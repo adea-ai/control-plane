@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.28.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.28.0...sqlite-persistence-v1.28.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden admission audits and skill validation ([#752](https://github.com/adea-ai/control-plane/issues/752)) ([73bb210](https://github.com/adea-ai/control-plane/commit/73bb21069c8d9644d08141610f9a63a2d62a4cf1))
+
+
+### Performance
+
+* **retention:** bound PostgreSQL hold lookup work ([#755](https://github.com/adea-ai/control-plane/issues/755)) ([e5d956b](https://github.com/adea-ai/control-plane/commit/e5d956bccfbfb461070a6e1f646449139d7d0da5))
+
 ## [1.28.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.27.1...sqlite-persistence-v1.28.0) (2026-09-28)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.35.2](https://github.com/adea-ai/control-plane/compare/database-v1.35.1...database-v1.35.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden admission audits and skill validation ([#752](https://github.com/adea-ai/control-plane/issues/752)) ([73bb210](https://github.com/adea-ai/control-plane/commit/73bb21069c8d9644d08141610f9a63a2d62a4cf1))
+
+
+### Performance
+
+* **retention:** bound PostgreSQL hold lookup work ([#755](https://github.com/adea-ai/control-plane/issues/755)) ([e5d956b](https://github.com/adea-ai/control-plane/commit/e5d956bccfbfb461070a6e1f646449139d7d0da5))
+
 ## [1.35.1](https://github.com/adea-ai/control-plane/compare/database-v1.35.0...database-v1.35.1) (2026-09-28)
 
 

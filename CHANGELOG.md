@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.59.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.2...workspace-v1.59.3) (2026-09-29)
+
+
+### Bug Fixes
+
+* **m11:** harden admission audits and skill validation ([#752](https://github.com/adea-ai/control-plane/issues/752)) ([73bb210](https://github.com/adea-ai/control-plane/commit/73bb21069c8d9644d08141610f9a63a2d62a4cf1))
+* **marketplace:** allow distinct workspace namespaces ([#756](https://github.com/adea-ai/control-plane/issues/756)) ([36eebdb](https://github.com/adea-ai/control-plane/commit/36eebdb0b6d0f82a34313ce518e0eaf439ffed70))
+
+
+### Performance
+
+* **retention:** bound PostgreSQL hold lookup work ([#755](https://github.com/adea-ai/control-plane/issues/755)) ([e5d956b](https://github.com/adea-ai/control-plane/commit/e5d956bccfbfb461070a6e1f646449139d7d0da5))
+
+
+### Documentation
+
+* **m11:** reconcile CP-M12 roadmap scope ([#754](https://github.com/adea-ai/control-plane/issues/754)) ([f51eda0](https://github.com/adea-ai/control-plane/commit/f51eda099564d22a6a08e5e28949b6647e170d70))
+
 ## [1.59.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.1...workspace-v1.59.2) (2026-09-28)
 
 
