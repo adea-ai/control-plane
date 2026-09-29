@@ -90,6 +90,27 @@ not a serialized reservation or proof of provider payment; see the
 [runtime admission checkpoint](evidence/m11-runtime-budget-admission-2026-09-27.md)
 for exact tested profiles and limitations.
 
+### Plan-bounded allocation authority
+
+The `accepted-plan-budget-allocation.v1` policy treats trusted execution acceptance
+as authorization to allocate an execution allowance, not as proof of prepaid
+funds or a provider charge. Acceptance must already enforce principal, scope,
+catalog and approval policy. `executionPlanBudgetAllowance` reads money and token
+ceilings only from the integrity-checked persisted plan and verifies its pin and
+execution correlation; request-supplied limits cannot increase the allowance.
+`executionBudgetAdmissionSource` binds the allocation to the recorded actor,
+command, payload, immutable execution and parent through an opaque digest. Its
+identity remains stable across lifecycle transitions and historical replay.
+
+Parent capacity and same-workspace, same-project ownership must be enforced by
+the admission repository within the command/owner transaction. Opening credits
+describe allocation, not purchased funds. Actual charges still need explicit
+funding and cost provenance; unknown costs must not become zero-cost settlement.
+SQLite and PostgreSQL acceptance now atomically records plan-bounded opening
+allocations, and Local, Hosted and Cloud runtime roots install the admission
+preflight. This does not reserve per-effect capacity or charge actual provider
+usage; trusted cost provenance and terminal settlement remain open M11 gates.
+
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
 implementation. Raw usage retention, surviving aggregates/replay fences, complete PostgreSQL

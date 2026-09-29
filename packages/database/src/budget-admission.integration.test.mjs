@@ -251,6 +251,28 @@ function terminalOwnerRow(executionId, invalidVersion = false) {
   }
 }
 
+async function createTemporaryAdmissionGate(client, state, revision) {
+  await client`create temporary table admission_rollout_gate (like public.admission_rollout_gate)`
+  await client`
+    insert into pg_temp.admission_rollout_gate
+      (gate_key, state, schema_version, revision, updated_at, updated_by)
+    values ('intake', ${state}, 1, ${revision}, now(), 'temporary-shadow')
+  `
+}
+
+async function createTemporaryAdmissionInventory(client) {
+  for (const table of [
+    'executions',
+    'execution_attempts',
+    'command_inbox',
+    'retired_command_keys',
+    'runtime_commands',
+    'delegations',
+  ]) {
+    await client.unsafe(`create temporary table ${table} (like public.${table})`)
+  }
+}
+
 describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
   const isolatedDatabases = []
 
@@ -520,6 +542,61 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
     } finally {
       await operatorClient.end({ timeout: 5 })
     }
+  }, 30_000)
+
+  test('a temporary gate table cannot shadow the paused public intake gate', async () => {
+    const { isolated, credentials } = await createDatabase()
+    await isolated.withMigrationDatabase((database) =>
+      new PostgresAdmissionRolloutService(database).pause()
+    )
+
+    const applicationUrl = new URL(credentials.application.url)
+    applicationUrl.pathname = `/${isolated.name}`
+    const client = postgres(applicationUrl.toString(), { max: 1, prepare: false })
+    try {
+      await createTemporaryAdmissionGate(client, 'open', 0)
+      const database = drizzle(client, { schema })
+      const result = await acceptanceService(database, { budgetAdmission: false })
+        .service.acceptExecution(commandInput(plan))
+        .then(
+          (accepted) => ({ accepted }),
+          (error) => ({ error })
+        )
+
+      expect(result.error).toMatchObject({ code: 'ADMISSION_ROLLOUT_PAUSED' })
+      expect(result.accepted).toBeUndefined()
+    } finally {
+      await client.end({ timeout: 5 })
+    }
+  }, 30_000)
+
+  test('a temporary inventory cannot hide active public owners from resume audit', async () => {
+    const { isolated } = await createDatabase()
+    const accepted = await acceptanceService(isolated.application, {
+      budgetAdmission: false,
+    }).service.acceptExecution(commandInput(plan))
+    const paused = await isolated.withMigrationDatabase((database) =>
+      new PostgresAdmissionRolloutService(database).pause()
+    )
+
+    const result = await isolated.withMigrationDatabase(async (database) => {
+      const client = database.$client
+      await createTemporaryAdmissionGate(client, 'paused', paused.revision)
+      await createTemporaryAdmissionInventory(client)
+      const resumeError = await new PostgresAdmissionRolloutService(database).resume().then(
+        (resumed) => ({ resumed }),
+        (error) => ({ error })
+      )
+      const [publicGate] = await client`
+        select state from public.admission_rollout_gate where gate_key = 'intake'
+      `
+      return { resumeError, publicGate }
+    })
+
+    expect(accepted.execution.state).toBe('accepted')
+    expect(result.resumeError.error).toMatchObject({ code: 'ADMISSION_ROLLOUT_RESUME_BLOCKED' })
+    expect(result.resumeError.resumed).toBeUndefined()
+    expect(result.publicGate.state).toBe('paused')
   }, 30_000)
 
   test('audits and resumes an empty paused gate with durable readback', async () => {
@@ -1498,6 +1575,34 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
     expect(afterAuditAndReplay.budgets).toEqual(before.budgets)
     expect(afterAuditAndReplay.entries).toEqual(before.entries)
     expect(afterAuditAndReplay.receipts).toEqual(before.receipts)
+  }, 30_000)
+
+  test('blocks resume when a terminal owner has both an inbox command and a retired key', async () => {
+    const { isolated } = await createDatabase()
+    const { service } = acceptanceService(isolated.application)
+    const accepted = await service.acceptExecution(commandInput(plan))
+    await persistLegacyOutcome(isolated.application, service, accepted, 'completed', 'completed')
+
+    const otherScope = {
+      ...commandScope(accepted.command),
+      idempotencyKey: `${accepted.command.idempotencyKey}-retired`,
+    }
+    const keys = retiredCommandKeyCandidates(otherScope)
+    await isolated.withMigrationDatabase((database) =>
+      database.insert(retiredCommandKeys).values({
+        scopeKey: keys.metadata.scopeKey,
+        commandId: nextId('cmd'),
+        executionId: accepted.execution.executionId,
+        retiredAt: new Date('2026-09-21T00:00:00.000Z'),
+        metadataVersion: keys.metadata.metadataVersion,
+        identityDigest: keys.metadata.identityDigest,
+      })
+    )
+
+    const report = await auditWithMigration(isolated)
+    expect(report.complete).toBe(false)
+    expect(report.canResume).toBe(false)
+    expect(report.diagnostics.map(({ code }) => code)).toContain('RETIRED_COMMAND_LINEAGE_INVALID')
   }, 30_000)
 
   test('v2 retired-command metadata rejects a null identity digest in PostgreSQL', async () => {

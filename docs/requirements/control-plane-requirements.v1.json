@@ -225,12 +225,12 @@
     },
     {
       "id": "local",
-      "composition": "All-in-one Bun process + node:sqlite + filesystem + single-node Restate + direct RuntimeTransport",
+      "composition": "All-in-one Bun process + node:sqlite + embedded SQLite durable queue/runtime + filesystem + direct RuntimeTransport; Restate is optional compatibility mode, not a default dependency",
       "classification": "partially_verified",
       "owner": "local-control-plane",
       "observedAt": "2026-08-30",
       "commit": "not-recorded-in-evidence",
-      "result": "Developer-host startup, readiness, sleep/wake, restore, and bounded load passed; packaged desktop certification remains open.",
+      "result": "The 2026-08-30 checkpoint exercised the then-current bundled-Restate Local composition; after owner decision #548 (2026-09-16), it is historical compatibility-mode evidence, not certification of the default Restate-free Local profile. Packaged desktop certification remains open.",
       "evidence": [
         {
           "kind": "environment",
@@ -6918,7 +6918,7 @@
           "path": "docs/evidence/m10-operability-2026-08-30.md"
         }
       ],
-      "assessment": "Local embedded and Hosted remote Restate startup, version pinning, persistence, readiness, endpoint registration, failure cleanup, dependency loss, and restart recovery have reachable evidence."
+      "assessment": "Restate runtime tests cover explicit Local binary and remote Hosted runtime startup, version, readiness, endpoint registration, and owned-process cleanup. After owner decision #548, Local Restate is optional compatibility coverage, not default Local queue/durability acceptance; full profile failure and recovery acceptance remains separate."
     },
     {
       "id": "M10-ISSUE-201",
@@ -6974,7 +6974,7 @@
           "path": "docs/evidence/m10-operability-2026-08-30.md"
         }
       ],
-      "assessment": "The production Local entry point composes SQLite, filesystem artifacts, local secrets, bundled Restate, direct runtime transport, loopback API, health, authentication, and optional outbound relay with zero mandatory external services; packaged macOS remeasurement is an M11 gate."
+      "assessment": "The production Local entry point defaults to SQLite persistence and an embedded SQLite durable queue/runtime, filesystem artifacts, local secrets, direct runtime transport, loopback API, health, authentication, and optional outbound relay with zero mandatory external services. Restate is optional compatibility mode; packaged macOS remeasurement of the default profile remains an M11 gate."
     },
     {
       "id": "M10-ISSUE-204",

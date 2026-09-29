@@ -475,6 +475,19 @@ describe('M11.1 requirements ledger', () => {
     }
   })
 
+  test('records the owner-approved Restate-free Local default without promoting it to verified', () => {
+    const local = ledger.deploymentProfiles.find(({ id }) => id === 'local')
+    expect(local.composition).toContain('embedded SQLite durable queue/runtime')
+    expect(local.composition).toContain('not a default dependency')
+    expect(local.classification).toBe('partially_verified')
+    expect(local.result).toContain('historical compatibility-mode evidence')
+    expect(local.result).toContain('not certification of the default Restate-free Local profile')
+
+    const localComposition = ledger.priorMilestoneAudits.find(({ id }) => id === 'M10-ISSUE-203')
+    expect(localComposition.assessment).toContain('Restate is optional compatibility mode')
+    expect(localComposition.assessment).toContain('remains an M11 gate')
+  })
+
   test('keeps the generated report in sync', async () => {
     expect(await readFile(reportUrl, 'utf8')).toBe(await renderRequirementsReport(ledger))
   })

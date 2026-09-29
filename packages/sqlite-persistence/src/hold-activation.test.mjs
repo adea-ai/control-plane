@@ -87,6 +87,7 @@ async function withProvider(run) {
 function waitForWorkerMessage(worker, expectedType) {
   return new Promise((resolve, reject) => {
     let settled = false
+    let timeout
     const finish = (callback, value) => {
       if (settled) return
       settled = true
@@ -107,10 +108,15 @@ function waitForWorkerMessage(worker, expectedType) {
       finish(reject, new Error(`worker exited ${code} before ${expectedType}`))
     }
     const cleanup = () => {
+      clearTimeout(timeout)
       worker.off('message', onMessage)
       worker.off('error', onError)
       worker.off('exit', onExit)
     }
+    timeout = setTimeout(
+      () => finish(reject, new Error(`timed out waiting for worker message ${expectedType}`)),
+      10_000
+    )
     worker.on('message', onMessage)
     worker.on('error', onError)
     worker.on('exit', onExit)
@@ -122,7 +128,7 @@ async function waitForSharedValue(state, index, expectedValues, description) {
   while (true) {
     const value = Atomics.load(state, index)
     if (expectedValues.includes(value)) return value
-    if (Atomics.load(state, 4) !== 0) throw new Error(`worker failed before ${description}`)
+    if (Atomics.load(state, 2) !== 0) throw new Error(`worker failed before ${description}`)
     if (Date.now() >= deadline)
       throw new Error(`timed out waiting for ${description}; state=${value}`)
     await new Promise((resolve) => setImmediate(resolve))
@@ -712,7 +718,7 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
   const directory = await mkdtemp(join(tmpdir(), 'sqlite-hold-two-provider-'))
   const path = join(directory, 'state.sqlite')
   const provider = new SqlitePersistenceProvider({ path })
-  const workerState = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 5))
+  const workerState = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3))
   let holdWriter
   let claimWorker
   try {
@@ -745,13 +751,12 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
           const provider = new SqlitePersistenceProvider({ path: workerData.path })
           await provider.migrate()
           const acquire = new Promise((resolve) => parentPort.once('message', resolve))
-          Atomics.store(state, 0, 1)
-          Atomics.notify(state, 0)
+          parentPort.postMessage({ type: 'ready' })
           await acquire
           await provider.transaction(async (transaction) => {
             const commit = new Promise((resolve) => parentPort.once('message', resolve))
-            Atomics.store(state, 2, 1)
-            Atomics.notify(state, 2)
+            Atomics.store(state, 0, 1)
+            Atomics.notify(state, 0)
             await commit
             await transaction.put({
               namespace: 'retention-holds',
@@ -763,8 +768,8 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
           parentPort.postMessage({ type: 'hold-committed' })
         })().catch((error) => {
           const state = new Int32Array(workerData.workerState)
-          Atomics.store(state, 4, 1)
-          Atomics.notify(state, 4)
+          Atomics.store(state, 2, 1)
+          Atomics.notify(state, 2)
           parentPort.postMessage({ type: 'error', error: error?.stack ?? String(error) })
         })
       `,
@@ -782,10 +787,12 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
             ])
           const state = new Int32Array(workerData.workerState)
           const provider = new SqlitePersistenceProvider({ path: workerData.path })
+          const migration = new Promise((resolve) => parentPort.once('message', resolve))
+          parentPort.postMessage({ type: 'migration-request' })
+          await migration
           await provider.migrate()
           const start = new Promise((resolve) => parentPort.once('message', resolve))
-          Atomics.store(state, 1, 1)
-          Atomics.notify(state, 1)
+          parentPort.postMessage({ type: 'ready' })
           await start
           const originalExec = DatabaseSync.prototype.exec
           let observeBegin = true
@@ -797,18 +804,18 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
               originalExec.call(this, 'PRAGMA busy_timeout = 25')
               try {
                 const result = originalExec.call(this, sql, ...parameters)
-                Atomics.store(state, 3, 2)
-                Atomics.notify(state, 3)
+                Atomics.store(state, 1, 2)
+                Atomics.notify(state, 1)
                 return result
               } catch (error) {
                 if (!/locked|busy/i.test(String(error?.message))) {
-                  Atomics.store(state, 3, 3)
-                  Atomics.notify(state, 3)
+                  Atomics.store(state, 1, 3)
+                  Atomics.notify(state, 1)
                   throw error
                 }
-                Atomics.store(state, 3, 1)
-                Atomics.notify(state, 3)
-                Atomics.wait(state, 3, 1)
+                Atomics.store(state, 1, 1)
+                Atomics.notify(state, 1)
+                Atomics.wait(state, 1, 1)
                 return originalExec.call(this, sql, ...parameters)
               }
             }
@@ -827,8 +834,8 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
           parentPort.postMessage({ type: 'sweep-complete', result })
         })().catch((error) => {
           const state = new Int32Array(workerData.workerState)
-          Atomics.store(state, 4, 1)
-          Atomics.notify(state, 4)
+          Atomics.store(state, 2, 1)
+          Atomics.notify(state, 2)
           parentPort.postMessage({ type: 'error', error: error?.stack ?? String(error) })
         })
       `,
@@ -845,14 +852,17 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
       }
     )
 
-    await Promise.all([
-      waitForSharedValue(workerState, 0, [1], 'holder migration'),
-      waitForSharedValue(workerState, 1, [1], 'sweeper migration'),
-    ])
-    const holdLocked = waitForSharedValue(workerState, 2, [1], 'holder transaction lock')
+    // The parent and both workers migrate the same file. Serialize worker
+    // startup so schema DDL contention cannot race ahead of the lock scenario.
+    const claimMigrationRequested = waitForWorkerMessage(claimWorker, 'migration-request')
+    await waitForWorkerMessage(holdWriter, 'ready')
+    await claimMigrationRequested
+    claimWorker.postMessage('migrate', [])
+    await waitForWorkerMessage(claimWorker, 'ready')
+    const holdLocked = waitForSharedValue(workerState, 0, [1], 'holder transaction lock')
     holdWriter.postMessage('acquire-hold', [])
     await holdLocked
-    const beginBlocked = waitForSharedValue(workerState, 3, [1, 2, 3], 'claim BEGIN result')
+    const beginBlocked = waitForSharedValue(workerState, 1, [1, 2, 3], 'claim BEGIN result')
     claimWorker.postMessage('start-sweep', [])
     const beginResult = await beginBlocked
     if (beginResult !== 1) throw new Error('claim BEGIN did not contend with the active holder')
@@ -860,8 +870,8 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
     const sweepComplete = waitForWorkerMessage(claimWorker, 'sweep-complete')
     holdWriter.postMessage('commit-hold', [])
     await writerCommitted
-    Atomics.store(workerState, 3, 2)
-    Atomics.notify(workerState, 3)
+    Atomics.store(workerState, 1, 2)
+    Atomics.notify(workerState, 1)
     const { result } = await sweepComplete
     expect(result.retainedByReason).toEqual({ hold_recorded: 1 })
     expect(result.deleted).toBe(0)
@@ -881,8 +891,8 @@ test('a concurrent hold writer serializes ahead of a claim on a second SQLite pr
       verificationProvider.close()
     }
   } finally {
-    Atomics.store(workerState, 3, 2)
-    Atomics.notify(workerState, 3)
+    Atomics.store(workerState, 1, 2)
+    Atomics.notify(workerState, 1)
     await holdWriter?.terminate()
     await claimWorker?.terminate()
     if (provider) {

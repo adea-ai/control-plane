@@ -238,24 +238,65 @@ provider-settlement evidence also remain open.
 Never restore intake with an arbitrary SQL update or invent historical funding
 authority.
 
-The operator CLI now supports actual PostgreSQL `status` and `pause` operations.
-It loads only `DATABASE_MIGRATION_URL`, uses an explicit migration connection
-factory, and verifies the target host, port and database before connecting. The
-connection profile does not grant authority: the service checks the authenticated
-database role's actual privileges. Do not put credentials in command arguments.
-After building the workspace, use the exact intended target:
+The operator CLI supports actual PostgreSQL `status`, `audit`, `pause`, and
+`resume` operations. It loads only `DATABASE_MIGRATION_URL`, uses an explicit
+migration connection factory, and verifies the target host, port and database
+before connecting. The connection profile does not grant authority: the service
+checks the authenticated database role's actual privileges. Do not put
+credentials in command arguments. After building the workspace, use the exact
+intended target:
 
 ```sh
 bun run admission:admin status --host <host> --port <port> --database <database>
+bun run admission:admin audit --host <host> --port <port> --database <database>
 bun run admission:admin pause --host <host> --port <port> --database <database> --confirm pause
+bun run admission:admin resume --host <host> --port <port> --database <database> --confirm resume
 ```
 
-The CLI also supports the bounded database service's `audit` and `resume`
-operations. Resume performs a fresh audit while holding the exclusive intake
-fence; a saved report cannot authorize it. These local service checks are not
-external rollout or replica-quiescence acceptance. Do not treat them as proof
-that the production cutover is safe. No force flag, automatic migration or
-deployment is provided. Failed operations return exit code 1 with sanitized
+The bounded `audit` and `resume` operations take PostgreSQL `SHARE` locks on
+these inventory tables for the pass: `public.executions`,
+`public.execution_attempts`, `public.command_inbox`,
+`public.runtime_commands`, `public.retired_command_keys`, and
+`public.delegations`. Those locks conflict with writes to the inventory tables,
+so owner and intake writes may wait for up to the 20-second audit budget. Lock
+waits time out after 2 seconds; plan the audit/resume window around write
+traffic. A lock timeout or incomplete audit fails closed. Resume performs a
+fresh audit under the exclusive intake fence and those table locks before
+updating the gate; a saved report cannot authorize it.
+
+Use `DATABASE_MIGRATION_URL` for this CLI, pointed at the exact target. It does
+not fall back to `DATABASE_URL` or `DATABASE_ADMIN_URL`. The authenticated role
+must be the migration owner (provisioned PostgreSQL uses `control_plane_migrator`)
+or an equivalent role with rights to lock all six inventory tables. `pause` and
+`resume` also require `UPDATE` authority on `admission_rollout_gate` (table-level,
+or column-level for `state`, `revision`, `updated_at`, and `updated_by`); the
+service checks the connected role's actual gate privileges. The application
+role's gate access is read-only and is not sufficient for `pause` or `resume`.
+
+A completed audit that reports `RETIRED_COMMAND_KEY_UNVERIFIABLE` is blocked by
+a pre-existing v1 replay tombstone: the audit cannot verify its scoped identity.
+Do not try to clear the finding with SQL or by editing the gate. The tombstone
+continues rejecting matching replays and remains audit-blocking until its
+30-day retention window from `retired_at` has passed and the row is removed by
+the supported operator sweep. Preflight the class with the default dry run,
+using the migration-owner URL and an authorized hold policy so recorded holds
+are evaluated:
+
+```sh
+bun scripts/retention-apply.mjs --backend postgres --class retired-command-keys \
+  --database <database> --host <host> \
+  --hold-policy /absolute/path/operator-policy.json
+```
+
+Review the audit diagnostics and the sweep's eligible/retained counts. A row is
+eligible only after the 30-day boundary and when no matching hold prevents
+deletion. Once the dry run and change review confirm eligibility, use the
+explicit `--apply --confirm retired-command-keys` sweep documented in
+[Retention deletion (#194)](#retention-deletion-194), then rerun `audit`; call
+`resume` only when its fresh audit permits it. These local service checks are
+not external rollout or replica-quiescence acceptance. Do not treat them as
+proof that the production cutover is safe. No force flag, automatic migration
+or deployment is provided. Failed operations return exit code 1 with sanitized
 stderr; a completed audit that does not permit resume returns exit code 2.
 
 ## Catalog approval gate (#188)
