@@ -7,6 +7,15 @@ import { discoverSkillLibrary, validateSkillLibrary } from '../scripts/validate-
 const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
 const read = (path) => readFile(resolve(root, path), 'utf8')
+const bunRunCommands = (markdown) =>
+  [...markdown.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)(?=[\s`])/gu)].map((command) => command[1])
+
+test('skill command extraction rejects malformed command prefixes', () => {
+  expect(bunRunCommands('`bun run build` `bun run test --timeout 1` `bun run build.foo`')).toEqual([
+    'build',
+    'test',
+  ])
+})
 
 test('the shared skill lock matches discoverable skill directories and valid identities', async () => {
   const lock = JSON.parse(await read('.agents/.skill-lock.json'))
@@ -63,9 +72,7 @@ test('every retained skill has an owner, version, complete evidence contract, va
 
     for (const file of skill.files.filter((path) => path.endsWith('.md'))) {
       const markdown = await read(`.agents/skills/${name}/${file}`)
-      const commands = [...markdown.matchAll(/`bun run ([a-z0-9][a-z0-9:_-]*)/gu)].map(
-        (command) => command[1]
-      )
+      const commands = bunRunCommands(markdown)
       for (const command of commands) {
         expect(typeof scripts[command], `${name}/${file}: bun run ${command}`).toBe('string')
       }
