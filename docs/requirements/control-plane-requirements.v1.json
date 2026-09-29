@@ -53,7 +53,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07 and re-reviewed at revision 25 on 2026-09-29. Section 17 now names the bundled Local Control Plane's embedded durable queue; atomic extraction and current implementation/control mapping, including the changed acceptance baseline, remain incomplete."
       }
     },
     {
@@ -68,7 +68,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
+        "disposition": "Source retrieved through Google Drive on 2026-09-07 and re-reviewed at revision 27 on 2026-09-29. Section 20 now distinguishes the default Local embedded SQLite queue from optional Local Restate and the Hosted/cloud/Self-hosted Restate profiles; atomic extraction and current implementation/control mapping remain incomplete."
       }
     },
     {
@@ -113,7 +113,7 @@
       "provider": "google-drive",
       "sourceId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
       "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
-      "updatedAt": "2026-08-28T07:21:06.166Z",
+      "updatedAt": "2026-09-29T02:02:15.799Z",
       "retrievalStatus": "retrieved",
       "sourceAudit": {
         "path": "docs/requirements/runtime-node-source-audit.md",
@@ -133,7 +133,7 @@
       "provider": "google-drive",
       "sourceId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
       "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
-      "updatedAt": "2026-08-28T07:21:17.702Z",
+      "updatedAt": "2026-09-29T02:02:18.414Z",
       "retrievalStatus": "retrieved",
       "sourceAudit": {
         "path": "docs/requirements/execution-consistency-source-audit.md",
@@ -1646,7 +1646,7 @@
       "id": "CP-CONS-017",
       "sourceId": "execution-consistency-spec",
       "heading": "Persistence authority (section 20)",
-      "requirement": "Execution, Attempt, ExecutionEvent and CommandInbox remain inspectable authority through SQLite for Local/Hosted simple and PostgreSQL for Hosted server/cloud; Restate history and optional graph checkpoints do not replace those records.",
+      "requirement": "Execution, Attempt, ExecutionEvent and CommandInbox remain inspectable authority through SQLite for Local and Self-hosted simple, and PostgreSQL for Self-hosted server and managed cloud; Hosted/cloud and Self-hosted profiles use Restate for lifecycle durability/recovery, while default Local uses the embedded SQLite queue without Restate and may opt into Restate only for compatibility. Restate history and optional graph checkpoints do not replace those records.",
       "normativeState": "accepted",
       "classification": "verified",
       "owner": "durable-execution",
@@ -5186,7 +5186,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "runtime-protocol",
-        "disposition": "Retrieval and most extraction are done: source retrieved and revision-pinned (revalidations 2026-09-07/09-08), CP-RNODE-001..030 extracted. Remaining per the audit doc's own verdict: detailed message/envelope fields, local-provider command/result metadata, audit/metric coverage, and the full section 17 acceptance mapping 'still require reconciliation'; the doc states 'the original retrieval/reconciliation umbrella requirement remains open' and that recovered access 'does not resolve every production transport implementation choice'."
+        "disposition": "Retrieval and most extraction are done: source retrieved and revision-pinned, re-reviewed at revision 25 on 2026-09-29, CP-RNODE-001..030 extracted. Section 17 now names the bundled Local Control Plane's embedded durable queue, but its acceptance baseline is not yet atomically mapped. Detailed message/envelope fields, local-provider command/result metadata, audit/metric coverage, and full section 17 acceptance mapping remain incomplete; current implementation/control mapping remains incomplete."
       }
     },
     {
@@ -5217,7 +5217,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Retrieval and extraction largely done: CP-CONS-001..032 extracted and revalidated; the section 18 acceptance map records all 15 baseline scenarios with ledger references, ownership boundaries and missing proof. Remaining per the audit doc: cross-system interface obligations, detailed event field mappings, remaining lifecycle details and the complete scenario-to-evidence mapping 'still require extraction/reconciliation'; 'the existing retrieval/reconciliation umbrella and reopened #186 stay open'; 'all scenarios remain unverified at their full scope'."
+        "disposition": "Retrieval and extraction largely done: CP-CONS-001..032 extracted; the source was re-reviewed at revision 27 on 2026-09-29. Section 20 now distinguishes default Local embedded SQLite durability from optional Local Restate and Hosted/cloud/Self-hosted Restate profiles. The section 18 acceptance map records 15 baseline scenarios, but cross-system interface obligations, detailed event field mappings, remaining lifecycle details and complete scenario-to-evidence mapping remain incomplete; all scenarios remain unverified at full scope."
       }
     },
     {

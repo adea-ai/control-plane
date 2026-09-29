@@ -3,7 +3,7 @@ name: Publish shared packages
 # Publishes the stable, deployment-neutral packages (@adea-ai/contracts,
 # @adea-ai/runtime-gateway-protocol, @adea-ai/sdk, @adea-ai/telemetry,
 # @adea-ai/tool-sdk, @adea-ai/runtime-sdk) to the public npm registry on every
-# main push that touches them (plus manual dispatch). Workspace names stay
+# main push that touches them. Workspace names stay
 # @control-plane/*; scripts/publish-packages.mjs maps names and resolves
 # workspace: ranges at publish time.
 #
@@ -23,8 +23,6 @@ on:
       - 'packages/runtime-sdk/**'
       - 'scripts/publish-packages.mjs'
       - '.github/workflows/publish-packages.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
   id-token: write
