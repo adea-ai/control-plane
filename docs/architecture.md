@@ -34,7 +34,7 @@ The accepted implementation sequence is:
 1. **M9 — Managed Cloud Deployment, Hardening & Evals:** establish a working Railway + Neon + R2 + Restate managed-cloud reference and freeze deployment-independent contracts/behavior.
 2. **M10 — Local & Hosted Portability:** extract/consume infrastructure ports and add Local/Hosted adapters while preserving the M9 semantic baseline.
 3. **M11 — Feature Completion & Production Audit:** independently audit managed cloud, Local, and Hosted as one portable product.
-4. **M12 — Cross-Product Integration & Release:** connect independently approved Adea and optional Cortana release candidates.
+4. **M12 — Cross-Product Integration & Release:** connect independently approved Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
 
 This implementation order is distinct from Adea product rollout. The Control Plane cloud profile is implemented in M9 even though `agent_hq_cloud` remains a later user-visible Adea execution-location option.
 

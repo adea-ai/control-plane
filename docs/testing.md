@@ -7,7 +7,7 @@ The repository uses Bun's native test runner. Keep tests deterministic, isolate 
 - **M9** finishes and certifies the managed-cloud Railway + Neon + R2 + Restate profile.
 - **M10** adds Local and Hosted deployment adapters/conformance.
 - **M11** rebuilds the complete validation program into deterministic release lanes and independently reruns all three profiles.
-- **M12** is the first live Adea/optional Cortana cross-product release gate.
+- **M12** is the first live Adea/optional Cortana cross-product release gate; CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it, per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459).
 
 A historical M1–M9 test remains useful evidence, but it cannot certify a component after its architecture has been superseded. In particular, former AWS/ECS/Terraform and Temporal-specific tests do not prove the accepted Railway/Restate deployment.
 

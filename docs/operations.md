@@ -7,7 +7,7 @@ This runbook covers the accepted Control Plane deployment sequence and must dist
 - **M9 — Managed Cloud Deployment, Hardening & Evals:** make the Railway + Neon + R2 + Restate profile actually deploy, recover, and pass the cloud hardening/eval gates.
 - **M10 — Local & Hosted Portability:** port the accepted M9 semantics to Local and user-controlled Hosted profiles.
 - **M11 — Feature Completion & Production Audit:** rerun production-readiness evidence across managed cloud, Local, and Hosted.
-- **M12 — Cross-Product Integration & Release:** connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates.
+- **M12 — Cross-Product Integration & Release:** connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
 
 Historical AWS/ECS/Terraform procedures are not the current first-party cloud runbook.
 
@@ -697,4 +697,4 @@ Provider-specific Railway/Neon/R2/Restate identifiers may appear in operational 
 - **Every managed-cloud candidate:** build/deploy, Neon migration/schema, Restate, R2, health/readiness, recovery, security, and cost evidence.
 - **Every M10 candidate:** Local and Hosted clean install/start/restart/backup/restore/conformance evidence.
 - **M11:** independent full-profile audit from frozen candidate.
-- **M12:** live cross-product integration evidence only after M11 approval.
+- **M12:** profile-substrate and live cross-product certification/release evidence only after M11 approval, per the #195 owner decision.
