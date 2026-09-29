@@ -398,10 +398,13 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
   test('class holds protect retired command keys until the hold is released', async () => {
     const isolated = await createDatabase()
     const scopeKey = randomUUID().replaceAll('-', '').repeat(2).slice(0, 64)
-    await isolated.withMigrationDatabase(async (database) => {
+    const application = isolated.application
+    const holds = new PostgresRetentionHoldRepository(application, retiredKeyHoldPolicy)
+    const hold = makeHold('retired-command-keys', 'release-owner', { kind: 'class' })
+    await isolated.withMigrationDatabase(async (migrationDatabase) => {
       // The operator retention path uses the migration role for tombstones;
-      // the application role is intentionally denied UPDATE/DELETE access.
-      await database.insert(retiredCommandKeys).values({
+      // hold administration follows the application-role path used by the CLI.
+      await migrationDatabase.insert(retiredCommandKeys).values({
         scopeKey,
         commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
         executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -409,37 +412,44 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
         metadataVersion: 1,
         identityDigest: null,
       })
-      const holds = new PostgresRetentionHoldRepository(database, retiredKeyHoldPolicy)
-      const hold = makeHold('retired-command-keys', 'release-owner', { kind: 'class' })
-      await holds.create(hold)
-      const journal = []
-      const options = {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-        retentionHoldPolicy: retiredKeyHoldPolicy,
-        journal: async (operations) => journal.push(...operations),
-      }
-      const retention = new PostgresCommandAcceptanceRepository(database)
-
-      const heldPass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
-      expect(heldPass).toMatchObject({ deleted: 0, retainedByReason: { hold_recorded: 1 } })
-      expect(await database.select().from(retiredCommandKeys)).toHaveLength(1)
-      expect(journal).toEqual([])
-
-      await holds.release({
-        holdId: hold.holdId,
-        expectedRevision: 0,
-        release: {
-          requestId: randomUUID(),
-          releasedAt: observedAt.toISOString(),
-          releasedBy: provenance,
-        },
-      })
-      const releasedPass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
-      expect(releasedPass.deleted).toBe(1)
-      expect(await database.select().from(retiredCommandKeys)).toHaveLength(0)
-      expect(journal).toEqual([{ kind: 'postgres.deleteRetiredCommandKey', scopeKey }])
     })
+
+    await holds.create(hold)
+    const journal = []
+    const options = {
+      policyRetainMs: retentionMs,
+      dryRun: false,
+      retentionHoldPolicy: retiredKeyHoldPolicy,
+      journal: async (operations) => journal.push(...operations),
+    }
+
+    const heldPass = await isolated.withMigrationDatabase(async (migrationDatabase) => {
+      const retention = new PostgresCommandAcceptanceRepository(migrationDatabase)
+      const pass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
+      expect(await migrationDatabase.select().from(retiredCommandKeys)).toHaveLength(1)
+      return pass
+    })
+    expect(heldPass).toMatchObject({ deleted: 0, retainedByReason: { hold_recorded: 1 } })
+    expect(journal).toEqual([])
+
+    await holds.release({
+      holdId: hold.holdId,
+      expectedRevision: 0,
+      release: {
+        requestId: randomUUID(),
+        releasedAt: observedAt.toISOString(),
+        releasedBy: provenance,
+      },
+    })
+
+    const releasedPass = await isolated.withMigrationDatabase(async (migrationDatabase) => {
+      const retention = new PostgresCommandAcceptanceRepository(migrationDatabase)
+      const pass = await retention.deleteEligibleRetiredCommandKeys(observedAt, options)
+      expect(await migrationDatabase.select().from(retiredCommandKeys)).toHaveLength(0)
+      return pass
+    })
+    expect(releasedPass.deleted).toBe(1)
+    expect(journal).toEqual([{ kind: 'postgres.deleteRetiredCommandKey', scopeKey }])
   }, 30_000)
 
   test('a committing hold writer wins a waiting real context-package deletion claim', async () => {
