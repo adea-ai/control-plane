@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.13.0...hosted-control-plane-v1.13.1) (2026-09-29)
+
+
+### Documentation
+
+* **m11:** reconcile CP-M12 roadmap scope ([#754](https://github.com/adea-ai/control-plane/issues/754)) ([f51eda0](https://github.com/adea-ai/control-plane/commit/f51eda099564d22a6a08e5e28949b6647e170d70))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.12.1...hosted-control-plane-v1.13.0) (2026-09-28)
 
 
