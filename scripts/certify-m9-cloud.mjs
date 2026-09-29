@@ -145,6 +145,9 @@ export function createSignedServiceCredential({ privateKey, issuer, keyId, runSu
 }
 
 export async function runCloudCertification(options, adapters) {
+  if (typeof options.objectPrefix !== 'string' || options.objectPrefix.length === 0) {
+    throw new Error('M9_CERTIFICATION_R2_PREFIX_REQUIRED')
+  }
   const startedAt = adapters.now()
   const plan = ExecutionPlanSchema.parse(options.plan)
   const request = ExecutionAcceptanceRequestSchema.parse(options.request)
@@ -205,6 +208,7 @@ export async function runCloudCertification(options, adapters) {
     attemptCount: state.attempts.length,
     replayed: replay.data.replayed,
     objectKey: key,
+    objectPrefix: options.objectPrefix,
     objectSha256: artifact.sha256,
     startedAt: startedAt.toISOString(),
     completedAt: adapters.now().toISOString(),
@@ -358,19 +362,17 @@ async function main() {
   const plans = new PostgresExecutionPlanRepository(connection.database)
   const commands = new PostgresCommandAcceptanceRepository(connection.database)
   const executions = new PostgresExecutionRepository(connection.database)
-  const objects = createR2ObjectStore(
-    {
-      endpoint: environment.r2Endpoint,
-      bucket: environment.r2Bucket,
-      region: 'auto',
-      accessKeyId: environment.r2AccessKeyId,
-      secretAccessKey: environment.r2SecretAccessKey,
-    },
-    { maxObjectBytes: 1_048_576 }
-  )
+  const objects = createCertificationObjectStore(environment, createR2ObjectStore)
   try {
     const evidence = await runCloudCertification(
-      { plan, request, credential, pollIntervalMs: 1_000, timeoutMs: 120_000 },
+      {
+        plan,
+        request,
+        credential,
+        objectPrefix: environment.r2Prefix,
+        pollIntervalMs: 1_000,
+        timeoutMs: 120_000,
+      },
       {
         seedPlan: (value) => plans.put(value),
         acceptExecution: (input, bearer) => acceptExecution(environment.apiUrl, input, bearer),
@@ -413,7 +415,7 @@ async function acceptExecution(apiUrl, request, credential) {
   return ExecutionAcceptanceResponseSchema.parse(body)
 }
 
-function requiredEnvironment(environment) {
+export function requiredEnvironment(environment) {
   const names = [
     'M9_CONTROL_API_URL',
     'M9_SERVICE_AUTH_ISSUER',
@@ -422,6 +424,7 @@ function requiredEnvironment(environment) {
     'DATABASE_URL',
     'R2_ENDPOINT',
     'R2_BUCKET',
+    'R2_PREFIX',
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
   ]
@@ -436,9 +439,24 @@ function requiredEnvironment(environment) {
     databaseUrl: environment.DATABASE_URL,
     r2Endpoint: environment.R2_ENDPOINT,
     r2Bucket: environment.R2_BUCKET,
+    r2Prefix: environment.R2_PREFIX,
     r2AccessKeyId: environment.R2_ACCESS_KEY_ID,
     r2SecretAccessKey: environment.R2_SECRET_ACCESS_KEY,
   }
+}
+
+export function createCertificationObjectStore(environment, createR2ObjectStore) {
+  return createR2ObjectStore(
+    {
+      endpoint: environment.r2Endpoint,
+      bucket: environment.r2Bucket,
+      region: 'auto',
+      accessKeyId: environment.r2AccessKeyId,
+      secretAccessKey: environment.r2SecretAccessKey,
+      prefix: environment.r2Prefix,
+    },
+    { maxObjectBytes: 1_048_576 }
+  )
 }
 
 if (import.meta.main) await main()
