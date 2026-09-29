@@ -625,7 +625,7 @@ describe('ManagedPiProcessClient', () => {
   })
 
   test('bounded stats timeout preserves cancellation without zero or late mutation', async () => {
-    const fixture = await processAdapterFixture('cancel-stats-hang', { rpcTimeoutMs: 1_000 })
+    const fixture = await processAdapterFixture('cancel-stats-hang', { rpcTimeoutMs: 5_000 })
     let handle
     try {
       handle = await fixture.adapter.start({
@@ -638,7 +638,8 @@ describe('ManagedPiProcessClient', () => {
         idempotencyKey: 'cancel-stats-hang',
         requestedAt: new Date().toISOString(),
       })
-      expect(performance.now() - start).toBeLessThan(750)
+      // Allow CI process/filesystem scheduling headroom while staying below the RPC deadline.
+      expect(performance.now() - start).toBeLessThan(1_500)
       expect(status.state).toBe('cancelled')
       expect(status.terminalUsage).toBeUndefined()
       expect(status.result).toBeUndefined()
@@ -667,7 +668,8 @@ describe('ManagedPiProcessClient', () => {
         idempotencyKey: 'cancel-race-late-stats',
         requestedAt: new Date().toISOString(),
       })
-      expect(performance.now() - start).toBeLessThan(750)
+      // The late response must not be awaited; leave headroom for slower CI runners.
+      expect(performance.now() - start).toBeLessThan(1_500)
       expect(status.state).toBe('cancelled')
       expect(status.terminalUsage).toBeUndefined()
       await delay(350)

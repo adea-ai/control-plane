@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpCode,
@@ -36,8 +37,8 @@ export class MarketplaceController {
   @ApiOperation({ summary: 'Discover the verified marketplace catalog through Control Plane' })
   @ApiOkResponse({ description: 'Verified catalog metadata and installation state' })
   async catalog(@Body() envelope: unknown, @Req() request: FastifyRequest) {
-    const snapshot = await this.registry.getCatalog()
     const identity = readIdentity(envelope)
+    const snapshot = await this.registry.getCatalog()
     return {
       data: {
         catalogId: snapshot.catalogId,
@@ -83,20 +84,26 @@ function readIdentity(value: unknown): { workspaceId: string; userId: string } {
     !isObject(value['parameters']) ||
     !isObject(value['parameters']['workspaceIdentity'])
   )
-    throw new ServiceUnavailableException({
+    throw new BadRequestException({
       code: 'MARKETPLACE_REQUEST_INVALID',
       message: 'Marketplace catalog request is invalid',
     })
   const parameters = value['parameters'] as Record<string, unknown>
   const identity = parameters['workspaceIdentity'] as Record<string, unknown>
-  if (!stringValue(identity['workspaceId']) || !stringValue(identity['userId']))
-    throw new ServiceUnavailableException({
+  const workspaceId = stringValue(identity['workspaceId'])
+  if (
+    !stringValue(value['workspaceId']) ||
+    !workspaceId ||
+    workspaceId !== stringValue(value['workspaceId']) ||
+    !stringValue(identity['userId'])
+  )
+    throw new BadRequestException({
       code: 'MARKETPLACE_REQUEST_INVALID',
       message: 'Marketplace catalog request is invalid',
     })
   return {
     userId: stringValue(identity['userId']),
-    workspaceId: stringValue(identity['workspaceId']),
+    workspaceId,
   }
 }
 
@@ -117,8 +124,19 @@ function planFailureResponseUnavailable(): never {
 }
 
 function parseInstallEnvelope(value: unknown): MarketplaceInstallEnvelope {
-  if (!isObject(value) || !isObject(value['payload']))
-    throw new ServiceUnavailableException({
+  if (
+    !isObject(value) ||
+    !isObject(value['payload']) ||
+    !isObject(value['payload']['workspaceIdentity'])
+  )
+    throw new BadRequestException({
+      code: 'MARKETPLACE_REQUEST_INVALID',
+      message: 'Marketplace installation request is invalid',
+    })
+  const workspaceId = stringValue(value['workspaceId'])
+  const nestedWorkspaceId = stringValue(value['payload']['workspaceIdentity']['workspaceId'])
+  if (!workspaceId || !nestedWorkspaceId || workspaceId !== nestedWorkspaceId)
+    throw new BadRequestException({
       code: 'MARKETPLACE_REQUEST_INVALID',
       message: 'Marketplace installation request is invalid',
     })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -58,6 +58,18 @@ const policySnapshot = () => ({
   policyId: 'probe.default',
   version: 1,
   digest: digestText(policyCedar),
+})
+
+describe('M11.5 probes: trusted package publishing', () => {
+  test('publishing is triggered only by protected-main pushes, not branch dispatch', async () => {
+    const workflow = await readFile(
+      new URL('../.github/workflows/publish-packages.yml', import.meta.url),
+      'utf8'
+    )
+    expect(workflow).toContain('branches: [main]')
+    expect(workflow).not.toMatch(/^  workflow_dispatch:/mu)
+    expect(workflow).toContain('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}')
+  })
 })
 
 describe('M11.5 probes: workspace isolation (STM-001/013/021)', () => {

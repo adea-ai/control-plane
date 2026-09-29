@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { basename, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
@@ -134,6 +134,79 @@ export async function validateRequirementsLedger(ledger, options = {}) {
       errors.push(`${source.id}: invalid retrievalStatus`)
     }
     if (source.retrievalStatus === 'missing') validateGap(errors, source, 'source gap')
+    if (source.sourceAudit !== undefined) {
+      const audit = source.sourceAudit
+      requireFields(errors, audit, ['path', 'requirementIdPrefix', 'coverage'])
+      if (audit.coverage !== 'partial') {
+        errors.push(`${source.id}: checked-in source audit coverage must remain partial`)
+      }
+      if (!/^CP-[A-Z0-9-]+$/.test(audit.requirementIdPrefix ?? '')) {
+        errors.push(`${source.id}: source-audit requirementIdPrefix is invalid`)
+      } else if (typeof audit.path === 'string') {
+        const sourceAuditPath = resolve(root, audit.path)
+        const sourceAuditRelativePath = relative(
+          resolve(root, 'docs/requirements'),
+          sourceAuditPath
+        )
+        let sourceAuditDocument
+        if (
+          !audit.path.startsWith('docs/requirements/') ||
+          sourceAuditRelativePath === '..' ||
+          sourceAuditRelativePath.startsWith(`..${sep}`)
+        ) {
+          errors.push(`${source.id}: source-audit path must be under docs/requirements`)
+        } else {
+          try {
+            sourceAuditDocument = await readFile(sourceAuditPath, 'utf8')
+          } catch {
+            errors.push(`${source.id}: source-audit document does not exist: ${audit.path}`)
+          }
+        }
+        if (sourceAuditDocument !== undefined) {
+          if (!/coverage remains partial/i.test(sourceAuditDocument)) {
+            errors.push(
+              `${source.id}: source-audit document must state that coverage remains partial`
+            )
+          }
+          const prefix = audit.requirementIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const rangePattern = new RegExp(
+            '\\b`?' + prefix + '-(\\d{3})`?\\s+through\\s+`?' + prefix + '-(\\d{3})`?\\b',
+            'g'
+          )
+          const documentedIds = new Set()
+          for (const match of sourceAuditDocument.matchAll(rangePattern)) {
+            const start = Number(match[1])
+            const end = Number(match[2])
+            if (end < start) {
+              errors.push(`${source.id}: source-audit requirement range is reversed`)
+              continue
+            }
+            for (let sequence = start; sequence <= end; sequence += 1) {
+              documentedIds.add(`${audit.requirementIdPrefix}-${String(sequence).padStart(3, '0')}`)
+            }
+          }
+          const actualIds = new Set(
+            (ledger.requirements ?? [])
+              .filter(
+                (requirement) =>
+                  requirement.sourceId === source.id &&
+                  new RegExp(`^${audit.requirementIdPrefix}-\\d{3}$`).test(requirement.id)
+              )
+              .map(({ id }) => id)
+          )
+          if (documentedIds.size === 0) {
+            errors.push(`${source.id}: source-audit document has no documented requirement ranges`)
+          }
+          const missingFromLedger = [...documentedIds].filter((id) => !actualIds.has(id)).toSorted()
+          const missingFromAudit = [...actualIds].filter((id) => !documentedIds.has(id)).toSorted()
+          if (missingFromLedger.length > 0 || missingFromAudit.length > 0) {
+            errors.push(
+              `${source.id}: source-audit requirement IDs do not match ledger (missing from ledger: ${missingFromLedger.join(', ') || 'none'}; missing from audit: ${missingFromAudit.join(', ') || 'none'})`
+            )
+          }
+        }
+      }
+    }
     if (sourceIds.has(source.id)) errors.push(`duplicate source ID: ${source.id}`)
     sourceIds.add(source.id)
   }
@@ -392,12 +465,14 @@ export async function renderRequirementsReport(ledger) {
     '',
     '## Normative sources',
     '',
-    '| Source | Provider | Revision / modified time | Requirements |',
-    '| --- | --- | --- | ---: |',
-    ...ledger.sources.map(
-      (source) =>
-        `| [${escapeCell(source.title)}](${source.uri}) | ${source.provider} | ${source.updatedAt} | ${ledger.requirements.filter(({ sourceId }) => sourceId === source.id).length} |`
-    ),
+    '| Source | Provider | Revision / modified time | Checked-in source audit | Requirements |',
+    '| --- | --- | --- | --- | ---: |',
+    ...ledger.sources.map((source) => {
+      const sourceAudit = source.sourceAudit
+        ? `partial extraction — [${basename(source.sourceAudit.path)}](./${basename(source.sourceAudit.path)})`
+        : '—'
+      return `| [${escapeCell(source.title)}](${source.uri}) | ${source.provider} | ${source.updatedAt} | ${sourceAudit} | ${ledger.requirements.filter(({ sourceId }) => sourceId === source.id).length} |`
+    }),
     '',
     '## Deployment profiles',
     '',

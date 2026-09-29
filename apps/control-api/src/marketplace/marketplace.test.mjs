@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { Buffer } from 'node:buffer'
 import { TextEncoder } from 'node:util'
 import { createControlApiApplication } from '../application.ts'
-import { createInternalServicePrincipal } from '../auth/service-authentication.ts'
+import {
+  PolicyServiceAuthenticator,
+  createInternalServicePrincipal,
+} from '../auth/service-authentication.ts'
 import { GithubReleaseVerifier } from './github-release-verifier.ts'
 import {
   InMemoryMarketplaceInstallationRepository,
@@ -513,7 +516,7 @@ describe('Control Plane marketplace contract', () => {
           parameters: {
             workspaceIdentity: {
               userId: 'user-1',
-              workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+              workspaceId: ids.workspaceId,
             },
           },
           requestId: ids.requestId,
@@ -561,6 +564,98 @@ describe('Control Plane marketplace contract', () => {
     }
   })
 
+  test('rejects marketplace identities outside the authenticated workspace before access', async () => {
+    const fixture = snapshotFixture()
+    let catalogListCalls = 0
+    let installCalls = 0
+    const claims = {
+      audience: 'control-plane',
+      credentialId: 'marketplace-scope-probe',
+      credentialKind: 'service',
+      expiresAt: '2026-08-31T01:00:00.000Z',
+      issuedAt: '2026-08-31T00:00:00.000Z',
+      issuer: 'https://agent-hq.example',
+      keyId: 'marketplace-test-key',
+      principalId: 'svc_agent-hq',
+      projectIds: [],
+      scopes: ['marketplace:read', 'marketplace:install'],
+      workspaceIds: [ids.workspaceId],
+    }
+    const application = await createControlApiApplication({
+      ...applicationDefaults,
+      serviceAuthenticator: new PolicyServiceAuthenticator({
+        audience: 'control-plane',
+        clockSkewMs: 30_000,
+        issuer: claims.issuer,
+        logger: { write: () => undefined },
+        now: () => new Date('2026-08-31T00:05:00.000Z'),
+        revocationChecker: { isRevoked: async () => false },
+        verifier: { verify: async () => claims },
+      }),
+      marketplaceRegistryService: { getCatalog: async () => fixture.snapshot },
+      marketplaceInstallationService: {
+        list: async () => {
+          catalogListCalls++
+          return []
+        },
+        install: async () => {
+          installCalls++
+          return { state: 'pending-authorization' }
+        },
+      },
+    })
+    try {
+      const catalog = await application.inject({
+        method: 'POST',
+        url: '/v1/marketplace/catalog',
+        headers: { authorization: 'Bearer scoped-test-credential' },
+        payload: {
+          caller: { servicePrincipalId: 'svc_agent-hq' },
+          contractVersion: { major: 2, minor: 0 },
+          correlation: { traceId: ids.traceId },
+          operation: 'marketplace.catalog.read',
+          parameters: {
+            workspaceIdentity: { userId: 'user-1', workspaceId: 'wsp_unauthorized' },
+          },
+          requestId: ids.requestId,
+          requestedAt: '2026-08-31T00:00:00.000Z',
+          workspaceId: ids.workspaceId,
+        },
+      })
+      expect(catalog.statusCode).toBe(400)
+      expect(catalogListCalls).toBe(0)
+
+      const install = await application.inject({
+        method: 'POST',
+        url: '/v1/marketplace/install',
+        headers: { authorization: 'Bearer scoped-test-credential' },
+        payload: {
+          caller: { servicePrincipalId: 'svc_agent-hq' },
+          commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+          contractVersion: { major: 2, minor: 0 },
+          correlation: { traceId: ids.traceId },
+          idempotencyKey: 'marketplace-install-cross-workspace',
+          issuedAt: '2026-08-31T00:00:00.000Z',
+          operation: 'marketplace.install.request',
+          payload: {
+            canonicalContentDigest: `sha256:${'b'.repeat(64)}`,
+            pluginId: 'plugin:openai-official:gmail',
+            releaseId: `release:${'c'.repeat(64)}`,
+            requestedHarness: 'codex',
+            workspaceIdentity: { userId: 'user-1', workspaceId: 'wsp_unauthorized' },
+          },
+          payloadHash: 'a'.repeat(64),
+          requestId: 'req_01JABCDEF1123456789ABCDEFG',
+          workspaceId: ids.workspaceId,
+        },
+      })
+      expect(install.statusCode).toBe(400)
+      expect(installCalls).toBe(0)
+    } finally {
+      await application.close()
+    }
+  })
+
   test('persists exact pins, checks compatibility, and replays idempotent requests', async () => {
     const fixture = snapshotFixture()
     const repository = new InMemoryMarketplaceInstallationRepository()
@@ -596,6 +691,16 @@ describe('Control Plane marketplace contract', () => {
     await expect(service.install({ ...envelope, workspaceId: '' })).rejects.toThrow(
       'Marketplace installation request is invalid'
     )
+    await expect(
+      service.install({
+        ...envelope,
+        payload: {
+          ...envelope.payload,
+          workspaceIdentity: { userId: 'user-1', workspaceId: 'wsp_unauthorized' },
+        },
+      })
+    ).rejects.toThrow('Marketplace installation request is invalid')
+    expect(await repository.listByWorkspace('wsp_unauthorized')).toEqual([])
   })
 
   test('fails closed for stale snapshots and sensitive plugins without policy authority', async () => {

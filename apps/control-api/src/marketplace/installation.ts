@@ -363,6 +363,7 @@ function parseEnvelope(value: MarketplaceInstallEnvelope): MarketplaceInstallEnv
       (!stringValue(payload.installationInstanceId) ||
         payload.installationInstanceId.length > 256)) ||
     !stringValue(identity.workspaceId) ||
+    identity.workspaceId !== value.workspaceId ||
     !stringValue(identity.userId)
   )
     throw new BadRequestException({
