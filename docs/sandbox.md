@@ -6,9 +6,15 @@ and ephemeral compute. Domain and runtime callers depend on `SandboxProvider`; t
 types to core packages.
 
 Every sandbox is correlated to a workspace, execution, and attempt and receives an explicit
-template, lifetime, CPU, memory, storage, output, and network policy. Network access defaults to
-denied, infrastructure metadata hosts are always rejected, and allowlisted hosts are forwarded to
-the provider isolation layer. Ordinary environment input cannot contain credential-shaped fields.
+template, lifetime, CPU, memory, storage, output, and network policy. The create contract defaults to
+denied network access and forwards the requested policy to the provider isolation layer. The
+coordinator additionally checks standalone HTTP(S) URL arguments against the allowlist and a
+metadata-host list; this limited precheck cannot enforce egress for arbitrary commands, bare
+addresses, shell text, or other protocols. Provider-level isolation is the required enforcement
+boundary. This repository contains an E2B client port and fake-provider tests, but no concrete E2B
+client or live egress qualification. Real allowlist/deny-all and metadata isolation remain unverified
+under M11 #195, including shell and bare-address attempts. Ordinary environment input cannot contain
+credential-shaped fields.
 Short-lived credential leases are resolved only inside the adapter immediately before execution and
 are not retained in handles, status, errors, or promotion records.
 
