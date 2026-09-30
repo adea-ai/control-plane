@@ -23,6 +23,7 @@ import {
 } from '@control-plane/execution-plan/testing'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
+import { seedSystemCatalogOwners } from './test-catalog-owners.mjs'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.ts'
 import { LocalRuntimeInteractions } from './runtime-interactions.ts'
 
@@ -86,6 +87,7 @@ test('two durable approvals skip resolved history and replay each effect without
       contextPackageSerializationFixtures.futurePi
     )
     await plans.put(plan)
+    await seedSystemCatalogOwners(catalog, planInputs.profile, planInputs.skills)
     await catalog.insertAgentProfileVersion(planInputs.profile)
     for (const skill of planInputs.skills) await catalog.insertSkillVersion(skill)
     const commandRepository = new SqliteCommandAcceptanceRepository(persistence)

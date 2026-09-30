@@ -19,6 +19,7 @@ import {
   type ExecutionRequestValidationRequest,
 } from '@control-plane/contracts'
 import {
+  catalogOwnershipAllowsAccess,
   ProjectStateSchema,
   type AgentProfileRepository,
   type ProjectStateRepository,
@@ -52,9 +53,9 @@ export interface DurableExecutionValidationServiceOptions {
   readonly commands: ExecutionValidationCommandRepository
   readonly contextAuthoring?: Pick<ContextPackageAuthoringService, 'createForCommand'>
   readonly now?: () => string
-  readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
+  readonly profiles: Pick<AgentProfileRepository, 'getAgentProfile' | 'getAgentProfileVersion'>
   readonly projectStates: Pick<ProjectStateRepository, 'getAtRevision'>
-  readonly skills: Pick<SkillRepository, 'getSkillVersion'>
+  readonly skills: Pick<SkillRepository, 'getSkill' | 'getSkillVersion'>
   /** Optional approval enforcement (#188); absent leaves validation unchanged. */
   readonly approvalGate?: CatalogApprovalGateOptions
 }
@@ -88,7 +89,10 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
     }
     const payloadHash = executionValidationPayloadHash(request)
     const existing = await this.options.commands.get(scope)
-    if (existing) return replayResponse(request, scope, payloadHash, existing)
+    if (existing) {
+      await this.#resolveAuthorizedCatalog(request, callerPrincipalId)
+      return replayResponse(request, scope, payloadHash, existing)
+    }
 
     const authoring = this.options.contextAuthoring
     if (!authoring && (request.payload.contextInputs || !request.payload.contextPackage)) {
@@ -97,18 +101,15 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
         message: 'Context input authoring is unavailable',
       })
     }
-    const [profile, projectState, ...skills] = await Promise.all([
-      this.options.profiles.getAgentProfileVersion(request.payload.profileVersionId),
+    const [{ profile, skills }, projectState] = await Promise.all([
+      this.#resolveAuthorizedCatalog(request, callerPrincipalId),
       this.options.projectStates.getAtRevision(
         request.workspaceId,
         projectId,
         request.payload.projectState.revision
       ),
-      ...request.payload.skillVersionIds.map((skillVersionId) =>
-        this.options.skills.getSkillVersion(skillVersionId)
-      ),
     ])
-    if (!profile || !projectState || skills.some((skill) => !skill)) reject()
+    if (!projectState) reject()
 
     const approvalGate = this.options.approvalGate
     if (approvalGate !== undefined) {
@@ -223,6 +224,45 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
         conflict()
       throw error
     }
+  }
+
+  async #resolveAuthorizedCatalog(
+    request: ExecutionRequestValidationRequest,
+    callerPrincipalId: string
+  ) {
+    const [profile, ...skillVersions] = await Promise.all([
+      this.options.profiles.getAgentProfileVersion(request.payload.profileVersionId),
+      ...request.payload.skillVersionIds.map((skillVersionId) =>
+        this.options.skills.getSkillVersion(skillVersionId)
+      ),
+    ])
+    if (!profile || skillVersions.some((skill) => !skill)) reject()
+
+    const [profileOwner, ...skillOwners] = await Promise.all([
+      this.options.profiles.getAgentProfile(profile.profileId),
+      ...skillVersions.map((skill) => this.options.skills.getSkill(skill!.skillId)),
+    ])
+    if (
+      !profileOwner ||
+      profileOwner.profileId !== profile.profileId ||
+      !catalogOwnershipAllowsAccess(profileOwner.ownership, {
+        workspaceId: request.workspaceId,
+        principalId: callerPrincipalId,
+      }) ||
+      skillOwners.length !== skillVersions.length ||
+      skillOwners.some(
+        (owner, index) =>
+          owner === undefined ||
+          owner.skillId !== skillVersions[index]?.skillId ||
+          !catalogOwnershipAllowsAccess(owner.ownership, {
+            workspaceId: request.workspaceId,
+            principalId: callerPrincipalId,
+          })
+      )
+    ) {
+      reject()
+    }
+    return { profile, skills: skillVersions as NonNullable<(typeof skillVersions)[number]>[] }
   }
 }
 

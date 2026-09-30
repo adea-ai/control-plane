@@ -751,8 +751,6 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       }
       Object.assign(reopened.composition.executionValidationService.options, {
         now: unexpected,
-        profiles: { getAgentProfileVersion: unexpected },
-        skills: { getSkillVersion: unexpected },
         projectStates: { getAtRevision: unexpected },
         contextPackages: { get: unexpected },
       })

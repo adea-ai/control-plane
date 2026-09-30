@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common'
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import type { FastifyRequest } from 'fastify'
 import { RequireServiceAuthentication } from '../auth/service-authentication.js'
 import {
   PROFILE_RESOLUTION_SERVICE,
@@ -19,7 +20,7 @@ export class ProfileResolutionController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resolve an immutable published profile version' })
   @ApiOkResponse({ description: 'Published profile and pinned Skill versions' })
-  resolve(@Body() envelope: unknown) {
-    return this.service.resolve(envelope)
+  resolve(@Body() envelope: unknown, @Req() request: FastifyRequest) {
+    return this.service.resolve(envelope, request.servicePrincipal?.principalId ?? '')
   }
 }

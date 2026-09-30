@@ -61,7 +61,7 @@ function setup({ now = receivedAt, planValid = true } = {}) {
   const service = new CommandInboxService({
     repository,
     executionIdFactory: () => ids.executionId,
-    executionPlanValidator: { validate: async () => planValid },
+    executionPlanValidator: { authorize: async () => true, validate: async () => planValid },
     now: () => now,
   })
   return { repository, service }
@@ -98,7 +98,7 @@ describe('CommandInbox execution acceptance', () => {
       executionIdFactory: () => {
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
-      executionPlanValidator: { validate: async () => false },
+      executionPlanValidator: { authorize: async () => true, validate: async () => false },
       now: () => receivedAt,
     })
     const result = await restarted.acceptExecution(
@@ -184,6 +184,7 @@ describe('CommandInbox execution acceptance', () => {
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           throw new Error('REPLAY_MUST_NOT_VALIDATE')
         },
@@ -259,6 +260,7 @@ describe('CommandInbox execution acceptance', () => {
       repository,
       executionIdFactory: () => ids.executionId,
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           validations += 1
           return validations === 1
@@ -391,7 +393,7 @@ describe('CommandInbox execution acceptance', () => {
     const expiredService = new CommandInboxService({
       repository: service.repository,
       executionIdFactory: () => ids.executionId,
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => '2026-09-23T10:00:00.001Z',
     })
     await expect(expiredService.acceptExecution(commandInput())).rejects.toMatchObject({

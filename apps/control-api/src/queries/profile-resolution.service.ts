@@ -8,6 +8,7 @@ import type {
   AgentProfileVersion,
   SkillRepository,
 } from '@control-plane/domain'
+import { catalogOwnershipAllowsAccess } from '@control-plane/domain'
 import {
   assertCatalogVersionApproved,
   type CatalogApprovalGateOptions,
@@ -16,7 +17,7 @@ import {
 export const PROFILE_RESOLUTION_SERVICE = Symbol('PROFILE_RESOLUTION_SERVICE')
 
 export interface ProfileResolutionService {
-  resolve(input: unknown): Promise<unknown>
+  resolve(input: unknown, callerPrincipalId: string): Promise<unknown>
 }
 
 export class UnavailableProfileResolutionService implements ProfileResolutionService {
@@ -42,24 +43,51 @@ export interface ProfileApprovalGateOptions extends CatalogApprovalGateOptions {
 
 export class RepositoryProfileResolutionService implements ProfileResolutionService {
   constructor(
-    private readonly profiles: Pick<
+    private readonly catalog: Pick<
       AgentProfileRepository,
-      'getAgentProfileVersion' | 'listAgentProfileVersions'
-    >,
+      'getAgentProfile' | 'getAgentProfileVersion' | 'listAgentProfileVersions'
+    > &
+      Pick<SkillRepository, 'getSkill' | 'getSkillVersion'>,
     private readonly approvalGate?: ProfileApprovalGateOptions
   ) {}
 
-  async resolve(inputValue: unknown) {
+  async resolve(inputValue: unknown, callerPrincipalId: string) {
     const input = ProfileResolutionRequestSchema.parse(inputValue)
+    if (callerPrincipalId.length === 0) notFound()
     const profile = await this.#resolveVersion(
       input.parameters.profileId,
       input.parameters.profileVersionId
     )
     if (profile === undefined || profile.lifecycle !== 'published') {
-      throw new NotFoundException({
-        code: 'PROFILE_VERSION_NOT_FOUND',
-        message: 'Published profile version was not found',
-      })
+      notFound()
+    }
+    const [profileOwner, linkedSkills] = await Promise.all([
+      this.catalog.getAgentProfile(profile.profileId),
+      Promise.all(
+        profile.definition.skills.map(async (reference) => {
+          const skillVersion = await this.catalog.getSkillVersion(reference.skillVersionId)
+          if (skillVersion === undefined || skillVersion.skillId !== reference.skillId)
+            return undefined
+          const skillOwner = await this.catalog.getSkill(skillVersion.skillId)
+          return skillOwner?.skillId === skillVersion.skillId &&
+            catalogOwnershipAllowsAccess(skillOwner.ownership, {
+              workspaceId: input.workspaceId,
+              principalId: callerPrincipalId,
+            })
+            ? skillVersion
+            : undefined
+        })
+      ),
+    ])
+    if (
+      profileOwner?.profileId !== profile.profileId ||
+      !catalogOwnershipAllowsAccess(profileOwner.ownership, {
+        workspaceId: input.workspaceId,
+        principalId: callerPrincipalId,
+      }) ||
+      linkedSkills.some((skill) => skill === undefined)
+    ) {
+      notFound()
     }
     if (this.approvalGate !== undefined) {
       await this.#assertApproved('agent_profile', 'PROFILE', profile.profileVersionId, {
@@ -67,8 +95,8 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
         contentDigest: profile.contentDigest,
         publishedAt: profile.lifecycleMetadata.publishedAt,
       })
-      for (const { skillVersionId } of profile.definition.skills) {
-        const skill = await this.approvalGate.skills.getSkillVersion(skillVersionId)
+      for (const [index, { skillVersionId }] of profile.definition.skills.entries()) {
+        const skill = linkedSkills[index]
         await this.#assertApproved('skill', 'SKILL', skillVersionId, {
           revision: skill?.revision ?? 0,
           contentDigest: skill?.manifest.contentDigest ?? '',
@@ -115,11 +143,18 @@ export class RepositoryProfileResolutionService implements ProfileResolutionServ
     profileVersionId?: string
   ): Promise<AgentProfileVersion | undefined> {
     if (profileVersionId !== undefined) {
-      const profile = await this.profiles.getAgentProfileVersion(profileVersionId)
+      const profile = await this.catalog.getAgentProfileVersion(profileVersionId)
       return profile?.profileId === profileId ? profile : undefined
     }
-    return (await this.profiles.listAgentProfileVersions(profileId))
+    return (await this.catalog.listAgentProfileVersions(profileId))
       .filter((profile) => profile.lifecycle === 'published')
       .toSorted((left, right) => right.version - left.version || right.revision - left.revision)[0]
   }
+}
+
+function notFound(): never {
+  throw new NotFoundException({
+    code: 'PROFILE_VERSION_NOT_FOUND',
+    message: 'Published profile version was not found',
+  })
 }

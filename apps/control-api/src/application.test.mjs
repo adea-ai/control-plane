@@ -155,12 +155,16 @@ describe('Control API', () => {
 
   test('resolves the latest published profile through the public contract', async () => {
     const profile = executionProfile(executionConstraintFixtures.read)
+    const skill = executionSkill()
     const service = new RepositoryProfileResolutionService({
+      getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
       getAgentProfileVersion: async () => undefined,
       listAgentProfileVersions: async () => [
         { ...profile, lifecycle: 'draft', version: 4 },
         profile,
       ],
+      getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      getSkillVersion: async () => skill,
     })
     const application = await createApplication(
       [],
@@ -454,9 +458,14 @@ describe('Control API', () => {
     let allowEvidenceReads = true
     let clockReads = 0
     const commandRecords = new Map()
+    let catalogReads = 0
     const readEvidence = (value) => {
       if (!allowEvidenceReads) throw new Error('UNEXPECTED_REPLAY_EVIDENCE_READ')
       evidenceReads += 1
+      return globalThis.structuredClone(value)
+    }
+    const readCatalog = (value) => {
+      catalogReads += 1
       return globalThis.structuredClone(value)
     }
     const service = new DurableExecutionValidationService({
@@ -481,7 +490,11 @@ describe('Control API', () => {
           return record
         },
       },
-      profiles: { getAgentProfileVersion: async () => readEvidence(profile) },
+      profiles: {
+        getAgentProfileVersion: async () => readCatalog(profile),
+        getAgentProfile: async (profileId) =>
+          readCatalog({ profileId, ownership: { scope: 'system' } }),
+      },
       projectStates: {
         getAtRevision: async () =>
           readEvidence({
@@ -494,7 +507,10 @@ describe('Control API', () => {
             updatedAt: '2026-08-23T11:00:00.000Z',
           }),
       },
-      skills: { getSkillVersion: async () => readEvidence(skill) },
+      skills: {
+        getSkillVersion: async () => readCatalog(skill),
+        getSkill: async (skillId) => readCatalog({ skillId, ownership: { scope: 'system' } }),
+      },
     })
     const request = executionValidationRequest(contextPackage, constraints)
 
@@ -538,7 +554,8 @@ describe('Control API', () => {
     expect(httpResponse.statusCode).toBe(200)
     expect(httpResponse.json().data.executionPlan).toEqual(response.data.executionPlan)
     expect(persistedPlans).toHaveLength(1)
-    expect(evidenceReads).toBe(4)
+    expect(evidenceReads).toBe(2)
+    expect(catalogReads).toBe(8)
     expect(clockReads).toBe(1)
     const retried = await service.validate(
       {
@@ -680,6 +697,119 @@ describe('Control API', () => {
         request.caller.servicePrincipalId
       )
     ).rejects.toMatchObject({ status: 409 })
+  })
+
+  test.each(['profile', 'skill'])(
+    'does not persist a plan pinned to a %s owned by another workspace',
+    async (foreignKind) => {
+      const contextPackage = contextPackageSerializationFixtures.futurePi
+      const constraints = executionConstraintFixtures.write
+      const profile = executionProfile(constraints)
+      const skill = executionSkill()
+      let persistedPlans = 0
+      const service = new DurableExecutionValidationService({
+        compilerVersion: '1.0.0',
+        contextPackages: { get: async () => contextPackage },
+        commands: {
+          get: async () => undefined,
+          commit: async (record) => {
+            persistedPlans += 1
+            return record
+          },
+        },
+        profiles: {
+          getAgentProfileVersion: async () => profile,
+          getAgentProfile: async () => ({
+            profileId: profile.profileId,
+            ownership:
+              foreignKind === 'profile'
+                ? { scope: 'workspace', workspaceId: 'wsp_01JOTHERWORKSPACE00000000000' }
+                : { scope: 'system' },
+          }),
+        },
+        projectStates: {
+          getAtRevision: async () => ({
+            schemaVersion: 1,
+            workspaceId: contextPackage.projectState.workspaceId,
+            projectId: contextPackage.projectState.projectId,
+            revision: contextPackage.projectState.revision,
+            items: [],
+            createdAt: '2026-08-23T11:00:00.000Z',
+            updatedAt: '2026-08-23T11:00:00.000Z',
+          }),
+        },
+        skills: {
+          getSkillVersion: async () => skill,
+          getSkill: async () => ({
+            skillId: skill.skillId,
+            ownership:
+              foreignKind === 'skill'
+                ? { scope: 'workspace', workspaceId: 'wsp_01JOTHERWORKSPACE00000000000' }
+                : { scope: 'system' },
+          }),
+        },
+      })
+
+      await expect(
+        service.validate(executionValidationRequest(contextPackage, constraints), 'svc_agent-hq')
+      ).rejects.toMatchObject({
+        response: { code: 'EXECUTION_VALIDATION_REJECTED' },
+      })
+      expect(persistedPlans).toBe(0)
+    }
+  )
+
+  test('rechecks catalog ownership before replaying a persisted validation command', async () => {
+    const contextPackage = contextPackageSerializationFixtures.futurePi
+    const constraints = executionConstraintFixtures.write
+    const profile = executionProfile(constraints)
+    const skill = executionSkill()
+    const records = new Map()
+    let profileOwnership = { scope: 'system' }
+    let commits = 0
+    const service = new DurableExecutionValidationService({
+      compilerVersion: '1.0.0',
+      contextPackages: { get: async () => contextPackage },
+      commands: {
+        get: async (scope) => records.get(JSON.stringify(scope)),
+        commit: async (record) => {
+          commits += 1
+          records.set(JSON.stringify(record.scope), record)
+          return record
+        },
+      },
+      profiles: {
+        getAgentProfileVersion: async () => profile,
+        getAgentProfile: async (profileId) => ({ profileId, ownership: profileOwnership }),
+      },
+      projectStates: {
+        getAtRevision: async () => ({
+          schemaVersion: 1,
+          workspaceId: contextPackage.projectState.workspaceId,
+          projectId: contextPackage.projectState.projectId,
+          revision: contextPackage.projectState.revision,
+          items: [],
+          createdAt: '2026-08-23T11:00:00.000Z',
+          updatedAt: '2026-08-23T11:00:00.000Z',
+        }),
+      },
+      skills: {
+        getSkillVersion: async () => skill,
+        getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      },
+    })
+    const request = executionValidationRequest(contextPackage, constraints)
+    const principalId = request.caller.servicePrincipalId
+
+    await service.validate(request, principalId)
+    profileOwnership = {
+      scope: 'workspace',
+      workspaceId: 'wsp_01JOTHERWORKSPACE00000000000',
+    }
+    await expect(service.validate(request, principalId)).rejects.toMatchObject({
+      response: { code: 'EXECUTION_VALIDATION_REJECTED' },
+    })
+    expect(commits).toBe(1)
   })
 
   test('rejects malformed and unauthorized execution validation requests before composition', async () => {
@@ -1466,7 +1596,7 @@ function executionAcceptanceFixture(options = {}) {
     commands: new CommandInboxService({
       repository,
       executionIdFactory: () => executionId,
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now,
     }),
     dispatcher: {
