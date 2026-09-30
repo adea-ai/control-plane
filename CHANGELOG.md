@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.59.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.5...workspace-v1.59.6) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m9:** persist certification catalog references ([#763](https://github.com/adea-ai/control-plane/issues/763)) ([d2ec6fe](https://github.com/adea-ai/control-plane/commit/d2ec6fecfd9f9769b3edbf88114fffd975589924))
+
+
+### Maintenance
+
+* **code-foundry:** upgrade to v1.36.4 ([#766](https://github.com/adea-ai/control-plane/issues/766)) ([91bd582](https://github.com/adea-ai/control-plane/commit/91bd582d930104b5ad9b45c72d22469bc8466846))
+
 ## [1.59.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.4...workspace-v1.59.5) (2026-09-29)
 
 
