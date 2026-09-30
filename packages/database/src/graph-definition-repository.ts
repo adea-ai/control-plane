@@ -1,24 +1,85 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
+  GraphCatalogError,
+  GraphDefinitionCommandReceiptSchema,
+  GraphDefinitionCommandSchema,
   GraphReferenceSchema,
   PublishedGraphDefinitionSchema,
   graphDefinitionUpdateIsValid,
+  type GraphDefinitionCommand,
+  type GraphDefinitionCommandRepository,
   type GraphDefinitionRepository,
   type PublishedGraphDefinition,
 } from '@control-plane/orchestration'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
-import { graphDefinitionVersions } from './schema/graph-definitions.js'
+import { graphDefinitionCommands, graphDefinitionVersions } from './schema/graph-definitions.js'
+
+type GraphDefinitionTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
+type GraphDefinitionDatabase = ControlPlaneDatabase | GraphDefinitionTransaction
 
 /** Scope is fixed by composition, never inferred from caller-owned graph content. */
-export class PostgresGraphDefinitionRepository implements GraphDefinitionRepository {
+export class PostgresGraphDefinitionRepository<
+  Database extends GraphDefinitionDatabase = ControlPlaneDatabase,
+> implements GraphDefinitionCommandRepository {
   readonly #workspaceId: string
 
   constructor(
-    readonly database: ControlPlaneDatabase,
+    readonly database: Database,
     workspaceId: string
   ) {
     this.#workspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
+  }
+
+  async executeCommand(
+    input: GraphDefinitionCommand,
+    action: (repository: GraphDefinitionRepository) => Promise<PublishedGraphDefinition>
+  ): Promise<PublishedGraphDefinition> {
+    const command = GraphDefinitionCommandSchema.parse(input)
+    return this.database.transaction(async (transaction) => {
+      const [claim] = await transaction
+        .insert(graphDefinitionCommands)
+        .values({
+          workspaceId: this.#workspaceId,
+          callerId: command.callerId,
+          operation: command.operation,
+          idempotencyKey: command.idempotencyKey,
+          payloadHash: command.payloadHash,
+          receipt: null,
+        })
+        .onConflictDoNothing()
+        .returning({ idempotencyKey: graphDefinitionCommands.idempotencyKey })
+
+      if (claim === undefined) {
+        const [existing] = await transaction
+          .select()
+          .from(graphDefinitionCommands)
+          .where(this.#commandScope(command))
+          .limit(1)
+          .for('update')
+        if (existing === undefined) throw new Error('POSTGRES_GRAPH_COMMAND_RECEIPT_CORRUPT')
+        const receipt = parseGraphDefinitionCommandReceipt(existing)
+        if (receipt.command.payloadHash !== command.payloadHash) {
+          throw new GraphCatalogError('GRAPH_COMMAND_CONFLICT')
+        }
+        return receipt.result
+      }
+
+      const scopedRepository = new PostgresGraphDefinitionRepository(transaction, this.#workspaceId)
+      const result = PublishedGraphDefinitionSchema.parse(await action(scopedRepository))
+      const receipt = GraphDefinitionCommandReceiptSchema.parse({
+        workspaceId: this.#workspaceId,
+        command,
+        result,
+      })
+      const [completed] = await transaction
+        .update(graphDefinitionCommands)
+        .set({ receipt })
+        .where(and(this.#commandScope(command), isNull(graphDefinitionCommands.receipt)))
+        .returning({ idempotencyKey: graphDefinitionCommands.idempotencyKey })
+      if (completed === undefined) throw new Error('POSTGRES_GRAPH_COMMAND_CLAIM_LOST')
+      return receipt.result
+    })
   }
 
   async insert(input: PublishedGraphDefinition): Promise<boolean> {
@@ -87,6 +148,15 @@ export class PostgresGraphDefinitionRepository implements GraphDefinitionReposit
     )
   }
 
+  #commandScope(command: GraphDefinitionCommand) {
+    return and(
+      eq(graphDefinitionCommands.workspaceId, this.#workspaceId),
+      eq(graphDefinitionCommands.callerId, command.callerId),
+      eq(graphDefinitionCommands.operation, command.operation),
+      eq(graphDefinitionCommands.idempotencyKey, command.idempotencyKey)
+    )
+  }
+
   #parse(row: typeof graphDefinitionVersions.$inferSelect): PublishedGraphDefinition {
     const definition = PublishedGraphDefinitionSchema.parse(row.definition)
     if (
@@ -98,4 +168,19 @@ export class PostgresGraphDefinitionRepository implements GraphDefinitionReposit
       throw new Error('GRAPH_DEFINITION_ROW_INCONSISTENT')
     return definition
   }
+}
+
+function parseGraphDefinitionCommandReceipt(row: typeof graphDefinitionCommands.$inferSelect) {
+  const parsed = GraphDefinitionCommandReceiptSchema.safeParse(row.receipt)
+  if (
+    !parsed.success ||
+    parsed.data.workspaceId !== row.workspaceId ||
+    parsed.data.command.callerId !== row.callerId ||
+    parsed.data.command.operation !== row.operation ||
+    parsed.data.command.idempotencyKey !== row.idempotencyKey ||
+    parsed.data.command.payloadHash !== row.payloadHash
+  ) {
+    throw new Error('POSTGRES_GRAPH_COMMAND_RECEIPT_CORRUPT')
+  }
+  return parsed.data
 }
