@@ -1,0 +1,53 @@
+{
+  "candidate": "8488e5d500b5992c99c50a7600d44aca223b8f1b",
+  "base": "fdc057e4a8393aa6751937a7999f5b2eef08078b",
+  "package": {
+    "name": "@earendil-works/pi-coding-agent",
+    "version": "0.84.2",
+    "executableSha256": "840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    "lockSha256": "71974ed3d43fc9aad073d8115eb18bf5c3ce169fc8c536aef1c8eeb3afb2563f"
+  },
+  "hostInstallation": {
+    "version": "0.99.1",
+    "inspection": "healthy process, outside certified >=0.84.0 <0.85.0 range",
+    "globalInstallationModified": false
+  },
+  "qualification": {
+    "schemaVersion": 1,
+    "suite": "m11-real-pi-process",
+    "runtimeVersion": "0.84.2",
+    "nodeVersion": "v24.18.0",
+    "bunVersion": "1.4.0",
+    "transport": "direct-local",
+    "model": "local-deterministic-http-fixture",
+    "requests": 4,
+    "completed": true,
+    "cancellation": true,
+    "duplicateStart": "same-handle-one-request",
+    "concurrentNativeStarts": 8,
+    "changedNativeCommand": "rejected",
+    "clientRecreationAfterCleanup": "original-terminal-handle-no-new-request",
+    "terminalRecoveryAfterCleanup": ["succeeded-with-original-output-and-usage", "cancelled"],
+    "terminalCancellationAfterCleanup": "original-terminal-state-no-new-request",
+    "eventRecoveryAfterCleanup": "exact-history-and-cursor-filtering",
+    "localComposition": {
+      "persistence": "sqlite",
+      "workflow": "real-local-restate",
+      "execution": "completed",
+      "cancellation": "authenticated-sdk-lost-ack-replay-single-attempt",
+      "cancellationModelStream": "closed-before-runtime-cleanup"
+    },
+    "usage": {
+      "inputTokens": 11,
+      "outputTokens": 3
+    },
+    "limitations": [
+      "PI_NATIVE_TOOLS_DISABLED",
+      "PI_AMBIENT_CONTEXT_DISABLED",
+      "PI_APPROVAL_INTERACTION_UNSUPPORTED",
+      "PI_INFLIGHT_RESTART_RECONCILIATION_UNSUPPORTED"
+    ],
+    "cleanup": "completed"
+  },
+  "scope": "Real published runtime and bundled Restate/SQLite composition against credential-free deterministic local provider; not live model/provider calibration, default Restate-free Local, all harnesses or deployed profile acceptance."
+}
