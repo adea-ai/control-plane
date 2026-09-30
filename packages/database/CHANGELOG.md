@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.6](https://github.com/adea-ai/control-plane/compare/database-v1.35.5...database-v1.35.6) (2026-09-30)
+
+
+### Bug Fixes
+
+* **database:** preserve Neon integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
+
 ## [1.35.5](https://github.com/adea-ai/control-plane/compare/database-v1.35.4...database-v1.35.5) (2026-09-30)
 
 

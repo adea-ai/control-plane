@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.14](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.13...workspace-v1.59.14) (2026-09-30)
+
+
+### Bug Fixes
+
+* **database:** preserve Neon integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
+
 ## [1.59.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.12...workspace-v1.59.13) (2026-09-30)
 
 
