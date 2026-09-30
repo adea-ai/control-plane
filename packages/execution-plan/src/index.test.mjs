@@ -849,6 +849,108 @@ function compile(input) {
   return new ExecutionPlanCompiler('1.0.0').compile(input)
 }
 
+describe('immutable graph selection in execution plans', () => {
+  const graph = {
+    reference: {
+      graphDefinitionId: 'review-task',
+      graphVersion: '1.0.0',
+      contentDigest: digest('c'),
+    },
+    input: { objective: 'Review task', options: { limit: 3 } },
+  }
+
+  test('binds the exact graph reference and input into the plan digest', () => {
+    const plan = compile({ ...baseInput(), graph })
+    expect(plan.graph).toEqual(graph)
+    const changedInput = compile({
+      ...baseInput(),
+      graph: { ...graph, input: { objective: 'Other task' } },
+    })
+    const changedVersion = compile({
+      ...baseInput(),
+      graph: { ...graph, reference: { ...graph.reference, graphVersion: '1.1.0' } },
+    })
+    expect(changedInput.contentDigest).not.toBe(plan.contentDigest)
+    expect(changedVersion.contentDigest).not.toBe(plan.contentDigest)
+    expect(() => assertExecutionPlanIntegrity({ ...plan, graph: changedInput.graph })).toThrow()
+  })
+
+  test('children inherit the graph pin and input without caller substitution', () => {
+    const input = baseInput()
+    const parent = compile({ ...input, graph })
+    const child = deriveExecutionPlan(parent, childInput(parent.constraints, input.contextPackage))
+    expect(child.graph).toEqual(graph)
+    expect(() =>
+      deriveExecutionPlan(parent, {
+        ...childInput(parent.constraints, input.contextPackage),
+        graph: { ...graph, input: {} },
+      })
+    ).toThrow()
+  })
+
+  test('rejects non-JSON, cyclic, oversized and deeply nested graph inputs', () => {
+    const cyclic = {}
+    cyclic.self = cyclic
+    let deep = {}
+    for (let depth = 0; depth < 20; depth++) deep = { child: deep }
+    for (const input of [
+      { value: Infinity },
+      { value: undefined },
+      { value: new Date() },
+      cyclic,
+      deep,
+      { value: 'x'.repeat(70_000) },
+    ]) {
+      expect(() => compile({ ...baseInput(), graph: { ...graph, input } })).toThrow()
+    }
+  })
+
+  test('fails graph acceptance closed when graph authority is absent', async () => {
+    const plan = compile({ ...baseInput(), graph })
+    const repository = new InMemoryExecutionPlanRepository()
+    await repository.put(plan)
+    const validator = new ExecutionPlanAcceptanceValidator(repository)
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+    expect(await validator.authorize(acceptanceInput(plan))).toBe(false)
+  })
+
+  test('checks current graph admission separately from exact replay authority', async () => {
+    const input = baseInput()
+    const plan = compile({ ...input, graph })
+    const repository = new InMemoryExecutionPlanRepository()
+    await repository.put(plan)
+    const calls = []
+    const validator = new ExecutionPlanAcceptanceValidator(repository, {
+      catalog: {
+        profiles: {
+          getAgentProfileVersion: async () => input.profile,
+          getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+        },
+        skills: {
+          getSkillVersion: async () => input.skills[0],
+          getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+        },
+      },
+      graphs: {
+        validate: async (workspaceId, selection) => {
+          calls.push({ workspaceId, selection })
+          return false
+        },
+        authorize: async (workspaceId, reference) => {
+          calls.push({ workspaceId, reference })
+          return true
+        },
+      },
+    })
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+    expect(await validator.authorize(acceptanceInput(plan))).toBe(true)
+    expect(calls).toEqual([
+      { workspaceId: plan.correlation.workspaceId, selection: graph },
+      { workspaceId: plan.correlation.workspaceId, reference: graph.reference },
+    ])
+  })
+})
+
 function acceptanceInput(plan) {
   return {
     callerPrincipalId: 'svc_agent-hq',

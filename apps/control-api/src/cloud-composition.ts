@@ -193,6 +193,7 @@ export function createManagedCloudControlApiComposition(
       )
     ),
     executionAcceptanceService: new DurableExecutionAcceptanceService({
+      plans,
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(connection.database, {
           budgetAdmission: true,

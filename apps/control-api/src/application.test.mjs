@@ -1622,6 +1622,18 @@ function executionAcceptanceFixture(options = {}) {
   const submissions = []
   const now = () => '2026-08-23T12:00:01.000Z'
   const service = new DurableExecutionAcceptanceService({
+    plans: {
+      get: async (reference) => ({
+        ...reference,
+        schemaVersion: 1,
+        correlation: {
+          workspaceId: ControlApiFixtures.executionAcceptance.request.workspaceId,
+          projectId: ControlApiFixtures.executionAcceptance.request.projectId,
+          taskId: ControlApiFixtures.executionAcceptance.request.payload.taskId,
+          agentId: ControlApiFixtures.executionAcceptance.request.payload.agentId,
+        },
+      }),
+    },
     commands: new CommandInboxService({
       repository,
       executionIdFactory: () => executionId,

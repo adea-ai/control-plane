@@ -135,6 +135,7 @@ export class LocalControlApiComposition {
       ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
     })
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
+      plans: this.executionPlans,
       commands: this.commands,
       dispatcher,
     })

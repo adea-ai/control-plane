@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { GraphSelectionSchema } from './graphs.js'
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
@@ -314,6 +315,7 @@ export const RuntimeListResponseSchema = successResponse(
 )
 
 const ExecutionValidationPayloadSchema = z.object({
+  graph: GraphSelectionSchema.optional(),
   taskId: IdentifierSchemas.taskId,
   agentId: IdentifierSchemas.agentId,
   profileVersionId: IdentifierSchemas.profileVersionId,

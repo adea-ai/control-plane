@@ -1139,6 +1139,40 @@
                             ],
                             "type": "object"
                           },
+                          "graph": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "input": {
+                                "additionalProperties": {},
+                                "description": "Plain JSON object, at most 65536 serialized UTF-8 bytes, 4096 values and 16 nested levels; executable and non-finite values are rejected.",
+                                "maxProperties": 4096,
+                                "type": "object"
+                              },
+                              "reference": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "contentDigest": {
+                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                    "type": "string"
+                                  },
+                                  "graphDefinitionId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                    "type": "string"
+                                  },
+                                  "graphVersion": {
+                                    "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                                "type": "object"
+                              }
+                            },
+                            "required": ["reference", "input"],
+                            "type": "object"
+                          },
                           "outputContractRef": {
                             "maxLength": 512,
                             "minLength": 1,
@@ -1302,6 +1336,40 @@
                             "type": "object"
                           },
                           "contextPackage": { "not": {} },
+                          "graph": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "input": {
+                                "additionalProperties": {},
+                                "description": "Plain JSON object, at most 65536 serialized UTF-8 bytes, 4096 values and 16 nested levels; executable and non-finite values are rejected.",
+                                "maxProperties": 4096,
+                                "type": "object"
+                              },
+                              "reference": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "contentDigest": {
+                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                    "type": "string"
+                                  },
+                                  "graphDefinitionId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                    "type": "string"
+                                  },
+                                  "graphVersion": {
+                                    "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                                "type": "object"
+                              }
+                            },
+                            "required": ["reference", "input"],
+                            "type": "object"
+                          },
                           "outputContractRef": {
                             "maxLength": 512,
                             "minLength": 1,

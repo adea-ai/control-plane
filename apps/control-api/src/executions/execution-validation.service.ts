@@ -36,6 +36,7 @@ import {
   executionValidationPayloadHash,
   type ExecutionValidationCommandRepository,
   type ExecutionValidationCommandScope,
+  type ExecutionGraphAuthority,
 } from '@control-plane/execution-plan'
 
 export const EXECUTION_VALIDATION_SERVICE = Symbol('EXECUTION_VALIDATION_SERVICE')
@@ -58,6 +59,7 @@ export interface DurableExecutionValidationServiceOptions {
   readonly skills: Pick<SkillRepository, 'getSkill' | 'getSkillVersion'>
   /** Optional approval enforcement (#188); absent leaves validation unchanged. */
   readonly approvalGate?: CatalogApprovalGateOptions
+  readonly graphs?: Pick<ExecutionGraphAuthority, 'validate'>
 }
 
 export class DurableExecutionValidationService implements ExecutionValidationService {
@@ -110,6 +112,11 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       ),
     ])
     if (!projectState) reject()
+    if (
+      request.payload.graph !== undefined &&
+      !(await this.options.graphs?.validate(request.workspaceId, request.payload.graph))
+    )
+      reject()
 
     const approvalGate = this.options.approvalGate
     if (approvalGate !== undefined) {
@@ -191,6 +198,7 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
           minimumSupport: 'supported' as const,
         })),
         outputContract: { contractRef: request.payload.outputContractRef },
+        ...(request.payload.graph === undefined ? {} : { graph: request.payload.graph }),
         compiledAt,
       })
       const record = await this.options.commands.commit(

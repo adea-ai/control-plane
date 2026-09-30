@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
 import {
+  assertExecutionPlanIntegrity,
+  type ExecutionPlanRepository,
+} from '@control-plane/execution-plan'
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -46,17 +50,20 @@ export interface ExecutionWorkflowDispatcher {
 export interface DurableExecutionAcceptanceServiceOptions {
   readonly commands: CommandInboxService
   readonly dispatcher: ExecutionWorkflowDispatcher
+  readonly plans: Pick<ExecutionPlanRepository, 'get'>
   readonly now?: () => string
 }
 
 export class DurableExecutionAcceptanceService implements ExecutionAcceptanceService {
   readonly #commands: CommandInboxService
   readonly #dispatcher: ExecutionWorkflowDispatcher
+  readonly #plans: Pick<ExecutionPlanRepository, 'get'>
   readonly #now: () => string
 
   constructor(options: DurableExecutionAcceptanceServiceOptions) {
     this.#commands = options.commands
     this.#dispatcher = options.dispatcher
+    this.#plans = options.plans
     this.#now = options.now ?? (() => new Date().toISOString())
   }
 
@@ -96,11 +103,34 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
     let command = accepted.command
     if (command.status === 'accepted' || command.status === 'reconciliation_required') {
       try {
+        const plan = await this.#plans.get(accepted.execution.executionPlan)
+        if (
+          !plan ||
+          plan.executionPlanId !== accepted.execution.executionPlan.executionPlanId ||
+          plan.contentDigest !== accepted.execution.executionPlan.contentDigest ||
+          plan.schemaVersion !== accepted.execution.executionPlan.schemaVersion ||
+          plan.correlation.workspaceId !== accepted.execution.correlation.workspaceId ||
+          plan.correlation.projectId !== accepted.execution.correlation.projectId ||
+          plan.correlation.taskId !== accepted.execution.correlation.taskId ||
+          plan.correlation.agentId !== accepted.execution.correlation.agentId
+        )
+          throw new Error('EXECUTION_WORKFLOW_PLAN_MISMATCH')
+        if (plan.graph !== undefined) assertExecutionPlanIntegrity(plan)
         await this.#dispatcher.submit(
           ExecutionWorkflowInputSchema.parse({
             executionId: accepted.execution.executionId,
             workflowId: workflowIdFromExecutionId(accepted.execution.executionId),
             executionPlan: accepted.execution.executionPlan,
+            ...(plan.graph === undefined
+              ? {}
+              : {
+                  graph: {
+                    workspaceId: plan.correlation.workspaceId,
+                    reference: plan.graph.reference,
+                    input: plan.graph.input,
+                    threadId: `graph:${accepted.execution.executionId}`,
+                  },
+                }),
             ...(accepted.execution.marketplacePluginReferences === undefined
               ? {}
               : { marketplacePluginReferences: accepted.execution.marketplacePluginReferences }),

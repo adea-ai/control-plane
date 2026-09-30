@@ -298,6 +298,7 @@ export class HostedServerControlPlaneComposition {
           }),
     }
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
+      plans,
       commands: new CommandInboxService({
         repository: new PostgresCommandAcceptanceRepository(this.connection.database, {
           budgetAdmission: true,

@@ -84,3 +84,31 @@ contracts only when their owning milestone defines and versions them.
 The Adea-facing typed client is published separately as `@control-plane/sdk`. Its generated
 OpenAPI boundary and deterministic pre-execution stub are documented in [`sdk.md`](sdk.md). The SDK
 does not import this application or any server implementation package.
+
+## Graph selection and immutable plans
+
+Execution validation may include `payload.graph` with an exact
+`{ graphDefinitionId, graphVersion, contentDigest }` reference and JSON-object
+`input`. Validation rejects graph selections unless composition supplies a
+workspace-scoped graph authority that checks published lifecycle, compatibility,
+registered operations and the declared input schema. The plan digest binds both
+reference and input. Inputs are limited to 65,536 serialized UTF-8 bytes, 4,096
+values and 16 nested levels; cycles, accessors, sparse arrays, executable values
+and non-finite numbers are rejected before persistence.
+
+Exact validation retries preserve the original plan and reject changed inputs.
+New execution admission rechecks graph authority; replay checks the original
+workspace-scoped immutable pin. Graph declaration does not grant permission to
+perform runtime, model, tool or delegation effects. Their execution-time policy,
+approval, capability, budget and revocation checks remain required.
+
+Execution acceptance receives the plan reference. Before submitting pending work,
+it loads the retained plan and verifies its reference and workspace/project/task/
+agent correlation. Workflow graph reference, input and thread identity derive
+from that stored plan; caller-supplied graph data cannot replace them. A missing
+or mismatched retained plan leaves dispatch unconfirmed for reconciliation.
+
+This contract and admission plumbing are prerequisites for the public graph
+execution path. Durable authenticated graph administration, the production
+compiler and operation bindings, profile wiring, and deployed acceptance remain
+required by M11; this increment does not establish those results.
