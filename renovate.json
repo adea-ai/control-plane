@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits", ":semanticPrefixFixDepsChoreOthers"],
+  "timezone": "America/New_York",
+  "labels": ["dependencies"],
+  "rebaseWhen": "behind-base-branch",
+  "pruneStaleBranches": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "Non-major external dependency updates ride one branch and automerge once this repository's checks pass.",
+      "matchPackagePatterns": ["*"],
+      "matchUpdateTypes": ["patch", "minor", "pin", "digest"],
+      "groupName": "external non-major dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "schedule": ["after 8am and before 8pm every weekday"]
+    },
+    {
+      "description": "Major bumps of external dependencies get a reviewed PR, one per package.",
+      "matchPackagePatterns": ["*"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major"]
+    }
+  ]
+}
