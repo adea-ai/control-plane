@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test as runTest } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test as runTest } from 'bun:test'
+import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 import { and, eq, sql } from 'drizzle-orm'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
@@ -20,9 +21,22 @@ import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget
 import { usageLedgerEntries } from './schema/usage-ledger.ts'
 import { executions } from './schema/executions.ts'
 
-// Each case includes a cold isolated database and canonical migrations, plus
-// real connections/lock waits. This is a fixture deadline, not a runtime SLO.
-const test = (name, operation) => runTest(name, operation, 30_000)
+const timingEnabled = process.env.RUN_DATABASE_INTEGRATION_TIMING === 'true'
+const timingFile = 'usage-store'
+
+async function timedPhase(phase, operation) {
+  if (!timingEnabled) return operation()
+  const startedAt = performance.now()
+  try {
+    return await operation()
+  } finally {
+    process.stderr.write(
+      `[db-integration-timing] file=${timingFile} phase=${phase} duration_ms=${(performance.now() - startedAt).toFixed(1)}\n`
+    )
+  }
+}
+
+const test = (name, operation) => runTest(name, () => timedPhase('body', operation), 30_000)
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
@@ -131,32 +145,59 @@ async function withinBound(promise, label, timeoutMs = 15_000) {
 
 describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
   const isolatedDatabases = []
+  let preparedDatabase
 
   async function createDatabase() {
-    const credentials = {
-      administration: loadDatabaseCredentials(process.env, 'administration'),
-      application: loadDatabaseCredentials(process.env, 'application'),
-      migration: loadDatabaseCredentials(process.env, 'migration'),
-    }
-    const isolated = await createIsolatedTestDatabase(credentials)
-    isolatedDatabases.push(isolated)
-    await isolated.migrate()
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-    await new PostgresExecutionPlanRepository(isolated.application).put(plan)
-    return { isolated, credentials }
+    if (!preparedDatabase) throw new Error('ISOLATED_TEST_DATABASE_NOT_PREPARED')
+    return preparedDatabase
   }
 
+  beforeEach(async () => {
+    let isolated
+    try {
+      const credentials = {
+        administration: loadDatabaseCredentials(process.env, 'administration'),
+        application: loadDatabaseCredentials(process.env, 'application'),
+        migration: loadDatabaseCredentials(process.env, 'migration'),
+      }
+      isolated = await timedPhase('create', () => createIsolatedTestDatabase(credentials))
+      isolatedDatabases.push(isolated)
+      await timedPhase('migrate', () => isolated.migrate())
+      await timedPhase('seed', async () => {
+        await new PostgresContextPackageRepository(isolated.application).put(
+          contextPackageSerializationFixtures.futurePi
+        )
+        await new PostgresExecutionPlanRepository(isolated.application).put(plan)
+      })
+      preparedDatabase = { isolated, credentials }
+    } catch (error) {
+      if (isolated) {
+        const index = isolatedDatabases.indexOf(isolated)
+        if (index >= 0) isolatedDatabases.splice(index, 1)
+        try {
+          await timedPhase('dispose', () => isolated.dispose())
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'ISOLATED_TEST_DATABASE_SETUP_FAILED', {
+            cause: cleanupError,
+          })
+        }
+      }
+      throw error
+    }
+  }, 60_000)
+
   afterEach(async () => {
+    preparedDatabase = undefined
     const created = isolatedDatabases.splice(0)
-    const results = await Promise.allSettled(created.map((isolated) => isolated.dispose()))
+    const results = await Promise.allSettled(
+      created.map((isolated) => timedPhase('dispose', () => isolated.dispose()))
+    )
     const errors = results.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
     if (errors.length > 0)
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
-  })
+  }, 30_000)
 
   test('opens, reserves, charges, settles, finalizes, reconnects, and replays receipts', async () => {
     const { isolated, credentials } = await createDatabase()

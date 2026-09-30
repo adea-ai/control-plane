@@ -7,6 +7,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { rejects } from 'node:assert/strict'
+import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { ControlApiFixtures } from '@control-plane/contracts'
@@ -135,6 +136,8 @@ import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresRetentionReapplication } from './retention-reapplication.ts'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
+const integrationTimingEnabled = process.env.RUN_DATABASE_INTEGRATION_TIMING === 'true'
+const integrationTimingFile = 'integration'
 const acceptancePlan = createExecutionPlanTestFixture()
 const acceptancePlanReference = {
   executionPlanId: acceptancePlan.executionPlanId,
@@ -149,18 +152,37 @@ async function seedAcceptancePlan(database) {
   await new PostgresExecutionPlanRepository(database).put(acceptancePlan)
 }
 
-async function createMigratedIsolatedDatabase() {
-  const database = await createIsolatedTestDatabase({
-    administration: loadDatabaseCredentials(process.env, 'administration'),
-    application: loadDatabaseCredentials(process.env, 'application'),
-    migration: loadDatabaseCredentials(process.env, 'migration'),
-  })
+function recordIntegrationTiming(phase, startedAt) {
+  if (!integrationTimingEnabled || startedAt === undefined) return
+  process.stderr.write(
+    `[db-integration-timing] file=${integrationTimingFile} phase=${phase} duration_ms=${(performance.now() - startedAt).toFixed(1)}\n`
+  )
+}
+
+async function timedIntegrationPhase(phase, operation) {
+  if (!integrationTimingEnabled) return operation()
+  const startedAt = performance.now()
   try {
-    await database.migrate()
+    return await operation()
+  } finally {
+    recordIntegrationTiming(phase, startedAt)
+  }
+}
+
+async function createMigratedIsolatedDatabase() {
+  const database = await timedIntegrationPhase('create', () =>
+    createIsolatedTestDatabase({
+      administration: loadDatabaseCredentials(process.env, 'administration'),
+      application: loadDatabaseCredentials(process.env, 'application'),
+      migration: loadDatabaseCredentials(process.env, 'migration'),
+    })
+  )
+  try {
+    await timedIntegrationPhase('migrate', () => database.migrate())
     return database
   } catch (error) {
     try {
-      await database.dispose()
+      await timedIntegrationPhase('dispose', () => database.dispose())
     } catch (cleanupError) {
       const setupError = new AggregateError(
         [error, cleanupError],
@@ -429,9 +451,10 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   }, 60_000)
 
   afterEach(async () => {
-    await isolated?.dispose()
+    const database = isolated
+    if (database) await timedIntegrationPhase('dispose', () => database.dispose())
     isolated = undefined
-  })
+  }, 30_000)
 
   test('reference-window metadata migrates without changing immutable plan/package contents', async () => {
     // This is storage-foundation evidence, not proof that retention writers
@@ -5971,7 +5994,8 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
   }, 60_000)
 
   test('public durable usage service records and replays a real PostgreSQL lifecycle', async () => {
-    const database = await createMigratedIsolatedDatabase()
+    const database = isolated
+    const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
     const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FE9'
     const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FE9'
     const request = ControlApiFixtures.executionAcceptance.request
@@ -5982,7 +6006,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         store: new PostgresDurableUsageStore(database.application),
       })
     try {
-      await createExecutionOwner(database.application, request, executionId, attemptId)
+      await timedIntegrationPhase('seed', () =>
+        createExecutionOwner(database.application, request, executionId, attemptId)
+      )
       const ledger = createLedger()
       const opening = {
         workspaceId,
@@ -6041,12 +6067,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         'IDEMPOTENCY_CONFLICT'
       )
     } finally {
-      await database.dispose()
+      if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
     }
   }, 60_000)
 
   test('execution retention pins durable usage scalar and payload funding references', async () => {
-    const database = await createMigratedIsolatedDatabase()
+    const database = isolated
+    const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
     const ids = Array.from({ length: 8 }, (_, index) => `exe_01CRZ3NDEKTSV4RRFFQ69G5FE${index}`)
     const [owner, parent, payloadOwner, payloadParent, child, receiptOwner, rawParent, clean] = ids
     const terminalAt = '2020-01-01T00:00:00.000Z'
@@ -6055,72 +6082,75 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       issuedAt: '2019-12-31T00:00:00.000Z',
     }
     try {
-      for (const id of ids) {
-        await createExecutionOwner(database.application, request, id)
-        await database.application.execute(
-          sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
-        )
-      }
-      const state = {
-        schemaVersion: 1,
-        workspaceId: request.workspaceId,
-        executionId: payloadOwner,
-        parentExecutionId: payloadParent,
-        currency: 'USD',
-        maximumMicrounits: 100,
-        maximumTokens: 100,
-        status: 'open',
-        nextSequence: 1,
-        reservations: [
-          {
-            reservationKey: 'child-funding',
-            childExecutionId: child,
-            maximumMicrounits: 10,
-            maximumTokens: 10,
-            chargedMicrounits: 0,
-            chargedTokens: 0,
-            status: 'open',
-          },
-        ],
-      }
-      // Valid JSON identities deliberately disagree with indexes: either side
-      // must pin its positively identified owner, even when recovery rejects it.
-      await database.application.insert(usageBudgetStates).values({
-        executionId: owner,
-        workspaceId: request.workspaceId,
-        parentExecutionId: parent,
-        schemaVersion: 1,
-        state,
-      })
-      await database.application.insert(usageOperationReceipts).values({
-        executionId: owner,
-        workspaceId: request.workspaceId,
-        idempotencyKey: 'retention-receipt-pin',
-        fingerprint: `sha256:${'a'.repeat(64)}`,
-        schemaVersion: 1,
-        receipt: {
+      let state
+      await timedIntegrationPhase('seed', async () => {
+        for (const id of ids) {
+          await createExecutionOwner(database.application, request, id)
+          await database.application.execute(
+            sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
+          )
+        }
+        state = {
           schemaVersion: 1,
           workspaceId: request.workspaceId,
-          executionId: receiptOwner,
+          executionId: payloadOwner,
+          parentExecutionId: payloadParent,
+          currency: 'USD',
+          maximumMicrounits: 100,
+          maximumTokens: 100,
+          status: 'open',
+          nextSequence: 1,
+          reservations: [
+            {
+              reservationKey: 'child-funding',
+              childExecutionId: child,
+              maximumMicrounits: 10,
+              maximumTokens: 10,
+              chargedMicrounits: 0,
+              chargedTokens: 0,
+              status: 'open',
+            },
+          ],
+        }
+        // Valid JSON identities deliberately disagree with indexes: either side
+        // must pin its positively identified owner, even when recovery rejects it.
+        await database.application.insert(usageBudgetStates).values({
+          executionId: owner,
+          workspaceId: request.workspaceId,
+          parentExecutionId: parent,
+          schemaVersion: 1,
+          state,
+        })
+        await database.application.insert(usageOperationReceipts).values({
+          executionId: owner,
+          workspaceId: request.workspaceId,
           idempotencyKey: 'retention-receipt-pin',
           fingerprint: `sha256:${'a'.repeat(64)}`,
-          result: {},
-        },
-      })
-      await new PostgresUsageLedgerRepository(database.application).append({
-        entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
-        executionId: owner,
-        parentExecutionId: rawParent,
-        workspaceId: request.workspaceId,
-        sequence: 1,
-        kind: 'settlement',
-        source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
-        fundingSource: 'hq_managed',
-        quantity: { unit: 'tokens', value: 0 },
-        currency: 'USD',
-        costMicrounits: 0,
-        costExact: true,
-        recordedAt: terminalAt,
+          schemaVersion: 1,
+          receipt: {
+            schemaVersion: 1,
+            workspaceId: request.workspaceId,
+            executionId: receiptOwner,
+            idempotencyKey: 'retention-receipt-pin',
+            fingerprint: `sha256:${'a'.repeat(64)}`,
+            result: {},
+          },
+        })
+        await new PostgresUsageLedgerRepository(database.application).append({
+          entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
+          executionId: owner,
+          parentExecutionId: rawParent,
+          workspaceId: request.workspaceId,
+          sequence: 1,
+          kind: 'settlement',
+          source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
+          fundingSource: 'hq_managed',
+          quantity: { unit: 'tokens', value: 0 },
+          currency: 'USD',
+          costMicrounits: 0,
+          costExact: true,
+          recordedAt: terminalAt,
+        })
       })
       const repository = new PostgresExecutionRepository(database.application)
       const now = new Date('2020-01-03T00:00:00.000Z')
@@ -6144,7 +6174,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       for (const id of ids.slice(0, 7)) expect(await repository.getExecution(id)).toBeDefined()
       expect(await repository.getExecution(clean)).toBeUndefined()
     } finally {
-      await database.dispose()
+      if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
     }
   }, 60_000)
 

@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test as runTest } from 'bun:test'
+import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 import { deriveContextPackage, contextPackageSerializationFixtures } from '@control-plane/context'
 import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execution-plan'
@@ -17,6 +18,8 @@ import { executionPlans } from './schema/execution-plans.js'
 import { eq, sql } from 'drizzle-orm'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
+const timingEnabled = process.env.RUN_DATABASE_INTEGRATION_TIMING === 'true'
+const timingFile = 'retention-ancestry'
 const retentionMs = 90 * 24 * 60 * 60 * 1_000
 const credentials = {
   administration: { role: 'administration', url: process.env.DATABASE_ADMIN_URL },
@@ -24,14 +27,26 @@ const credentials = {
   application: { role: 'application', url: process.env.DATABASE_URL },
 }
 
-async function withDatabase(run) {
-  const isolated = await createIsolatedTestDatabase(credentials)
+async function timedPhase(phase, operation) {
+  if (!timingEnabled) return operation()
+  const startedAt = performance.now()
   try {
-    await isolated.migrate()
-    await run(isolated.application)
+    return await operation()
   } finally {
-    await isolated.dispose()
+    process.stderr.write(
+      `[db-integration-timing] file=${timingFile} phase=${phase} duration_ms=${(performance.now() - startedAt).toFixed(1)}\n`
+    )
   }
+}
+
+let isolatedDatabase
+
+const test = (name, operation, timeoutMs) =>
+  runTest(name, () => timedPhase('body', operation), timeoutMs)
+
+async function withDatabase(run) {
+  if (!isolatedDatabase) throw new Error('ISOLATED_TEST_DATABASE_NOT_PREPARED')
+  await run(isolatedDatabase.application)
 }
 
 function planAt(compiledAt) {
@@ -86,6 +101,32 @@ async function waitForLockWait(database, tableName) {
 }
 
 describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
+  beforeEach(async () => {
+    let isolated
+    try {
+      isolated = await timedPhase('create', () => createIsolatedTestDatabase(credentials))
+      await timedPhase('migrate', () => isolated.migrate())
+      isolatedDatabase = isolated
+    } catch (error) {
+      if (isolated) {
+        try {
+          await timedPhase('dispose', () => isolated.dispose())
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'ISOLATED_TEST_DATABASE_SETUP_FAILED', {
+            cause: cleanupError,
+          })
+        }
+      }
+      throw error
+    }
+  }, 60_000)
+
+  afterEach(async () => {
+    const isolated = isolatedDatabase
+    isolatedDatabase = undefined
+    if (isolated) await timedPhase('dispose', () => isolated.dispose())
+  }, 30_000)
+
   test('retains a parent plan until its child is swept, then releases the ancestor', async () => {
     await withDatabase(async (database) => {
       const package_ = contextPackageSerializationFixtures.futurePi

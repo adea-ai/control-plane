@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test as runTest } from 'bun:test'
 import { randomUUID } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
@@ -26,6 +27,8 @@ import { inboxMessages, outboxEvents } from './schema/messaging.ts'
 import { retiredCommandKeys } from './schema/retired-command-keys.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
+const timingEnabled = process.env.RUN_DATABASE_INTEGRATION_TIMING === 'true'
+const timingFile = 'retention-hold-activation'
 const retentionMs = 1_000
 const observedAt = new Date('2026-09-26T12:00:00.000Z')
 const otherWorkspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW'
@@ -61,6 +64,21 @@ const holdPolicy = {
     reasonCodes: ['legal-case'],
   },
 }
+
+async function timedPhase(phase, operation) {
+  if (!timingEnabled) return operation()
+  const startedAt = performance.now()
+  try {
+    return await operation()
+  } finally {
+    process.stderr.write(
+      `[db-integration-timing] file=${timingFile} phase=${phase} duration_ms=${(performance.now() - startedAt).toFixed(1)}\n`
+    )
+  }
+}
+
+const test = (name, operation, timeoutMs) =>
+  runTest(name, () => timedPhase('body', operation), timeoutMs)
 const retiredKeyHoldPolicy = {
   ...holdPolicy,
   'retired-command-keys': {
@@ -149,27 +167,53 @@ function deferred() {
 
 describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
   const isolatedDatabases = []
+  let preparedDatabase
 
   async function createDatabase() {
-    const isolated = await createIsolatedTestDatabase({
-      administration: loadDatabaseCredentials(process.env, 'administration'),
-      application: loadDatabaseCredentials(process.env, 'application'),
-      migration: loadDatabaseCredentials(process.env, 'migration'),
-    })
-    isolatedDatabases.push(isolated)
-    await isolated.migrate()
-    return isolated
+    if (!preparedDatabase) throw new Error('ISOLATED_TEST_DATABASE_NOT_PREPARED')
+    return preparedDatabase
   }
 
+  beforeEach(async () => {
+    let isolated
+    try {
+      const credentials = {
+        administration: loadDatabaseCredentials(process.env, 'administration'),
+        application: loadDatabaseCredentials(process.env, 'application'),
+        migration: loadDatabaseCredentials(process.env, 'migration'),
+      }
+      isolated = await timedPhase('create', () => createIsolatedTestDatabase(credentials))
+      isolatedDatabases.push(isolated)
+      await timedPhase('migrate', () => isolated.migrate())
+      preparedDatabase = isolated
+    } catch (error) {
+      if (isolated) {
+        const index = isolatedDatabases.indexOf(isolated)
+        if (index >= 0) isolatedDatabases.splice(index, 1)
+        try {
+          await timedPhase('dispose', () => isolated.dispose())
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'ISOLATED_TEST_DATABASE_SETUP_FAILED', {
+            cause: cleanupError,
+          })
+        }
+      }
+      throw error
+    }
+  }, 60_000)
+
   afterEach(async () => {
+    preparedDatabase = undefined
     const created = isolatedDatabases.splice(0)
-    const results = await Promise.allSettled(created.map((isolated) => isolated.dispose()))
+    const results = await Promise.allSettled(
+      created.map((isolated) => timedPhase('dispose', () => isolated.dispose()))
+    )
     const errors = results.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
     if (errors.length > 0)
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
-  })
+  }, 30_000)
 
   test('holds suppress plan, context, evaluation, audit and messaging deletion until release', async () => {
     const isolated = await createDatabase()
