@@ -134,6 +134,9 @@ describe('ProcessRpcLink', () => {
     await withLink(
       () => startLink(),
       async ({ link }) => {
+        expect(await link.request({ echo: 'ready' }, { id: 'ready', timeoutMs: 2_000 })).toBe(
+          'ready'
+        )
         const reasons = []
         const pending = link.request(
           { slow: 150 },
