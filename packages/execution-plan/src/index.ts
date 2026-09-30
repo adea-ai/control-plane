@@ -24,10 +24,12 @@ import {
   type SkillRepository,
   type SkillVersion,
   evaluateVersionApproval,
+  catalogOwnershipAllowsAccess,
   CommandInboxError,
   CommandInboxRecordSchema,
   ExecutionSchema,
   type CommandInboxRecord,
+  type ExecutionPlanReplayAuthorization,
   type Execution,
 } from '@control-plane/domain'
 import {
@@ -431,10 +433,10 @@ export function assertExecutionPlanIntegrity(input: unknown): ExecutionPlan {
 }
 
 export interface ExecutionPlanAcceptanceValidatorOptions {
-  /** Current catalog reads used only for new execution acceptance. */
+  /** Owner reads run on new acceptance and replay; lifecycle/approval checks run on new acceptance. */
   readonly catalog: {
-    readonly profiles: Pick<AgentProfileRepository, 'getAgentProfileVersion'>
-    readonly skills: Pick<SkillRepository, 'getSkillVersion'>
+    readonly profiles: Pick<AgentProfileRepository, 'getAgentProfile' | 'getAgentProfileVersion'>
+    readonly skills: Pick<SkillRepository, 'getSkill' | 'getSkillVersion'>
   }
   /** Optional execution-time approval policy shared with catalog resolution. */
   readonly approvalGate?: {
@@ -449,22 +451,56 @@ export class ExecutionPlanAcceptanceValidator {
     readonly options?: ExecutionPlanAcceptanceValidatorOptions
   ) {}
 
+  /** Rechecks current ownership on exact replay when the historical plan is still retained. */
+  async authorize(input: {
+    readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
+    readonly workspaceId: string
+    readonly projectId: string
+    readonly taskId: string
+    readonly agentId: string
+    readonly callerPrincipalId: string
+  }): Promise<ExecutionPlanReplayAuthorization> {
+    const plan = await this.repository.get(input.executionPlan)
+    // CommandInboxService may acknowledge a retired plan only once the command
+    // has already left its dispatch-pending states; otherwise the API could
+    // resubmit work without the authorization context used at initial acceptance.
+    if (plan === undefined) return 'historical_plan_missing'
+    if (!executionPlanCorrelates(plan, input)) return false
+    const options = this.options
+    if (options === undefined) return true
+
+    const [profile, skills] = await Promise.all([
+      options.catalog.profiles.getAgentProfileVersion(plan.profile.profileVersionId),
+      Promise.all(
+        plan.skills.map((pin) => options.catalog.skills.getSkillVersion(pin.skillVersionId))
+      ),
+    ])
+    if (!profile || skills.some((skill) => skill === undefined)) return false
+    const currentSkills = skills as SkillVersion[]
+    if (
+      profile.profileId !== plan.profile.profileId ||
+      currentSkills.length !== plan.skills.length ||
+      currentSkills.some(
+        (skill, index) =>
+          skill.skillVersionId !== plan.skills[index]?.skillVersionId ||
+          skill.skillId !== plan.skills[index]?.skillId
+      )
+    ) {
+      return false
+    }
+    return this.#catalogOwnershipAllows(input, profile, currentSkills)
+  }
+
   async validate(input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
     readonly workspaceId: string
     readonly projectId: string
     readonly taskId: string
     readonly agentId: string
+    readonly callerPrincipalId: string
   }): Promise<boolean> {
     const plan = await this.repository.get(input.executionPlan)
-    const correlated =
-      plan !== undefined &&
-      plan.schemaVersion === input.executionPlan.schemaVersion &&
-      plan.correlation.workspaceId === input.workspaceId &&
-      plan.correlation.projectId === input.projectId &&
-      plan.correlation.taskId === input.taskId &&
-      plan.correlation.agentId === input.agentId
-    if (!correlated) return false
+    if (!executionPlanCorrelates(plan, input)) return false
 
     const options = this.options
     if (options === undefined) return true
@@ -475,13 +511,10 @@ export class ExecutionPlanAcceptanceValidator {
         plan.skills.map((pin) => options.catalog.skills.getSkillVersion(pin.skillVersionId))
       ),
     ])
-    if (
-      !profilePinIsCurrent(profile, plan.profile) ||
-      skills.some((skill) => skill === undefined)
-    ) {
-      return false
-    }
+    if (!profile || skills.some((skill) => skill === undefined)) return false
     const currentSkills = skills as SkillVersion[]
+    if (!(await this.#catalogOwnershipAllows(input, profile, currentSkills))) return false
+    if (!profilePinIsCurrent(profile, plan.profile)) return false
     if (!profileSkillsMatchPlan(profile, currentSkills, plan)) return false
 
     const gate = options.approvalGate
@@ -518,6 +551,59 @@ export class ExecutionPlanAcceptanceValidator {
         verdict === 'approved' || verdict === 'grandfathered' || verdict === 'not_required'
     )
   }
+
+  async #catalogOwnershipAllows(
+    input: {
+      readonly workspaceId: string
+      readonly callerPrincipalId: string
+    },
+    profile: AgentProfileVersion,
+    skills: readonly SkillVersion[]
+  ): Promise<boolean> {
+    const catalog = this.options?.catalog
+    if (catalog === undefined) return true
+    const [profileOwner, ...skillOwners] = await Promise.all([
+      catalog.profiles.getAgentProfile(profile.profileId),
+      ...skills.map((skill) => catalog.skills.getSkill(skill.skillId)),
+    ])
+    return (
+      profileOwner?.profileId === profile.profileId &&
+      catalogOwnershipAllowsAccess(profileOwner.ownership, {
+        workspaceId: input.workspaceId,
+        principalId: input.callerPrincipalId,
+      }) &&
+      skillOwners.length === skills.length &&
+      skillOwners.every(
+        (owner, index) =>
+          owner !== undefined &&
+          owner.skillId === skills[index]?.skillId &&
+          catalogOwnershipAllowsAccess(owner.ownership, {
+            workspaceId: input.workspaceId,
+            principalId: input.callerPrincipalId,
+          })
+      )
+    )
+  }
+}
+
+function executionPlanCorrelates(
+  plan: ExecutionPlan | undefined,
+  input: {
+    readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
+    readonly workspaceId: string
+    readonly projectId: string
+    readonly taskId: string
+    readonly agentId: string
+  }
+): plan is ExecutionPlan {
+  return (
+    plan !== undefined &&
+    plan.schemaVersion === input.executionPlan.schemaVersion &&
+    plan.correlation.workspaceId === input.workspaceId &&
+    plan.correlation.projectId === input.projectId &&
+    plan.correlation.taskId === input.taskId &&
+    plan.correlation.agentId === input.agentId
+  )
 }
 
 function profilePinIsCurrent(

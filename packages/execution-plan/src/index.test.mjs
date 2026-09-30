@@ -581,6 +581,14 @@ describe('immutable ExecutionPlan compilation', () => {
 })
 
 describe('ExecutionPlan acceptance eligibility', () => {
+  test('distinguishes a retired replay plan from an invalid new acceptance', async () => {
+    const plan = compile(baseInput())
+    const validator = new ExecutionPlanAcceptanceValidator(new InMemoryExecutionPlanRepository())
+
+    expect(await validator.authorize(acceptanceInput(plan))).toBe('historical_plan_missing')
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+  })
+
   test('rechecks current catalog pins and lifecycle for new acceptance', async () => {
     const input = baseInput()
     const plan = compile(input)
@@ -589,8 +597,14 @@ describe('ExecutionPlan acceptance eligibility', () => {
     let currentProfile = input.profile
     let currentSkill = input.skills[0]
     const catalog = {
-      profiles: { getAgentProfileVersion: async () => currentProfile },
-      skills: { getSkillVersion: async () => currentSkill },
+      profiles: {
+        getAgentProfileVersion: async () => currentProfile,
+        getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+      },
+      skills: {
+        getSkillVersion: async () => currentSkill,
+        getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      },
     }
     const validator = new ExecutionPlanAcceptanceValidator(repository, { catalog })
 
@@ -636,8 +650,14 @@ describe('ExecutionPlan acceptance eligibility', () => {
     const skillsById = new Map(input.skills.map((skill) => [skill.skillVersionId, skill]))
     const validator = new ExecutionPlanAcceptanceValidator(plans, {
       catalog: {
-        profiles: { getAgentProfileVersion: async () => currentProfile },
-        skills: { getSkillVersion: async (versionId) => skillsById.get(versionId) },
+        profiles: {
+          getAgentProfileVersion: async () => currentProfile,
+          getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+        },
+        skills: {
+          getSkillVersion: async (versionId) => skillsById.get(versionId),
+          getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+        },
       },
     })
 
@@ -661,8 +681,14 @@ describe('ExecutionPlan acceptance eligibility', () => {
     const repository = new InMemoryExecutionPlanRepository()
     await repository.put(plan)
     const catalog = {
-      profiles: { getAgentProfileVersion: async () => input.profile },
-      skills: { getSkillVersion: async () => input.skills[0] },
+      profiles: {
+        getAgentProfileVersion: async () => input.profile,
+        getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+      },
+      skills: {
+        getSkillVersion: async () => input.skills[0],
+        getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      },
     }
     const decisions = []
     const approvalGate = {
@@ -725,12 +751,14 @@ describe('ExecutionPlan acceptance eligibility', () => {
             catalogReads += 1
             return currentProfile
           },
+          getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
         },
         skills: {
           getSkillVersion: async () => {
             catalogReads += 1
             return input.skills[0]
           },
+          getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
         },
       },
     })
@@ -744,6 +772,7 @@ describe('ExecutionPlan acceptance eligibility', () => {
       repository: new InMemoryCommandAcceptanceRepository(),
       executionIdFactory: () => 'exe_01JABCDEF0123456789ABCDEFG',
       executionPlanValidator: {
+        authorize: async (acceptance) => validator.authorize(acceptance),
         validate: async (acceptance) => {
           validations += 1
           return validator.validate(acceptance)
@@ -765,6 +794,55 @@ describe('ExecutionPlan acceptance eligibility', () => {
     expect(replay.execution).toEqual(accepted.execution)
     expect(validations).toBe(1)
   })
+
+  test('rechecks catalog ownership when an accepted plan is replayed', async () => {
+    const input = baseInput()
+    const plan = compile(input)
+    const plans = new InMemoryExecutionPlanRepository()
+    await plans.put(plan)
+    let profileOwnership = { scope: 'workspace', workspaceId: ids.workspaceId }
+    let skillOwnership = { scope: 'system' }
+    const validator = new ExecutionPlanAcceptanceValidator(plans, {
+      catalog: {
+        profiles: {
+          getAgentProfileVersion: async () => input.profile,
+          getAgentProfile: async (profileId) => ({ profileId, ownership: profileOwnership }),
+        },
+        skills: {
+          getSkillVersion: async () => input.skills[0],
+          getSkill: async (skillId) => ({ skillId, ownership: skillOwnership }),
+        },
+      },
+    })
+    profileOwnership = { scope: 'workspace', workspaceId: 'wsp_01JOTHERWORKSPACE00000000000' }
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+    profileOwnership = { scope: 'workspace', workspaceId: ids.workspaceId }
+    const repository = new InMemoryCommandAcceptanceRepository()
+    const inbox = new CommandInboxService({
+      repository,
+      executionIdFactory: () => 'exe_01JABCDEF0123456789ABCDEFG',
+      executionPlanValidator: validator,
+      now: () => '2026-09-26T12:00:00.000Z',
+    })
+
+    const accepted = await inbox.acceptExecution(commandInput(plan))
+    profileOwnership = { scope: 'workspace', workspaceId: 'wsp_01JOTHERWORKSPACE00000000000' }
+    await expect(inbox.acceptExecution(commandInput(plan))).rejects.toMatchObject({
+      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+    })
+    expect(accepted.replayed).toBe(false)
+    expect(repository.executionCount).toBe(1)
+
+    profileOwnership = { scope: 'workspace', workspaceId: ids.workspaceId }
+    skillOwnership = {
+      scope: 'workspace',
+      workspaceId: 'wsp_01JOTHERWORKSPACE00000000000',
+    }
+    await expect(inbox.acceptExecution(commandInput(plan))).rejects.toMatchObject({
+      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+    })
+    expect(repository.executionCount).toBe(1)
+  })
 })
 
 function compile(input) {
@@ -773,6 +851,7 @@ function compile(input) {
 
 function acceptanceInput(plan) {
   return {
+    callerPrincipalId: 'svc_agent-hq',
     executionPlan: {
       executionPlanId: plan.executionPlanId,
       contentDigest: plan.contentDigest,

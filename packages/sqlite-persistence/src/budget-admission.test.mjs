@@ -46,7 +46,10 @@ function commands(provider, tail = 'G', enabled = true) {
   return new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider, { budgetAdmission: enabled }),
     executionIdFactory: () => id('exe', tail),
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator: {
+      validate: async () => true,
+      authorize: async () => true,
+    },
     now: () => at,
   })
 }
@@ -303,6 +306,7 @@ test('native legacy terminal replay returns only the persisted canonical outcome
         return id('exe', 'H')
       },
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           validatorCalls++
           return true

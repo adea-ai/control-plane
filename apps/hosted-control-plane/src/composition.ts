@@ -67,6 +67,7 @@ import {
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
 import type { MetricAdapter } from '@control-plane/telemetry'
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
+import { decidedRetentionPolicy, retentionClassPolicy } from '@control-plane/config'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import { RemoteRestateRuntime, RESTATE_SERVER_VERSION } from '@control-plane/restate-runtime'
 import type {
@@ -443,10 +444,34 @@ export class HostedServerControlPlaneComposition {
       }),
     })
     this.executionLifecycleActivities = activities
+    const retentionPolicy = decidedRetentionPolicy
+    const commandInboxRepository = new PostgresCommandAcceptanceRepository(this.connection.database)
+    const executionEventRepository = new PostgresExecutionEventRepository(this.connection.database)
     this.#retentionSweep = new RetentionSweep({
-      commandInbox: new PostgresCommandAcceptanceRepository(this.connection.database),
-      executionEvents: new PostgresExecutionEventRepository(this.connection.database),
+      assessCommandInbox: (now) =>
+        commandInboxRepository.assessExpiredInbox(now, {
+          policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
+        }),
+      assessExecutionEvents: (now) =>
+        executionEventRepository.assessExpiredEvents(now, {
+          policyRetainMs: retentionClassPolicy(retentionPolicy, 'execution-events').retainMs,
+        }),
       intervalMs: options.retentionSweepIntervalMs ?? 3_600_000,
+      onReport: (report) => {
+        const level =
+          report.assessment.commandInbox.eligible > 0 ||
+          report.assessment.executionEvents.eligible > 0
+            ? 'warn'
+            : 'info'
+        const output = JSON.stringify({
+          level,
+          event: 'retention.sweep',
+          commandInbox: report.assessment.commandInbox,
+          executionEvents: report.assessment.executionEvents,
+        })
+        if (level === 'warn') console.warn(output)
+        else console.info(output)
+      },
     })
     // Reconciliation scheduling is explicit composition configuration: absent
     // configuration enables nothing, and invalid bounds fail closed above.

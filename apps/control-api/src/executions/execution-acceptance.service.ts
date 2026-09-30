@@ -85,7 +85,9 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
         parentExecutionId: request.payload.parentExecutionId,
         receivedAt: request.issuedAt,
         retentionExpiresAt: request.payload.retentionExpiresAt,
-        deadlineAt: request.payload.deadlineAt,
+        // Persist the resolved workflow deadline so an exact retry cannot
+        // substitute a caller-chosen deadline while reusing the payload hash.
+        deadlineAt,
       })
     } catch (error) {
       normalizeCommandError(error)
@@ -102,7 +104,12 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
             ...(accepted.execution.marketplacePluginReferences === undefined
               ? {}
               : { marketplacePluginReferences: accepted.execution.marketplacePluginReferences }),
-            deadlineAt,
+            deadlineAt:
+              accepted.execution.deadlineAt ??
+              workflowDeadline({
+                issuedAt: accepted.command.receivedAt,
+                payload: { retentionExpiresAt: accepted.command.retentionExpiresAt },
+              }),
           })
         )
         command = await this.#transition(command, 'processing')

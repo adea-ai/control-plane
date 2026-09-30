@@ -10,6 +10,7 @@ import {
 } from '@control-plane/execution-plan/testing'
 import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import { LocalControlApiComposition } from './local-api-composition.ts'
+import { seedSystemCatalogOwners } from './test-catalog-owners.mjs'
 
 test('Local cancellation composition replays the stored signal after lost ACK and SQLite reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'local-cancellation-replay-'))
@@ -42,6 +43,7 @@ test('Local cancellation composition replays the stored signal after lost ACK an
     const plan = createExecutionPlanTestFixture()
     await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
     await composition.executionPlans.put(plan)
+    await seedSystemCatalogOwners(composition.catalog, planInputs.profile, planInputs.skills)
     await composition.catalog.insertAgentProfileVersion(planInputs.profile)
     for (const skill of planInputs.skills) {
       await composition.catalog.insertSkillVersion(skill)

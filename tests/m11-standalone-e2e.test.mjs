@@ -56,6 +56,7 @@ import {
   LocalControlPlaneComposition,
   createLocalManagedPiRuntime,
 } from '@control-plane/local-control-plane'
+import { seedSystemCatalogOwners } from '../apps/local-control-plane/src/test-catalog-owners.mjs'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
 import {
   DirectLocalRuntimeTransport,
@@ -750,8 +751,11 @@ describe('M11 standalone execution composition', () => {
             return response
           },
         })
-        await local.catalog.insertAgentProfileVersion(managedPiProfileVersion())
-        await local.catalog.insertSkillVersion(managedPiSkillVersion())
+        const profileVersion = managedPiProfileVersion()
+        const skillVersion = managedPiSkillVersion()
+        await seedSystemCatalogOwners(local.catalog, profileVersion, [skillVersion])
+        await local.catalog.insertAgentProfileVersion(profileVersion)
+        await local.catalog.insertSkillVersion(skillVersion)
         await local.contextPackages.put(contextPackageSerializationFixtures.futurePi)
         await local.executionPlans.put(plan)
         const issuedAt = new Date().toISOString()
@@ -1011,6 +1015,7 @@ function acpExecutionPlanOptions() {
 
 async function seedExecutionPlanInputs(local, options = {}) {
   const inputs = createExecutionPlanTestFixtureInputs(options)
+  await seedSystemCatalogOwners(local.catalog, inputs.profile, inputs.skills)
   await local.catalog.insertAgentProfileVersion(inputs.profile)
   for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
   await local.contextPackages.put(inputs.contextPackage)

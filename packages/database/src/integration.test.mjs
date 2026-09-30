@@ -4872,6 +4872,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           throw new Error('REPLAY_MUST_NOT_REVALIDATE')
         },
@@ -5013,6 +5014,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           throw new Error('REPLAY_MUST_NOT_REVALIDATE')
         },
@@ -5032,7 +5034,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     const service = new CommandInboxService({
       repository,
       executionIdFactory: () => 'exe_01BRZ3NDEKTSV4RRFFQ69G5FAV',
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => '2026-08-24T11:00:00.000Z',
     })
     const input = {
@@ -5091,7 +5093,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       executionIdFactory: () => {
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
-      executionPlanValidator: { validate: async () => false },
+      executionPlanValidator: { authorize: async () => true, validate: async () => false },
       now: () => input.retentionExpiresAt,
     })
     expect((await atDeadline.acceptExecution(input)).command).toEqual(processing)
@@ -5100,7 +5102,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       executionIdFactory: () => {
         throw new Error('EXPIRED_REPLAY_MUST_NOT_ALLOCATE')
       },
-      executionPlanValidator: { validate: async () => false },
+      executionPlanValidator: { authorize: async () => true, validate: async () => false },
       now: () => new Date(Date.parse(input.retentionExpiresAt) + 1).toISOString(),
     })
     await expect(expired.acceptExecution(input)).rejects.toMatchObject({
@@ -5119,7 +5121,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       executionIdFactory: () => {
         throw new Error('LEGACY_REPLAY_MUST_NOT_ALLOCATE')
       },
-      executionPlanValidator: { validate: async () => false },
+      executionPlanValidator: { authorize: async () => true, validate: async () => false },
       now: () => legacyDeadline,
     })
     const legacy = await legacyService.acceptExecution({
