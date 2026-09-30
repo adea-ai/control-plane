@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.28.1...sqlite-persistence-v1.28.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.28.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.28.0...sqlite-persistence-v1.28.1) (2026-09-29)
 
 

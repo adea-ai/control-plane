@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.3](https://github.com/adea-ai/control-plane/compare/database-v1.35.2...database-v1.35.3) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.35.2](https://github.com/adea-ai/control-plane/compare/database-v1.35.1...database-v1.35.2) (2026-09-29)
 
 
