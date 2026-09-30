@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.2...local-control-plane-v1.19.3) (2026-09-30)
+
+
+### Maintenance
+
+* **deps:** bump the bun-dependencies group with 14 updates ([#767](https://github.com/adea-ai/control-plane/issues/767)) ([d9e29ed](https://github.com/adea-ai/control-plane/commit/d9e29eda1658637a6da7fe7430ad7933e9cbb582))
+
 ## [1.19.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.1...local-control-plane-v1.19.2) (2026-09-30)
 
 
