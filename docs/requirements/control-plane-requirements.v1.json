@@ -254,7 +254,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The current revision 27 captured-text clause inventory has 373 atoms over 169 logical lines, including individual normalized-event/WorkspaceEvent schema fields and error classification dimensions/categories. CP-CONS-001..032 remain coarse. The Local embedded default/optional Restate distinction is preserved; Agent HQ product inbox/event log/SSE ownership is separate. Current atom-to-requirement/code/test/deployment mapping and complete source acceptance scenarios remain incomplete. Existing classifications and historical candidate evidence are unchanged."
+        "disposition": "The current revision 27 captured-text clause inventory has 372 atoms over 169 logical lines, including individual normalized-event/WorkspaceEvent schema fields and error classification dimensions/categories. CP-CONS-001..032 remain coarse. The Local embedded default/optional Restate distinction is preserved; Agent HQ product inbox/event log/SSE ownership is separate. Current atom-to-requirement/code/test/deployment mapping and complete source acceptance scenarios remain incomplete. Existing classifications and historical candidate evidence are unchanged."
       },
       "currentRevision": 27,
       "revisionModifiedAt": "2026-09-29T02:02:18.414Z",
@@ -267,7 +267,7 @@
         "sourceRevision": 27,
         "contentSha256": "d1a98dafdda98a73e72f07377b44f067bb8a2b5deef77c9d2036d01d10f5ac35",
         "logicalLines": 169,
-        "atoms": 373,
+        "atoms": 372,
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
@@ -7597,28 +7597,44 @@
     {
       "id": "CONTRA-002",
       "topic": "AWS and pnpm versus Railway and Bun",
-      "sources": ["Control Plane TDD Appendix C", "ADR-027", "AGENTS.md", "docs/infrastructure.md"],
+      "sources": [
+        "Control Plane TDD Appendix C",
+        "ADR-027",
+        "AGENTS.md",
+        "docs/infrastructure.md"
+      ],
       "resolution": "Bun 1.4 and Railway/Neon/R2 are current first-party choices; the live TDD and ADR-027 now record the tooling reconciliation and partial supersession, while portable adapters preserve Hosted alternatives. Full #195 source inventory and marketplace reconciliation remain open.",
       "issue": 195
     },
     {
       "id": "CONTRA-003",
       "topic": "PostgreSQL-only persistence versus profile portability",
-      "sources": ["Control Plane TDD", "System Architecture Overview", "docs/architecture.md"],
+      "sources": [
+        "Control Plane TDD",
+        "System Architecture Overview",
+        "docs/architecture.md"
+      ],
       "resolution": "Cloud and Hosted Server use PostgreSQL; Local and Hosted Simple use SQLite behind shared persistence semantics.",
       "issue": 187
     },
     {
       "id": "CONTRA-004",
       "topic": "Mandatory Local Runtime Gateway versus direct transport",
-      "sources": ["Agent HQ PRD", "System Architecture Overview", "docs/local-deployment.md"],
+      "sources": [
+        "Agent HQ PRD",
+        "System Architecture Overview",
+        "docs/local-deployment.md"
+      ],
       "resolution": "Co-located Local uses DirectLocalRuntimeTransport; Runtime Gateway remains for non-co-located nodes.",
       "issue": 195
     },
     {
       "id": "CONTRA-005",
       "topic": "Prose contract v1 versus machine contract 2.0",
-      "sources": ["Data Model & API Specification", "packages/contracts/src/control-api.ts"],
+      "sources": [
+        "Data Model & API Specification",
+        "packages/contracts/src/control-api.ts"
+      ],
       "resolution": "Machine-readable Control API 2.0 owns exact wire shape; prose retains semantic inventory pending reconciliation.",
       "issue": 195
     }
