@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test as runTest } from 'bun:test'
+import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
@@ -21,12 +22,29 @@ import { executionPlans } from './schema/execution-plans.js'
 import { eq, sql } from 'drizzle-orm'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
+const timingEnabled = process.env.RUN_DATABASE_INTEGRATION_TIMING === 'true'
+const timingFile = 'retention-reference-windows'
 const retentionMs = 90 * 24 * 60 * 60 * 1_000
 const credentials = {
   administration: { role: 'administration', url: process.env.DATABASE_ADMIN_URL },
   migration: { role: 'migration', url: process.env.DATABASE_MIGRATION_URL },
   application: { role: 'application', url: process.env.DATABASE_URL },
 }
+
+async function timedPhase(phase, operation) {
+  if (!timingEnabled) return operation()
+  const startedAt = performance.now()
+  try {
+    return await operation()
+  } finally {
+    process.stderr.write(
+      `[db-integration-timing] file=${timingFile} phase=${phase} duration_ms=${(performance.now() - startedAt).toFixed(1)}\n`
+    )
+  }
+}
+
+const test = (name, operation, timeoutMs) =>
+  runTest(name, () => timedPhase('body', operation), timeoutMs)
 
 function planFor(contextPackage, compiledAt = '2024-01-01T00:00:00.000Z') {
   return new ExecutionPlanCompiler('1.0.0').compile({
@@ -167,24 +185,49 @@ async function waitForLockWait(database, queryFragment) {
 
 describe.skipIf(!enabled)('PostgreSQL reference retention windows', () => {
   const isolatedDatabases = []
+  let preparedDatabase
 
   async function createDatabase() {
-    const isolated = await createIsolatedTestDatabase(credentials)
-    isolatedDatabases.push(isolated)
-    await isolated.migrate()
-    return isolated.application
+    if (!preparedDatabase) throw new Error('ISOLATED_TEST_DATABASE_NOT_PREPARED')
+    return preparedDatabase.application
   }
 
+  beforeEach(async () => {
+    let isolated
+    try {
+      isolated = await timedPhase('create', () => createIsolatedTestDatabase(credentials))
+      isolatedDatabases.push(isolated)
+      await timedPhase('migrate', () => isolated.migrate())
+      preparedDatabase = isolated
+    } catch (error) {
+      if (isolated) {
+        const index = isolatedDatabases.indexOf(isolated)
+        if (index >= 0) isolatedDatabases.splice(index, 1)
+        try {
+          await timedPhase('dispose', () => isolated.dispose())
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'ISOLATED_TEST_DATABASE_SETUP_FAILED', {
+            cause: cleanupError,
+          })
+        }
+      }
+      throw error
+    }
+  }, 60_000)
+
   afterEach(async () => {
+    preparedDatabase = undefined
     const created = isolatedDatabases.splice(0)
-    const results = await Promise.allSettled(created.map((isolated) => isolated.dispose()))
+    const results = await Promise.allSettled(
+      created.map((isolated) => timedPhase('dispose', () => isolated.dispose()))
+    )
     const errors = results.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
     if (errors.length > 0) {
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
     }
-  })
+  }, 30_000)
 
   test('starts the full window at the first unreferenced observation, not compiledAt', async () => {
     const database = await createDatabase()

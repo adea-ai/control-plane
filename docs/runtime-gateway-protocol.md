@@ -20,6 +20,19 @@ For operator key registration and issuance commands, migration-role requirements
 key handling, and the one-use credential lifecycle, see
 [`runtime-node-identity-operations.md`](runtime-node-identity-operations.md).
 
+The PostgreSQL gateway keeps ordinary queries on `DATABASE_URL` and opens a
+separate application-role connection for revocation `LISTEN`. Configure
+`DATABASE_URL_UNPOOLED` with the direct endpoint, the same application principal,
+and the same database. Neon transaction pooling does not support session
+notifications ([Neon connection pooling](https://neon.com/docs/connect/connection-pooling));
+a pooled Neon URL without the direct URL fails configuration before the gateway
+opens its store. A direct `DATABASE_URL` remains sufficient without the extra
+variable. Generic transaction poolers also require an explicitly configured
+direct URL; the gateway cannot infer their connection mode from the hostname.
+Migration and administration credentials must not be used for notifications.
+Programmatic hosts provide `store.notificationUrl` with the same constraints.
+Shutdown and failed startup close both owned connections.
+
 `RUNTIME_NODE_IDENTITY_ISSUER_PUBLIC_KEYS_JSON` is a bounded JSON object mapping operator key IDs to Ed25519 public-key PEM. The gateway rejects private PEM, unknown keys, missing registry rows, mismatched stored claims, retired device keys, and any database/notification failure that would confer authority. The synthetic authority in the private Runtime Gateway app exists only for standalone conformance tests and is never a production fallback. Local execution continues to use direct runtime transport and does not start a Runtime Gateway.
 
 ## WebSocket lifecycle and horizontal scale
