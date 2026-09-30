@@ -17,6 +17,7 @@ import {
 } from '../packages/execution-plan/src/testing.ts'
 import { ControlApiFixtures } from '@control-plane/contracts'
 import { ControlPlaneClient } from '@control-plane/sdk'
+import { seedSystemCatalogOwners } from '../apps/local-control-plane/src/test-catalog-owners.mjs'
 import {
   createControlApiApplication,
   createPrivateApiAuthentication,
@@ -303,10 +304,11 @@ try {
   await local.start()
   assert.equal(local.durableExecution, 'embedded-sqlite')
   assert.equal((await local.manifest()).topology.externalServices, 0)
+  await seedSystemCatalogOwners(local.catalog, inputs.profile, inputs.skills)
   await local.catalog.insertAgentProfileVersion(inputs.profile)
   for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
   await local.contextPackages.put(inputs.contextPackage)
-  await local.executionPlans.put(plan)
+  const planReference = await local.executionPlans.put(plan)
   const authentication = await createPrivateApiAuthentication(join(directory, 'api-auth'))
   const metadata = {
     serviceName: 'control-api',
@@ -352,11 +354,7 @@ try {
     issuedAt: new Date().toISOString(),
     payload: {
       ...base.payload,
-      executionPlan: {
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-        schemaVersion: plan.schemaVersion,
-      },
+      executionPlan: { ...planReference, schemaVersion: plan.schemaVersion },
       deadlineAt: new Date(Date.now() + 60000).toISOString(),
       retentionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
     },

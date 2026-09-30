@@ -9,6 +9,7 @@ import {
   createExecutionPlanTestFixture,
   createExecutionPlanTestFixtureInputs,
 } from '@control-plane/execution-plan/testing'
+import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import {
   SqlitePersistenceProvider,
@@ -57,6 +58,45 @@ describe('local catalog approval policy resolution', () => {
 })
 
 describe('Local Control Plane composition', () => {
+  test('installed ACP certification fixture has catalog ownership for its persisted plan', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-acp-plan-ownership-'))
+    const local = new LocalControlPlaneComposition({ dataDirectory: directory })
+    const options = {
+      profileCapabilityRequirements: ['stream.output'],
+      skillRequiredCapabilities: [],
+    }
+    const inputs = createExecutionPlanTestFixtureInputs(options)
+    const plan = createExecutionPlanTestFixture(options)
+    try {
+      await local.start()
+      await local.contextPackages.put(inputs.contextPackage)
+      const reference = await local.executionPlans.put(plan)
+      await local.catalog.insertAgentProfileVersion(inputs.profile)
+      for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
+      const validator = new ExecutionPlanAcceptanceValidator(local.executionPlans, {
+        catalog: { profiles: local.catalog, skills: local.catalog },
+      })
+      const validationInput = {
+        executionPlan: { ...reference, schemaVersion: plan.schemaVersion },
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        taskId: plan.correlation.taskId,
+        agentId: plan.correlation.agentId,
+        callerPrincipalId: 'svc_agent-hq',
+      }
+      expect(await validator.validate(validationInput)).toBe(false)
+      await seedSystemCatalogOwners(local.catalog, inputs.profile, inputs.skills)
+      expect(await validator.validate(validationInput)).toBe(true)
+    } finally {
+      try {
+        await local.close()
+      } finally {
+        local.persistence.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  })
+
   test.each(['none', 'runtime', 'endpoint', 'workflow', 'relay'])(
     'owns runtime process lifecycle across %s startup failure',
     async (failure) => {
