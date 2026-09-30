@@ -1,4 +1,4 @@
-import { expect, test as runTest } from 'bun:test'
+import { afterAll, beforeAll, expect, test as runTest } from 'bun:test'
 import process from 'node:process'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { loadDatabaseCredentials } from '@control-plane/config'
@@ -27,6 +27,14 @@ const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 let fixtureSequence = 0
+let isolated
+let fixtureCatalogRepository
+let fixturePlans
+let fixtureBasePlan
+let fixturePlanInputs
+let workerConfiguration
+let testFailure
+const compositions = []
 
 function nextId(prefix) {
   fixtureSequence += 1
@@ -112,75 +120,118 @@ async function seedCatalogAndPlan(database) {
   return { catalogRepository, plans, basePlan, inputs }
 }
 
-runTest.skipIf(!enabled)(
-  'actual Cloud worker composition performs read-only runtime admission from Postgres receipts',
-  async () => {
+if (enabled) {
+  beforeAll(async () => {
     const credentials = {
       administration: loadDatabaseCredentials(process.env, 'administration'),
       application: loadDatabaseCredentials(process.env, 'application'),
       migration: loadDatabaseCredentials(process.env, 'migration'),
     }
-    let isolated
-    const compositions = []
-    let testFailure
-    let testFailed = false
 
     try {
       isolated = await createIsolatedTestDatabase(credentials)
       await isolated.migrate()
-      const {
-        catalogRepository,
-        plans,
-        basePlan,
-        inputs: planInputs,
-      } = await seedCatalogAndPlan(isolated.application)
+      const seeded = await seedCatalogAndPlan(isolated.application)
+      fixtureCatalogRepository = seeded.catalogRepository
+      fixturePlans = seeded.plans
+      fixtureBasePlan = seeded.basePlan
+      fixturePlanInputs = seeded.inputs
 
       const databaseUrl = new URL(credentials.application.url)
       databaseUrl.pathname = `/${isolated.name}`
-      const configuration = {
+      workerConfiguration = {
         service: 'workflow-worker',
         database: { ...credentials.application, url: databaseUrl.toString() },
         restate: { role: 'endpoint', requestIdentityPublicKey: 'test-only-public-key' },
         secretEncryptionKey: 'test-only-secret-encryption-key',
       }
-      const callbacks = { dispatch: [], interaction: [], graph: [] }
-      const runtime = {
-        async dispatch(input) {
-          callbacks.dispatch.push(input)
-          return { outcome: 'completed', resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
-        },
-        async applyInteraction(input) {
-          callbacks.interaction.push(input)
-          return { outcome: 'completed', resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
-        },
-        async cancel(input) {
-          callbacks.cancel = [...(callbacks.cancel ?? []), input]
-        },
-        async cleanup(input) {
-          callbacks.cleanup = [...(callbacks.cleanup ?? []), input]
-        },
+    } catch (error) {
+      if (isolated !== undefined) {
+        try {
+          await isolated.dispose()
+        } catch (cleanupError) {
+          isolated = undefined
+          const setupFailure = new AggregateError(
+            [error, cleanupError],
+            'ISOLATED_TEST_DATABASE_SETUP_FAILED',
+            {
+              cause: error,
+            }
+          )
+          throw setupFailure
+        }
+        isolated = undefined
       }
-      const graph = {
-        async runGraphSegment(input) {
-          callbacks.graph.push(input)
-          return { outcome: 'completed' }
-        },
-        async resumeGraphSegment(input) {
-          callbacks.graph.push(input)
-          return { outcome: 'completed' }
-        },
-        async continueGraphSegment(input) {
-          callbacks.graph.push(input)
-          return { outcome: 'completed' }
-        },
-        async cancelGraphSegment(input) {
-          callbacks.graph.push(input)
-        },
-      }
+      throw error
+    }
+  }, 60_000)
 
+  afterAll(async () => {
+    const cleanupErrors = []
+    for (const composition of compositions.toReversed()) {
+      try {
+        await composition.connection.close()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+    try {
+      await isolated?.dispose()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        testFailure === undefined ? cleanupErrors : [testFailure, ...cleanupErrors],
+        'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED'
+      )
+    }
+  }, 30_000)
+}
+
+runTest.skipIf(!enabled)(
+  'actual Cloud worker composition performs read-only runtime admission from Postgres receipts',
+  async () => {
+    testFailure = undefined
+    const callbacks = { dispatch: [], interaction: [], graph: [] }
+    const runtime = {
+      async dispatch(input) {
+        callbacks.dispatch.push(input)
+        return { outcome: 'completed', resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
+      },
+      async applyInteraction(input) {
+        callbacks.interaction.push(input)
+        return { outcome: 'completed', resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
+      },
+      async cancel(input) {
+        callbacks.cancel = [...(callbacks.cancel ?? []), input]
+      },
+      async cleanup(input) {
+        callbacks.cleanup = [...(callbacks.cleanup ?? []), input]
+      },
+    }
+    const graph = {
+      async runGraphSegment(input) {
+        callbacks.graph.push(input)
+        return { outcome: 'completed' }
+      },
+      async resumeGraphSegment(input) {
+        callbacks.graph.push(input)
+        return { outcome: 'completed' }
+      },
+      async continueGraphSegment(input) {
+        callbacks.graph.push(input)
+        return { outcome: 'completed' }
+      },
+      async cancelGraphSegment(input) {
+        callbacks.graph.push(input)
+      },
+    }
+
+    try {
       function openComposition() {
         const composition = createManagedCloudWorkflowWorkerComposition(
-          configuration,
+          workerConfiguration,
           runtime,
           graph,
           () => ({
@@ -203,8 +254,11 @@ runTest.skipIf(!enabled)(
       const acceptanceService = new CommandInboxService({
         repository: firstComposition.commands.repository,
         executionIdFactory: () => nextId('exe'),
-        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
-          catalog: { profiles: catalogRepository, skills: catalogRepository },
+        executionPlanValidator: new ExecutionPlanAcceptanceValidator(fixturePlans, {
+          catalog: {
+            profiles: fixtureCatalogRepository,
+            skills: fixtureCatalogRepository,
+          },
         }),
         now: () => acceptedAt,
       })
@@ -215,9 +269,9 @@ runTest.skipIf(!enabled)(
       let planSequence = 0
       async function seedOwner() {
         planSequence += 1
-        let executionPlan = basePlan
+        let executionPlan = fixtureBasePlan
         if (planSequence > 1) {
-          const inputs = structuredClone(planInputs)
+          const inputs = structuredClone(fixturePlanInputs)
           inputs.correlation = {
             ...inputs.correlation,
             taskId: nextId('tsk'),
@@ -225,7 +279,7 @@ runTest.skipIf(!enabled)(
           }
           inputs.compiledAt = new Date(Date.parse(acceptedAt) + planSequence * 1_000).toISOString()
           executionPlan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
-          await plans.put(executionPlan)
+          await fixturePlans.put(executionPlan)
         }
 
         const accepted = await acceptanceService.acceptExecution(commandInput(executionPlan))
@@ -398,31 +452,8 @@ runTest.skipIf(!enabled)(
       expect(callbacks.cleanup).toHaveLength(1)
     } catch (error) {
       testFailure = error
-      testFailed = true
+      throw error
     }
-
-    const cleanupErrors = []
-    for (const composition of compositions.toReversed()) {
-      try {
-        await composition.connection.close()
-      } catch (error) {
-        cleanupErrors.push(error)
-      }
-    }
-    if (isolated !== undefined) {
-      try {
-        await isolated.dispose()
-      } catch (error) {
-        cleanupErrors.push(error)
-      }
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        testFailed ? [testFailure, ...cleanupErrors] : cleanupErrors,
-        'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED'
-      )
-    }
-    if (testFailed) throw testFailure
   },
   30_000
 )
