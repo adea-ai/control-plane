@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { AcpStdioClient } from '../packages/acp-adapter/src/stdio-client.ts'
 import { pinnedAcpBuild } from './install-m11-codex-acp.mjs'
+import { awaitLocalWorkflowOutcome } from './native-local-workflow.mjs'
 import {
   LocalControlPlaneComposition,
   resolveLocalRuntimeOptions,
@@ -270,7 +271,6 @@ try {
   })
   local = new LocalControlPlaneComposition({
     dataDirectory: join(directory, 'local'),
-    workflowEndpointPort: 19083,
     runtimeFactory(repositories) {
       const runtime = runtimeOptions.runtimeFactory(repositories)
       const cleanup = runtime.cleanup.bind(runtime)
@@ -301,6 +301,8 @@ try {
   const inputs = createExecutionPlanTestFixtureInputs(fixtureOptions)
   const plan = createExecutionPlanTestFixture(fixtureOptions)
   await local.start()
+  assert.equal(local.durableExecution, 'embedded-sqlite')
+  assert.equal((await local.manifest()).topology.externalServices, 0)
   await local.catalog.insertAgentProfileVersion(inputs.profile)
   for (const skill of inputs.skills) await local.catalog.insertSkillVersion(skill)
   await local.contextPackages.put(inputs.contextPackage)
@@ -374,12 +376,7 @@ try {
   )
   assert.equal(JSON.parse(new TextDecoder().decode(result.body)).usage.inputTokens, 11)
   assert.equal(JSON.parse(new TextDecoder().decode(result.body)).usage.outputTokens, 3)
-  const attached = await fetch(
-    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${execution.executionId}/attach`,
-    { signal: AbortSignal.timeout(10000) }
-  )
-  assert.equal(attached.ok, true)
-  assert.equal((await attached.json()).status, 'completed')
+  await awaitLocalWorkflowOutcome(local, execution.executionId, 'completed', 10000)
   assert.equal(requests, 3)
   const cancellationIssuedAt = Date.now()
   const cancelled = await sdk.acceptExecution({
@@ -408,12 +405,7 @@ try {
   })
   assert.equal(replay.data.commandId, cancellation.commandId)
   assert.equal(replay.data.replayed, true)
-  const cancelledAttachment = await fetch(
-    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${cancelled.data.executionId}/attach`,
-    { signal: AbortSignal.timeout(30000) }
-  )
-  assert.equal(cancelledAttachment.ok, true)
-  assert.equal((await cancelledAttachment.json()).status, 'cancelled')
+  await awaitLocalWorkflowOutcome(local, cancelled.data.executionId, 'cancelled', 30000)
   const cancelledExecution = await local.executions.getExecution(cancelled.data.executionId)
   assert.equal(cancelledExecution.state, 'cancelled')
   assert.equal(cancelledExecution.terminalResultRef, undefined)
@@ -487,12 +479,7 @@ try {
     return ['completed', 'failed', 'cancelled', 'timed_out'].includes(approvedExecution.state)
   }, 'approved-execution-completion')
   assert.equal(approvedExecution.state, 'completed')
-  const approvedAttachment = await fetch(
-    `http://127.0.0.1:8080/restate/workflow/execution-lifecycle/${approval.data.executionId}/attach`,
-    { signal: AbortSignal.timeout(10000) }
-  )
-  assert.equal(approvedAttachment.ok, true)
-  assert.equal((await approvedAttachment.json()).status, 'completed')
+  await awaitLocalWorkflowOutcome(local, approval.data.executionId, 'completed', 10000)
   assert.equal(await readFile(approvalMarker, 'utf8'), 'approved\napproved\n')
   assert.equal((await local.executions.listAttempts(approval.data.executionId)).length, 1)
   const approvedResult = await local.objectStore.get(
@@ -511,10 +498,11 @@ try {
         nodeVersion,
         requests,
         approvalUsage,
+        durableExecution: local.durableExecution,
         freshPromptUsage: { inputTokens: 11, outputTokens: 3 },
         restartedPromptUsage: { inputTokens: 11, outputTokens: 3 },
         localLauncher:
-          'codex-acp; authenticated HTTP API; SQLite; real Restate; completion, cancellation and two approvals; one attempt each',
+          'codex-acp; authenticated HTTP API; embedded SQLite durable queue; completion, cancellation and two approvals; one attempt each',
         approval: 'two gated marker writes; lost ACK replayed; aggregate usage verified',
         cancellation: 'lost ACK replayed; native model stream closed before runtime cleanup',
         scope:
@@ -530,7 +518,11 @@ try {
       try {
         await application?.close()
       } finally {
-        await local?.close()
+        try {
+          await local?.close()
+        } finally {
+          local?.persistence.close()
+        }
       }
     } finally {
       await rpc?.close()
