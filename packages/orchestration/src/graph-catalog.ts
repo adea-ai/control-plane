@@ -4,6 +4,7 @@ import {
   GraphReferenceSchema,
   GraphDefinitionContentSchema,
   GraphSelectionSchema,
+  ServiceCallerAssertionSchema,
   type GraphInput,
   type GraphReference,
   type GraphSelection,
@@ -118,6 +119,37 @@ export interface GraphDefinitionRepository {
   compareAndSet(expectedRevision: number, version: PublishedGraphDefinition): Promise<boolean>
 }
 
+export const GraphDefinitionCommandSchema = z
+  .object({
+    callerId: ServiceCallerAssertionSchema.shape.servicePrincipalId,
+    operation: z.enum(['publish', 'deprecate', 'revoke']),
+    idempotencyKey: z
+      .string()
+      .min(16)
+      .max(128)
+      .regex(/^[A-Za-z0-9._:-]+$/),
+    payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict()
+
+export const GraphDefinitionCommandReceiptSchema = z
+  .object({
+    workspaceId: IdentifierSchemas.workspaceId,
+    command: GraphDefinitionCommandSchema,
+    result: PublishedGraphDefinitionSchema,
+  })
+  .strict()
+
+export type GraphDefinitionCommand = z.output<typeof GraphDefinitionCommandSchema>
+
+/** The mutation and immutable response receipt must commit in one storage transaction. */
+export interface GraphDefinitionCommandRepository extends GraphDefinitionRepository {
+  executeCommand(
+    command: GraphDefinitionCommand,
+    action: (repository: GraphDefinitionRepository) => Promise<PublishedGraphDefinition>
+  ): Promise<PublishedGraphDefinition>
+}
+
 /** New admission checks live catalog/compiler policy; exact replay checks the immutable pin. */
 export class GraphDefinitionExecutionAuthority implements ExecutionGraphAuthority {
   constructor(
@@ -199,6 +231,7 @@ export class InMemoryGraphDefinitionRepository implements GraphDefinitionReposit
 }
 
 export type GraphCatalogErrorCode =
+  | 'GRAPH_COMMAND_CONFLICT'
   | 'GRAPH_VERSION_CONFLICT'
   | 'GRAPH_NOT_FOUND'
   | 'GRAPH_DIGEST_MISMATCH'
