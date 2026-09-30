@@ -153,6 +153,45 @@ describe('ProcessRpcLink', () => {
     )
   })
 
+  test.each([true, false])(
+    'expires an overdue response before a delayed timer callback (ok=%s)',
+    async (ok) => {
+      await withLink(
+        () => startLink(),
+        async ({ child, link, events }) => {
+          const reasons = []
+          const pending = link.request(
+            { hold: true },
+            { id: 'overdue', timeoutMs: 20, onSettled: (reason) => reasons.push(reason) }
+          )
+          // Keep the event loop busy so the timeout callback cannot run first.
+          // Deliver the response synchronously after the monotonic deadline.
+          const blockedUntil = performance.now() + 25
+          while (performance.now() < blockedUntil) {}
+          child.stdout.emit(
+            'data',
+            Buffer.from(JSON.stringify({ id: 'overdue', ok, value: 'late-result' }) + '\n')
+          )
+          await expect(pending).rejects.toThrow('TEST_TIMEOUT:request')
+          expect(reasons).toEqual(['timeout'])
+          expect(link.pendingCount).toBe(0)
+          expect(events.missed).toHaveLength(1)
+          expect(events.missed[0][0]).toBe('overdue')
+          if (ok) expect(events.missed[0][1].result).toBe('late-result')
+          else expect(events.missed[0][1].error.message).toBe('TEST_REJECTED')
+          // A queued timeout must not settle or deliver the response twice.
+          await delay(10)
+          expect(reasons).toEqual(['timeout'])
+          expect(events.missed).toHaveLength(1)
+          expect(link.connected).toBe(true)
+          expect(
+            await link.request({ echo: 'still-here' }, { id: 'after', timeoutMs: 1_000 })
+          ).toBe('still-here')
+        }
+      )
+    }
+  )
+
   test('rejects aborted requests once without writing a cancellation frame', async () => {
     await withLink(
       () => startLink(),
