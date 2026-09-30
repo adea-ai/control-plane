@@ -101,7 +101,9 @@
     "localCases": 2,
     "assertions": 23,
     "executableHashMatchesOriginal": true,
-    "ownedProcessesAndListeners": "stopped; absence checked",
+    "ownedProcessesAndListeners": "matching task processes absent after the completed command",
+    "cleanupReceipt": "m11-default-pi-cleanup-2026-09-30.json",
+    "cleanupReceiptSha256": "602d5fb5c96f4488d212007b5b492f1e68b403cfebdbc6b41864b0e3c57937cf",
     "runtimeScratch": "empty; disposable package retained under cleanup guard"
   }
 }

@@ -1043,7 +1043,7 @@ async function waitForTerminalExecution(runtimeComposition, executionId) {
     }
     await delay(100)
   }
-  throw new Error('M11_LOCAL_RESTATE_EXECUTION_TIMEOUT')
+  throw new Error('M11_LOCAL_EXECUTION_TIMEOUT')
 }
 
 function acpExecutionPlanOptions() {
