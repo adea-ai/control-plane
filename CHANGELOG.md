@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.59.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.6...workspace-v1.59.7) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
+
+### Maintenance
+
+* **deps:** bump actions/attest-build-provenance from 3.0.0 to 4.2.2 in the github-actions group across 1 directory ([#745](https://github.com/adea-ai/control-plane/issues/745)) ([7e721be](https://github.com/adea-ai/control-plane/commit/7e721bedb6c049e9917577b71b049eb803d70784))
+
 ## [1.59.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.5...workspace-v1.59.6) (2026-09-30)
 
 
