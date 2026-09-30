@@ -5,6 +5,19 @@ export interface IsolatedDatabaseCleanupActions {
   readonly closeAdministration: () => Promise<void>
 }
 
+export function ownedClientBackendTerminationStatement(databaseName: string) {
+  return {
+    text: `
+      select pg_terminate_backend(pid)
+      from pg_stat_activity
+      where datname = $1
+        and backend_type = 'client backend'
+        and pid <> pg_backend_pid()
+    `,
+    parameters: [databaseName] as const,
+  }
+}
+
 /** The disposer must already be bound before any database creation is attempted. */
 export async function completeIsolatedDatabaseSetup<Result>(
   initialize: () => Promise<Result>,

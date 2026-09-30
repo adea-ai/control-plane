@@ -23,6 +23,7 @@
         "DATABASE_ADMIN_URL",
         "DATABASE_MIGRATION_URL",
         "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
         "RUN_DATABASE_INTEGRATION"
       ]
     }
