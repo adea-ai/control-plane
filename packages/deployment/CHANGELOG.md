@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.2](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.1...deployment-v1.10.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deployment:** enforce RPC response deadlines ([#771](https://github.com/adea-ai/control-plane/issues/771)) ([ee060f8](https://github.com/adea-ai/control-plane/commit/ee060f852bfd5b11891213b951407dcf34acfe93))
+
 ## [1.10.1](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.0...deployment-v1.10.1) (2026-09-30)
 
 
