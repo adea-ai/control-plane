@@ -363,7 +363,9 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
     expect(await contexts.getById(contextFixture.contextPackageId)).toBeUndefined()
     expect(await evalRepository.getRun(run.evalRunId)).toBeUndefined()
     expect(await auditRepository.list('gate-retention-activation')).toEqual([])
-  }, 30_000)
+    // This five-class hold/release probe took 33s against real Neon.
+    // Keep a bounded 60s body without changing lock or operation deadlines.
+  }, 60_000)
 
   test('a project hold in another tenant does not suppress physical deletion', async () => {
     const isolated = await createDatabase()

@@ -6176,7 +6176,9 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     } finally {
       if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
     }
-  }, 60_000)
+    // Eight funding-reference variants and their retention assertions took
+    // 73s against real Neon; keep this compound body bounded at 90s.
+  }, 90_000)
 
   test('reapplying the journal restores rejection identity on a snapshot without it', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFE'
