@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 
 /**
@@ -149,6 +150,7 @@ export interface ProcessRpcLinkOptions<Request, Result, Message> {
 
 interface ProcessRpcActiveRequest<Request, Result> {
   readonly payload: Request
+  readonly deadline: number
   resolve(value: Result): void
   reject(error: Error, reason: ProcessRpcSettleReason): void
 }
@@ -237,6 +239,7 @@ export class ProcessRpcLink<Request, Result, Message> {
       return Promise.reject(failure ?? this.#options.notRunningError())
     }
     if (signal?.aborted === true) return Promise.reject(this.#abortError())
+    const deadline = performance.now() + timeoutMs
     return new Promise<Result>((resolve, reject) => {
       const finish = (settle: () => void, reason: ProcessRpcSettleReason) => {
         if (!this.#pending.delete(id)) return
@@ -253,6 +256,7 @@ export class ProcessRpcLink<Request, Result, Message> {
       timer.unref()
       const entry: ProcessRpcActiveRequest<Request, Result> = {
         payload,
+        deadline,
         resolve: (value) => finish(() => resolve(value), 'response'),
         reject: (error, reason) => finish(() => reject(error), reason),
       }
@@ -409,7 +413,11 @@ export class ProcessRpcLink<Request, Result, Message> {
       return
     }
     const entry = this.#pending.get(decoded.id)
-    if (entry === undefined) {
+    const expired = entry !== undefined && performance.now() >= entry.deadline
+    if (expired) entry.reject(this.#options.formatTimeoutError(entry.payload), 'timeout')
+    // Timers can be delayed by event-loop work. Expire the request first so
+    // late-response consumers still reclaim resources created by the child.
+    if (entry === undefined || expired) {
       const onResponseMiss = this.#options.onResponseMiss
       if (onResponseMiss !== undefined) {
         try {
