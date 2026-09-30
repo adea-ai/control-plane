@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.7...workspace-v1.59.8) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** restore validation and refresh source provenance ([#769](https://github.com/adea-ai/control-plane/issues/769)) ([5a47a6b](https://github.com/adea-ai/control-plane/commit/5a47a6b1f1a260ec5a213eaff97d0e018e648507))
+
 ## [1.59.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.6...workspace-v1.59.7) (2026-09-30)
 
 
