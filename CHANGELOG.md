@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.10...workspace-v1.59.11) (2026-09-30)
+
+
+### Tests
+
+* **workflow-worker:** isolate remote admission fixture budgets ([#778](https://github.com/adea-ai/control-plane/issues/778)) ([104cc82](https://github.com/adea-ai/control-plane/commit/104cc82dc518fb0a04321e3abad51d8dbd74ee45))
+
 ## [1.59.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.9...workspace-v1.59.10) (2026-09-30)
 
 
