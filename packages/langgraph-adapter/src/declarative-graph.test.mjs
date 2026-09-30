@@ -700,6 +700,57 @@ test('conditional all-branch joins reject ambiguous conditional inputs; unmatche
   })
   expect(await adapter.run({ ...requestBase, graph: published.reference })).toMatchObject({
     status: 'failed',
+    failure: { retryable: false },
   })
   expect(calls).toBe(1)
 })
+
+test.each([false, true])(
+  'only the selected conditional end route contributes terminal output (done=%s)',
+  async (done) => {
+    const definition = {
+      ...graphDefinition,
+      graphDefinitionId: 'conditional-direct-end',
+      nodes: ['choose', 'finish'].map((node) => ({
+        node,
+        operation: { kind: 'tool', name: node },
+      })),
+      edges: [
+        { from: '__start__', to: 'choose' },
+        { from: 'choose', to: '__end__', when: { path: ['done'], equals: true } },
+        { from: 'choose', to: 'finish', when: { path: ['done'], equals: false } },
+        { from: 'finish', to: '__end__' },
+      ],
+    }
+    const { published } = await publish(definition)
+    const calls = []
+    const expected = done ? { choose: { done: true } } : { finish: { summary: 'finished' } }
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphs: [
+        compiler({
+          operationAllowlist: definition.nodes.map(({ operation }) => operation),
+          schemaRegistry: createSchemaRegistry({
+            'control-plane.graph-output.v1': (value) =>
+              JSON.stringify(value) === JSON.stringify(expected),
+          }),
+        }).compile(published),
+      ],
+      checkpointer: new MemorySaver(),
+      events: eventPublisher(),
+      operations: {
+        async invoke(operation) {
+          calls.push(operation.node)
+          return operation.node === 'choose' ? { done } : { summary: 'finished' }
+        },
+        async cancel() {
+          return true
+        },
+      },
+    })
+    expect(await adapter.run({ ...requestBase, graph: published.reference })).toMatchObject({
+      status: 'completed',
+      output: expected,
+    })
+    expect(calls).toEqual(done ? ['choose'] : ['choose', 'finish'])
+  }
+)

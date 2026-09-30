@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   Annotation,
   Command,
+  GraphRecursionError,
   END,
   INTERRUPT,
   START,
@@ -365,7 +366,16 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
       return GraphSegmentResultSchema.parse({
         status: 'failed',
         state: {},
-        failure: { code: failureCode, retryable: true },
+        failure: {
+          code: failureCode,
+          retryable:
+            error instanceof DeclarativeGraphCompilationError ||
+            error instanceof GraphRecursionError
+              ? false
+              : error instanceof OrchestrationError
+                ? error.retryable
+                : true,
+        },
         events: emitted,
       })
     } finally {
@@ -552,7 +562,9 @@ export class DeclarativeGraphCompiler {
           const isStartNode = content.edges.some(
             (edge) => edge.from === START && edge.to === node.node
           )
-          const isTerminalNode = terminalNodes.some(({ node: name }) => name === node.node)
+          const endRoutes = content.edges.filter(
+            (edge) => edge.from === node.node && edge.to === END
+          )
           graph.addNode(node.node, async (state, config) => {
             const operationInput =
               isStartNode && !Object.hasOwn(state.values, node.node) ? state.input : state.values
@@ -567,7 +579,10 @@ export class DeclarativeGraphCompiler {
               )
             )
             const nextValues = { ...state.values, [node.node]: result }
-            const outputUpdate = isTerminalNode
+            const reachesEnd = endRoutes.some(
+              (edge) => !edge.when || conditionMatches(result, edge.when)
+            )
+            const outputUpdate = reachesEnd
               ? terminalNodes.length === 1
                 ? result
                 : { [node.node]: result }
