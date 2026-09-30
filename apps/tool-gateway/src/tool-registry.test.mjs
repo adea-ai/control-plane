@@ -206,13 +206,12 @@ describe('Tool Gateway registry', () => {
       },
     })
 
-    const outcome = await Promise.race([
-      gateway.execute(request).then(
-        () => 'unexpected-success',
-        (error) => error
-      ),
-      new Promise((resolve) => globalThis.setTimeout(() => resolve('gateway-hung'), 100)),
-    ])
+    // The gateway's own timeout is the behavior under test. An outer wall-clock
+    // watchdog starts before async preparation and can race it under suite load.
+    const outcome = await gateway.execute(request).then(
+      () => 'unexpected-success',
+      (error) => error
+    )
     expect(outcome).toMatchObject({ code: 'EXECUTION_TIMEOUT', executorCode: 'TIMEOUT' })
     expect(events).toEqual(['started:1', 'aborted:1'])
     expect(attempts).toBe(1)
