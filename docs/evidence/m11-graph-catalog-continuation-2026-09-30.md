@@ -77,3 +77,27 @@ before merge.
 Independent bounded patch review found no remaining actionable issues after
 the timestamp validation fix and safe-integer regression. All original #188
 requirements remain open; these results establish catalog-adapter evidence only.
+
+## CI continuation and SQLite startup regression
+
+The first CI run on catalog candidate `cdeb8b47` passed all 1,961 unit tests
+and coverage, but exceeded the unchanged 300-second unit-lane budget at
+375.2 seconds. The other four aggregate gates passed. One failed-job rerun
+on the same candidate was used as a bounded diagnostic, not as acceptance:
+it failed the existing two-provider retention-hold concurrency test with
+`database is locked` during provider startup. No further unchanged retries
+were requested.
+
+A controlled local regression reproduced the startup failure with a separate
+worker holding an exclusive SQLite lock. The provider attempted its WAL pragma
+before installing the existing busy handler. Moving the unchanged five-second
+handler before WAL configuration made the regression pass. The focused provider
+and hold suite passed 19 tests and 94 assertions, including the original
+lock-contention check. Independent review tightened the regression fixture so its lock is released
+only after native initialization reaches WAL, and the final WAL assertion reads
+the actual SQLite pragma. That revised fixture failed against the original
+ordering before the fix was restored. The full SQLite package suite passed
+199 tests and 1,249 assertions before this test-only tightening; package build,
+format and lint passed. No concurrency assertion, test deadline, coverage gate,
+or CI budget was weakened. The original failures remain evidence; required CI
+on the updated candidate remains necessary before merge.
