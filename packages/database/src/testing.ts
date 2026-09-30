@@ -7,6 +7,7 @@ import { migrateDatabase } from './migration.js'
 import {
   completeIsolatedDatabaseSetup,
   createIsolatedDatabaseDisposer,
+  ownedClientBackendTerminationStatement,
 } from './isolated-database-cleanup.js'
 import * as schema from './schema/index.js'
 import { withDomainTransaction, type DomainTransaction } from './transaction.js'
@@ -57,11 +58,8 @@ export async function createIsolatedTestDatabase(
       await applicationClient?.end({ timeout: 5 })
     },
     terminateSessions: async () => {
-      await administration`
-        select pg_terminate_backend(pid)
-        from pg_stat_activity
-        where datname = ${name} and pid <> pg_backend_pid()
-      `
+      const statement = ownedClientBackendTerminationStatement(name)
+      await administration.unsafe(statement.text, [...statement.parameters])
     },
     dropDatabase: async () => {
       // The generated name is owned even when CREATE's acknowledgement is

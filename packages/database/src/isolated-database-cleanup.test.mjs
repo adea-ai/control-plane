@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import {
   completeIsolatedDatabaseSetup,
   createIsolatedDatabaseDisposer,
+  ownedClientBackendTerminationStatement,
 } from './isolated-database-cleanup.ts'
 
 test('coalesces successful isolated database disposal without repeating actions', async () => {
@@ -102,4 +103,12 @@ test('attempts every owned cleanup action and retains failure on concurrent and 
   expect(later[0].status).toBe('rejected')
   expect(later[0].reason).toBe(outcomes[0].reason)
   expect(calls).toEqual(Object.keys(actions))
+})
+
+test('terminates only client backends connected to its generated database', async () => {
+  const statement = ownedClientBackendTerminationStatement('control_plane_test_owned')
+  expect(statement.text).toContain('where datname = $1')
+  expect(statement.text).toContain("and backend_type = 'client backend'")
+  expect(statement.text).toContain('and pid <> pg_backend_pid()')
+  expect(statement.parameters).toEqual(['control_plane_test_owned'])
 })
