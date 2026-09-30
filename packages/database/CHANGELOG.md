@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.5](https://github.com/adea-ai/control-plane/compare/database-v1.35.4...database-v1.35.5) (2026-09-30)
+
+
+### Bug Fixes
+
+* **database:** separate cold fixtures and direct revocation sessions ([#783](https://github.com/adea-ai/control-plane/issues/783)) ([62e9b1a](https://github.com/adea-ai/control-plane/commit/62e9b1a48b645329f972aec9fae76b04da239905))
+
 ## [1.35.4](https://github.com/adea-ai/control-plane/compare/database-v1.35.3...database-v1.35.4) (2026-09-30)
 
 

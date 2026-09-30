@@ -27,6 +27,49 @@ export function loadDatabaseCredentials<Role extends DatabaseCredentialRole>(
   return { role, url: value }
 }
 
+/** Session features use the application principal on a direct connection. */
+export function databaseSessionCredentials(
+  application: DatabaseCredentials<'application'>,
+  unpooledUrl?: string
+): DatabaseCredentials<'application'> {
+  if (application.role !== 'application' || !isPostgresUrl(application.url))
+    throw databaseConfigurationError('application', ['DATABASE_URL'], [])
+  const applicationUrl = new URL(application.url)
+  const pooled = isNeonPooledUrl(applicationUrl)
+  if (unpooledUrl === undefined) {
+    if (pooled) throw databaseConfigurationError('application', [], ['DATABASE_URL_UNPOOLED'])
+    return application
+  }
+  if (!isPostgresUrl(unpooledUrl))
+    throw databaseConfigurationError('application', ['DATABASE_URL_UNPOOLED'], [])
+  const directUrl = new URL(unpooledUrl)
+  if (
+    isNeonPooledUrl(directUrl) ||
+    directUrl.username !== applicationUrl.username ||
+    directUrl.pathname !== applicationUrl.pathname ||
+    (applicationUrl.hostname.endsWith('.neon.tech') &&
+      (directUrl.hostname !== applicationUrl.hostname.replace('-pooler.', '.') ||
+        directUrl.port !== applicationUrl.port))
+  )
+    throw databaseConfigurationError('application', ['DATABASE_URL_UNPOOLED'], [])
+  return { role: 'application', url: unpooledUrl }
+}
+
+export function loadDatabaseSessionCredentials(
+  environment: RawEnvironment
+): DatabaseCredentials<'application'> {
+  return databaseSessionCredentials(
+    loadDatabaseCredentials(environment, 'application'),
+    environment['DATABASE_URL_UNPOOLED']
+  )
+}
+
+function isNeonPooledUrl(url: URL): boolean {
+  return (
+    url.hostname.endsWith('.neon.tech') && url.hostname.split('.')[0]?.endsWith('-pooler') === true
+  )
+}
+
 function isPostgresUrl(value: string): boolean {
   try {
     const url = new URL(value)
