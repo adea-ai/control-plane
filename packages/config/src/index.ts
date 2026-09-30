@@ -1,4 +1,9 @@
-export { databaseCredentialRoles, loadDatabaseCredentials } from './database.js'
+export {
+  databaseCredentialRoles,
+  loadDatabaseCredentials,
+  databaseSessionCredentials,
+  loadDatabaseSessionCredentials,
+} from './database.js'
 export type { DatabaseCredentialRole, DatabaseCredentials } from './database.js'
 export {
   loadManagedCloudConfiguration,

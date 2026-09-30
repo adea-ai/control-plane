@@ -75,8 +75,18 @@ export class RuntimeNodeIdentityRepositoryError extends Error {
   }
 }
 
+export interface RuntimeNodeIdentityRevocationClient {
+  listen(
+    channel: string,
+    callback: (payload: string) => void
+  ): Promise<{ unlisten(): Promise<void> }>
+}
+
 export class PostgresRuntimeNodeIdentityRepository {
-  constructor(readonly database: ControlPlaneDatabase) {}
+  constructor(
+    readonly database: ControlPlaneDatabase,
+    readonly options: { readonly revocationClient?: RuntimeNodeIdentityRevocationClient } = {}
+  ) {}
 
   async registerVerificationKey(
     input: RuntimeNodeVerificationKeyRecord
@@ -352,16 +362,13 @@ export class PostgresRuntimeNodeIdentityRepository {
     listener: (invalidation: RuntimeNodeIdentityInvalidation) => void
   ): Promise<() => Promise<void>> {
     if (typeof listener !== 'function') fail('RUNTIME_NODE_IDENTITY_INVALID_INPUT')
-    const client = (
-      this.database as ControlPlaneDatabase & {
-        $client: {
-          listen(
-            channel: string,
-            callback: (payload: string) => void
-          ): Promise<{ unlisten(): Promise<void> }>
+    const client =
+      this.options.revocationClient ??
+      (
+        this.database as ControlPlaneDatabase & {
+          $client: RuntimeNodeIdentityRevocationClient
         }
-      }
-    ).$client
+      ).$client
     const request = await client.listen(REVOCATION_CHANNEL, (payload) => {
       const invalidation = parseIdentityInvalidation(payload)
       if (!invalidation) return
