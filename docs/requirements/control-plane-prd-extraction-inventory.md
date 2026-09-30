@@ -1,11 +1,19 @@
 # Control Plane PRD extraction inventory
 
-Reviewed September 22, 2026 against document
+Historical extraction review dated September 22, 2026 against document
 `1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0`, revision
 `ANLCKQlfmaR_7ZPBUOp3KT05r8zXv2mFHDsMtnmixqwARZgROHvFxvwn3pEzmQ2yckWDQEKK9To1jo7RWcPM4ANn4mlMmVfmyo8k-17fe20`.
 Paragraph anchors refer to that revision's normalized native document read, not permanent
 Google Docs bookmarks. The implementation baseline for this inventory is
 `17878c765754e3ccf6869f9374cc6aa09050df9f`; later ledger additions do not recertify it.
+
+The current source was reviewed on September 30 at revision 46 (revision modified
+`2026-09-29T02:16:20.421Z`; file modified `2026-09-29T02:16:20.521Z`). Its exported-text
+SHA-256 and current source review/extraction/mapping states are in the
+[current-source inventory](control-plane-source-inventory.md). The historical paragraph
+anchors and implementation baseline above remain unchanged; this refresh does not recertify
+them. The PRD internal `Last reviewed` marker is 2026-08-28, earlier than its current file
+modification.
 
 ## Coverage rules
 

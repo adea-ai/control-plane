@@ -1,6 +1,6 @@
 # Execution consistency source extraction
 
-Current source: [Execution Consistency & Event Delivery Specification](https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit), reviewed through Google Drive on 2026-09-29 at revision 27, modified 2026-09-29T02:02:18.414Z. The source is an accepted cross-system technical specification.
+Current source: [Execution Consistency & Event Delivery Specification](https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit), revision 27, reviewed from the 2026-09-30 Drive capture. Revision modified `2026-09-29T02:02:18.414Z`; file modified `2026-09-29T02:02:18.460Z`. Its exact fetched-text SHA-256 is in the [current-source inventory](control-plane-source-inventory.md). The source is an accepted cross-system technical specification.
 
 Comparing revision 27 with revision 26 found one change in section 20: Local uses the embedded SQLite durable queue by default without a Restate process; Local Restate is an explicit compatibility option. The source also distinguishes Hosted/cloud and Self-hosted Restate profiles from the Local default. This refresh records the source change, not new implementation evidence.
 

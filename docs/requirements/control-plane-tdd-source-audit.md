@@ -1,12 +1,20 @@
 # Control Plane TDD revision audit
 
-Reviewed September 12, 2026. Canonical document:
-`1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg`.
+This file preserves a historical revision comparison for canonical document
+`1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg`. The historical comparison was reviewed
+September 12, 2026; it is not the current source pin.
 
-The ledger records file modification time `2026-08-24T20:34:22.096Z`. Drive history identifies
-revision 85 at `2026-08-24T20:34:22.007Z` as the corresponding revision. Current revision 96
-is dated `2026-08-28T06:03:21.730Z`; current file metadata is
+The historical comparison records file modification time `2026-08-24T20:34:22.096Z`,
+revision 85 at `2026-08-24T20:34:22.007Z`, and revision 96 at
+`2026-08-28T06:03:21.730Z`; revision 96 file metadata was
 `2026-08-28T06:03:21.899Z`. Both versions were fetched by explicit revision ID.
+
+The current source snapshot reviewed September 30 is revision 110, modified
+`2026-09-29T02:22:57.922Z`; file metadata reports `2026-09-29T02:22:58.053Z`. Its exact
+fetched-text SHA-256 is in the [current-source inventory](control-plane-source-inventory.md).
+The TDD internal review marker is 2026-09-28, earlier than this file modification. Historical
+revision-85/revision-96 hashes and comparisons remain unchanged; they are not current-candidate
+evidence.
 
 The line-level comparison has 300 prior and 303 current lines, with 149 added/removed
 lines in the diff. Many lines contain whole paragraphs: this count is not an atomic

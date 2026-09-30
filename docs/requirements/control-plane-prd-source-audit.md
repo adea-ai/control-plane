@@ -1,12 +1,22 @@
 # Control Plane PRD revision audit
 
-Reviewed September 12, 2026. Source: canonical Control Plane PRD,
-document `1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0`.
+This file preserves a historical revision comparison for the canonical Control Plane PRD,
+document `1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0`. The historical comparison was
+reviewed on September 12, 2026; it is not the current source pin.
 
-Drive revision history identifies revision 40 as the previous revision and 43 as current.
-Revision 40 was modified August 28 at `07:15:36.312Z`; revision 43 was modified September 8
-at `08:20:21.595Z`. File metadata reports the current modification time as
-`2026-09-08T08:20:21.669Z`. Revision and file modification timestamps are distinct metadata.
+The historical revision pair was 40 and 43. Revision 40 was modified August 28 at
+`07:15:36.312Z`; revision 43 was modified September 8 at `08:20:21.595Z`. Its file metadata
+was `2026-09-08T08:20:21.669Z`. Revision and file modification timestamps are distinct.
+
+The current source snapshot reviewed on September 30 is revision 46, modified
+`2026-09-29T02:16:20.421Z`; file metadata reports `2026-09-29T02:16:20.521Z`. Its exact
+fetched-text SHA-256 is in the [current-source inventory](control-plane-source-inventory.md).
+The PRD internal `Last reviewed` marker remains 2026-08-28, earlier than this file
+modification. Current text names the default Local embedded SQLite queue and optional Local
+Restate in its milestone section; section 9 lists Restate among the desktop bundle components
+without saying whether it is active by default. Clarify that bundle wording under #195. Existing
+extraction and implementation mapping remain partial; this refresh does not alter historical
+candidate evidence.
 
 The previous revision was fetched explicitly by revision ID. Current text and previous
 revision text both contain 231 lines after CRLF-to-LF normalization. Their only differing

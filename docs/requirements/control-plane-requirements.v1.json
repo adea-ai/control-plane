@@ -29,8 +29,14 @@
       "provider": "work-drive",
       "sourceId": "1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI",
       "uri": "https://docs.google.com/document/d/1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI/edit?usp=drivesdk",
-      "updatedAt": "2026-08-20T18:01:00.532Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:15:40.033Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 131,
+      "revisionModifiedAt": "2026-09-29T02:15:39.947Z",
+      "fileModifiedAt": "2026-09-29T02:15:40.033Z",
+      "retrievedAt": "2026-09-30",
+      "contentSha256": "73cdf31c07229da6e4630fb2caf0c410d10dc9292fd74d1675153f8c9f9033af",
+      "revisionMetadataStatus": "current revision 131 and revision modifiedTime verified from Drive list_file_revisions; the saved direct-fetch payload omits revision history, and the exact fetch time was not retained"
     },
     {
       "id": "agent-hq-prd",
@@ -38,8 +44,14 @@
       "provider": "work-drive",
       "sourceId": "1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q",
       "uri": "https://docs.google.com/document/d/1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q/edit?usp=drivesdk",
-      "updatedAt": "2026-08-24T21:16:00.149Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:02:08.429Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 2021,
+      "revisionModifiedAt": "2026-09-29T02:02:08.384Z",
+      "fileModifiedAt": "2026-09-29T02:02:08.429Z",
+      "retrievedAt": "2026-09-30T05:21:44.408Z",
+      "contentSha256": "76780434fdf473b41d6441ca7ed39edc4417ebf5060df18c4dc56a27942ae143",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "control-plane-prd",
@@ -47,14 +59,20 @@
       "provider": "google-drive",
       "sourceId": "1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0",
       "uri": "https://docs.google.com/document/d/1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0/edit",
-      "updatedAt": "2026-08-28T07:15:36.403Z",
+      "updatedAt": "2026-09-29T02:16:20.521Z",
       "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07 and re-reviewed at revision 25 on 2026-09-29. Section 17 now names the bundled Local Control Plane's embedded durable queue; atomic extraction and current implementation/control mapping, including the changed acceptance baseline, remain incomplete."
-      }
+        "disposition": "Current source revision 46 was re-read from the 2026-09-30 Drive capture; its revision/file timestamps and text SHA-256 are in docs/requirements/control-plane-source-inventory.md. The document's own Last reviewed marker is 2026-08-28, earlier than its 2026-09-29 file modification. Section 9 lists Restate among developer-MVP desktop components while the later milestone section makes the default Local embedded SQLite queue and optional Local Restate explicit; clarify that bundle wording without changing the #548 default. The 60 existing ledger rows and sections 8.1–8.3 extraction remain bounded, not exhaustive. Full atomic extraction and current implementation/control mapping remain incomplete under #195; historical candidate evidence and classifications are unchanged."
+      },
+      "currentRevision": 46,
+      "revisionModifiedAt": "2026-09-29T02:16:20.421Z",
+      "fileModifiedAt": "2026-09-29T02:16:20.521Z",
+      "retrievedAt": "2026-09-30T05:21:44.020Z",
+      "contentSha256": "81f62402d4459e6aa7567e2490b543bf6f8fcf289aa341824fe585903324503d",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "cortana-prd",
@@ -62,14 +80,20 @@
       "provider": "google-drive",
       "sourceId": "1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY",
       "uri": "https://docs.google.com/document/d/1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY/edit",
-      "updatedAt": "2026-08-28T04:57:08.721Z",
+      "updatedAt": "2026-09-18T18:07:16.986Z",
       "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07 and re-reviewed at revision 27 on 2026-09-29. Section 20 now distinguishes the default Local embedded SQLite queue from optional Local Restate and the Hosted/cloud/Self-hosted Restate profiles; atomic extraction and current implementation/control mapping remain incomplete."
-      }
+        "disposition": "Current source revision 29 was reviewed from the 2026-09-30 Drive capture; timestamps and text SHA-256 are recorded in docs/requirements/control-plane-source-inventory.md. The current source text is reviewed, but Cortana PRD still has one ledger requirement row and no dedicated section-level source audit; atomic provider-boundary extraction and current implementation/control mapping remain incomplete under #195. No classification or historical candidate evidence changed."
+      },
+      "currentRevision": 29,
+      "revisionModifiedAt": "2026-09-18T18:07:16.881Z",
+      "fileModifiedAt": "2026-09-18T18:07:16.986Z",
+      "retrievedAt": "2026-09-30T05:21:43.673Z",
+      "contentSha256": "1876af87e8df64b9f6a6a388e3897fdef46fd2d96631003c9e669f9ed6c933d5",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "system-architecture",
@@ -77,8 +101,14 @@
       "provider": "work-drive",
       "sourceId": "1Bdck8tMJQ_o9C1cPnxpEI9fe39csTmynllRgj-gbTxI",
       "uri": "https://docs.google.com/document/d/1Bdck8tMJQ_o9C1cPnxpEI9fe39csTmynllRgj-gbTxI/edit?usp=drivesdk",
-      "updatedAt": "2026-08-24T21:16:16.793Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:02:13.020Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 99,
+      "revisionModifiedAt": "2026-09-29T02:02:12.887Z",
+      "fileModifiedAt": "2026-09-29T02:02:13.020Z",
+      "retrievedAt": "2026-09-30T05:21:44.485Z",
+      "contentSha256": "fcc466b2233c8c8d6db4d844ce5920506562ac94bb1fbc6082d2c41ae0e63f11",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "control-plane-tdd",
@@ -86,8 +116,14 @@
       "provider": "work-drive",
       "sourceId": "1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg",
       "uri": "https://docs.google.com/document/d/1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg/edit?usp=drivesdk",
-      "updatedAt": "2026-08-24T20:34:22.096Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:22:58.053Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 110,
+      "revisionModifiedAt": "2026-09-29T02:22:57.922Z",
+      "fileModifiedAt": "2026-09-29T02:22:58.053Z",
+      "retrievedAt": "2026-09-30T05:21:44.581Z",
+      "contentSha256": "1f746a1e85da2fed9ead5805acaea6c71e656e5fcf7e917818564c51d91b9bed",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "agent-skill-spec",
@@ -95,8 +131,14 @@
       "provider": "personal-drive",
       "sourceId": "1YTNV1loWA34R-eZsYvEX5I_C6ecw3gWIfIWW0TvFnwg",
       "uri": "https://docs.google.com/document/d/1YTNV1loWA34R-eZsYvEX5I_C6ecw3gWIfIWW0TvFnwg/edit?usp=drivesdk",
-      "updatedAt": "2026-08-20T16:27:15.302Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-18T18:15:33.007Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 45,
+      "revisionModifiedAt": "2026-09-18T18:15:32.784Z",
+      "fileModifiedAt": "2026-09-18T18:15:33.007Z",
+      "retrievedAt": "2026-09-30T05:22:08.347Z",
+      "contentSha256": "a1d11f06e9f828d436c195d1d1b05abfa4e3070ca74380b1162896bd0902d6b5",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "data-api-spec",
@@ -104,8 +146,14 @@
       "provider": "work-drive",
       "sourceId": "1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM",
       "uri": "https://docs.google.com/document/d/1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM/edit?usp=drivesdk",
-      "updatedAt": "2026-08-20T16:35:26.925Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:07:29.187Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 73,
+      "revisionModifiedAt": "2026-09-29T02:07:29.125Z",
+      "fileModifiedAt": "2026-09-29T02:07:29.187Z",
+      "retrievedAt": "2026-09-30T05:22:08.968Z",
+      "contentSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "runtime-node-spec",
@@ -113,7 +161,7 @@
       "provider": "google-drive",
       "sourceId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
       "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
-      "updatedAt": "2026-09-29T02:02:15.799Z",
+      "updatedAt": "2026-09-29T02:02:15.957Z",
       "retrievalStatus": "retrieved",
       "sourceAudit": {
         "path": "docs/requirements/runtime-node-source-audit.md",
@@ -124,8 +172,14 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
-      }
+        "disposition": "Current source revision 25 (revision modified 2026-09-29T02:02:15.799Z; file modified 2026-09-29T02:02:15.957Z) was re-read from the 2026-09-30 Drive capture; SHA-256 is in docs/requirements/control-plane-source-inventory.md. CP-RNODE-001..030 remain the bounded extracted rows. Section 17's Local embedded-queue acceptance is recorded, but detailed envelope/message fields, provider command/result metadata, audit/metric coverage and full acceptance mapping remain incomplete. Current implementation/control mapping and exact-candidate evidence remain incomplete under #195; the trust-boundary note now distinguishes the operator-key validator from test-only synthetic identity fixtures."
+      },
+      "currentRevision": 25,
+      "revisionModifiedAt": "2026-09-29T02:02:15.799Z",
+      "fileModifiedAt": "2026-09-29T02:02:15.957Z",
+      "retrievedAt": "2026-09-30T05:22:09.167Z",
+      "contentSha256": "5bdc4f456cb379c83c31189ea44942e44ed704c07d74fd42934afad437dc1731",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "execution-consistency-spec",
@@ -133,7 +187,7 @@
       "provider": "google-drive",
       "sourceId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
       "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
-      "updatedAt": "2026-09-29T02:02:18.414Z",
+      "updatedAt": "2026-09-29T02:02:18.460Z",
       "retrievalStatus": "retrieved",
       "sourceAudit": {
         "path": "docs/requirements/execution-consistency-source-audit.md",
@@ -144,8 +198,14 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
-      }
+        "disposition": "Current source revision 27 (revision modified 2026-09-29T02:02:18.414Z; file modified 2026-09-29T02:02:18.460Z) was re-read from the 2026-09-30 Drive capture; SHA-256 is in docs/requirements/control-plane-source-inventory.md. CP-CONS-001..032 and the section 20 Local default/optional-Restate distinction remain bounded extraction. Cross-system interfaces, detailed event fields, remaining lifecycle clauses and complete section 18 scenario-to-evidence mapping remain incomplete; all scenarios remain unverified at full scope under #195. No classifications or historical candidate evidence changed."
+      },
+      "currentRevision": 27,
+      "revisionModifiedAt": "2026-09-29T02:02:18.414Z",
+      "fileModifiedAt": "2026-09-29T02:02:18.460Z",
+      "retrievedAt": "2026-09-30T05:22:08.436Z",
+      "contentSha256": "d1a98dafdda98a73e72f07377b44f067bb8a2b5deef77c9d2036d01d10f5ac35",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "artifact-storage-spec",
@@ -153,14 +213,20 @@
       "provider": "google-drive",
       "sourceId": "12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I",
       "uri": "https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit",
-      "updatedAt": "2026-08-28T07:05:15.684Z",
+      "updatedAt": "2026-09-18T18:15:50.519Z",
       "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
-      }
+        "disposition": "Current source revision 20 was reviewed from the 2026-09-30 Drive capture; revision/file timestamps and text SHA-256 are recorded in docs/requirements/control-plane-source-inventory.md. CP-ART-001..024 remain the bounded extraction and the ownership boundary remains explicit. The implementation map is still a starting map: per-profile object-storage bytes, provider boundary and context admission evidence remain incomplete, as does COMPAT-CONTEXT-COMPILER-REACHABILITY. Source refresh does not promote any requirement classification; #195 remains open."
+      },
+      "currentRevision": 20,
+      "revisionModifiedAt": "2026-09-18T18:15:50.319Z",
+      "fileModifiedAt": "2026-09-18T18:15:50.519Z",
+      "retrievedAt": "2026-09-30T05:22:08.358Z",
+      "contentSha256": "4054b9e061294a2a613840433a6d742da5599c648389b6f0fff7afd8f0020ac3",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "security-trust-model",
@@ -168,14 +234,20 @@
       "provider": "google-drive",
       "sourceId": "14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE",
       "uri": "https://docs.google.com/document/d/14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE/edit",
-      "updatedAt": "2026-08-28T07:20:45.361Z",
+      "updatedAt": "2026-09-19T17:12:40.661Z",
       "retrievalStatus": "retrieved",
       "gap": {
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Source retrieved through Google Drive on 2026-09-07. Atomic requirement extraction and current implementation/control mapping remain incomplete."
-      }
+        "disposition": "Current source revision 78 was reviewed from the 2026-09-30 Drive capture; revision/file timestamps and text SHA-256 are recorded in docs/requirements/control-plane-source-inventory.md. The source assigns Agent HQ user/AuthIdentity, RuntimeNode registration/public-key metadata and pairing ownership; the repository's production PostgreSQL Runtime Gateway separately validates operator-signed Ed25519 credentials using operator-controlled public keys, while the synthetic issuer is a test fixture. The revised source audit documents this boundary; it does not prove live key issuance/provisioning, Agent HQ pairing, full atomic extraction or exact-candidate implementation mapping. The 35-row source matrix and single broad security ledger row are not a claim of complete atomic extraction. #195 remains high and no classification changed."
+      },
+      "currentRevision": 78,
+      "revisionModifiedAt": "2026-09-19T17:12:40.623Z",
+      "fileModifiedAt": "2026-09-19T17:12:40.661Z",
+      "retrievedAt": "2026-09-30T05:22:48.108Z",
+      "contentSha256": "74faa251402876c98d65b8abc3752099a3f77f5e625a13d6ba2587749d9e15c7",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "evaluation-plan",
@@ -183,8 +255,14 @@
       "provider": "personal-drive",
       "sourceId": "1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo",
       "uri": "https://docs.google.com/document/d/1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo/edit?usp=drivesdk",
-      "updatedAt": "2026-08-20T16:27:28.377Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:02:21.329Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 53,
+      "revisionModifiedAt": "2026-09-29T02:02:21.138Z",
+      "fileModifiedAt": "2026-09-29T02:02:21.329Z",
+      "retrievedAt": "2026-09-30T05:22:47.885Z",
+      "contentSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "runtime-compatibility",
@@ -192,8 +270,14 @@
       "provider": "work-drive",
       "sourceId": "16dBpODPdXIbwlxNlaxSlQopIXSTVbS5mdfUqLsafwjc",
       "uri": "https://docs.google.com/document/d/16dBpODPdXIbwlxNlaxSlQopIXSTVbS5mdfUqLsafwjc/edit?usp=drivesdk",
-      "updatedAt": "2026-08-20T16:35:47.965Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:07:31.582Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 50,
+      "revisionModifiedAt": "2026-09-29T02:07:31.455Z",
+      "fileModifiedAt": "2026-09-29T02:07:31.582Z",
+      "retrievedAt": "2026-09-30T05:22:49.060Z",
+      "contentSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
+      "revisionMetadataStatus": "current revision metadata captured"
     },
     {
       "id": "architecture-decisions",
@@ -201,8 +285,14 @@
       "provider": "work-drive",
       "sourceId": "1K6JwlbSQIRvxmvSeTb5oNEQYc5SfoIJ4QPVTGtXPCbo",
       "uri": "https://docs.google.com/document/d/1K6JwlbSQIRvxmvSeTb5oNEQYc5SfoIJ4QPVTGtXPCbo/edit?usp=drivesdk",
-      "updatedAt": "2026-08-24T20:35:59.335Z",
-      "retrievalStatus": "retrieved"
+      "updatedAt": "2026-09-29T02:07:33.594Z",
+      "retrievalStatus": "retrieved",
+      "currentRevision": 138,
+      "revisionModifiedAt": "2026-09-29T02:07:33.497Z",
+      "fileModifiedAt": "2026-09-29T02:07:33.594Z",
+      "retrievedAt": "2026-09-30T05:22:48.022Z",
+      "contentSha256": "81af0e9eec9916223196172705ac965759cc8d7a0c1ef551fab22084ff61a1b4",
+      "revisionMetadataStatus": "current revision metadata captured"
     }
   ],
   "deploymentProfiles": [
@@ -3204,7 +3294,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "product-architecture",
-        "disposition": "Retrieval is done: canonical Control Plane PRD retrieved by explicit revision ID (rev 40 vs historical rev 43) with SHA-256 pins (docs/requirements/control-plane-prd-source-audit.md). Sections 8.1–8.3 (P00078–P00092) now have a bounded atomic extraction; the remainder of the PRD and current implementation/control mapping remain incomplete under #195. The revision comparison is historical metadata evidence, not proof that the current PRD has no further product changes."
+        "disposition": "Current canonical Control Plane PRD revision 46 was reviewed on 2026-09-30; file modification is 2026-09-29 and exact exported-text SHA-256 is recorded in docs/requirements/control-plane-source-inventory.md. The source's internal Last reviewed marker remains 2026-08-28. Sections 8.1–8.3 (P00078–P00092) retain their bounded atomic extraction; the other current source clauses and current implementation/control mapping remain incomplete under #195. Section 9's Restate bundle wording needs an explicit qualifier against the later default-Local embedded SQLite/optional-Restate baseline. The historical revision-40/revision-43 comparison remains historical metadata evidence; candidate evidence and classification stay unchanged."
       }
     },
     {
@@ -4656,7 +4746,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "context-integration",
-        "disposition": "Unchanged: no in-repo source-audit document exists for the Cortana PRD (docs/requirements/ has audits for control-plane-prd, control-plane-tdd, runtime-node, execution-consistency, artifact-storage, security-trust — none for cortana-prd). The 2026-09-12 refresh doc records only metadata_matches (timestamp 2026-08-28T04:57:08.721Z); cortana-prd still has exactly one ledger row. #195 tranche 4 fixed two repo identities in the Drive doc but extracted and reconciled nothing. Close by retrieving/pinning the PRD content with a revision audit and extracting its provider-boundary requirements against public contracts."
+        "disposition": "Current Cortana PRD revision 29 was reviewed on 2026-09-30; revision/file timestamps and text SHA-256 are pinned in docs/requirements/control-plane-source-inventory.md. No dedicated Cortana section-level source audit exists; the ledger still has one Cortana PRD row. Full provider-boundary atomic extraction and current implementation/control mapping remain incomplete under #195. The prior 2026-09-12 metadata-only note is historical; this source review does not change the tbd classification or historical candidate evidence."
       }
     },
     {
@@ -4965,7 +5055,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The live TDD source was reconciled on 2026-09-27: Appendix C now specifies Bun 1.4 workspaces, and Appendix D marks milestone statuses as historical with GitHub authoritative; the historical revision 96 snapshot remains unchanged. The baseline implementation replacement and Local/Hosted SQLite/PostgreSQL distinctions are documented and the repo identity was corrected in the current source. This requirement remains partially verified because #195 still requires full source inventory and marketplace non-goal reconciliation; the source delta audit is not an atomic requirements extraction."
+        "disposition": "Current Control Plane TDD revision 110 was reviewed on 2026-09-30; revision modified 2026-09-29T02:22:57.922Z and file modified 2026-09-29T02:22:58.053Z (text SHA-256 in docs/requirements/control-plane-source-inventory.md). The source now states Local embedded SQLite durability and Hosted/cloud Restate; the historical revision-96 comparison and its dates/hashes remain valid historical evidence only. Its own review marker is 2026-09-28, earlier than current file modification. The universal-baseline prose in this ledger row remains partially verified until the full current source, profile mappings and marketplace non-goal reconciliation are audited under #195; no classification is upgraded."
       }
     },
     {
@@ -5190,7 +5280,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "runtime-protocol",
-        "disposition": "Retrieval and most extraction are done: source retrieved and revision-pinned, re-reviewed at revision 25 on 2026-09-29, CP-RNODE-001..030 extracted. Section 17 now names the bundled Local Control Plane's embedded durable queue, but its acceptance baseline is not yet atomically mapped. Detailed message/envelope fields, local-provider command/result metadata, audit/metric coverage, and full section 17 acceptance mapping remain incomplete; current implementation/control mapping remains incomplete."
+        "disposition": "Current source revision 25 was re-read on 2026-09-30; revision modified 2026-09-29T02:02:15.799Z and file modified 2026-09-29T02:02:15.957Z (text SHA-256 in docs/requirements/control-plane-source-inventory.md). CP-RNODE-001..030 remain bounded extraction. Section 17 records embedded SQLite for default Local, but detailed envelope/message fields, local-provider metadata, audit/metric coverage and the full acceptance map remain incomplete; current implementation/control mapping remains incomplete. Operator Ed25519 validation is documented separately from test-only synthetic issuer evidence. No row classification or historical candidate evidence changed."
       }
     },
     {
@@ -5221,7 +5311,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Retrieval and extraction largely done: CP-CONS-001..032 extracted; the source was re-reviewed at revision 27 on 2026-09-29. Section 20 now distinguishes default Local embedded SQLite durability from optional Local Restate and Hosted/cloud/Self-hosted Restate profiles. The section 18 acceptance map records 15 baseline scenarios, but cross-system interface obligations, detailed event field mappings, remaining lifecycle details and complete scenario-to-evidence mapping remain incomplete; all scenarios remain unverified at full scope."
+        "disposition": "Current source revision 27 was re-read on 2026-09-30; revision modified 2026-09-29T02:02:18.414Z and file modified 2026-09-29T02:02:18.460Z (text SHA-256 in docs/requirements/control-plane-source-inventory.md). CP-CONS-001..032 and the section 20 Local default/optional-Restate distinction remain bounded extraction. Cross-system interface obligations, detailed event field mappings, remaining lifecycle clauses and complete section 18 scenario-to-evidence mapping remain incomplete; all scenarios remain unverified at full scope. No row classification or historical candidate evidence changed."
       }
     },
     {
@@ -5248,7 +5338,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Retrieval and extraction are done (CP-ART-001..024; ownership boundary against Agent HQ product Artifacts documented). Remaining per the audit doc: implementation reconciliation is a 'starting map, not evidence sufficient to upgrade any CP-ART row from tbd' — the boundary table lists evidence still required for Local/Hosted/managed-cloud bytes, provider boundary, and context admission, plus COMPAT-CONTEXT-COMPILER-REACHABILITY (no production composition caller found for ContextPackageCompiler)."
+        "disposition": "Current Artifact Storage Specification revision 20 was reviewed on 2026-09-30; revision/file timestamps and text SHA-256 are pinned in docs/requirements/control-plane-source-inventory.md. CP-ART-001..024 and the product/Control Plane ownership boundary remain bounded extraction. The current implementation map is still only a starting map: per-profile storage bytes, provider boundary, context admission and COMPAT-CONTEXT-COMPILER-REACHABILITY evidence remain incomplete. Retrieval does not upgrade any row; #195 remains open and the historical candidate evidence is unchanged."
       }
     },
     {
@@ -5563,7 +5653,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "ADR-027's live record was annotated on 2026-09-27 as partially superseded by ADR-035, retaining the server/cloud stack and portability principles, and notes Bun 1.4 supersedes the original pnpm tooling. This resolves the specific ADR-record action; the broader #195 source inventory and marketplace reconciliation remain open, so this row stays partially verified."
+        "disposition": "Current Architecture Decision Records revision 138 was reviewed on 2026-09-30; revision/file timestamps and text SHA-256 are pinned in docs/requirements/control-plane-source-inventory.md. ADR-027 still records Bun 1.4 and its partial supersession by ADR-035, while ADR-034/035 record the #548 default-Local embedded SQLite queue and optional Restate. The 2026-09-27 annotation remains valid history, but the source's own Last reviewed marker (2026-09-18) predates the current file modification. Full source inventory and marketplace non-goal reconciliation remain open under #195; classification and historical candidate evidence stay unchanged."
       }
     },
     {
