@@ -29,6 +29,7 @@ import {
   CommandInboxRecordSchema,
   ExecutionSchema,
   type CommandInboxRecord,
+  type ExecutionPlanReplayAuthorization,
   type Execution,
 } from '@control-plane/domain'
 import {
@@ -458,12 +459,12 @@ export class ExecutionPlanAcceptanceValidator {
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
-  }): Promise<boolean> {
+  }): Promise<ExecutionPlanReplayAuthorization> {
     const plan = await this.repository.get(input.executionPlan)
-    // This authorizer is used only after CommandInboxService finds an exact
-    // payload replay under caller/workspace/project/idempotency scope. Retention
-    // may remove its plan first; acknowledging it creates or dispatches no work.
-    if (plan === undefined) return true
+    // CommandInboxService may acknowledge a retired plan only once the command
+    // has already left its dispatch-pending states; otherwise the API could
+    // resubmit work without the authorization context used at initial acceptance.
+    if (plan === undefined) return 'historical_plan_missing'
     if (!executionPlanCorrelates(plan, input)) return false
     const options = this.options
     if (options === undefined) return true

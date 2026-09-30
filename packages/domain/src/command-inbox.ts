@@ -168,6 +168,12 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
   }
 }
 
+/**
+ * Replay authorization can report that the retained plan no longer exists.
+ * Boolean results remain supported for existing validator implementations.
+ */
+export type ExecutionPlanReplayAuthorization = boolean | 'historical_plan_missing'
+
 export interface ExecutionPlanAcceptanceValidator {
   authorize(input: {
     readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
@@ -176,7 +182,7 @@ export interface ExecutionPlanAcceptanceValidator {
     readonly taskId: string
     readonly agentId: string
     readonly callerPrincipalId: string
-  }): Promise<boolean>
+  }): Promise<ExecutionPlanReplayAuthorization>
   validate(input: {
     readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
     readonly workspaceId: string
@@ -339,16 +345,17 @@ export class CommandInboxService {
     const existing = await this.repository.get(scope)
     if (existing) {
       if (existing.payloadHash === parsed.payloadHash) {
-        if (
-          !(await this.#executionPlanValidator.authorize({
-            executionPlan: existing.executionPlan,
-            workspaceId: existing.workspaceId,
-            projectId: existing.projectId,
-            taskId: existing.taskId,
-            agentId: existing.agentId,
-            callerPrincipalId: existing.callerPrincipalId,
-          }))
-        ) {
+        const authorization = await this.#executionPlanValidator.authorize({
+          executionPlan: existing.executionPlan,
+          workspaceId: existing.workspaceId,
+          projectId: existing.projectId,
+          taskId: existing.taskId,
+          agentId: existing.agentId,
+          callerPrincipalId: existing.callerPrincipalId,
+        })
+        const dispatchPending =
+          existing.status === 'accepted' || existing.status === 'reconciliation_required'
+        if (authorization === 'historical_plan_missing' ? dispatchPending : !authorization) {
           fail('INVALID_EXECUTION_PLAN_REFERENCE')
         }
       }

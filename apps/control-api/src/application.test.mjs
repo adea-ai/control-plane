@@ -858,6 +858,35 @@ describe('Control API', () => {
     expect(fixture.repository.executionCount).toBe(1)
   })
 
+  test('reuses the accepted deadline when a same-hash retry changes its deadline', async () => {
+    const fixture = executionAcceptanceFixture({
+      dispatchFailure: (_input, attempt) => attempt === 1,
+    })
+    const original = ControlApiFixtures.executionAcceptance.request
+    const payload = { ...original.payload }
+    delete payload.deadlineAt
+    const request = { ...original, payload }
+
+    await expect(fixture.service.accept(request, 'svc_agent-hq')).rejects.toThrow(
+      'Restate workflow submission is unavailable'
+    )
+    const acceptedDeadline = fixture.submissions[0].deadlineAt
+    const replay = {
+      ...request,
+      payload: { ...request.payload, deadlineAt: '2026-08-23T14:00:00.000Z' },
+    }
+
+    const response = await fixture.service.accept(replay, 'svc_agent-hq')
+
+    expect(response.data).toMatchObject({ replayed: true, status: 'processing' })
+    expect(fixture.submissions).toHaveLength(2)
+    expect(fixture.submissions[1].deadlineAt).toBe(acceptedDeadline)
+    expect(fixture.submissions[1].deadlineAt).not.toBe(replay.payload.deadlineAt)
+    expect(await fixture.repository.getExecution(fixture.executionId)).toMatchObject({
+      deadlineAt: acceptedDeadline,
+    })
+  })
+
   test('carries exact marketplace pins into the durable workflow submission', async () => {
     const fixture = executionAcceptanceFixture()
     const marketplacePluginReferences = [
@@ -1602,7 +1631,11 @@ function executionAcceptanceFixture(options = {}) {
     dispatcher: {
       submit: async (input) => {
         submissions.push(globalThis.structuredClone(input))
-        if (options.dispatchFailure) throw new Error('private Restate details must not escape')
+        const failSubmission =
+          options.dispatchFailure === true ||
+          (typeof options.dispatchFailure === 'function' &&
+            options.dispatchFailure(input, submissions.length))
+        if (failSubmission) throw new Error('private Restate details must not escape')
       },
     },
     now,

@@ -581,6 +581,14 @@ describe('immutable ExecutionPlan compilation', () => {
 })
 
 describe('ExecutionPlan acceptance eligibility', () => {
+  test('distinguishes a retired replay plan from an invalid new acceptance', async () => {
+    const plan = compile(baseInput())
+    const validator = new ExecutionPlanAcceptanceValidator(new InMemoryExecutionPlanRepository())
+
+    expect(await validator.authorize(acceptanceInput(plan))).toBe('historical_plan_missing')
+    expect(await validator.validate(acceptanceInput(plan))).toBe(false)
+  })
+
   test('rechecks current catalog pins and lifecycle for new acceptance', async () => {
     const input = baseInput()
     const plan = compile(input)
