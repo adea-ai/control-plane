@@ -1,6 +1,6 @@
 # Artifact storage source extraction
 
-Source: [Artifact Storage Specification](https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit), fully re-read through Google Drive on 2026-09-07; modified 2026-08-28T07:05:15.684Z. Status: accepted technical specification.
+Current source: [Artifact Storage Specification](https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit), revision 20, reviewed from the 2026-09-30 Drive capture. Revision modified `2026-09-18T18:15:50.319Z`; file modified `2026-09-18T18:15:50.519Z`. The exact fetched-text SHA-256 is recorded in [the current-source inventory](control-plane-source-inventory.md). Status: accepted technical specification.
 
 CP-ART-001 through CP-ART-024 extract Control Plane and standalone consumer-boundary
 obligations from sections 2–14, 17 and 18. Normative status is accepted; implementation
