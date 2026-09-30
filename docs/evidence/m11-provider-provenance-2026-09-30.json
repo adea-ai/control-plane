@@ -1,0 +1,314 @@
+{
+  "schema": "control-plane.m11.provider-provenance.v1",
+  "scope": "Read-only source revision and production startup provenance; not current-candidate deployment acceptance",
+  "captures": {
+    "railway-production-api-startup.json": {
+      "rawCaptureSha256": "8697277361cb3e13605aeacf9eca8998982f99d443548e353accd16afbc131e9",
+      "providerResponse": {
+        "deploy": [
+          {
+            "attributes": [
+              {
+                "key": "level",
+                "value": "\"info\""
+              }
+            ],
+            "message": "@control-plane/control-api start: {\"timestamp\":\"2026-09-30T02:11:32.069Z\",\"level\":\"info\",\"event\":\"service.starting\",\"metadata\":{\"serviceName\":\"control-api\",\"version\":\"bcd1dd83-9518-4382-b2ca-50a0ad7b3714\",\"commitSha\":\"5508c7a29ebe39c65b5bc569049d5ef8c00c7d9a\",\"environment\":\"production\",\"instanceId\":\"b7d5c853-f836-4eb3-8227-fdf80b7a6fda\"},\"details\":{\"configuration\":{\"port\":8080}}}",
+            "severity": "info",
+            "timestamp": "2026-09-30T02:11:32.942825604Z"
+          },
+          {
+            "attributes": [
+              {
+                "key": "level",
+                "value": "\"info\""
+              }
+            ],
+            "message": "@control-plane/control-api start: {\"timestamp\":\"2026-09-30T02:11:32.783Z\",\"level\":\"info\",\"event\":\"service.started\",\"metadata\":{\"serviceName\":\"control-api\",\"version\":\"bcd1dd83-9518-4382-b2ca-50a0ad7b3714\",\"commitSha\":\"5508c7a29ebe39c65b5bc569049d5ef8c00c7d9a\",\"environment\":\"production\",\"instanceId\":\"b7d5c853-f836-4eb3-8227-fdf80b7a6fda\"}}",
+            "severity": "info",
+            "timestamp": "2026-09-30T02:11:32.942832393Z"
+          }
+        ],
+        "deploymentId": "bcd1dd83-9518-4382-b2ca-50a0ad7b3714",
+        "environmentId": "52f5b0ac-2af0-4792-aa56-30d80e5db31e",
+        "scope": "deployment",
+        "serviceId": "9167a33b-af0f-4780-8614-a5a161697c9c",
+        "status": "SUCCESS"
+      }
+    },
+    "railway-production-worker-startup.json": {
+      "rawCaptureSha256": "3139ea38c30c68fdda830f9a1dd15614076e2fc7bdf4a8a322f1ec4047d2843e",
+      "providerResponse": {
+        "deploy": [
+          {
+            "attributes": [
+              {
+                "key": "level",
+                "value": "\"info\""
+              }
+            ],
+            "message": "@control-plane/workflow-worker start: {\"timestamp\":\"2026-09-30T02:11:54.931Z\",\"level\":\"info\",\"event\":\"service.starting\",\"metadata\":{\"serviceName\":\"workflow-worker\",\"version\":\"5bb7aa67-ac58-405e-9db2-ab714c6f2352\",\"commitSha\":\"5508c7a29ebe39c65b5bc569049d5ef8c00c7d9a\",\"environment\":\"production\",\"instanceId\":\"1f196d34-6c9d-4b81-a173-fe053cef87b2\"},\"details\":{\"configuration\":{\"concurrency\":1}}}",
+            "severity": "info",
+            "timestamp": "2026-09-30T02:11:55.510367104Z"
+          },
+          {
+            "attributes": [
+              {
+                "key": "level",
+                "value": "\"info\""
+              }
+            ],
+            "message": "@control-plane/workflow-worker start: {\"timestamp\":\"2026-09-30T02:11:55.543Z\",\"level\":\"info\",\"event\":\"service.started\",\"metadata\":{\"serviceName\":\"workflow-worker\",\"version\":\"5bb7aa67-ac58-405e-9db2-ab714c6f2352\",\"commitSha\":\"5508c7a29ebe39c65b5bc569049d5ef8c00c7d9a\",\"environment\":\"production\",\"instanceId\":\"1f196d34-6c9d-4b81-a173-fe053cef87b2\"}}",
+            "severity": "info",
+            "timestamp": "2026-09-30T02:11:55.552541269Z"
+          }
+        ],
+        "deploymentId": "5bb7aa67-ac58-405e-9db2-ab714c6f2352",
+        "environmentId": "52f5b0ac-2af0-4792-aa56-30d80e5db31e",
+        "scope": "deployment",
+        "serviceId": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+        "status": "SUCCESS"
+      }
+    },
+    "drive-project-index-revisions.json": {
+      "rawCaptureSha256": "7a20764169386d21d9f12e87b6b288870413613d6f4249003db7ac935b3ff7fa",
+      "providerResponse": {
+        "fileId": "1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI",
+        "currentRevisionId": "131",
+        "previousRevisionId": "130",
+        "revisions": [
+          {
+            "id": "130",
+            "mimeType": "application/vnd.google-apps.document",
+            "modifiedTime": "2026-09-23T00:49:12.596Z"
+          },
+          {
+            "id": "131",
+            "mimeType": "application/vnd.google-apps.document",
+            "modifiedTime": "2026-09-29T02:15:39.947Z"
+          }
+        ]
+      }
+    },
+    "railway-deployments.json": {
+      "rawCaptureSha256": "680e57e97dd82b1a01200e74b75294d92a242ce5039fcaba8e8ca2363987777b",
+      "providerResponse": {
+        "deployments": [
+          {
+            "id": "5bb7aa67-ac58-405e-9db2-ab714c6f2352",
+            "createdAt": "2026-09-30T02:11:40.013Z",
+            "updatedAt": "2026-09-30T02:12:03.065Z",
+            "environmentId": "52f5b0ac-2af0-4792-aa56-30d80e5db31e",
+            "serviceId": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+            "status": "SUCCESS",
+            "meta": {
+              "image": "ghcr.io/adea-ai/control-plane-workflow-worker@sha256:07eef7715317d59bf74dc5ace113dc66579b443626a8bed29999717099d11c9f"
+            }
+          },
+          {
+            "id": "bcd1dd83-9518-4382-b2ca-50a0ad7b3714",
+            "createdAt": "2026-09-30T02:11:18.971Z",
+            "updatedAt": "2026-09-30T02:11:36.392Z",
+            "environmentId": "52f5b0ac-2af0-4792-aa56-30d80e5db31e",
+            "serviceId": "9167a33b-af0f-4780-8614-a5a161697c9c",
+            "status": "SUCCESS",
+            "meta": {
+              "image": "ghcr.io/adea-ai/control-plane-control-api@sha256:10559ed09656755222ebbfe7b8b64f0ab81b66d6f9692ee7b9fd61b581e15d0c"
+            }
+          }
+        ]
+      }
+    },
+    "railway-staging-deployments.json": {
+      "rawCaptureSha256": "2e04560eb17959fac6548455b91159b40c28b502034e5b35bf962b14852e8180",
+      "providerResponse": {
+        "deployments": [
+          {
+            "id": "4104e153-d69d-4e82-aa2c-787e4d6a4b2e",
+            "createdAt": "2026-09-29T21:33:39.203Z",
+            "updatedAt": "2026-09-29T21:37:04.962Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "9167a33b-af0f-4780-8614-a5a161697c9c",
+            "status": "REMOVED",
+            "meta": {
+              "commitHash": "5470095b9f15b36760557a175e285e692697771e",
+              "branch": "main"
+            }
+          },
+          {
+            "id": "f060e8dc-bfff-43b4-a0fc-fc9485201b73",
+            "createdAt": "2026-09-29T21:00:24.568Z",
+            "updatedAt": "2026-09-29T21:37:28.038Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+            "status": "REMOVED",
+            "meta": {
+              "commitHash": "5470095b9f15b36760557a175e285e692697771e",
+              "branch": "main"
+            }
+          },
+          {
+            "id": "2eb9be28-03bb-487d-9d21-600c13343d46",
+            "createdAt": "2026-09-29T20:58:26.092Z",
+            "updatedAt": "2026-09-29T21:35:22.293Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "9167a33b-af0f-4780-8614-a5a161697c9c",
+            "status": "REMOVED",
+            "meta": {
+              "commitHash": "5470095b9f15b36760557a175e285e692697771e",
+              "branch": "main"
+            }
+          },
+          {
+            "id": "26a259b0-d4c2-4a87-985b-980c6fe109f8",
+            "createdAt": "2026-09-29T20:43:45.309Z",
+            "updatedAt": "2026-09-29T21:04:18.473Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "9167a33b-af0f-4780-8614-a5a161697c9c",
+            "status": "REMOVED",
+            "meta": {
+              "commitHash": "443be3b7015202cb33c7317f28883b151bea3071",
+              "branch": "main"
+            }
+          },
+          {
+            "id": "38acda27-d3f4-4339-9235-d19fe8cc1700",
+            "createdAt": "2026-09-29T20:43:45.213Z",
+            "updatedAt": "2026-09-29T21:06:18.156Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+            "status": "REMOVED",
+            "meta": {
+              "commitHash": "443be3b7015202cb33c7317f28883b151bea3071",
+              "branch": "main"
+            }
+          },
+          {
+            "id": "27990018-f0a4-4a55-93eb-319028f1469b",
+            "createdAt": "2026-09-29T20:43:44.941Z",
+            "updatedAt": "2026-09-29T21:37:31.928Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "31dc2df5-9ca8-46f0-ab1b-bf89caeda5d6",
+            "status": "REMOVED",
+            "meta": {
+              "image": "docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2"
+            }
+          },
+          {
+            "id": "ad4ec0d2-918a-4308-bd60-f8365981ccf3",
+            "createdAt": "2026-09-29T15:04:01.825Z",
+            "updatedAt": "2026-09-29T20:47:20.739Z",
+            "environmentId": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+            "serviceId": "31dc2df5-9ca8-46f0-ab1b-bf89caeda5d6",
+            "status": "REMOVED",
+            "meta": {
+              "image": "docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2"
+            }
+          }
+        ]
+      }
+    },
+    "railway-staging.json": {
+      "rawCaptureSha256": "d7fc0fe68c76e698d802d94504e18f7a44236ec3a07d512c50cedeec30d9cfef",
+      "providerResponse": {
+        "environment": {
+          "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+          "name": "staging",
+          "stagedChanges": null,
+          "unmergedChangesCount": null
+        },
+        "services": [
+          {
+            "id": "9167a33b-af0f-4780-8614-a5a161697c9c",
+            "name": "@control-plane/control-api",
+            "volumes": []
+          },
+          {
+            "id": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+            "name": "@control-plane/workflow-worker",
+            "volumes": []
+          },
+          {
+            "id": "31dc2df5-9ca8-46f0-ab1b-bf89caeda5d6",
+            "name": "restate",
+            "volumes": [
+              {
+                "id": "ef284217-970d-4314-9ce9-43a5391ad188",
+                "mountPath": "/restate-data",
+                "name": "restate-data",
+                "region": "ams",
+                "sizeMB": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "railway-staged.json": {
+      "rawCaptureSha256": "1fa104befe4c0c8138c5434ecb21c210f53de29eb685312ae349089a33542ea4",
+      "providerResponse": {
+        "destructive": false,
+        "environment": {
+          "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+          "name": "staging"
+        },
+        "privateNetworkDisabled": null,
+        "project": {
+          "id": "18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f",
+          "name": "control-plane"
+        },
+        "resources": [],
+        "sharedVariables": [],
+        "staged": null
+      }
+    },
+    "railway-staging-api-config.json": {
+      "rawCaptureSha256": "3c6216f6481d930e8e0c593a8d3358d5cfcb2c0799c40402ef8f4e6cc4a545fb",
+      "providerResponse": {
+        "environment": {
+          "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+          "name": "staging"
+        },
+        "service": {
+          "id": "9167a33b-af0f-4780-8614-a5a161697c9c",
+          "name": "@control-plane/control-api"
+        },
+        "source": null,
+        "staged": null
+      }
+    },
+    "railway-staging-worker-config.json": {
+      "rawCaptureSha256": "0ea159eff1b2f7e7d30b7d29bc4cd9cf9d63101040c68c2712e5d5eb7f45fc27",
+      "providerResponse": {
+        "environment": {
+          "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+          "name": "staging"
+        },
+        "service": {
+          "id": "d733ec0d-bda5-4be5-86b9-637154d282eb",
+          "name": "@control-plane/workflow-worker"
+        },
+        "source": null,
+        "staged": null
+      }
+    },
+    "railway-staging-restate-config.json": {
+      "rawCaptureSha256": "28021b2932155b787dcf60a16b5a9b410416b96c3ba42acc142471520ffbe2cf",
+      "providerResponse": {
+        "environment": {
+          "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
+          "name": "staging"
+        },
+        "service": {
+          "id": "31dc2df5-9ca8-46f0-ab1b-bf89caeda5d6",
+          "name": "restate"
+        },
+        "source": {
+          "image": "docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2"
+        },
+        "staged": null
+      }
+    }
+  },
+  "assembledAt": "2026-09-30T06:23:35.915065+00:00"
+}
