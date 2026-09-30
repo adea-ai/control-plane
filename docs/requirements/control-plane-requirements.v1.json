@@ -36,7 +36,18 @@
       "fileModifiedAt": "2026-09-29T02:15:40.033Z",
       "retrievedAt": "2026-09-30",
       "contentSha256": "73cdf31c07229da6e4630fb2caf0c410d10dc9292fd74d1675153f8c9f9033af",
-      "revisionMetadataStatus": "current revision 131 and revision modifiedTime verified from Drive list_file_revisions; the saved direct-fetch payload omits revision history, and the exact fetch time was not retained"
+      "revisionMetadataStatus": "current revision 131 and revision modifiedTime verified from Drive list_file_revisions; the saved direct-fetch payload omits revision history, and the exact fetch time was not retained",
+      "atomicInventory": {
+        "path": "docs/requirements/project-index-atomic-inventory.md",
+        "sourceRevision": 131,
+        "contentSha256": "73cdf31c07229da6e4630fb2caf0c410d10dc9292fd74d1675153f8c9f9033af",
+        "logicalLines": 77,
+        "atoms": 135,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      }
     },
     {
       "id": "agent-hq-prd",
@@ -51,7 +62,18 @@
       "fileModifiedAt": "2026-09-29T02:02:08.429Z",
       "retrievedAt": "2026-09-30T05:21:44.408Z",
       "contentSha256": "76780434fdf473b41d6441ca7ed39edc4417ebf5060df18c4dc56a27942ae143",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/agent-hq-prd-atomic-inventory.md",
+        "sourceRevision": 2021,
+        "contentSha256": "76780434fdf473b41d6441ca7ed39edc4417ebf5060df18c4dc56a27942ae143",
+        "logicalLines": 125,
+        "atoms": 415,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      }
     },
     {
       "id": "control-plane-prd",
@@ -97,14 +119,25 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "Current source revision 29 was reviewed from the 2026-09-30 Drive capture; timestamps and text SHA-256 are recorded in docs/requirements/control-plane-source-inventory.md. The current source text is reviewed, but Cortana PRD still has one ledger requirement row and no dedicated section-level source audit; atomic provider-boundary extraction and current implementation/control mapping remain incomplete under #195. No classification or historical candidate evidence changed."
+        "disposition": "The current revision 29 captured-text clause inventory has 366 atoms over 150 logical lines. Agent HQ and Cortana product responsibilities remain externally owned; Control Plane repository-path inspection is bounded. Current atom-to-requirement/code/test/deployment mapping and independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
       },
       "currentRevision": 29,
       "revisionModifiedAt": "2026-09-18T18:07:16.881Z",
       "fileModifiedAt": "2026-09-18T18:07:16.986Z",
       "retrievedAt": "2026-09-30T05:21:43.673Z",
       "contentSha256": "1876af87e8df64b9f6a6a388e3897fdef46fd2d96631003c9e669f9ed6c933d5",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/cortana-prd-atomic-inventory.md",
+        "sourceRevision": 29,
+        "contentSha256": "1876af87e8df64b9f6a6a388e3897fdef46fd2d96631003c9e669f9ed6c933d5",
+        "logicalLines": 150,
+        "atoms": 366,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      }
     },
     {
       "id": "system-architecture",
@@ -449,7 +482,18 @@
       "fileModifiedAt": "2026-09-29T02:07:33.594Z",
       "retrievedAt": "2026-09-30T05:22:48.022Z",
       "contentSha256": "81af0e9eec9916223196172705ac965759cc8d7a0c1ef551fab22084ff61a1b4",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/architecture-decisions-atomic-inventory.md",
+        "sourceRevision": 138,
+        "contentSha256": "81af0e9eec9916223196172705ac965759cc8d7a0c1ef551fab22084ff61a1b4",
+        "logicalLines": 286,
+        "atoms": 720,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      }
     }
   ],
   "deploymentProfiles": [
