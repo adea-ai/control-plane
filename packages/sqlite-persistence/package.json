@@ -41,6 +41,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/orchestration": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",

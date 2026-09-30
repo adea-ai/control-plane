@@ -185,3 +185,4 @@ export {
 } from './runtime-node-identity-repository.js'
 export { PostgresContextCommandGrantRepository } from './context-command-grant-repository.js'
 export { PostgresContextProviderRegistrationRepository } from './context-provider-registration-repository.js'
+export * from './graph-definition-repository.js'
