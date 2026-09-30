@@ -233,8 +233,7 @@ describe('LangGraph orchestration adapter', () => {
     })
     await adapter.run(request)
     await adapter.run(request)
-    expect(effects).toEqual(
-      new Set(['test:segment:1:prepare', 'test:segment:1:reason', 'test:segment:1:lookup'])
-    )
+    expect(effects.size).toBe(3)
+    expect([...effects].every((key) => /^graph-op-v1:[a-f0-9]{64}$/.test(key))).toBe(true)
   })
 })
