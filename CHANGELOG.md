@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.59.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.8...workspace-v1.59.9) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deployment:** enforce RPC response deadlines ([#771](https://github.com/adea-ai/control-plane/issues/771)) ([ee060f8](https://github.com/adea-ai/control-plane/commit/ee060f852bfd5b11891213b951407dcf34acfe93))
+
+
+### Documentation
+
+* **m11:** map current PRD and TDD clauses with bounded evidence ([#773](https://github.com/adea-ai/control-plane/issues/773)) ([572f44a](https://github.com/adea-ai/control-plane/commit/572f44ab238ed61a56db8f296b85bed9d14f1b31))
+
+
+### Maintenance
+
+* **main:** release ([#772](https://github.com/adea-ai/control-plane/issues/772)) ([4814efc](https://github.com/adea-ai/control-plane/commit/4814efce3761003f6854c6ee6b7ecaa1ce35e45e))
+
 ## [1.59.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.7...workspace-v1.59.8) (2026-09-30)
 
 
