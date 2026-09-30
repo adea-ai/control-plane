@@ -9,6 +9,7 @@ import {
   PostgresRuntimeChannelSequenceRepository,
   PostgresRuntimeNodeIdentityRepository,
   type PostgresConnection,
+  type RuntimeNodeIdentityRevocationClient,
 } from '@control-plane/database'
 import {
   ContextCommandGrantAuthority,
@@ -23,6 +24,8 @@ import {
 } from '@control-plane/domain'
 import {
   loadDatabaseCredentials,
+  loadDatabaseSessionCredentials,
+  databaseSessionCredentials,
   type DatabaseCredentials,
   type RawEnvironment,
 } from '@control-plane/config'
@@ -114,7 +117,11 @@ export interface RuntimeGatewayRuntimeOptions {
  */
 export type RuntimeGatewayStoreConfig =
   | { readonly backend: 'sqlite'; readonly path: string }
-  | { readonly backend: 'postgres'; readonly credentials: DatabaseCredentials<'application'> }
+  | {
+      readonly backend: 'postgres'
+      readonly credentials: DatabaseCredentials<'application'>
+      readonly notificationUrl?: string
+    }
 
 /** Parses the gateway store backend from the environment; missing or invalid config fails closed. */
 export function runtimeGatewayStoreConfigFromEnvironment(
@@ -128,7 +135,11 @@ export function runtimeGatewayStoreConfigFromEnvironment(
     return { backend: 'sqlite', path }
   }
   if (backend === 'postgres') {
-    return { backend: 'postgres', credentials: loadDatabaseCredentials(environment, 'application') }
+    return {
+      backend: 'postgres',
+      credentials: loadDatabaseCredentials(environment, 'application'),
+      notificationUrl: loadDatabaseSessionCredentials(environment).url,
+    }
   }
   throw new Error('RUNTIME_GATEWAY_STORE_CONFIG_INVALID')
 }
@@ -264,7 +275,14 @@ export async function composeRuntimeGateway(
     coordination = new InMemoryRuntimeNodeCoordination()
     closeStore = async () => provider.close()
   } else {
+    const notificationCredentials = databaseSessionCredentials(
+      store.credentials,
+      store.notificationUrl
+    )
     const connection: PostgresConnection = createPostgresConnection(store.credentials)
+    const notificationConnection = createPostgresConnection(notificationCredentials, {
+      maxConnections: 1,
+    })
     repository = new PostgresContextCommandRepository(connection.database)
     grants = new PostgresContextCommandGrantRepository(connection.database)
     registrations = new PostgresContextProviderRegistrationRepository(connection.database)
@@ -274,8 +292,20 @@ export async function composeRuntimeGateway(
     coordination = new RepositoryRuntimeNodeCoordination(
       new PostgresRuntimeChannelOwnershipRepository(connection.database)
     )
-    postgresIdentityRepository = new PostgresRuntimeNodeIdentityRepository(connection.database)
-    closeStore = () => connection.close()
+    postgresIdentityRepository = new PostgresRuntimeNodeIdentityRepository(connection.database, {
+      revocationClient: (
+        notificationConnection.database as typeof notificationConnection.database & {
+          $client: RuntimeNodeIdentityRevocationClient
+        }
+      ).$client,
+    })
+    closeStore = async () => {
+      const results = await Promise.allSettled([notificationConnection.close(), connection.close()])
+      const errors = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (errors.length > 0) throw new AggregateError(errors, 'RUNTIME_GATEWAY_STORE_CLOSE_FAILED')
+    }
   }
 
   let storeClosed = false

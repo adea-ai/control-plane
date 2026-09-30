@@ -177,6 +177,7 @@ export {
   RuntimeNodeIdentityRepositoryError,
   type RuntimeNodeCredentialConsumeResult,
   type RuntimeNodeIdentityRepositoryErrorCode,
+  type RuntimeNodeIdentityRevocationClient,
   type RuntimeNodeIssuedCredentialInput,
   type RuntimeNodeIssuedCredentialRecord,
   type RuntimeNodeVerificationKeyRecord,
