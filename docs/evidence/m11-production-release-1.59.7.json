@@ -1,0 +1,62 @@
+{
+  "capturedAt": "2026-09-30T07:01:34Z",
+  "release": "workspace-v1.59.7",
+  "commit": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+  "promotionRun": "https://github.com/adea-ai/control-plane/actions/runs/36679434262",
+  "services": {
+    "api": {
+      "deploymentId": "17b3b742-e2c9-431a-b8ed-ca02cf25906f",
+      "status": "SUCCESS",
+      "image": "ghcr.io/adea-ai/control-plane-control-api@sha256:cbedef0b6f4d3228de36a479ec0e5d676111ecc44e2a8320bff429605d90cc54",
+      "startupEvents": [
+        {
+          "event": "service.starting",
+          "timestamp": "2026-09-30T06:45:59.678Z",
+          "commitSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+          "deploymentId": "17b3b742-e2c9-431a-b8ed-ca02cf25906f"
+        },
+        {
+          "event": "service.started",
+          "timestamp": "2026-09-30T06:46:00.486Z",
+          "commitSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+          "deploymentId": "17b3b742-e2c9-431a-b8ed-ca02cf25906f"
+        }
+      ]
+    },
+    "worker": {
+      "deploymentId": "edc1e6ec-1dc4-41f8-915b-8d015bf15fae",
+      "status": "SUCCESS",
+      "image": "ghcr.io/adea-ai/control-plane-workflow-worker@sha256:814df38fac7c62e2dc69abd25ab64cdf49053fd96633e819994ba996c0563769",
+      "startupEvents": [
+        {
+          "event": "service.starting",
+          "timestamp": "2026-09-30T06:46:20.988Z",
+          "commitSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+          "deploymentId": "edc1e6ec-1dc4-41f8-915b-8d015bf15fae"
+        },
+        {
+          "event": "service.started",
+          "timestamp": "2026-09-30T06:46:21.638Z",
+          "commitSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+          "deploymentId": "edc1e6ec-1dc4-41f8-915b-8d015bf15fae"
+        }
+      ]
+    }
+  },
+  "promotionEvidence": {
+    "api": {
+      "target": "control-api",
+      "image": "ghcr.io/adea-ai/control-plane-control-api",
+      "digest": "sha256:cbedef0b6f4d3228de36a479ec0e5d676111ecc44e2a8320bff429605d90cc54",
+      "sourceSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+      "release": "workspace-v1.59.7"
+    },
+    "worker": {
+      "target": "workflow-worker",
+      "image": "ghcr.io/adea-ai/control-plane-workflow-worker",
+      "digest": "sha256:814df38fac7c62e2dc69abd25ab64cdf49053fd96633e819994ba996c0563769",
+      "sourceSha": "9ab59bb2b24d351d27b9611f31b4f814920f663c",
+      "release": "workspace-v1.59.7"
+    }
+  }
+}

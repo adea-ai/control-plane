@@ -52,3 +52,9 @@ Staging's September 29 API, worker and Restate qualification deployments are `RE
 ## Ownership and cleanup
 
 Historical worktrees and Restate volumes are preserved. No Railway environment was activated by this checkpoint. The disposable Neon branch `br-super-haze-aynfixw5` was deleted and verified absent; task-created connection files were removed. The diagnostic Docker project `cp-m11-diag-20260930`, its synthetic volume and network were removed after integration/restore evidence; container/volume absence and closed port 54431 were verified. Source-provenance changes were reviewed before integration. The root continuation checkout remains owned by this active goal; historical worktrees and unrelated containers are untouched. No chat archival is authorized.
+
+## Subsequent production release observation
+
+Release `workspace-v1.59.7` was published after PR #745 and its release PR #768 merged. [Promotion run 36679434262](https://github.com/adea-ai/control-plane/actions/runs/36679434262) completed successfully. A subsequent read at 2026-09-30T07:01:34Z observed successful production API deployment `17b3b742-e2c9-431a-b8ed-ca02cf25906f` and worker deployment `edc1e6ec-1dc4-41f8-915b-8d015bf15fae`. Both startup messages identify commit `9ab59bb2b24d351d27b9611f31b4f814920f663c`; their configured immutable image digests match the promotion artifacts. The [sanitized release projection](m11-production-release-1.59.7.json) preserves the source commit, digest and startup linkage.
+
+This is a later observation than the initial `5508c7a2` capture above. It proves production startup and image provenance for 1.59.7; PR #769 merged subsequently at `5a47a6b1`, so this production release does not include that patch. It does not establish the deployed functional, recovery, calibration, independent-review or final M11 acceptance gates.
