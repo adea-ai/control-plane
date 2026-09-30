@@ -98,7 +98,7 @@
     "oxlint": "^1.85.0",
     "railway": "3.11.0",
     "turbo": "^2.11.4",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.0"
   },
   "overrides": {
     "esbuild": "0.28.2",
