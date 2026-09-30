@@ -6,8 +6,9 @@ and ephemeral compute. Domain and runtime callers depend on `SandboxProvider`; t
 types to core packages.
 
 Every sandbox is correlated to a workspace, execution, and attempt and receives an explicit
-template, lifetime, CPU, memory, storage, output, and network policy. The create contract defaults to
-denied network access and forwards the requested policy to the provider isolation layer. The
+template, lifetime, CPU, memory, storage, output, and network policy. Creation requires an explicit
+network policy (`deny_all` or `allowlist`) and rejects requests that omit it. The adapter forwards the
+requested policy to the provider isolation layer. The
 coordinator additionally checks standalone HTTP(S) URL arguments against the allowlist and a
 metadata-host list; this limited precheck cannot enforce egress for arbitrary commands, bare
 addresses, shell text, or other protocols. Provider-level isolation is the required enforcement
