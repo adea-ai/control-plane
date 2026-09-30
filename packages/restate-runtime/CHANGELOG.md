@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.2.0...restate-runtime-v1.2.1) (2026-09-30)
+
+
+### Maintenance
+
+* **deps:** bump the bun-dependencies group with 14 updates ([#767](https://github.com/adea-ai/control-plane/issues/767)) ([d9e29ed](https://github.com/adea-ai/control-plane/commit/d9e29eda1658637a6da7fe7430ad7933e9cbb582))
+
 ## [1.2.0](https://github.com/adea-ai/control-plane/compare/restate-runtime-v1.1.6...restate-runtime-v1.2.0) (2026-09-20)
 
 

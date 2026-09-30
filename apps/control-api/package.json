@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/control-api",
-  "version": "1.16.3",
+  "version": "1.16.4",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
