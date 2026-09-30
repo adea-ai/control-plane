@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.6.1...managed-pi-adapter-v1.6.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m9:** persist certification catalog references ([#763](https://github.com/adea-ai/control-plane/issues/763)) ([d2ec6fe](https://github.com/adea-ai/control-plane/commit/d2ec6fecfd9f9769b3edbf88114fffd975589924))
+
 ## [1.6.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.6.0...managed-pi-adapter-v1.6.1) (2026-09-29)
 
 
