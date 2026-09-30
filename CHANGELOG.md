@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.17](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.16...workspace-v1.59.17) (2026-09-30)
+
+
+### Tests
+
+* **pi:** qualify default Local embedded SQLite execution ([#794](https://github.com/adea-ai/control-plane/issues/794)) ([568b95c](https://github.com/adea-ai/control-plane/commit/568b95ca95873416df720b3843386628f88ca01e))
+
 ## [1.59.16](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.15...workspace-v1.59.16) (2026-09-30)
 
 
