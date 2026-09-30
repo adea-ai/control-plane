@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.3](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.2...deployment-v1.10.3) (2026-09-30)
+
+
+### Bug Fixes
+
+* **local:** certify native ACP against the embedded queue ([#780](https://github.com/adea-ai/control-plane/issues/780)) ([fcd637a](https://github.com/adea-ai/control-plane/commit/fcd637a11accf2edeb8c769f39c39a66965f6b39))
+
 ## [1.10.2](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.1...deployment-v1.10.2) (2026-09-30)
 
 

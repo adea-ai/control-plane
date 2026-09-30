@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.59.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.11...workspace-v1.59.12) (2026-09-30)
+
+
+### Bug Fixes
+
+* **local:** certify native ACP against the embedded queue ([#780](https://github.com/adea-ai/control-plane/issues/780)) ([fcd637a](https://github.com/adea-ai/control-plane/commit/fcd637a11accf2edeb8c769f39c39a66965f6b39))
+
+
+### Documentation
+
+* **requirements:** inventory runtime, consistency, artifact and skill clauses ([#781](https://github.com/adea-ai/control-plane/issues/781)) ([be193a3](https://github.com/adea-ai/control-plane/commit/be193a34c9402d5ecd72bc1833803361382e02f7))
+
 ## [1.59.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.10...workspace-v1.59.11) (2026-09-30)
 
 
