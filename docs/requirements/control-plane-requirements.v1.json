@@ -7597,44 +7597,28 @@
     {
       "id": "CONTRA-002",
       "topic": "AWS and pnpm versus Railway and Bun",
-      "sources": [
-        "Control Plane TDD Appendix C",
-        "ADR-027",
-        "AGENTS.md",
-        "docs/infrastructure.md"
-      ],
+      "sources": ["Control Plane TDD Appendix C", "ADR-027", "AGENTS.md", "docs/infrastructure.md"],
       "resolution": "Bun 1.4 and Railway/Neon/R2 are current first-party choices; the live TDD and ADR-027 now record the tooling reconciliation and partial supersession, while portable adapters preserve Hosted alternatives. Full #195 source inventory and marketplace reconciliation remain open.",
       "issue": 195
     },
     {
       "id": "CONTRA-003",
       "topic": "PostgreSQL-only persistence versus profile portability",
-      "sources": [
-        "Control Plane TDD",
-        "System Architecture Overview",
-        "docs/architecture.md"
-      ],
+      "sources": ["Control Plane TDD", "System Architecture Overview", "docs/architecture.md"],
       "resolution": "Cloud and Hosted Server use PostgreSQL; Local and Hosted Simple use SQLite behind shared persistence semantics.",
       "issue": 187
     },
     {
       "id": "CONTRA-004",
       "topic": "Mandatory Local Runtime Gateway versus direct transport",
-      "sources": [
-        "Agent HQ PRD",
-        "System Architecture Overview",
-        "docs/local-deployment.md"
-      ],
+      "sources": ["Agent HQ PRD", "System Architecture Overview", "docs/local-deployment.md"],
       "resolution": "Co-located Local uses DirectLocalRuntimeTransport; Runtime Gateway remains for non-co-located nodes.",
       "issue": 195
     },
     {
       "id": "CONTRA-005",
       "topic": "Prose contract v1 versus machine contract 2.0",
-      "sources": [
-        "Data Model & API Specification",
-        "packages/contracts/src/control-api.ts"
-      ],
+      "sources": ["Data Model & API Specification", "packages/contracts/src/control-api.ts"],
       "resolution": "Machine-readable Control API 2.0 owns exact wire shape; prose retains semantic inventory pending reconciliation.",
       "issue": 195
     }
