@@ -80,9 +80,13 @@ import {
   SyntheticRuntimeNodeIdentityAuthority,
 } from '../apps/runtime-gateway/dist/index.js'
 import { writeManagedPiRpcFixture } from '../packages/managed-pi-adapter/src/test-support/managed-pi-rpc-fixture.mjs'
+import { awaitLocalWorkflowOutcome } from '../scripts/native-local-workflow.mjs'
 
 const observedAt = '2026-08-30T12:00:00.000Z'
 const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
+const realPiDurableExecution = process.env.M11_REAL_PI_DURABLE_EXECUTION ?? 'restate'
+if (!['embedded-sqlite', 'restate'].includes(realPiDurableExecution))
+  throw new Error('M11_REAL_PI_DURABLE_EXECUTION_INVALID')
 
 describe('M11 standalone execution composition', () => {
   test('SDK invokes the authenticated interaction HTTP route with private credentials', async () => {
@@ -658,20 +662,19 @@ describe('M11 standalone execution composition', () => {
   }, 30000)
 
   test.each(['complete', 'cancel'])(
-    'runs the packaged managed Pi RPC client through Local Restate (%s)',
+    `runs the packaged managed Pi RPC client through Local ${realPiDurableExecution} (%s)`,
     async (mode) => {
       const realExecutable = process.env.M11_REAL_PI_EXECUTABLE
       const realAgentDirectory = process.env.M11_REAL_PI_AGENT_DIRECTORY
       if (Boolean(realExecutable) !== Boolean(realAgentDirectory))
         throw new Error('M11_REAL_PI_CONFIGURATION_INCOMPLETE')
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-pi-rpc-'))
-      const ports = await isolatedLocalPorts()
+      const ports = realPiDurableExecution === 'restate' ? await isolatedLocalPorts() : undefined
       const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
       const promptRecord = join(directory, 'prompt-record.json')
       if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
-      const local = new LocalControlPlaneComposition({
+      const localOptions = {
         dataDirectory: directory,
-        durableExecution: 'restate',
         runtimeFactory: (repositories) => {
           const runtime = createLocalManagedPiRuntime(repositories, {
             executablePath,
@@ -704,15 +707,40 @@ describe('M11 standalone execution composition', () => {
           }
           return runtime
         },
-        ...ports,
-      })
+      }
+      if (realPiDurableExecution === 'restate') {
+        Object.assign(localOptions, { durableExecution: 'restate', ...ports })
+      }
+      const local = new LocalControlPlaneComposition(localOptions)
+      let restateDiscoveryCalls = 0
+      if (realPiDurableExecution === 'embedded-sqlite') {
+        const resolve = local.discovery.resolve.bind(local.discovery)
+        local.discovery.resolve = async (service) => {
+          if (service === 'restate') restateDiscoveryCalls += 1
+          return resolve(service)
+        }
+      }
       const plan = createExecutionPlanTestFixture({
         profileCapabilityRequirements: ['stream.output'],
         skillRequiredCapabilities: [],
       })
       let application
       try {
+        expect(local.durableExecution).toBe(realPiDurableExecution)
         await local.start()
+        const manifest = await local.manifest()
+        if (realPiDurableExecution === 'embedded-sqlite') {
+          expect(manifest.topology).toMatchObject({
+            durableExecution: 'embedded-sqlite',
+            externalServices: 0,
+            persistence: 'sqlite',
+          })
+          expect(manifest.topology).not.toHaveProperty('restateVersion')
+          expect(restateDiscoveryCalls).toBe(0)
+          await expect(local.discovery.resolve('restate')).rejects.toThrow(
+            'SERVICE_ENDPOINT_NOT_FOUND'
+          )
+        }
         const authentication = await createPrivateApiAuthentication(directory)
         const credential = (await readFile(authentication.credentialFile, 'utf8')).trim()
         const metadata = {
@@ -800,7 +828,19 @@ describe('M11 standalone execution composition', () => {
           })
         }
         const execution = await waitForTerminalExecution(local, response.data.executionId)
-        {
+        if (realPiDurableExecution === 'embedded-sqlite') {
+          await expect(
+            awaitLocalWorkflowOutcome(
+              local,
+              response.data.executionId,
+              mode === 'cancel' ? 'cancelled' : 'completed'
+            )
+          ).resolves.toMatchObject({
+            executionId: response.data.executionId,
+            status: mode === 'cancel' ? 'cancelled' : 'completed',
+          })
+          expect(restateDiscoveryCalls).toBe(1)
+        } else {
           const attached = await fetch(
             `http://127.0.0.1:${ports.restateIngressPort}/restate/workflow/execution-lifecycle/${response.data.executionId}/attach`,
             { signal: AbortSignal.timeout(5000) }

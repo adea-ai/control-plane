@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -168,6 +169,9 @@ try {
   assert.equal(inspection.metadata.harnessVersion, '0.84.2')
   assert.equal(inspection.metadata.transportKind, 'direct-local')
   assert.equal(inspection.capabilityEvaluation.eligible, true)
+  const executableSha256 = createHash('sha256')
+    .update(await readFile(executablePath))
+    .digest('hex')
   const approval = await adapter.inspect([
     { capability: 'interaction.approval', necessity: 'required', minimumSupport: 'supported' },
   ])
@@ -222,14 +226,16 @@ try {
       'test',
       'tests/m11-standalone-e2e.test.mjs',
       '--test-name-pattern',
-      'runs the packaged managed Pi RPC client through Local Restate',
+      'runs the packaged managed Pi RPC client through Local embedded-sqlite',
     ],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       env: {
         PATH: process.env.PATH ?? '/usr/bin:/bin',
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
         M11_REAL_PI_EXECUTABLE: executablePath,
         M11_REAL_PI_AGENT_DIRECTORY: agentDirectory,
+        M11_REAL_PI_DURABLE_EXECUTION: 'embedded-sqlite',
         M11_REAL_PI_CANCELLATION_READY_URL: `http://127.0.0.1:${server.port}/m11/local-cancellation-ready`,
       },
       stdout: 'pipe',
@@ -290,6 +296,7 @@ try {
     schemaVersion: 1,
     suite: 'm11-real-pi-process',
     runtimeVersion: inspection.metadata.harnessVersion,
+    runtimeExecutableSha256: executableSha256,
     nodeVersion: node.stdout.trim(),
     bunVersion: process.versions.bun,
     transport: 'direct-local',
@@ -306,10 +313,13 @@ try {
     eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {
       persistence: 'sqlite',
-      workflow: 'real-local-restate',
+      workflow: 'embedded-sqlite-default',
+      externalServices: 0,
+      restateDiscovery: 'unavailable-and-unused-by-workflow',
       execution: 'completed',
       cancellation: 'authenticated-sdk-lost-ack-replay-single-attempt',
       cancellationModelStream: 'closed-before-runtime-cleanup',
+      e2eTest: { exitCode, stdout: stdout.trim(), stderr: stderr.trim() },
     },
     usage: { inputTokens: 11, outputTokens: 3 },
     limitations: inspection.limitations,
