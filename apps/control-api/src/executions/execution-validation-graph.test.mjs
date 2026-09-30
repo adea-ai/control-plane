@@ -113,3 +113,21 @@ test.each([undefined, { validate: async () => false }])(
     expect(plans).toHaveLength(0)
   }
 )
+
+test('rejects credential-bearing graph input before plan persistence', async () => {
+  const { request, service, plans } = setup({ validate: async () => true })
+  const secret = 'secret-canary-graph-input-4a7c'
+  await expect(
+    service.validate(
+      {
+        ...request,
+        payload: {
+          ...request.payload,
+          graph: { ...graph, input: { objective: 'Review', authorization: `Bearer ${secret}` } },
+        },
+      },
+      request.caller.servicePrincipalId
+    )
+  ).rejects.toMatchObject({ status: 422 })
+  expect(plans).toHaveLength(0)
+})

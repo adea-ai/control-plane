@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { isDeepStrictEqual } from 'node:util'
+import { redactTelemetryValue } from '@control-plane/telemetry'
 import {
   ContextCompilationError,
   ContextProviderResolutionError,
@@ -112,11 +113,17 @@ export class DurableExecutionValidationService implements ExecutionValidationSer
       ),
     ])
     if (!projectState) reject()
-    if (
-      request.payload.graph !== undefined &&
-      !(await this.options.graphs?.validate(request.workspaceId, request.payload.graph))
-    )
-      reject()
+    if (request.payload.graph !== undefined) {
+      if (
+        !isDeepStrictEqual(
+          redactTelemetryValue(request.payload.graph.input),
+          request.payload.graph.input
+        )
+      )
+        reject()
+      if (!(await this.options.graphs?.validate(request.workspaceId, request.payload.graph)))
+        reject()
+    }
 
     const approvalGate = this.options.approvalGate
     if (approvalGate !== undefined) {
