@@ -108,6 +108,13 @@ export const PublishedGraphDefinitionSchema = z
   })
   .strict()
   .superRefine((version, context) => {
+    if (Date.parse(version.changedAt) < Date.parse(version.publishedAt)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['changedAt'],
+        message: 'Graph change timestamp must not precede publication',
+      })
+    }
     if (
       version.reference.graphDefinitionId !== version.content.graphDefinitionId ||
       version.reference.graphVersion !== version.content.graphVersion ||
@@ -190,6 +197,7 @@ export class InMemoryGraphDefinitionRepository implements GraphDefinitionReposit
   readonly #versions = new Map<string, PublishedGraphDefinition>()
 
   async insert(version: PublishedGraphDefinition): Promise<boolean> {
+    version = PublishedGraphDefinitionSchema.parse(version)
     const key = versionKey(version.reference)
     if (this.#versions.has(key)) return false
     this.#versions.set(key, structuredClone(version))
@@ -208,9 +216,13 @@ export class InMemoryGraphDefinitionRepository implements GraphDefinitionReposit
     expectedRevision: number,
     version: PublishedGraphDefinition
   ): Promise<boolean> {
+    const parsed = PublishedGraphDefinitionSchema.safeParse(version)
+    if (!parsed.success) return false
+    version = parsed.data
     const key = versionKey(version.reference)
     const current = this.#versions.get(key)
-    if (current?.revision !== expectedRevision || !sameContent(current, version)) return false
+    if (current === undefined || !graphDefinitionUpdateIsValid(current, version, expectedRevision))
+      return false
     this.#versions.set(key, structuredClone(version))
     return true
   }
@@ -329,12 +341,38 @@ function versionKey(reference: { graphDefinitionId: string; graphVersion: string
   return `${reference.graphDefinitionId}:${reference.graphVersion}`
 }
 
+/** Shared persistence fence: lifecycle updates cannot rewrite a published graph or revive it. */
+export function graphDefinitionUpdateIsValid(
+  currentInput: PublishedGraphDefinition,
+  nextInput: PublishedGraphDefinition,
+  expectedRevision: number
+): boolean {
+  const currentResult = PublishedGraphDefinitionSchema.safeParse(currentInput)
+  const nextResult = PublishedGraphDefinitionSchema.safeParse(nextInput)
+  if (!currentResult.success || !nextResult.success || !Number.isSafeInteger(expectedRevision))
+    return false
+  const current = currentResult.data
+  const next = nextResult.data
+  return (
+    expectedRevision > 0 &&
+    current.revision === expectedRevision &&
+    next.revision === expectedRevision + 1 &&
+    sameContent(current, next) &&
+    current.publishedAt === next.publishedAt &&
+    Date.parse(next.changedAt) >= Date.parse(current.changedAt) &&
+    Date.parse(current.changedAt) >= Date.parse(current.publishedAt) &&
+    ((current.lifecycle === 'published' &&
+      (next.lifecycle === 'deprecated' || next.lifecycle === 'revoked')) ||
+      (current.lifecycle === 'deprecated' && next.lifecycle === 'revoked'))
+  )
+}
+
 function sameContent(left: PublishedGraphDefinition, right: PublishedGraphDefinition): boolean {
   return (
     left.reference.graphDefinitionId === right.reference.graphDefinitionId &&
     left.reference.graphVersion === right.reference.graphVersion &&
     left.reference.contentDigest === right.reference.contentDigest &&
-    JSON.stringify(left.content) === JSON.stringify(right.content)
+    canonicalJsonStringify(left.content) === canonicalJsonStringify(right.content)
   )
 }
 

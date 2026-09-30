@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import {
   REFERENCE_RETENTION_NAMESPACES,
   SqlitePersistenceError,
@@ -31,6 +32,59 @@ async function provider() {
 }
 
 describe('SQLite persistence provider', () => {
+  test('cold startup waits for an existing exclusive lock before configuring WAL', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-'))
+    directories.push(directory)
+    const path = join(directory, 'control-plane.sqlite')
+    const seed = new DatabaseSync(path)
+    seed.exec('CREATE TABLE startup_probe (id INTEGER PRIMARY KEY)')
+    seed.close()
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require('node:worker_threads')
+        const { DatabaseSync } = require('node:sqlite')
+        const database = new DatabaseSync(workerData.path)
+        database.exec('BEGIN EXCLUSIVE')
+        parentPort.once('message', () => {
+          setTimeout(() => {
+            database.exec('ROLLBACK')
+            database.close()
+            parentPort.postMessage('released')
+          }, 100)
+        })
+        parentPort.postMessage('locked')
+      `,
+      { eval: true, workerData: { path } }
+    )
+    const instance = new SqlitePersistenceProvider({ path })
+    providers.push(instance)
+    const originalExec = DatabaseSync.prototype.exec
+    try {
+      await new Promise((resolve, reject) => {
+        worker.once('message', resolve)
+        worker.once('error', reject)
+      })
+      // Release only when native initialization reaches the WAL boundary;
+      // filesystem setup may take arbitrarily long while the worker holds its lock.
+      DatabaseSync.prototype.exec = function (sql, ...parameters) {
+        if (sql.includes('PRAGMA journal_mode = WAL')) worker.postMessage('release', [])
+        return originalExec.call(this, sql, ...parameters)
+      }
+      await instance.migrate()
+      expect((await instance.health()).ready).toBe(true)
+      const probe = new DatabaseSync(path)
+      try {
+        expect(probe.prepare('PRAGMA journal_mode').get().journal_mode).toBe('wal')
+      } finally {
+        probe.close()
+      }
+    } finally {
+      DatabaseSync.prototype.exec = originalExec
+      instance.close()
+      await worker.terminate()
+    }
+  }, 10000)
+
   test('restore invalidates reference clocks but ordinary reopen preserves them', async () => {
     const { instance } = await provider()
     const namespaces = Object.values(REFERENCE_RETENTION_NAMESPACES)

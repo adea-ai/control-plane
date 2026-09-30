@@ -168,6 +168,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
+    'packages/database/src/graph-definition-repository.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
