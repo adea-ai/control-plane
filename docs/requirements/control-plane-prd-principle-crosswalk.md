@@ -1,7 +1,8 @@
 # Control Plane PRD principles crosswalk
 
-This is a clause-level extraction review of P00055 and P00057–P00066 in the
-revision pinned by the [PRD inventory](control-plane-prd-extraction-inventory.md).
+This is a historical clause-level extraction review of P00055 and P00057–P00066 in the
+September 22 revision pinned by the [PRD inventory](control-plane-prd-extraction-inventory.md).
+The current PRD is revision 46; this crosswalk has not been refreshed against that revision.
 Compared with the requirement text at commit
 `102242845de3e1fdfe47352ab44fc3d14e015b44`, not with inferred implementation
 behavior. A mapping here does not upgrade a ledger classification, prove its

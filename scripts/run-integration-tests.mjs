@@ -105,7 +105,9 @@ try {
       'postgresql://control_plane_app:local-application-only@127.0.0.1:54329/control_plane',
     RUN_DATABASE_INTEGRATION: 'true',
   }
-  run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1'], {
+  // Stream progress even while a remote database task is unfinished. Grouped
+  // CI logs hide test/setup timing until the whole package exits.
+  run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
     environment: integrationEnvironment,
   })
   run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })

@@ -15,7 +15,10 @@ jobs:
   verify_neon_preview:
     name: Verify migrations and PostgreSQL profile conformance
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Each case keeps an independent database. Remote migration setup alone
+    # takes about 30 seconds per database; preserve that isolation and allow
+    # the expanded integration suite to complete with streamed progress.
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
