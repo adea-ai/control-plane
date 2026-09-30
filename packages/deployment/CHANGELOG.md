@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.0...deployment-v1.10.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.10.0](https://github.com/adea-ai/control-plane/compare/deployment-v1.9.0...deployment-v1.10.0) (2026-09-28)
 
 

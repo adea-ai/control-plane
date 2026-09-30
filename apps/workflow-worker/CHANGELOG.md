@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.0...workflow-worker-v1.11.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.10.1...workflow-worker-v1.11.0) (2026-09-28)
 
 

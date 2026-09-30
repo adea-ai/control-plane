@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.1...local-control-plane-v1.19.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.19.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.0...local-control-plane-v1.19.1) (2026-09-29)
 
 

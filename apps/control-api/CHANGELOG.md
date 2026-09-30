@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.2...control-api-v1.16.3) (2026-09-30)
+
+
+### Bug Fixes
+
+* **m11:** enforce catalog ownership and defer scheduled deletes ([#765](https://github.com/adea-ai/control-plane/issues/765)) ([7cdb1c4](https://github.com/adea-ai/control-plane/commit/7cdb1c4969a6fe8f57d59107d6906067538238dc))
+
 ## [1.16.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.1...control-api-v1.16.2) (2026-09-29)
 
 
