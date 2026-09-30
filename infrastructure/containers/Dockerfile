@@ -13,6 +13,26 @@ FROM dependencies AS build
 
 RUN bun run build
 
+# Assemble an install tree separately from the build tree. Swagger's optional
+# TypeScript peer is needed by its compile-time plugin, not by compiled services.
+# Exclude compiler packages from the runtime artifact while retaining other peers.
+FROM build AS runtime-package
+
+RUN mkdir /runtime-source /runtime-artifact \
+    && tar --exclude=node_modules --exclude='*.tsbuildinfo' -cf /tmp/runtime-source.tar \
+        package.json bun.lock bunfig.toml patches apps packages \
+    && tar -xf /tmp/runtime-source.tar -C /runtime-source
+
+WORKDIR /runtime-source
+
+RUN bun install --frozen-lockfile --production --ignore-scripts \
+    && tar --exclude='./node_modules/.bun/typescript@*' \
+        --exclude='./node_modules/.bun/@typescript+typescript-*' \
+        --exclude='*/node_modules/typescript' --exclude='*/node_modules/@typescript' \
+        --exclude='*/node_modules/.bin/tsc' --exclude='*/node_modules/.bin/tsserver' \
+        -cf /tmp/runtime-artifact.tar . \
+    && tar -xf /tmp/runtime-artifact.tar -C /runtime-artifact
+
 FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS runtime
 
 ARG APP_NAME
@@ -24,7 +44,9 @@ ENV APP_NAME=${APP_NAME} \
 
 WORKDIR /workspace
 
-COPY --from=build --chown=bun:bun /workspace /workspace
+# Only the assembled artifact crosses into runtime; installer caches remain in
+# the producer stage and cannot reintroduce build tools into service images.
+COPY --from=runtime-package --chown=bun:bun /runtime-artifact /workspace
 COPY --chown=bun:bun infrastructure/containers/entrypoint.sh /usr/local/bin/control-plane-entrypoint
 
 # CVE-2026-14456 (OpenSSL denial of service, HIGH): the pinned base digest
