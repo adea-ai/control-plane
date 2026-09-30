@@ -221,7 +221,7 @@
         "sourceRevision": 73,
         "contentSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
         "logicalLines": 234,
-        "atoms": 903,
+        "atoms": 935,
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
@@ -231,7 +231,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The current revision 73 captured-text clause inventory has 903 atoms over 234 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+        "disposition": "The current revision 73 captured-text clause inventory has 935 atoms over 234 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
       }
     },
     {
@@ -391,7 +391,7 @@
         "sourceRevision": 53,
         "contentSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
         "logicalLines": 114,
-        "atoms": 465,
+        "atoms": 466,
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
@@ -401,7 +401,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The current revision 53 captured-text clause inventory has 465 atoms over 114 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+        "disposition": "The current revision 53 captured-text clause inventory has 466 atoms over 114 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
       }
     },
     {
@@ -423,7 +423,7 @@
         "sourceRevision": 50,
         "contentSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
         "logicalLines": 172,
-        "atoms": 323,
+        "atoms": 326,
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
@@ -433,7 +433,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "documentation-governance",
-        "disposition": "The current revision 50 captured-text clause inventory has 323 atoms over 172 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+        "disposition": "The current revision 50 captured-text clause inventory has 326 atoms over 172 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
       }
     },
     {
