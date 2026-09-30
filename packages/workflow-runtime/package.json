@@ -28,7 +28,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
-    "@restatedev/restate-sdk": "1.17.1",
+    "@restatedev/restate-sdk": "1.17.2",
     "zod": "4.6.5"
   },
   "devDependencies": {

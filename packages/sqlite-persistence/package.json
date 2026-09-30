@@ -44,7 +44,7 @@
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
-    "drizzle-orm": "0.45.2"
+    "drizzle-orm": "0.45.3"
   },
   "devDependencies": {
     "@control-plane/config": "workspace:*"

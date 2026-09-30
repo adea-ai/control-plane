@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { describe, expect, test } from 'bun:test'
 import { LocalRestateRuntime, RemoteRestateRuntime, RESTATE_SERVER_VERSION } from './index.ts'
 
@@ -86,7 +87,7 @@ describe('LocalRestateRuntime', () => {
     }
   })
 
-  test('pins 1.7.10, loopback listeners, bounded memory, and durable data', async () => {
+  test('pins 1.7.12, loopback listeners, bounded memory, and durable data', async () => {
     const process = processProvider()
     const runtime = new LocalRestateRuntime({
       executablePath: '/opt/control-plane/restate-server',
@@ -107,9 +108,19 @@ describe('LocalRestateRuntime', () => {
         RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE: '256 MiB',
       },
     })
-    expect(await runtime.health()).toMatchObject({ ready: true, version: '1.7.10' })
+    expect(await runtime.health()).toMatchObject({ ready: true, version: '1.7.12' })
     await runtime.stop()
     expect(process.stops).toEqual(['SIGTERM'])
+  })
+
+  test('matches the server version guard to the packaged binary dependency', async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL('../../../apps/local-control-plane/package.json', import.meta.url),
+        'utf8'
+      )
+    )
+    expect(manifest.dependencies['@restatedev/restate-server']).toBe(RESTATE_SERVER_VERSION)
   })
 
   test('fails before launch for an incompatible binary', async () => {
@@ -118,7 +129,8 @@ describe('LocalRestateRuntime', () => {
       executablePath: '/opt/control-plane/restate-server',
       dataDirectory: '/tmp/control-plane-restate-test',
       processProvider: process.provider,
-      inspectVersion: async () => '1.8.0',
+      inspectVersion: async () => '1.7.10',
+      fetch: async () => ({ ok: true }),
     })
     await expect(runtime.start()).rejects.toMatchObject({
       code: 'RESTATE_BINARY_VERSION_MISMATCH',
