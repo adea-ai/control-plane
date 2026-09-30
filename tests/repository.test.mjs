@@ -546,6 +546,8 @@ test('promotes scan-attested container digests to Railway production', async () 
     workflow,
     /actions\/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8/
   )
+  assert.match(workflow, /create-storage-record: false/)
+  assert.doesNotMatch(workflow, /artifact-metadata: write/)
   assert.match(workflow, /RAILWAY_PRODUCTION_TOKEN: \$\{\{ secrets\.RAILWAY_PRODUCTION_TOKEN \}\}/)
   assert.match(workflow, /test "\$GITHUB_REF_TYPE" = tag/)
   assert.match(workflow, /startsWith\(github\.event\.release\.tag_name, 'workspace-v'\)/)

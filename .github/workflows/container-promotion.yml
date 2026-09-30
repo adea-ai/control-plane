@@ -123,6 +123,8 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
+          # Keep the existing attestation flow without optional metadata writes.
+          create-storage-record: false
 
       - name: Upload promotion evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
