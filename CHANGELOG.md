@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.9...workspace-v1.59.10) (2026-09-30)
+
+
+### Bug Fixes
+
+* **ci:** parse component-only grouped release titles ([#776](https://github.com/adea-ai/control-plane/issues/776)) ([9906193](https://github.com/adea-ai/control-plane/commit/9906193a4822f81b65ce68c7f16502c3932a8dfe))
+
 ## [1.59.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.8...workspace-v1.59.9) (2026-09-30)
 
 
