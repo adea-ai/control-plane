@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.60.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.60.0...workspace-v1.60.1) (2026-09-30)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade runtime to v1.38.1 ([91b0462](https://github.com/adea-ai/control-plane/commit/91b04620ccc71bbc753747d300e63a3494adbf9c))
+* **code-foundry:** upgrade to v1.38.1 ([#800](https://github.com/adea-ai/control-plane/issues/800)) ([91b0462](https://github.com/adea-ai/control-plane/commit/91b04620ccc71bbc753747d300e63a3494adbf9c))
+* **deps:** upgrade TypeScript 7 and exclude compilers from runtime images ([#796](https://github.com/adea-ai/control-plane/issues/796)) ([1ee1281](https://github.com/adea-ai/control-plane/commit/1ee128179e68fe1a2ad4dba3de8fd993ca7e974d))
+
 ## [1.60.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.17...workspace-v1.60.0) (2026-09-30)
 
 
