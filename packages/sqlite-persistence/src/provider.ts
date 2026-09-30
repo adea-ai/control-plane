@@ -212,11 +212,13 @@ export class SqlitePersistenceProvider implements PersistenceProvider {
     await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 })
     await chmod(dirname(this.#path), 0o700)
     const database = new DatabaseSync(this.#path)
+    // WAL configuration can acquire a lock before migrations begin.
+    // Install the bounded busy handler before any lock-taking pragma.
     database.exec(`
+      PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA foreign_keys = ON;
-      PRAGMA busy_timeout = 5000;
       PRAGMA trusted_schema = OFF;
     `)
     await chmod(this.#path, 0o600)

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/sqlite-persistence",
-  "version": "1.28.3",
+  "version": "1.29.0",
   "private": true,
   "files": [
     "dist"
@@ -41,6 +41,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/orchestration": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",

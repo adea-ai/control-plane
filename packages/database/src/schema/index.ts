@@ -37,6 +37,7 @@ export {
   executionState,
 } from './executions.js'
 export { executionPlans } from './execution-plans.js'
+export { graphDefinitionVersions } from './graph-definitions.js'
 export { executionValidationCommands } from './execution-validation-commands.js'
 export {
   projectStateMutations,
