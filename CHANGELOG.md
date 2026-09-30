@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.59.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.12...workspace-v1.59.13) (2026-09-30)
+
+
+### Bug Fixes
+
+* **database:** separate cold fixtures and direct revocation sessions ([#783](https://github.com/adea-ai/control-plane/issues/783)) ([62e9b1a](https://github.com/adea-ai/control-plane/commit/62e9b1a48b645329f972aec9fae76b04da239905))
+
+
+### Documentation
+
+* **requirements:** inventory architecture, data, evaluation and compatibility clauses ([#784](https://github.com/adea-ai/control-plane/issues/784)) ([b309944](https://github.com/adea-ai/control-plane/commit/b309944de98b57db3fe28bc0bd2ffdd8f6537f1e))
+
 ## [1.59.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.11...workspace-v1.59.12) (2026-09-30)
 
 
