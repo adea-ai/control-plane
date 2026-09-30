@@ -58,11 +58,11 @@
   },
   "devDependencies": {
     "@opentelemetry/api": "1.9.1",
-    "@sentry/node": "10.75.0"
+    "@sentry/node": "11.0.0"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.0",
-    "@sentry/node": "^10.73.0"
+    "@sentry/node": "^10.73.0 || ^11.0.0"
   },
   "peerDependenciesMeta": {
     "@opentelemetry/api": {

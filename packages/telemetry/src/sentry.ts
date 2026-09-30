@@ -25,6 +25,21 @@ const disabledTracker: ErrorTracker = {
   async flush() {},
 }
 
+const restrictedDataCollection = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: {
+    request: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+    response: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+  },
+  httpBodies: [],
+  urlQueryParams: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  graphQL: { document: false, variables: false },
+}
+
 export async function createSentryErrorTracker(
   options: SentryErrorTrackerOptions
 ): Promise<ErrorTracker> {
@@ -39,7 +54,7 @@ export async function createSentryErrorTracker(
       enabled: true,
       environment: options.environment,
       release: options.release,
-      sendDefaultPii: false,
+      dataCollection: restrictedDataCollection,
     })
   } catch {
     return disabledTracker

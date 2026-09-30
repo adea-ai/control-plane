@@ -385,7 +385,7 @@ describe('telemetry safety and correlation', () => {
     expect(JSON.stringify(errors)).not.toContain('private')
   })
 
-  test('configures Sentry without PII and redacts captured diagnostics', async () => {
+  test('keeps Sentry data collection restricted and redacts captured diagnostics', async () => {
     const calls = { captured: [], contexts: [], initialized: [] }
     const sdk = {
       captureException(error) {
@@ -412,8 +412,25 @@ describe('telemetry safety and correlation', () => {
     await tracker.flush?.()
 
     expect(calls.initialized[0]).toEqual(
-      expect.objectContaining({ enabled: true, sendDefaultPii: false })
+      expect.objectContaining({
+        enabled: true,
+        dataCollection: {
+          userInfo: false,
+          cookies: false,
+          httpHeaders: {
+            request: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+            response: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+          },
+          httpBodies: [],
+          urlQueryParams: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+          genAI: { inputs: false, outputs: false },
+          databaseQueryData: false,
+          queues: false,
+          graphQL: { document: false, variables: false },
+        },
+      })
     )
+    expect(calls.initialized[0]).not.toHaveProperty('sendDefaultPii')
     expect(JSON.stringify({ captured: calls.captured, contexts: calls.contexts })).not.toContain(
       'private'
     )

@@ -194,7 +194,7 @@ describe('Local Control Plane composition', () => {
           externalServices: 0,
           runtimeTransport: 'direct-local',
           durableExecution: 'restate',
-          restateVersion: '1.7.10',
+          restateVersion: '1.7.12',
           persistence: 'sqlite',
           objectStore: 'filesystem',
           remoteControl: 'disabled',
@@ -225,7 +225,7 @@ describe('Local Control Plane composition', () => {
       topology: {
         externalServices: 0,
         runtimeTransport: 'direct-local',
-        restateVersion: '1.7.10',
+        restateVersion: '1.7.12',
         persistence: 'sqlite',
         objectStore: 'filesystem',
         remoteControl: 'disabled',

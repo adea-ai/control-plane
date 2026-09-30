@@ -3,7 +3,7 @@ import { AcpDriver } from './index.ts'
 import { AcpProcessTransport } from './process-transport.ts'
 
 const source = `
-let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0, resumes=0;
+let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0, resumes=0, lateCreate=null;
 const pending=new Map();
 const creating=[];
 const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
@@ -32,6 +32,11 @@ process.stdin.on('data',chunk=>{
   if(m.method==='close-probe')reply(m.id,{closes});
   if(m.method==='resume-probe')reply(m.id,{resumes});
   if(m.method==='late-ready')setTimeout(()=>reply(m.id,{}),500);
+  if(m.method==='release-late-create'&&lateCreate){
+   const {id,sessionId}=lateCreate;lateCreate=null;
+   send({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'available_commands_update'}}});
+   reply(id,{sessionId});reply(m.id,{released:true});
+  }
   if(m.method==='session/resume'){
    resumes++;
    if(m.params.cwd!==process.cwd()||!Array.isArray(m.params.mcpServers))throw Error('missing resume configuration');
@@ -48,6 +53,7 @@ process.stdin.on('data',chunk=>{
   }
   if(m.method==='session/new'){
    creates++;
+   if(process.env.SCENARIO==='late-create-gated'&&creates===1){lateCreate={id:m.id,sessionId:'native-'+creates};continue;}
    if(process.env.SCENARIO==='late-create'&&creates===1){
     const sessionId='native-'+creates;
     setTimeout(()=>{send({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'available_commands_update'}}});reply(m.id,{sessionId});},1200);
@@ -117,11 +123,12 @@ test('a late native create response recovers the same token and permits explicit
 })
 
 test('driver retry reclaims a late-created session before issuing a new create', async () => {
-  const { transport, driver } = fixture('late-create')
+  const { transport, driver } = fixture('late-create-gated')
   try {
     await transport.open()
     await expect(driver.start(startRequest)).rejects.toThrow()
-    await transport.request('late-ready', {})
+    // Release only after the first call has observed its real transport timeout.
+    await transport.request('release-late-create', {})
     const handle = await driver.start(startRequest)
     expect(await transport.request('probe', {})).toEqual({ creates: 2, prompts: 1 })
     expect(await transport.request('close-probe', {})).toEqual({ closes: 1 })
