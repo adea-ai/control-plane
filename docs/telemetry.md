@@ -22,7 +22,7 @@ Telemetry may contain identifiers, event names, bounded status values, timings, 
 templates, and sanitized error classifications. It must not contain credentials, authorization or
 cookie headers, prompts, file contents, model inputs, tool inputs, arbitrary request/response bodies,
 or full third-party payloads. Known secret fields and `key=value` diagnostics are redacted before a
-log, span, or Sentry adapter receives them. Sentry is initialized with `sendDefaultPii: false`.
+log, span, or Sentry adapter receives them. Sentry 11 is initialized with explicit `dataCollection` restrictions: user information, cookies, HTTP bodies, generative AI inputs/outputs, database query data, queue data, and GraphQL documents/variables are disabled; identifying request/response headers and query parameters are filtered. The removed `sendDefaultPii` option is not used.
 
 Development uses correlated console span events. Staging and production use the OpenTelemetry API
 adapter, which remains a no-op until a deployment registers an SDK/exporter. Tests can inject a
