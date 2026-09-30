@@ -1,0 +1,55 @@
+{
+  "release": "workspace-v1.59.8",
+  "commit": "fdc057e4a8393aa6751937a7999f5b2eef08078b",
+  "promotionRun": "https://github.com/adea-ai/control-plane/actions/runs/36683198399",
+  "services": {
+    "api": {
+      "deploymentId": "07eff796-e1f2-4efc-824a-8b49166b5df1",
+      "status": "SUCCESS",
+      "image": "ghcr.io/adea-ai/control-plane-control-api@sha256:57db6f5488d5c257a487a1e26b6c91dfc5aa376000dbf11aead6cefcd795ce85",
+      "startupEvents": [
+        {
+          "event": "service.starting",
+          "timestamp": "2026-09-30T07:35:33.931Z",
+          "commitSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b"
+        },
+        {
+          "event": "service.started",
+          "timestamp": "2026-09-30T07:35:34.685Z",
+          "commitSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b"
+        }
+      ],
+      "promotion": {
+        "target": "control-api",
+        "image": "ghcr.io/adea-ai/control-plane-control-api",
+        "digest": "sha256:57db6f5488d5c257a487a1e26b6c91dfc5aa376000dbf11aead6cefcd795ce85",
+        "sourceSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b",
+        "release": "workspace-v1.59.8"
+      }
+    },
+    "worker": {
+      "deploymentId": "456c8115-5458-4a64-8b42-066e93bb683a",
+      "status": "SUCCESS",
+      "image": "ghcr.io/adea-ai/control-plane-workflow-worker@sha256:8daa982fdfafc195fb4d87fd2d93a51f736793334ccb6310a50e08205f5cd2de",
+      "startupEvents": [
+        {
+          "event": "service.starting",
+          "timestamp": "2026-09-30T07:35:59.403Z",
+          "commitSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b"
+        },
+        {
+          "event": "service.started",
+          "timestamp": "2026-09-30T07:36:00.032Z",
+          "commitSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b"
+        }
+      ],
+      "promotion": {
+        "target": "workflow-worker",
+        "image": "ghcr.io/adea-ai/control-plane-workflow-worker",
+        "digest": "sha256:8daa982fdfafc195fb4d87fd2d93a51f736793334ccb6310a50e08205f5cd2de",
+        "sourceSha": "fdc057e4a8393aa6751937a7999f5b2eef08078b",
+        "release": "workspace-v1.59.8"
+      }
+    }
+  }
+}
