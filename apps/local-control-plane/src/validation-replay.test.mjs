@@ -262,9 +262,7 @@ test('local composition replays validation after a SQLite reopen without compila
       now: () => {
         throw new Error('REPLAY_READ_CLOCK')
       },
-      profiles: { getAgentProfileVersion: unexpected },
       projectStates: { getAtRevision: unexpected },
-      skills: { getSkillVersion: unexpected },
       contextPackages: { get: unexpected },
       approvalGate: { approvals: { list: unexpected }, policy: { required: true } },
     })

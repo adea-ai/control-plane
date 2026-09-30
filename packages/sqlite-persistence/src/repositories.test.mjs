@@ -80,7 +80,10 @@ function service(provider, now = receivedAt, repositoryOptions) {
   return new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(provider, repositoryOptions),
     executionIdFactory: () => ids.executionId,
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator: {
+      validate: async () => true,
+      authorize: async () => true,
+    },
     now: () => now,
   })
 }
@@ -241,7 +244,10 @@ describe('SQLite domain repositories', () => {
       const template = await new CommandInboxService({
         repository: new InMemoryCommandAcceptanceRepository(),
         executionIdFactory: () => ids.executionId,
-        executionPlanValidator: { validate: async () => true },
+        executionPlanValidator: {
+          validate: async () => true,
+          authorize: async () => true,
+        },
         now: () => receivedAt,
       }).acceptExecution(commandInput())
       const executions = new SqliteExecutionRepository(provider)
@@ -298,7 +304,10 @@ describe('SQLite domain repositories', () => {
         const service = new CommandInboxService({
           repository: new SqliteCommandAcceptanceRepository(provider),
           executionIdFactory: () => ${JSON.stringify(ids.executionId)},
-          executionPlanValidator: { validate: async () => true },
+          executionPlanValidator: {
+            validate: async () => true,
+            authorize: async () => true,
+          },
           now: () => ${JSON.stringify(receivedAt)},
           failureInjector: { checkpoint(name) {
             if (name === 'control_api.after_accept') process.exit(73);
@@ -327,6 +336,7 @@ describe('SQLite domain repositories', () => {
           throw new Error('REPLAY_MUST_NOT_ALLOCATE')
         },
         executionPlanValidator: {
+          authorize: async () => true,
           validate: async () => {
             throw new Error('REPLAY_MUST_NOT_REVALIDATE')
           },
@@ -537,7 +547,10 @@ describe('SQLite domain repositories', () => {
         const template = await new CommandInboxService({
           repository: new InMemoryCommandAcceptanceRepository(),
           executionIdFactory: () => ids.executionId,
-          executionPlanValidator: { validate: async () => true },
+          executionPlanValidator: {
+            validate: async () => true,
+            authorize: async () => true,
+          },
           now: () => receivedAt,
         }).acceptExecution(commandInput())
         // Seed the pre-policy persisted shape without using new-acceptance validation.
@@ -1001,7 +1014,10 @@ describe('SQLite retention sweep', () => {
       const retentionService = new CommandInboxService({
         repository,
         executionIdFactory: () => ids.executionId,
-        executionPlanValidator: { validate: async () => true },
+        executionPlanValidator: {
+          validate: async () => true,
+          authorize: async () => true,
+        },
         now: () => receivedAt,
       })
       const input = commandInput({
@@ -1041,7 +1057,10 @@ describe('SQLite retention sweep', () => {
         new CommandInboxService({
           repository,
           executionIdFactory: () => executionId,
-          executionPlanValidator: { validate: async () => true },
+          executionPlanValidator: {
+            validate: async () => true,
+            authorize: async () => true,
+          },
           now: () => receivedAt,
         })
 

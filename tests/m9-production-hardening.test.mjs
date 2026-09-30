@@ -182,7 +182,9 @@ describe('M9 production hardening acceptance', () => {
     const service = new CommandInboxService({
       repository,
       executionIdFactory: () => 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      executionPlanValidator: { validate: async () => true },
+      // This test isolates durable inbox recovery; ownership authorization is
+      // explicitly permitted by the fake so replay can exercise the inbox path.
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => command.receivedAt,
       failureInjector: injector,
     })

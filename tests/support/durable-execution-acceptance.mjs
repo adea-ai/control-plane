@@ -38,6 +38,7 @@ export async function createDurableExecutionAcceptanceHarness({ interaction = tr
     repository: commandRepository,
     executionIdFactory: () => durableExecutionIds.executionId,
     executionPlanValidator: {
+      authorize: async () => true,
       validate: async ({ executionPlan }) => {
         planValidations += 1
         return (
