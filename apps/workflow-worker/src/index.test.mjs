@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { loadManagedCloudConfiguration } from '@control-plane/config'
 import { CommandInboxService } from '@control-plane/domain'
+import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DurableExecutionLifecycleActivities } from './cloud-execution-activities.ts'
 import { createManagedCloudWorkflowWorkerComposition, start } from './index.ts'
 import { DurableRemoteWorkflowRuntime } from './remote-workflow-runtime.ts'
@@ -138,11 +139,114 @@ describe('workflow worker telemetry', () => {
 
   test('passes the consistency emitter from an injected adapter into the composed command inbox', async () => {
     const adapter = new RecordingMetricAdapter()
+    const executionPlan = createExecutionPlanTestFixture()
+    const [skillPin] = executionPlan.skills
+    if (!skillPin) throw new Error('TEST_PLAN_REQUIRES_A_SKILL')
+    const fixtureDate = new Date(executionPlan.compiledAt)
+    const rowsByTable = new Map([
+      ['execution_plans', [{ plan: executionPlan }]],
+      [
+        'agent_profile_versions',
+        [
+          {
+            profileVersionId: executionPlan.profile.profileVersionId,
+            profileId: executionPlan.profile.profileId,
+            version: executionPlan.profile.version,
+            revision: executionPlan.profile.revision,
+            lifecycle: 'published',
+            contentDigest: executionPlan.profile.contentDigest,
+            definition: {
+              schemaVersion: executionPlan.profile.schemaVersion,
+              roleInstructions: 'Complete the assigned task safely.',
+              skills: [
+                {
+                  skillId: skillPin.skillId,
+                  skillVersionId: skillPin.skillVersionId,
+                  contentDigest: skillPin.contentDigest,
+                },
+              ],
+              capabilityRequirements: [],
+              executionConstraints: executionPlan.constraints,
+              outputContractRefs: [executionPlan.outputContract.contractRef],
+            },
+            createdAt: fixtureDate,
+            lifecycleMetadata: { publishedAt: executionPlan.compiledAt },
+          },
+        ],
+      ],
+      [
+        'agent_profiles',
+        [
+          {
+            profileId: executionPlan.profile.profileId,
+            displayName: 'Telemetry fixture',
+            ownership: { scope: 'system' },
+            createdAt: fixtureDate,
+          },
+        ],
+      ],
+      [
+        'skill_versions',
+        [
+          {
+            skillVersionId: skillPin.skillVersionId,
+            skillId: skillPin.skillId,
+            revision: skillPin.revision,
+            lifecycle: 'published',
+            manifest: {
+              schemaVersion: 1,
+              semanticVersion: skillPin.semanticVersion,
+              contentDigest: skillPin.contentDigest,
+              requiredCapabilities: [],
+              requiredTools: [],
+              compatibleProfileSchemaVersions: [1],
+              compatibleContractMajorVersions: [1],
+            },
+            content: { instructions: 'Fixture instruction.', artifactRefs: [] },
+            createdAt: fixtureDate,
+            lifecycleMetadata: { publishedAt: executionPlan.compiledAt },
+          },
+        ],
+      ],
+      [
+        'skills',
+        [
+          {
+            skillId: skillPin.skillId,
+            displayName: 'Telemetry fixture skill',
+            ownership: { scope: 'system' },
+            provenance: {
+              source: 'system-curated',
+              ownerRef: 'control-plane-test-fixture',
+              trust: 'trusted',
+            },
+            createdAt: fixtureDate,
+          },
+        ],
+      ],
+    ])
+    const database = {
+      select() {
+        let table
+        return {
+          from(value) {
+            table = value?.[Symbol.for('drizzle:Name')]
+            return {
+              where() {
+                return {
+                  limit: async () => rowsByTable.get(table) ?? [],
+                }
+              },
+            }
+          },
+        }
+      },
+    }
     const composition = createManagedCloudWorkflowWorkerComposition(
       loadManagedCloudConfiguration(managedCloudEnvironment(), 'workflow-worker'),
       runtimePort(),
       undefined,
-      () => ({ database: {}, check: async () => undefined, close: async () => undefined }),
+      () => ({ database, check: async () => undefined, close: async () => undefined }),
       adapter
     )
     expect(composition.commands).toBeInstanceOf(CommandInboxService)
@@ -151,6 +255,16 @@ describe('workflow worker telemetry', () => {
     const record = {
       executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
       payloadHash: 'a'.repeat(64),
+      callerPrincipalId: 'svc_worker',
+      workspaceId: executionPlan.correlation.workspaceId,
+      projectId: executionPlan.correlation.projectId,
+      taskId: executionPlan.correlation.taskId,
+      agentId: executionPlan.correlation.agentId,
+      executionPlan: {
+        executionPlanId: executionPlan.executionPlanId,
+        contentDigest: executionPlan.contentDigest,
+        schemaVersion: executionPlan.schemaVersion,
+      },
       retentionExpiresAt: new Date(Date.now() + 600000).toISOString(),
     }
     composition.commands.repository = {
@@ -169,19 +283,19 @@ describe('workflow worker telemetry', () => {
       callerPrincipalId: 'svc_worker',
       operation: 'execution.accept',
       commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      requestId: executionPlan.correlation.requestId,
       idempotencyKey: 'consistency-metrics-replay-key-1',
       payloadHash: record.payloadHash,
       correlation: {
-        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        workspaceId: executionPlan.correlation.workspaceId,
+        projectId: executionPlan.correlation.projectId,
+        taskId: executionPlan.correlation.taskId,
+        agentId: executionPlan.correlation.agentId,
       },
       executionPlan: {
-        executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        contentDigest: `sha256:${'b'.repeat(64)}`,
-        schemaVersion: 1,
+        executionPlanId: executionPlan.executionPlanId,
+        contentDigest: executionPlan.contentDigest,
+        schemaVersion: executionPlan.schemaVersion,
       },
       receivedAt,
       retentionExpiresAt: new Date(Date.parse(receivedAt) + 600000).toISOString(),

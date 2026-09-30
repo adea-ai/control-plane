@@ -61,7 +61,7 @@ function setup({ now = receivedAt, planValid = true } = {}) {
   const service = new CommandInboxService({
     repository,
     executionIdFactory: () => ids.executionId,
-    executionPlanValidator: { validate: async () => planValid },
+    executionPlanValidator: { authorize: async () => true, validate: async () => planValid },
     now: () => now,
   })
   return { repository, service }
@@ -98,7 +98,7 @@ describe('CommandInbox execution acceptance', () => {
       executionIdFactory: () => {
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
-      executionPlanValidator: { validate: async () => false },
+      executionPlanValidator: { authorize: async () => true, validate: async () => false },
       now: () => receivedAt,
     })
     const result = await restarted.acceptExecution(
@@ -184,6 +184,7 @@ describe('CommandInbox execution acceptance', () => {
         throw new Error('REPLAY_MUST_NOT_ALLOCATE')
       },
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           throw new Error('REPLAY_MUST_NOT_VALIDATE')
         },
@@ -196,6 +197,88 @@ describe('CommandInbox execution acceptance', () => {
     })
     expect(checks).toBe(1)
   })
+
+  test.each(['accepted', 'reconciliation_required'])(
+    'fails closed on a pending %s replay when its historical plan is missing',
+    async (pendingStatus) => {
+      const { repository, service } = setup()
+      const accepted = await service.acceptExecution(commandInput())
+      if (pendingStatus === 'reconciliation_required') {
+        await service.transitionCommand({
+          ...commandInput(),
+          expectedVersion: accepted.command.version,
+          to: 'reconciliation_required',
+          transitionedAt: '2026-08-24T10:01:00.000Z',
+          errorReference: 'reconciliation://lost-ack/1',
+        })
+      }
+      const before = await repository.get(commandScope())
+      const restarted = new CommandInboxService({
+        repository,
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: {
+          authorize: async () => 'historical_plan_missing',
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_VALIDATE')
+          },
+        },
+        now: () => receivedAt,
+      })
+
+      await expect(restarted.acceptExecution(commandInput())).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      expect(await repository.get(commandScope())).toEqual(before)
+      expect(repository.executionCount).toBe(1)
+    }
+  )
+
+  test.each(['processing', 'completed', 'failed'])(
+    'allows exact %s replay after its historical plan is retired',
+    async (settledStatus) => {
+      const { repository, service } = setup()
+      const accepted = await service.acceptExecution(commandInput())
+      let current = await service.transitionCommand({
+        ...commandInput(),
+        expectedVersion: accepted.command.version,
+        to: 'processing',
+        transitionedAt: '2026-08-24T10:01:00.000Z',
+      })
+      if (settledStatus !== 'processing') {
+        current = await service.transitionCommand({
+          ...commandInput(),
+          expectedVersion: current.version,
+          to: settledStatus,
+          transitionedAt: '2026-08-24T10:02:00.000Z',
+          ...(settledStatus === 'completed'
+            ? { resultReference: ids.artifactId }
+            : { errorReference: 'error://execution/failed' }),
+        })
+      }
+      const restarted = new CommandInboxService({
+        repository,
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: {
+          authorize: async () => 'historical_plan_missing',
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_VALIDATE')
+          },
+        },
+        now: () => receivedAt,
+      })
+
+      await expect(restarted.acceptExecution(commandInput())).resolves.toMatchObject({
+        replayed: true,
+        command: { status: settledStatus },
+      })
+      expect(await repository.get(commandScope())).toEqual(current)
+      expect(repository.executionCount).toBe(1)
+    }
+  )
 
   test('checks admission on the duplicate race path before returning it', async () => {
     const { repository, service } = setup()
@@ -259,6 +342,7 @@ describe('CommandInbox execution acceptance', () => {
       repository,
       executionIdFactory: () => ids.executionId,
       executionPlanValidator: {
+        authorize: async () => true,
         validate: async () => {
           validations += 1
           return validations === 1
@@ -391,7 +475,7 @@ describe('CommandInbox execution acceptance', () => {
     const expiredService = new CommandInboxService({
       repository: service.repository,
       executionIdFactory: () => ids.executionId,
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => '2026-09-23T10:00:00.001Z',
     })
     await expect(expiredService.acceptExecution(commandInput())).rejects.toMatchObject({

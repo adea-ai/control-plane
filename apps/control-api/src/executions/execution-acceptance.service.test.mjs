@@ -112,7 +112,7 @@ test.each(['optimistic replay', 'acceptance race'])(
     const commands = new CommandInboxService({
       repository,
       executionIdFactory: () => 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => request.issuedAt,
     })
     const accepted = await commands.acceptExecution({

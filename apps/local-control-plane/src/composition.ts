@@ -501,17 +501,13 @@ export class LocalControlPlaneComposition {
         batchLimit: reconciliation.batchLimit,
       })
     }
-    // M11.9 retention worker: physical deletion of records past their
-    // retention deadline, scheduled at a slow fixed cadence.
+    // M11.9 retention worker: read-only retention assessment on a slow fixed
+    // cadence. Physical deletion remains an explicit operator action.
     if (options.retention !== undefined) {
       const commandInboxRepository = new SqliteCommandAcceptanceRepository(this.persistence)
       const executionEventRepository = new SqliteExecutionEventRepository(this.persistence)
       const retentionPolicy = decidedRetentionPolicy
       this.#retentionSweep = new RetentionSweep({
-        commandInbox: commandInboxRepository,
-        executionEvents: executionEventRepository,
-        // #194: deletion is fail-closed, so the pass reports retained growth
-        // and the reasons on stderr for the local operator.
         assessCommandInbox: (now) =>
           commandInboxRepository.assessExpiredInbox(now, {
             policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
@@ -521,17 +517,21 @@ export class LocalControlPlaneComposition {
             policyRetainMs: retentionClassPolicy(retentionPolicy, 'execution-events').retainMs,
           }),
         intervalMs: options.retention.sweepIntervalMs,
-        onReport: (report) =>
-          console.error(
-            JSON.stringify({
-              event: 'retention.sweep',
-              inbox: report.inbox,
-              events: report.events,
-              blocked: report.blocked,
-              commandInbox: report.assessment.commandInbox,
-              executionEvents: report.assessment.executionEvents,
-            })
-          ),
+        onReport: (report) => {
+          const level =
+            report.assessment.commandInbox.eligible > 0 ||
+            report.assessment.executionEvents.eligible > 0
+              ? 'warn'
+              : 'info'
+          const output = JSON.stringify({
+            level,
+            event: 'retention.sweep',
+            commandInbox: report.assessment.commandInbox,
+            executionEvents: report.assessment.executionEvents,
+          })
+          if (level === 'warn') console.warn(output)
+          else console.info(output)
+        },
       })
     }
     // The Restate workflow endpoint exists only in restate mode; embedded mode

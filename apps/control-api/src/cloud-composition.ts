@@ -134,10 +134,6 @@ export function createManagedCloudControlApiComposition(
   const commandInboxRepository = new PostgresCommandAcceptanceRepository(connection.database)
   const executionEventRepository = new PostgresExecutionEventRepository(connection.database)
   const retentionSweep = new RetentionSweep({
-    commandInbox: commandInboxRepository,
-    executionEvents: executionEventRepository,
-    // #194: deletion stays fail-closed, so each pass reports how many expired
-    // candidates exist and why the retained ones are blocked.
     assessCommandInbox: (now) =>
       commandInboxRepository.assessExpiredInbox(now, {
         policyRetainMs: retentionClassPolicy(retentionPolicy, 'command-inbox').retainMs,
@@ -150,18 +146,15 @@ export function createManagedCloudControlApiComposition(
     onError: () => logger.write({ level: 'error', event: 'retention.sweep_failed' }),
     onReport: (report) =>
       logger.write({
-        level: report.blocked.length === 0 ? 'info' : 'warn',
+        level:
+          report.assessment.commandInbox.eligible > 0 ||
+          report.assessment.executionEvents.eligible > 0
+            ? 'warn'
+            : 'info',
         event: 'retention.sweep',
         metadata: {
-          inbox: report.inbox,
-          events: report.events,
-          blocked: [...report.blocked],
-          ...(report.assessment.commandInbox === undefined
-            ? {}
-            : { commandInbox: report.assessment.commandInbox }),
-          ...(report.assessment.executionEvents === undefined
-            ? {}
-            : { executionEvents: report.assessment.executionEvents }),
+          commandInbox: report.assessment.commandInbox,
+          executionEvents: report.assessment.executionEvents,
         },
       }),
   })

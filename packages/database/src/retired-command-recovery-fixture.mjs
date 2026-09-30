@@ -27,7 +27,7 @@ export async function seedRetiredCommandRecoveryFixture(database) {
   const service = new CommandInboxService({
     repository,
     executionIdFactory: () => `exe_${suffix}`,
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator: { authorize: async () => true, validate: async () => true },
     now: () => receivedAt,
   })
   const accepted = await service.acceptExecution({

@@ -168,13 +168,28 @@ export class InMemoryCommandAcceptanceRepository implements CommandAcceptanceRep
   }
 }
 
+/**
+ * Replay authorization can report that the retained plan no longer exists.
+ * Boolean results remain supported for existing validator implementations.
+ */
+export type ExecutionPlanReplayAuthorization = boolean | 'historical_plan_missing'
+
 export interface ExecutionPlanAcceptanceValidator {
+  authorize(input: {
+    readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
+    readonly workspaceId: string
+    readonly projectId: string
+    readonly taskId: string
+    readonly agentId: string
+    readonly callerPrincipalId: string
+  }): Promise<ExecutionPlanReplayAuthorization>
   validate(input: {
     readonly executionPlan: z.output<typeof ExecutionPlanPinSchema>
     readonly workspaceId: string
     readonly projectId: string
     readonly taskId: string
     readonly agentId: string
+    readonly callerPrincipalId: string
   }): Promise<boolean>
 }
 
@@ -328,7 +343,24 @@ export class CommandInboxService {
     const parsed = AcceptExecutionSchema.parse(input)
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
-    if (existing) return this.#replay(existing, parsed.payloadHash)
+    if (existing) {
+      if (existing.payloadHash === parsed.payloadHash) {
+        const authorization = await this.#executionPlanValidator.authorize({
+          executionPlan: existing.executionPlan,
+          workspaceId: existing.workspaceId,
+          projectId: existing.projectId,
+          taskId: existing.taskId,
+          agentId: existing.agentId,
+          callerPrincipalId: existing.callerPrincipalId,
+        })
+        const dispatchPending =
+          existing.status === 'accepted' || existing.status === 'reconciliation_required'
+        if (authorization === 'historical_plan_missing' ? dispatchPending : !authorization) {
+          fail('INVALID_EXECUTION_PLAN_REFERENCE')
+        }
+      }
+      return this.#replay(existing, parsed.payloadHash)
+    }
     if (!NewExecutionAcceptanceSchema.safeParse(parsed).success) fail('INVALID_COMMAND_RETENTION')
     if (
       !(await this.#executionPlanValidator.validate({
@@ -337,6 +369,7 @@ export class CommandInboxService {
         projectId: parsed.correlation.projectId,
         taskId: parsed.correlation.taskId,
         agentId: parsed.correlation.agentId,
+        callerPrincipalId: parsed.callerPrincipalId,
       }))
     ) {
       fail('INVALID_EXECUTION_PLAN_REFERENCE')

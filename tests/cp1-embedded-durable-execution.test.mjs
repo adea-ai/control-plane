@@ -42,6 +42,7 @@ import {
 } from '@control-plane/database'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import process from 'node:process'
+import { seedSystemCatalogOwners } from '../apps/local-control-plane/src/test-catalog-owners.mjs'
 
 const observedAt = '2026-09-18T12:00:00.000Z'
 const interactionId = 'int_01JABCDEF0123456789ABCDEFG'
@@ -131,6 +132,7 @@ describe('CP1 conformance resource ownership', () => {
 
 async function seedLocalPlan(composition) {
   const inputs = createExecutionPlanTestFixtureInputs()
+  await seedSystemCatalogOwners(composition.catalog, inputs.profile, inputs.skills)
   await composition.catalog.insertAgentProfileVersion(inputs.profile)
   for (const skill of inputs.skills) await composition.catalog.insertSkillVersion(skill)
   await new SqliteContextPackageRepository(composition.persistence).put(inputs.contextPackage)

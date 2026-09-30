@@ -13,18 +13,9 @@ export interface RetentionAssessmentSummary {
 }
 
 export interface RetentionSweepOptions {
-  readonly commandInbox: { readonly deleteExpiredInbox: (now: Date) => Promise<number> }
-  readonly executionEvents: {
-    readonly deleteExpiredEvents: (now: Date) => Promise<number>
-  }
-  /**
-   * Optional read-only eligibility assessment (#194). Deletion stays
-   * fail-closed until the claim path exists, so a pass reports how many
-   * expired candidates exist, how many are eligible, and why the rest are
-   * retained instead of only failing.
-   */
-  readonly assessCommandInbox?: (now: Date) => Promise<RetentionAssessmentSummary>
-  readonly assessExecutionEvents?: (now: Date) => Promise<RetentionAssessmentSummary>
+  /** Read-only assessments; scheduled passes have no physical-deletion port. */
+  readonly assessCommandInbox: (now: Date) => Promise<RetentionAssessmentSummary>
+  readonly assessExecutionEvents: (now: Date) => Promise<RetentionAssessmentSummary>
   /** Non-overlapping sweep cadence; a slow pass never overlaps the next one. */
   readonly intervalMs: number
   readonly onError?: (error: unknown) => void
@@ -35,34 +26,20 @@ export interface RetentionSweepOptions {
 /** Counts and reason codes only; never record payloads or identifiers. */
 export interface RetentionSweepReport {
   readonly at: string
-  readonly inbox: number
-  readonly events: number
-  /** Class guards that refused deletion this pass, by error code. */
-  readonly blocked: readonly string[]
   readonly assessment: {
-    readonly commandInbox?: RetentionAssessmentSummary
-    readonly executionEvents?: RetentionAssessmentSummary
+    readonly commandInbox: RetentionAssessmentSummary
+    readonly executionEvents: RetentionAssessmentSummary
   }
 }
-
-const ELIGIBILITY_REQUIRED = new Set([
-  'COMMAND_RETENTION_ELIGIBILITY_REQUIRED',
-  'EVENT_RETENTION_ELIGIBILITY_REQUIRED',
-])
 
 const MAXIMUM_INTERVAL_MS = 3_600_000 * 24
 
 /**
- * M11.9 retention worker (#194): completion-scheduled, non-overlapping sweeps
- * that physically delete durable records past their retention deadline.
- * Explicit composition configuration only — constructing the sweep without
- * starting it enables nothing. Storage-neutral: the command-inbox and
- * execution-events deletions are supplied as callables, so both the SQLite
- * and PostgreSQL repositories satisfy the ports.
+ * M11.9 retention worker (#194): completion-scheduled, non-overlapping,
+ * read-only assessments. Physical deletion is an operator action and is
+ * deliberately absent from this scheduler's ports.
  */
 export class RetentionSweep {
-  readonly #commandInbox: RetentionSweepOptions['commandInbox']
-  readonly #executionEvents: RetentionSweepOptions['executionEvents']
   readonly #assessCommandInbox: RetentionSweepOptions['assessCommandInbox']
   readonly #assessExecutionEvents: RetentionSweepOptions['assessExecutionEvents']
   readonly #intervalMs: number
@@ -74,8 +51,6 @@ export class RetentionSweep {
   #started = false
 
   constructor(options: RetentionSweepOptions) {
-    this.#commandInbox = options.commandInbox
-    this.#executionEvents = options.executionEvents
     this.#assessCommandInbox = options.assessCommandInbox
     this.#assessExecutionEvents = options.assessExecutionEvents
     this.#intervalMs = positiveInterval(options.intervalMs)
@@ -111,39 +86,17 @@ export class RetentionSweep {
   }
 
   /** Runs one sweep immediately; also used by the scheduled passes. */
-  async run(): Promise<{ inbox: number; events: number }> {
+  async run(): Promise<RetentionSweepReport> {
     const now = new Date()
-    const commandInboxAssessment =
-      this.#assessCommandInbox === undefined ? undefined : await this.#assessCommandInbox(now)
-    const executionEventsAssessment =
-      this.#assessExecutionEvents === undefined ? undefined : await this.#assessExecutionEvents(now)
-    const assessment: RetentionSweepReport['assessment'] = {
-      ...(commandInboxAssessment === undefined ? {} : { commandInbox: commandInboxAssessment }),
-      ...(executionEventsAssessment === undefined
-        ? {}
-        : { executionEvents: executionEventsAssessment }),
+    const report: RetentionSweepReport = {
+      at: now.toISOString(),
+      assessment: {
+        commandInbox: await this.#assessCommandInbox(now),
+        executionEvents: await this.#assessExecutionEvents(now),
+      },
     }
-    const blocked: string[] = []
-    const inbox = await this.#sweep(() => this.#commandInbox.deleteExpiredInbox(now), blocked)
-    const events = await this.#sweep(() => this.#executionEvents.deleteExpiredEvents(now), blocked)
-    this.#onReport?.({ at: now.toISOString(), inbox, events, blocked, assessment })
-    return { inbox, events }
-  }
-
-  /**
-   * One class per call: a fail-closed eligibility refusal is expected while
-   * deletion is disabled and must not stop the other class or the schedule.
-   * Any other storage error still propagates to `onError`.
-   */
-  async #sweep(operation: () => Promise<number>, blocked: string[]): Promise<number> {
-    try {
-      return await operation()
-    } catch (error) {
-      const code = error instanceof Error ? error.message : ''
-      if (!ELIGIBILITY_REQUIRED.has(code)) throw error
-      blocked.push(code)
-      return 0
-    }
+    this.#onReport?.(report)
+    return report
   }
 
   /** Cancels future passes and drains the scheduled pass before storage closes. */

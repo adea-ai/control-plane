@@ -16,6 +16,7 @@ import {
 } from '@control-plane/sqlite-persistence'
 import { ExecutionAttemptSchema, ExecutionSchema, InteractionService } from '@control-plane/domain'
 import { LocalRuntimeInteractions } from './runtime-interactions.ts'
+import { seedSystemCatalogOwners } from './test-catalog-owners.mjs'
 
 const storedId = (id) => `r-${createHash('sha256').update(id).digest('hex')}`
 import {
@@ -778,6 +779,7 @@ describe('Local Control Plane composition', () => {
         }
         await composition.contextPackages.put(contextPackageSerializationFixtures.futurePi)
         await composition.executionPlans.put(plan)
+        await seedSystemCatalogOwners(composition.catalog, planInputs.profile, planInputs.skills)
         await composition.catalog.insertAgentProfileVersion(planInputs.profile)
         for (const skill of planInputs.skills) {
           await composition.catalog.insertSkillVersion(skill)

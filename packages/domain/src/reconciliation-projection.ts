@@ -225,7 +225,7 @@ export function createReconciliationEffects(
     executionIdFactory: (): never => {
       throw new Error('RECONCILIATION_EFFECTS_CANNOT_ACCEPT_EXECUTIONS')
     },
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator: { authorize: async () => true, validate: async () => true },
   })
   const now = ports.now ?? (() => new Date().toISOString())
 
