@@ -95,7 +95,7 @@ function acceptanceService(database, options = {}) {
     service: new CommandInboxService({
       repository,
       executionIdFactory: options.executionIdFactory ?? (() => nextId('exe')),
-      executionPlanValidator: { validate: async () => true },
+      executionPlanValidator: { authorize: async () => true, validate: async () => true },
       now: () => acceptedAt,
     }),
   }
