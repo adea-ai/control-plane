@@ -90,5 +90,18 @@
     "nodeSyntax": "passed",
     "gitDiffCheck": "passed"
   },
-  "scope": "Real Pi 0.84.2 process and default Local embedded-SQLite workflow against a deterministic credential-free loopback provider. This is bounded transport and topology evidence; it does not establish live-provider quality/cost, in-flight restart recovery, approval execution, human acceptance, every harness/profile, or full M11 acceptance."
+  "scope": "Real Pi 0.84.2 process and default Local embedded-SQLite workflow against a deterministic credential-free loopback provider. This is bounded transport and topology evidence; it does not establish live-provider quality/cost, in-flight restart recovery, approval execution, human acceptance, every harness/profile, or full M11 acceptance.",
+  "integratedVerification": {
+    "candidate": "15db7ddabbcc51310ca626f1080428e61487ed68",
+    "mainBase": "e6133a75b34a1da949a967303729bacf5d6ef053",
+    "observedAt": "2026-09-30T18:04:37.137454+00:00",
+    "commandExit": 0,
+    "workspaceBuildPackages": 41,
+    "providerRequests": 4,
+    "localCases": 2,
+    "assertions": 23,
+    "executableHashMatchesOriginal": true,
+    "ownedProcessesAndListeners": "stopped; absence checked",
+    "runtimeScratch": "empty; disposable package retained under cleanup guard"
+  }
 }
