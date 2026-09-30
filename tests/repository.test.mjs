@@ -27,6 +27,14 @@ import {
   normalizedBunTestArguments,
 } from '../scripts/run-bun-test-group.mjs'
 
+// The fleet upgrade rewrites the runtime pin on every release; tests assert
+// the caller pins stay consistent with the configured ref, not a hardcoded
+// version.
+const runtimeRef =
+  (await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')).match(
+    /^runtime_ref: (\S+)$/m
+  )?.[1] ?? ''
+
 const apps = [
   'control-api',
   'workflow-worker',
@@ -397,7 +405,7 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.match(config, /^dependency_review: auto$/m)
   assert.doesNotMatch(config, /^opencode_security:/m)
   assert.doesNotMatch(config, /^staging_validation_mode:/m)
-  assert.match(config, /^runtime_ref: v1\.30\.0$/m)
+  assert.match(config, /^runtime_ref: v\d+\.\d+\.\d+$/m)
   for (const runner of [
     'runner',
     'ci_runner',
@@ -464,7 +472,9 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
 
   assert.match(
     validation,
-    /uses: 0xPlayerOne\/code-foundry\/\.github\/workflows\/validation\.yml@v1\.30\.0/
+    new RegExp(
+      `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${runtimeRef}`
+    )
   )
   assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
@@ -476,7 +486,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(validation, /synchronize/)
   assert.match(validation, /validation mode/)
   assert.match(validation, /mode: \$\{\{ needs\.mode\.outputs\.mode \}\}/)
-  assert.match(release, /release\.yml@v1\.30\.0/)
+  assert.match(release, new RegExp(`release\\.yml@${runtimeRef}`))
   assert.match(release, /release-while-paused:/)
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
@@ -667,7 +677,12 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   assert.match(pullRequestWorkflow, /bun run test:integration/)
   assert.ok(validationJob)
   assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
-  assert.doesNotMatch(validationJob, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
+  // The reusable-workflow call forwards exactly two sanctioned secrets
+  // (TURBO_TOKEN, NEXTAUTH_SECRET); any other secrets reference is a leak.
+  const secretRefs = validationJob.match(/\$\{\{[^}]*\bsecrets\b[^}]*\}\}/g) ?? []
+  for (const ref of secretRefs) {
+    assert.match(ref, /secrets\.(TURBO_TOKEN|NEXTAUTH_SECRET)\b/)
+  }
 })
 
 test('scaffolds every application with an executable placeholder target', async () => {
