@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { loadDatabaseCredentials } from '@control-plane/config'
+import { loadDatabaseCredentials, loadDatabaseSessionCredentials } from '@control-plane/config'
 import { RuntimeNodeCredentialClaimsSchema } from '@control-plane/runtime-gateway-protocol'
 import { sql } from 'drizzle-orm'
 import { createIsolatedTestDatabase } from './testing.ts'
@@ -19,6 +19,7 @@ const baseNow = new Date(issuedAt)
 describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
   let isolated
   let applicationRepository
+  let notificationConnection
 
   beforeAll(async () => {
     isolated = await createIsolatedTestDatabase({
@@ -28,11 +29,24 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
     })
     await isolated.migrate()
     await restrictApplicationIdentityPrivileges()
-    applicationRepository = new PostgresRuntimeNodeIdentityRepository(isolated.application)
+    const credentials = loadDatabaseSessionCredentials(process.env)
+    const notificationUrl = new URL(credentials.url)
+    notificationUrl.pathname = `/${isolated.name}`
+    notificationConnection = createPostgresConnection(
+      { ...credentials, url: notificationUrl.toString() },
+      { maxConnections: 1 }
+    )
+    applicationRepository = new PostgresRuntimeNodeIdentityRepository(isolated.application, {
+      revocationClient: notificationConnection.database.$client,
+    })
   }, 60_000)
 
   afterAll(async () => {
-    await isolated?.dispose()
+    try {
+      await notificationConnection?.close()
+    } finally {
+      await isolated?.dispose()
+    }
   })
 
   test('registration and issue reject key-ID collisions, inactive keys, and scope mismatch', async () => {

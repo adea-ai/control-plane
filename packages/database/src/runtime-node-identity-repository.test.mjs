@@ -5,6 +5,48 @@ import {
   runtimeNodeIssuedCredentials,
   runtimeNodeVerificationKeys,
 } from './schema/runtime-node-identity.ts'
+import { PostgresRuntimeNodeIdentityRepository } from './runtime-node-identity-repository.ts'
+
+test('revocation hints use the dedicated session client and retain validation and cleanup', async () => {
+  const received = []
+  let deliver
+  let unlistens = 0
+  const database = {
+    $client: {
+      listen: () => {
+        throw new Error('POOLED_CRUD_CLIENT_USED_FOR_LISTEN')
+      },
+    },
+  }
+  const repository = new PostgresRuntimeNodeIdentityRepository(database, {
+    revocationClient: {
+      listen: async (channel, callback) => {
+        expect(channel).toBe('runtime_node_credential_revocations_v1')
+        deliver = callback
+        return {
+          unlisten: async () => {
+            unlistens++
+          },
+        }
+      },
+    },
+  })
+  const unsubscribe = await repository.subscribeRevocations((value) => received.push(value))
+  try {
+    deliver('not-a-credential')
+    deliver('key:invalid')
+    deliver('rgc_current')
+    deliver('key:rgk_current')
+    expect(received).toEqual([
+      { kind: 'credential', credentialId: 'rgc_current' },
+      { kind: 'key', keyId: 'rgk_current' },
+    ])
+  } finally {
+    await unsubscribe()
+    await unsubscribe()
+  }
+  expect(unlistens).toBe(1)
+})
 
 describe('RuntimeNode identity persistence schema', () => {
   test('stores public keys and issued claims separately without token or private-key columns', () => {
