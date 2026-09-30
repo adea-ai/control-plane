@@ -64,15 +64,15 @@ were removed, and the owned database port was closed. Formatting and lint passed
 Local validation is not entirely green. An initial smoke run exposed a missing
 entry in the explicit integration-test inventory; that entry is now registered.
 A later parallel run failed the existing pinned-build process-group test with
-`EPERM`. The same unchanged assertion and deadline passed in isolation and in
-the sequential smoke group. The sequential smoke group finished with 231 passes,
+`EPERM`. The same unchanged assertion and deadline passed in the sequential
+smoke group. The sequential smoke group finished with 231 passes,
 two conditional PostgreSQL skips, two failures and one error: the unchanged
 source-audit and generated-report ledger tests exceeded their 30-second deadline,
 and a killed formatter child produced the error. In an isolated diagnostic using
 the same deadline, the source-audit test still timed out while the generated-report
-test passed. Host load averages of 254 and 293 were observed; resource contention
-is a possible cause, not a proven diagnosis. No test deadline, assertion or
-required check was weakened. The full required CI gates must pass before merge.
+test passed. The cause of those timeouts remains undiagnosed. No test deadline,
+assertion or required check was weakened. The full required CI gates must pass
+before merge.
 
 Independent bounded patch review found no remaining actionable issues after
 the timestamp validation fix and safe-integer regression. All original #188
