@@ -10,6 +10,12 @@ The successful probe used a credential-free deterministic local model endpoint. 
 
 The script reported completed cleanup. Recorded runner, child-test and Restate process IDs were subsequently absent; the fixture temporary directory and disposable package installation were removed. Unrelated listeners and the user’s global runtime remained untouched.
 
+## Default embedded-SQLite Pi follow-up
+
+The bounded follow-up at candidate `0b616155d2a6a7c21303fbb426bdb0f44109d501` runs the real Pi 0.84.2 process through Local without supplying a `durableExecution` override. The test verifies the `embedded-sqlite` default, SQLite persistence, `externalServices: 0`, unavailable Restate discovery, zero workflow Restate lookups, and successful queue outcomes through `awaitLocalWorkflowOutcome`. The actual native completion and cancellation cases passed; the ordinary fixture E2E also retains and passes its explicit Local Restate compatibility path. The [default-Local qualification projection](m11-native-pi-default-local-2026-09-30.json) records the outcomes, package provenance and limitations.
+
+The fresh exact-version NPM tarball integrity and executable SHA256 match the earlier recorded values. The fresh disposable Bun lock hash differs because its root workspace name differs; the lock diff contains no other change. Global Pi remained at 0.99.1 and was not modified. This is default Local transport/topology evidence against the credential-free deterministic fixture. It does not establish live-provider quality/cost, in-flight restart recovery, approval execution, human acceptance, every harness/profile, or full M11 acceptance.
+
 ## Production release observation
 
 [Promotion run 36683198399](https://github.com/adea-ai/control-plane/actions/runs/36683198399) completed for `workspace-v1.59.8`. Production API deployment `07eff796-e1f2-4efc-824a-8b49166b5df1` and worker deployment `456c8115-5458-4a64-8b42-066e93bb683a` reported successful startup at main commit `fdc057e4a8393aa6751937a7999f5b2eef08078b`. Configured immutable image digests match the promotion artifacts; the [release projection](m11-production-release-1.59.8.json) preserves this linkage.
