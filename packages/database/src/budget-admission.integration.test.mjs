@@ -1165,6 +1165,7 @@ describe.skipIf(!enabled)('PostgreSQL command budget admission', () => {
           return nextId('exe')
         },
         executionPlanValidator: {
+          authorize: async () => true,
           validate: async () => {
             validatorCalls++
             return true

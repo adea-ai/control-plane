@@ -442,7 +442,7 @@ async function commandIdempotency(profile) {
   const service = new CommandInboxService({
     repository: actualRepository,
     executionIdFactory: () => 'exe_01JABCDEF0123456789ABCDEFG',
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator: { authorize: async () => true, validate: async () => true },
     now: () => observedAt,
   })
   const input = {
