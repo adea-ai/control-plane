@@ -36,7 +36,8 @@ async function timedPhase(phase, operation) {
   }
 }
 
-const test = (name, operation) => runTest(name, () => timedPhase('body', operation), 30_000)
+const test = (name, operation, timeoutMs = 30_000) =>
+  runTest(name, () => timedPhase('body', operation), timeoutMs)
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
@@ -276,7 +277,10 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
     } finally {
       await reconnected.close()
     }
-  })
+    // The lifecycle and a fresh-client replay completed in 51s on the real
+    // Neon probe. This compound fixture has a bounded 60s body; individual
+    // lock/operation bounds and the other case deadlines remain unchanged.
+  }, 60_000)
 
   test('binds durable usage to an existing transaction, including rollback and lease scope', async () => {
     const { isolated } = await createDatabase()
