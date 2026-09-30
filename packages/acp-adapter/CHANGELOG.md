@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.8.1...acp-adapter-v1.8.2) (2026-09-30)
+
+
+### Maintenance
+
+* **deps:** bump the bun-dependencies group with 14 updates ([#767](https://github.com/adea-ai/control-plane/issues/767)) ([d9e29ed](https://github.com/adea-ai/control-plane/commit/d9e29eda1658637a6da7fe7430ad7933e9cbb582))
+
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.8.0...acp-adapter-v1.8.1) (2026-09-29)
 
 
