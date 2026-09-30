@@ -38,6 +38,7 @@ export const GraphDefinitionContentSchema = z
         z
           .object({
             node: NodeNameSchema,
+            join: z.enum(['all', 'any']).optional(),
             operation: z
               .object({
                 kind: z.enum(['runtime', 'model', 'tool', 'delegation']),
@@ -56,6 +57,22 @@ export const GraphDefinitionContentSchema = z
           .object({
             from: z.union([NodeNameSchema, z.literal('__start__')]),
             to: z.union([NodeNameSchema, z.literal('__end__')]),
+            when: z
+              .object({
+                path: z
+                  .array(
+                    z
+                      .string()
+                      .min(1)
+                      .max(256)
+                      .refine((key) => !['__proto__', 'prototype', 'constructor'].includes(key))
+                  )
+                  .min(1)
+                  .max(16),
+                equals: z.union([z.string().max(4096), z.number().finite(), z.boolean(), z.null()]),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
       )
@@ -77,6 +94,9 @@ export const GraphDefinitionContentSchema = z
   .superRefine((definition, context) => {
     const nodes = new Set(definition.nodes.map(({ node }) => node))
     for (const edge of definition.edges) {
+      if (edge.from === '__start__' && edge.when !== undefined) {
+        context.addIssue({ code: 'custom', message: 'Start edges cannot depend on node results' })
+      }
       if (edge.from !== '__start__' && !nodes.has(edge.from)) {
         context.addIssue({ code: 'custom', message: `Unknown edge source: ${edge.from}` })
       }

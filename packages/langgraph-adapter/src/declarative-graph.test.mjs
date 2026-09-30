@@ -511,3 +511,195 @@ describe('declarative graph compiler', () => {
     expect(JSON.stringify(checkpointer.storage)).not.toContain(secretCanary)
   })
 })
+
+function forkLoopDefinition(conditional = false) {
+  return {
+    ...graphDefinition,
+    graphDefinitionId: conditional ? 'terminating-fork-loop' : 'cyclic-fork-barrier',
+    nodes: ['prepare', 'leftWait', 'left', 'right', 'join', 'finish'].map((node) => ({
+      node: node.toLowerCase(),
+      operation: { kind: 'tool', name: node.toLowerCase() },
+    })),
+    edges: [
+      { from: '__start__', to: 'prepare' },
+      { from: 'prepare', to: 'leftwait' },
+      { from: 'leftwait', to: 'left' },
+      { from: 'prepare', to: 'right' },
+      { from: 'left', to: 'join' },
+      { from: 'right', to: 'join' },
+      {
+        from: 'join',
+        to: 'prepare',
+        ...(conditional ? { when: { path: ['done'], equals: false } } : {}),
+      },
+      {
+        from: 'join',
+        to: 'finish',
+        ...(conditional ? { when: { path: ['done'], equals: true } } : {}),
+      },
+      { from: 'finish', to: '__end__' },
+    ],
+  }
+}
+
+async function runForkLoop(conditional) {
+  const definition = forkLoopDefinition(conditional)
+  const { published } = await publish(definition)
+  const joins = []
+  const calls = []
+  const adapter = new LangGraphOrchestrationAdapter({
+    graphs: [
+      compiler({
+        operationAllowlist: definition.nodes.map(({ operation }) => operation),
+        maximumSteps: 12,
+      }).compile(published),
+    ],
+    checkpointer: new MemorySaver(),
+    events: eventPublisher(),
+    operations: {
+      async invoke(operation) {
+        calls.push(operation)
+        const input = operation.input
+        switch (operation.node) {
+          case 'prepare':
+            return { iteration: (input.join?.iteration ?? 0) + 1 }
+          case 'leftwait':
+            return { iteration: input.prepare.iteration }
+          case 'left':
+            return { iteration: input.leftwait.iteration }
+          case 'right':
+            return { iteration: input.prepare.iteration }
+          case 'join': {
+            if (!input.left || input.left.iteration !== input.right.iteration)
+              throw new Error('join did not wait for both current branches')
+            joins.push(input.left.iteration)
+            return { iteration: input.left.iteration, done: input.left.iteration >= 2 }
+          }
+          case 'finish':
+            return { summary: `joined:${input.join.iteration}` }
+          default:
+            throw new Error('unexpected node')
+        }
+      },
+      async cancel() {
+        return true
+      },
+    },
+  })
+  return { result: await adapter.run({ ...requestBase, graph: published.reference }), joins, calls }
+}
+
+test('preserves all-branch joins inside a feedback loop with staggered branch lengths', async () => {
+  const { result, joins } = await runForkLoop(false)
+  expect(joins.length).toBeGreaterThanOrEqual(2)
+  expect(joins.slice(0, 2)).toEqual([1, 2])
+  expect(result).toMatchObject({ status: 'failed', failure: { code: 'GRAPH_FAILED' } })
+})
+
+test('conditional loop exit completes after both branches join, with no extra feedback visit', async () => {
+  const { result, joins, calls } = await runForkLoop(true)
+  expect(result).toMatchObject({ status: 'completed', output: { summary: 'joined:2' } })
+  expect(joins).toEqual([1, 2])
+  expect(calls.filter(({ node }) => node === 'prepare')).toHaveLength(2)
+  expect(calls.filter(({ node }) => node === 'finish')).toHaveLength(1)
+})
+
+test('routes exclusive branches through an explicit any-join without executing the other branch', async () => {
+  const definition = {
+    ...graphDefinition,
+    graphDefinitionId: 'conditional-any-join',
+    nodes: ['choose', 'left', 'right', 'finish'].map((node) => ({
+      node,
+      ...(node === 'finish' ? { join: 'any' } : {}),
+      operation: { kind: 'tool', name: node },
+    })),
+    edges: [
+      { from: '__start__', to: 'choose' },
+      { from: 'choose', to: 'left', when: { path: ['route'], equals: 'left' } },
+      { from: 'choose', to: 'right', when: { path: ['route'], equals: 'right' } },
+      { from: 'left', to: 'finish' },
+      { from: 'right', to: 'finish' },
+      { from: 'finish', to: '__end__' },
+    ],
+  }
+  const { published } = await publish(definition)
+  const calls = []
+  const graphCompiler = compiler({
+    operationAllowlist: definition.nodes.map(({ operation }) => operation),
+  })
+  const adapter = new LangGraphOrchestrationAdapter({
+    graphs: [graphCompiler.compile(published)],
+    checkpointer: new MemorySaver(),
+    events: eventPublisher(),
+    operations: {
+      async invoke(operation) {
+        calls.push(operation.node)
+        if (operation.node === 'choose') return { route: 'left' }
+        if (operation.node === 'finish') return { summary: operation.input.left.summary }
+        return { summary: 'selected left' }
+      },
+      async cancel() {
+        return true
+      },
+    },
+  })
+  expect(await adapter.run({ ...requestBase, graph: published.reference })).toMatchObject({
+    status: 'completed',
+    output: { summary: 'selected left' },
+  })
+  expect(calls).toEqual(['choose', 'left', 'finish'])
+  const mixed = await publish({
+    ...definition,
+    edges: definition.edges.map((edge) =>
+      edge.from === 'choose' && edge.to === 'left' ? { from: 'choose', to: 'left' } : edge
+    ),
+  })
+  expect(() => graphCompiler.compile(mixed.published)).toThrow(
+    expect.objectContaining({ code: 'INVALID_GRAPH_TOPOLOGY' })
+  )
+})
+
+test('conditional all-branch joins reject ambiguous conditional inputs; unmatched routes fail before later effects', async () => {
+  const definition = forkLoopDefinition(true)
+  const graphCompiler = compiler({
+    operationAllowlist: definition.nodes.map(({ operation }) => operation),
+  })
+  const conditionalFanIn = await publish({
+    ...definition,
+    edges: definition.edges.map((edge) =>
+      edge.from === 'left' && edge.to === 'join'
+        ? { ...edge, when: { path: ['ready'], equals: true } }
+        : edge
+    ),
+  })
+  expect(() => graphCompiler.compile(conditionalFanIn.published)).toThrow(
+    expect.objectContaining({ code: 'INVALID_GRAPH_TOPOLOGY' })
+  )
+  const { published } = await publish({
+    ...definition,
+    nodes: [{ node: 'prepare', operation: { kind: 'tool', name: 'prepare' } }],
+    edges: [
+      { from: '__start__', to: 'prepare' },
+      { from: 'prepare', to: '__end__', when: { path: ['done'], equals: true } },
+    ],
+  })
+  let calls = 0
+  const adapter = new LangGraphOrchestrationAdapter({
+    graphs: [graphCompiler.compile(published)],
+    checkpointer: new MemorySaver(),
+    events: eventPublisher(),
+    operations: {
+      async invoke() {
+        calls += 1
+        return { done: false }
+      },
+      async cancel() {
+        return true
+      },
+    },
+  })
+  expect(await adapter.run({ ...requestBase, graph: published.reference })).toMatchObject({
+    status: 'failed',
+  })
+  expect(calls).toBe(1)
+})

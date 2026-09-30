@@ -502,6 +502,25 @@ export class DeclarativeGraphCompiler {
     const published = parsePublishedGraph(input)
     const content = published.content
     assertGraphTopology(content)
+    const feedbackEdges = graphFeedbackEdges(content)
+    const conditionalSources = new Set(
+      content.edges.filter((edge) => edge.when).map((edge) => edge.from)
+    )
+    for (const node of content.nodes) {
+      const outgoing = content.edges.filter((edge) => edge.from === node.node)
+      if (outgoing.some((edge) => edge.when) && outgoing.some((edge) => !edge.when)) {
+        throw new DeclarativeGraphCompilationError('INVALID_GRAPH_TOPOLOGY')
+      }
+      const incoming = content.edges.filter(
+        (edge) =>
+          edge.to === node.node &&
+          edge.from !== START &&
+          !feedbackEdges.has(graphEdgeKey(edge.from, edge.to))
+      )
+      if (node.join !== 'any' && incoming.length > 1 && incoming.some((edge) => edge.when)) {
+        throw new DeclarativeGraphCompilationError('INVALID_GRAPH_TOPOLOGY')
+      }
+    }
 
     for (const node of content.nodes) {
       if (!this.#operationAllowlist.has(operationKey(node.operation.kind, node.operation.name))) {
@@ -572,6 +591,7 @@ export class DeclarativeGraphCompiler {
         const nonStartSourcesByTarget = new Map<string, string[]>()
         const endSources: string[] = []
         for (const edge of content.edges) {
+          if (conditionalSources.has(edge.from)) continue
           if (edge.to === END) {
             endSources.push(edge.from)
           } else if (edge.from === START) {
@@ -582,18 +602,35 @@ export class DeclarativeGraphCompiler {
             nonStartSourcesByTarget.set(edge.to, sources)
           }
         }
-        const forwardGraph = adjacency(content.edges.map(({ from, to }) => [from, to] as const))
         for (const [target, sources] of nonStartSourcesByTarget) {
-          const feedbackSources = sources.filter(
-            (source) => source === target || visitGraph(target, forwardGraph).has(source)
+          const feedbackSources = sources.filter((source) =>
+            feedbackEdges.has(graphEdgeKey(source, target))
           )
           const entrySources = sources.filter((source) => !feedbackSources.includes(source))
-          if (entrySources.length > 0) {
+          if (content.nodes.find((node) => node.node === target)?.join === 'any') {
+            for (const source of entrySources) graph.addEdge(source, target)
+          } else if (entrySources.length > 0) {
             graph.addEdge(entrySources.length === 1 ? entrySources[0]! : entrySources, target)
           }
           for (const source of feedbackSources) graph.addEdge(source, target)
         }
         for (const source of endSources) graph.addEdge(source, END)
+        for (const source of conditionalSources) {
+          const outgoing = content.edges.filter((edge) => edge.from === source)
+          graph.addConditionalEdges(
+            source,
+            (state) => {
+              const result = state.values[source]
+              const targets = outgoing
+                .filter((edge) => conditionMatches(result, edge.when!))
+                .map((edge) => edge.to)
+              if (targets.length === 0)
+                throw new DeclarativeGraphCompilationError('INVALID_GRAPH_TOPOLOGY')
+              return targets
+            },
+            [...new Set(outgoing.map((edge) => edge.to))]
+          )
+        }
         return graph.compile({ checkpointer: context.checkpointer })
       },
     }
@@ -622,6 +659,11 @@ interface DynamicStateGraphBuilder {
     ) => Promise<Partial<ManagedGraphState>>
   ): this
   addEdge(start: string | string[], end: string): this
+  addConditionalEdges(
+    source: string,
+    route: (state: ManagedGraphState) => string[],
+    destinations: string[]
+  ): this
   compile(options: { checkpointer: BaseCheckpointSaver }): GraphRunnable
 }
 
@@ -668,6 +710,43 @@ function assertGraphTopology(content: PublishedGraphDefinition['content']): void
   ) {
     throw new DeclarativeGraphCompilationError('INVALID_GRAPH_TOPOLOGY')
   }
+}
+
+function graphEdgeKey(from: string, to: string): string {
+  return `${from}\u0000${to}`
+}
+
+/** DFS back edges identify feedback without treating every edge in a cycle as feedback. */
+function graphFeedbackEdges(content: PublishedGraphDefinition['content']): Set<string> {
+  const forward = adjacency(content.edges.map(({ from, to }) => [from, to] as const))
+  const visited = new Set<string>()
+  const ancestors = new Set<string>()
+  const feedback = new Set<string>()
+  const visit = (node: string) => {
+    visited.add(node)
+    ancestors.add(node)
+    for (const target of forward.get(node) ?? []) {
+      if (ancestors.has(target)) feedback.add(graphEdgeKey(node, target))
+      else if (!visited.has(target)) visit(target)
+    }
+    ancestors.delete(node)
+  }
+  visit(START)
+  return feedback
+}
+
+function conditionMatches(
+  value: unknown,
+  condition: NonNullable<PublishedGraphDefinition['content']['edges'][number]['when']>
+): boolean {
+  let current = value
+  for (const key of condition.path) {
+    if (current === null || typeof current !== 'object') return false
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return false
+    current = descriptor.value
+  }
+  return current === condition.equals
 }
 
 function adjacency(edges: readonly (readonly [string, string])[]): Map<string, string[]> {

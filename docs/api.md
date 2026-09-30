@@ -112,3 +112,17 @@ This contract and admission plumbing are prerequisites for the public graph
 execution path. Durable authenticated graph administration, the production
 compiler and operation bindings, profile wiring, and deployed acceptance remain
 required by M11; this increment does not establish those results.
+
+Graph edges may include `when: { path: ["done"], equals: true }`, which compares
+an own JSON field in the source node's result with a bounded scalar. All outgoing
+edges from that source must be conditional; every matching target is scheduled,
+and no match fails the segment. Routes contain data only, with no executable
+predicates or external schema resolution. Start edges are unconditional.
+
+Nodes default to an all-branch join. Feedback edges are identified by traversal
+back edges so a fork/join inside a loop still waits for all current branches,
+including branches with different lengths. A node may declare `join: "any"` for
+mutually exclusive branches. Conditional inputs to a multi-source all-branch
+join are rejected because a skipped branch cannot satisfy its barrier. Graphs
+can therefore exit loops normally through conditional routes; the host step
+limit remains the bound for a cycle that does not exit.
