@@ -14,8 +14,11 @@ Python 3 and the platform C/C++ build tools. Pass the actual Rust toolchain bina
 directory, not a directory of rustup shims. Source, lock and patch hashes and tool
 versions are checked. The release-tag lock normalization is hash-checked and does
 not change external dependency versions. Tests run without retries; the native
-executable uses the upstream release profile. Git/npm/Cargo use private build
-state rather than caller credentials or Cargo configuration. Build commands have
+executable uses the upstream release profile. Git/npm and Cargo home/cache state
+are private. Cargo can still inherit configuration from ancestors of the source
+working directory, even with a private HOME and CARGO_HOME. Inspect and record
+those inputs separately from the tracked source/patch/lock proof; a private home
+alone does not establish configuration isolation. Build commands have
 bounded process-group lifetimes (up to one hour per native command, except Linux
 release compilation, which has a two-hour limit). A fresh one-job Linux build
 passed its 167 native tests but was terminated at the former one-hour release

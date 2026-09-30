@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.4](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.3...local-control-plane-v1.19.4) (2026-09-30)
+
+
+### Bug Fixes
+
+* **acp:** seed catalog owners for installed native qualification ([#790](https://github.com/adea-ai/control-plane/issues/790)) ([9a292b5](https://github.com/adea-ai/control-plane/commit/9a292b576296646f488470c534147d9f55abcc9f))
+
 ## [1.19.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.2...local-control-plane-v1.19.3) (2026-09-30)
 
 

@@ -66,6 +66,11 @@
     ],
     "cleanup": "completed"
   },
+  "resourceRetention": {
+    "processesAndListeners": "stopped; absence checked",
+    "perRunFixtureState": "removed by certifier",
+    "disposablePackageAndEmptyRuntimeScratch": "retained; global destructive-command guard blocked removal"
+  },
   "regressions": {
     "defaultEmbeddedSqliteFixtureE2E": {
       "passed": 2,
