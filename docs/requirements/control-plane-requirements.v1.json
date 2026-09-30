@@ -119,7 +119,24 @@
       "fileModifiedAt": "2026-09-29T02:02:13.020Z",
       "retrievedAt": "2026-09-30T05:21:44.485Z",
       "contentSha256": "fcc466b2233c8c8d6db4d844ce5920506562ac94bb1fbc6082d2c41ae0e63f11",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/system-architecture-atomic-inventory.md",
+        "sourceRevision": 99,
+        "contentSha256": "fcc466b2233c8c8d6db4d844ce5920506562ac94bb1fbc6082d2c41ae0e63f11",
+        "logicalLines": 111,
+        "atoms": 546,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      },
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "documentation-governance",
+        "disposition": "The current revision 99 captured-text clause inventory has 546 atoms over 111 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      }
     },
     {
       "id": "control-plane-tdd",
@@ -198,7 +215,24 @@
       "fileModifiedAt": "2026-09-29T02:07:29.187Z",
       "retrievedAt": "2026-09-30T05:22:08.968Z",
       "contentSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/data-api-atomic-inventory.md",
+        "sourceRevision": 73,
+        "contentSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
+        "logicalLines": 234,
+        "atoms": 903,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      },
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "documentation-governance",
+        "disposition": "The current revision 73 captured-text clause inventory has 903 atoms over 234 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      }
     },
     {
       "id": "runtime-node-spec",
@@ -351,7 +385,24 @@
       "fileModifiedAt": "2026-09-29T02:02:21.329Z",
       "retrievedAt": "2026-09-30T05:22:47.885Z",
       "contentSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/evaluation-plan-atomic-inventory.md",
+        "sourceRevision": 53,
+        "contentSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
+        "logicalLines": 114,
+        "atoms": 465,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      },
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "documentation-governance",
+        "disposition": "The current revision 53 captured-text clause inventory has 465 atoms over 114 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      }
     },
     {
       "id": "runtime-compatibility",
@@ -366,7 +417,24 @@
       "fileModifiedAt": "2026-09-29T02:07:31.582Z",
       "retrievedAt": "2026-09-30T05:22:49.060Z",
       "contentSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
-      "revisionMetadataStatus": "current revision metadata captured"
+      "revisionMetadataStatus": "current revision metadata captured",
+      "atomicInventory": {
+        "path": "docs/requirements/runtime-compatibility-atomic-inventory.md",
+        "sourceRevision": 50,
+        "contentSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
+        "logicalLines": 172,
+        "atoms": 323,
+        "extractionScope": "captured-text",
+        "requirementMapping": "incomplete",
+        "implementationMapping": "bounded-path-inspection",
+        "candidateAcceptance": "not-established"
+      },
+      "gap": {
+        "issue": 195,
+        "severity": "high",
+        "owner": "documentation-governance",
+        "disposition": "The current revision 50 captured-text clause inventory has 323 atoms over 172 logical lines. Repository-path inspection is bounded; current atom-to-requirement/code/test/deployment mapping and all-profile independent acceptance remain incomplete. Historical candidate evidence and classifications are unchanged."
+      }
     },
     {
       "id": "architecture-decisions",
