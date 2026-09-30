@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.28.3...sqlite-persistence-v1.29.0) (2026-09-30)
+
+
+### Features
+
+* **graph:** persist workspace-scoped graph definitions ([#798](https://github.com/adea-ai/control-plane/issues/798)) ([313de71](https://github.com/adea-ai/control-plane/commit/313de7109c9066cefe4b2ba65b146c0b805fa29f))
+
 ## [1.28.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.28.2...sqlite-persistence-v1.28.3) (2026-09-30)
 
 
