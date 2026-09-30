@@ -43,7 +43,7 @@ jobs:
         with:
           persist-credentials: false
           repository: 0xPlayerOne/code-foundry
-          ref: v1.30.0
+          ref: v1.36.4
           path: .github/.code-foundry
           sparse-checkout: |
             src/lib
@@ -77,14 +77,14 @@ jobs:
       contents: read
       packages: read
       security-events: write
-    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@v1.30.0
+    uses: 0xPlayerOne/code-foundry/.github/workflows/validation.yml@v1.36.4
     with:
       mode: ${{ needs.mode.outputs.mode }}
       runtime-repository: 0xPlayerOne/code-foundry
       # Pull requests validate the proposed runtime commit. Scheduled and
       # manually dispatched audits use a separate default-branch-pinned caller,
       # so this caller-selected ref never runs with default-branch cache access.
-      runtime-ref: v1.30.0
+      runtime-ref: v1.36.4
       ci-runner: ubuntu-slim
       test-runner: ubuntu-latest
       unit-runner: ubuntu-slim
@@ -95,9 +95,9 @@ jobs:
       rust-shards: '["all"]'
       rust-threads: '1'
       rust-max-parallel: 1
-    # This job executes PR-controlled source. Keep repository secrets out of
-    # the reusable workflow; a cold cache and its documented build placeholder
-    # are preferable to exposing credentials to pull-request tasks.
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
 
   # CodeQL requires a push analysis to populate default-branch code-scanning
   # alerts. Keep the full validation gate pull-request-only so main pushes do
@@ -110,10 +110,10 @@ jobs:
       contents: read
       packages: read
       security-events: write
-    uses: 0xPlayerOne/code-foundry/.github/workflows/codeql.yml@v1.30.0
+    uses: 0xPlayerOne/code-foundry/.github/workflows/codeql.yml@v1.36.4
     with:
       runtime-repository: 0xPlayerOne/code-foundry
-      runtime-ref: v1.30.0
+      runtime-ref: v1.36.4
       runner: ubuntu-latest
       rust-shards: '["all"]'
       rust-threads: '1'
