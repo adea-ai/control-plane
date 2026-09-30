@@ -102,9 +102,24 @@ multi-call accounting, model quality or full milestone certification. See
 authentication remains operator-owned; installation does not authenticate or
 silently enable a runtime.
 
+The current lane uses the default Local `embedded-sqlite` durable execution backend
+introduced by #548. It asserts that backend and the zero-external-service topology,
+then reads completed workflow outcomes from the composition's SQLite queue. It
+requires matching execution IDs and business outcomes for completion, cancellation
+and approval. The former Restate HTTP attachment checks were stale after the
+default changed: the lane does not start a Restate service. The historical Restate
+runs above retain their original scope and do not certify this SQLite lane.
+
 The current lane additionally uses the authenticated HTTP API and requires native
 cancellation of a fourth, held model request, replay of a lost cancellation ACK,
 and provider-stream closure before cleanup with server idle timeout disabled.
 See `docs/evidence/m11-acp-native-cancellation-2026-09-08.md` for current native
 repair evidence and outstanding promotion gates. Historical three-request success
 is not proof of this extended cancellation gate.
+
+It also requires two granted native tool interactions, replay of the first lost
+approval acknowledgement, exactly two marker writes, one attempt and aggregate
+usage of 33 input/9 output tokens. The complete lane requires seven model requests.
+The SQLite queue regression test seeds real retained execution parents and terminal
+workflow records while rejecting Restate HTTP access; it is helper coverage, not
+installed native execution evidence.
