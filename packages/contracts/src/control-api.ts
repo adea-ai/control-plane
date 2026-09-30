@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { GraphSelectionSchema } from './graphs.js'
+import {
+  GraphSelectionSchema,
+  GraphDefinitionContentSchema,
+  GraphDefinitionVersionSchema,
+  GraphReferenceSchema,
+} from './graphs.js'
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
@@ -144,6 +149,52 @@ export const ProfileResolutionResponseSchema = successResponse(
     skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
   })
 )
+
+const GraphMutationContextSchema = CommandContextSchema.omit({ projectId: true })
+const GraphLifecyclePayloadSchema = z
+  .object({
+    reference: GraphReferenceSchema,
+    expectedRevision: z.number().int().positive(),
+    reason: z.string().min(1).max(1024),
+  })
+  .strict()
+
+export const GraphDefinitionPublishRequestSchema = GraphMutationContextSchema.extend({
+  operation: z.literal('graph.publish'),
+  issuedAt: TimestampSchema,
+  payload: z.object({ definition: GraphDefinitionContentSchema }).strict(),
+}).strict()
+export const GraphDefinitionDeprecationRequestSchema = GraphMutationContextSchema.extend({
+  operation: z.literal('graph.deprecate'),
+  issuedAt: TimestampSchema,
+  payload: GraphLifecyclePayloadSchema,
+}).strict()
+export const GraphDefinitionRevocationRequestSchema = GraphMutationContextSchema.extend({
+  operation: z.literal('graph.revoke'),
+  issuedAt: TimestampSchema,
+  payload: GraphLifecyclePayloadSchema,
+}).strict()
+export const GraphDefinitionResolutionRequestSchema = RequestContextSchema.omit({ projectId: true })
+  .extend({
+    operation: z.literal('graph.resolve'),
+    requestedAt: TimestampSchema,
+    parameters: z.object({ reference: GraphReferenceSchema }).strict(),
+  })
+  .strict()
+export const GraphDefinitionResponseSchema = successResponse(
+  z.object({ definition: GraphDefinitionVersionSchema }).strict()
+)
+export type GraphDefinitionPublishRequest = z.input<typeof GraphDefinitionPublishRequestSchema>
+export type GraphDefinitionDeprecationRequest = z.input<
+  typeof GraphDefinitionDeprecationRequestSchema
+>
+export type GraphDefinitionRevocationRequest = z.input<
+  typeof GraphDefinitionRevocationRequestSchema
+>
+export type GraphDefinitionResolutionRequest = z.input<
+  typeof GraphDefinitionResolutionRequestSchema
+>
+export type GraphDefinitionResponse = z.output<typeof GraphDefinitionResponseSchema>
 
 export const ProjectStateResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('project-state.resolve'),

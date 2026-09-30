@@ -126,3 +126,27 @@ mutually exclusive branches. Conditional inputs to a multi-source all-branch
 join are rejected because a skipped branch cannot satisfy its barrier. Graphs
 can therefore exit loops normally through conditional routes; the host step
 limit remains the bound for a cycle that does not exit.
+
+## Graph catalog administration
+
+The versioned graph catalog uses `POST /v1/graphs/publish`, `deprecate`, `revoke`,
+and `resolve`. Publication requires `graph:publish`, lifecycle changes require
+`graph:manage`, and inspection requires `graph:resolve`, in addition to caller
+and workspace credential matching. Definitions belong to the selected workspace;
+these envelopes do not accept a project authority field. Publication does not
+approve a profile or Skill or authorize execution effects.
+
+Publish payloads contain `definition`; lifecycle payloads contain the exact
+`reference`, `expectedRevision`, and a nonempty `reason`. Resolution parameters
+contain the exact reference and allow inspection of retained deprecated or
+revoked versions. Responses include immutable content and current lifecycle.
+Credential-bearing catalog input is rejected before persistence.
+
+Mutations commit the catalog write and an original result receipt atomically.
+Receipt identity includes workspace, caller, operation and idempotency key.
+A server-computed semantic hash binds operation and payload; changed payloads
+under the same key conflict. Retries return the original snapshot even after
+later lifecycle changes, with response metadata from the current request.
+The Control SDK exposes `publishGraph`, `deprecateGraph`, `revokeGraph`, and
+`resolveGraph`. Deployment compositions must bind a durable administration
+repository; the unconfigured service returns an explicit unavailable error.

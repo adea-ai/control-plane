@@ -112,6 +112,30 @@ export const GraphDefinitionContentSchema = z
     }
   })
 
+/** Public catalog snapshot; the server additionally verifies the content digest. */
+export const GraphDefinitionVersionSchema = z
+  .object({
+    reference: GraphReferenceSchema,
+    revision: z.number().int().positive(),
+    lifecycle: z.enum(['published', 'deprecated', 'revoked']),
+    content: GraphDefinitionContentSchema,
+    publishedAt: z.iso.datetime(),
+    changedAt: z.iso.datetime(),
+    reason: z.string().min(1).max(1024).optional(),
+  })
+  .strict()
+  .superRefine((version, context) => {
+    if (
+      version.reference.graphDefinitionId !== version.content.graphDefinitionId ||
+      version.reference.graphVersion !== version.content.graphVersion ||
+      Date.parse(version.changedAt) < Date.parse(version.publishedAt) ||
+      (version.lifecycle !== 'published' && !version.reason)
+    ) {
+      context.addIssue({ code: 'custom', message: 'Graph version metadata is inconsistent' })
+    }
+  })
+export type GraphDefinitionVersion = z.output<typeof GraphDefinitionVersionSchema>
+
 export type GraphJsonValue =
   | null
   | boolean

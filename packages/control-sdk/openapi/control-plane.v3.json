@@ -2589,6 +2589,2154 @@
         "security": [{ "serviceBearer": [] }]
       }
     },
+    "/v1/graphs/deprecate": {
+      "post": {
+        "operationId": "graph.deprecate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "graph.deprecate", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedRevision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                      "reference": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contentDigest": { "pattern": "^sha256:[a-f0-9]{64}$", "type": "string" },
+                          "graphDefinitionId": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          },
+                          "graphVersion": {
+                            "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["reference", "expectedRevision", "reason"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "definition": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "changedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "content": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "compatibility": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "adapterVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "compilerVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "contractMajorVersions": {
+                                      "items": {
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991,
+                                        "type": "integer"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "contractMajorVersions",
+                                    "compilerVersions",
+                                    "adapterVersions"
+                                  ],
+                                  "type": "object"
+                                },
+                                "edges": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "from": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__start__", "type": "string" }
+                                        ]
+                                      },
+                                      "to": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__end__", "type": "string" }
+                                        ]
+                                      },
+                                      "when": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "equals": {
+                                            "anyOf": [
+                                              { "maxLength": 4096, "type": "string" },
+                                              { "type": "number" },
+                                              { "type": "boolean" },
+                                              { "type": "null" }
+                                            ]
+                                          },
+                                          "path": {
+                                            "items": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "maxItems": 16,
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": ["path", "equals"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["from", "to"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 1024,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "nodes": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "join": { "enum": ["all", "any"], "type": "string" },
+                                      "node": {
+                                        "maxLength": 128,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z][a-z0-9._-]*$",
+                                        "type": "string"
+                                      },
+                                      "operation": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "enum": ["runtime", "model", "tool", "delegation"],
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "maxLength": 256,
+                                            "minLength": 1,
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["kind", "name"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["node", "operation"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 256,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "requiredCapabilities": {
+                                  "items": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 128,
+                                  "type": "array"
+                                },
+                                "schemaVersion": { "const": 1, "type": "number" },
+                                "schemas": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "input": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "output": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["input", "state", "output"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "graphDefinitionId",
+                                "graphVersion",
+                                "schemaVersion",
+                                "nodes",
+                                "edges",
+                                "schemas",
+                                "requiredCapabilities",
+                                "compatibility"
+                              ],
+                              "type": "object"
+                            },
+                            "lifecycle": {
+                              "enum": ["published", "deprecated", "revoked"],
+                              "type": "string"
+                            },
+                            "publishedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                            "reference": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contentDigest": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                              "type": "object"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "revision",
+                            "lifecycle",
+                            "content",
+                            "publishedAt",
+                            "changedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["definition"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/graphs/publish": {
+      "post": {
+        "operationId": "graph.publish",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "graph.publish", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "definition": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "compatibility": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "adapterVersions": {
+                                "items": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "compilerVersions": {
+                                "items": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "contractMajorVersions": {
+                                "items": {
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "contractMajorVersions",
+                              "compilerVersions",
+                              "adapterVersions"
+                            ],
+                            "type": "object"
+                          },
+                          "edges": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 128,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z][a-z0-9._-]*$",
+                                      "type": "string"
+                                    },
+                                    { "const": "__start__", "type": "string" }
+                                  ]
+                                },
+                                "to": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 128,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z][a-z0-9._-]*$",
+                                      "type": "string"
+                                    },
+                                    { "const": "__end__", "type": "string" }
+                                  ]
+                                },
+                                "when": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "anyOf": [
+                                        { "maxLength": 4096, "type": "string" },
+                                        { "type": "number" },
+                                        { "type": "boolean" },
+                                        { "type": "null" }
+                                      ]
+                                    },
+                                    "path": {
+                                      "items": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "maxItems": 16,
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": ["path", "equals"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": ["from", "to"],
+                              "type": "object"
+                            },
+                            "maxItems": 1024,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "graphDefinitionId": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          },
+                          "graphVersion": {
+                            "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                            "type": "string"
+                          },
+                          "nodes": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "join": { "enum": ["all", "any"], "type": "string" },
+                                "node": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z][a-z0-9._-]*$",
+                                  "type": "string"
+                                },
+                                "operation": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["runtime", "model", "tool", "delegation"],
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind", "name"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": ["node", "operation"],
+                              "type": "object"
+                            },
+                            "maxItems": 256,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "requiredCapabilities": {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9.-]*$",
+                              "type": "string"
+                            },
+                            "maxItems": 128,
+                            "type": "array"
+                          },
+                          "schemaVersion": { "const": 1, "type": "number" },
+                          "schemas": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "input": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                "type": "string"
+                              },
+                              "output": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                "type": "string"
+                              },
+                              "state": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["input", "state", "output"],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "graphDefinitionId",
+                          "graphVersion",
+                          "schemaVersion",
+                          "nodes",
+                          "edges",
+                          "schemas",
+                          "requiredCapabilities",
+                          "compatibility"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["definition"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "definition": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "changedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "content": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "compatibility": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "adapterVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "compilerVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "contractMajorVersions": {
+                                      "items": {
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991,
+                                        "type": "integer"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "contractMajorVersions",
+                                    "compilerVersions",
+                                    "adapterVersions"
+                                  ],
+                                  "type": "object"
+                                },
+                                "edges": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "from": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__start__", "type": "string" }
+                                        ]
+                                      },
+                                      "to": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__end__", "type": "string" }
+                                        ]
+                                      },
+                                      "when": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "equals": {
+                                            "anyOf": [
+                                              { "maxLength": 4096, "type": "string" },
+                                              { "type": "number" },
+                                              { "type": "boolean" },
+                                              { "type": "null" }
+                                            ]
+                                          },
+                                          "path": {
+                                            "items": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "maxItems": 16,
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": ["path", "equals"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["from", "to"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 1024,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "nodes": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "join": { "enum": ["all", "any"], "type": "string" },
+                                      "node": {
+                                        "maxLength": 128,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z][a-z0-9._-]*$",
+                                        "type": "string"
+                                      },
+                                      "operation": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "enum": ["runtime", "model", "tool", "delegation"],
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "maxLength": 256,
+                                            "minLength": 1,
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["kind", "name"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["node", "operation"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 256,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "requiredCapabilities": {
+                                  "items": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 128,
+                                  "type": "array"
+                                },
+                                "schemaVersion": { "const": 1, "type": "number" },
+                                "schemas": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "input": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "output": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["input", "state", "output"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "graphDefinitionId",
+                                "graphVersion",
+                                "schemaVersion",
+                                "nodes",
+                                "edges",
+                                "schemas",
+                                "requiredCapabilities",
+                                "compatibility"
+                              ],
+                              "type": "object"
+                            },
+                            "lifecycle": {
+                              "enum": ["published", "deprecated", "revoked"],
+                              "type": "string"
+                            },
+                            "publishedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                            "reference": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contentDigest": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                              "type": "object"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "revision",
+                            "lifecycle",
+                            "content",
+                            "publishedAt",
+                            "changedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["definition"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/graphs/resolve": {
+      "post": {
+        "operationId": "graph.resolve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "operation": { "const": "graph.resolve", "type": "string" },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "reference": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contentDigest": { "pattern": "^sha256:[a-f0-9]{64}$", "type": "string" },
+                          "graphDefinitionId": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          },
+                          "graphVersion": {
+                            "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["reference"],
+                    "type": "object"
+                  },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "requestedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "operation",
+                  "requestedAt",
+                  "parameters"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "definition": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "changedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "content": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "compatibility": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "adapterVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "compilerVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "contractMajorVersions": {
+                                      "items": {
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991,
+                                        "type": "integer"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "contractMajorVersions",
+                                    "compilerVersions",
+                                    "adapterVersions"
+                                  ],
+                                  "type": "object"
+                                },
+                                "edges": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "from": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__start__", "type": "string" }
+                                        ]
+                                      },
+                                      "to": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__end__", "type": "string" }
+                                        ]
+                                      },
+                                      "when": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "equals": {
+                                            "anyOf": [
+                                              { "maxLength": 4096, "type": "string" },
+                                              { "type": "number" },
+                                              { "type": "boolean" },
+                                              { "type": "null" }
+                                            ]
+                                          },
+                                          "path": {
+                                            "items": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "maxItems": 16,
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": ["path", "equals"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["from", "to"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 1024,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "nodes": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "join": { "enum": ["all", "any"], "type": "string" },
+                                      "node": {
+                                        "maxLength": 128,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z][a-z0-9._-]*$",
+                                        "type": "string"
+                                      },
+                                      "operation": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "enum": ["runtime", "model", "tool", "delegation"],
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "maxLength": 256,
+                                            "minLength": 1,
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["kind", "name"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["node", "operation"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 256,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "requiredCapabilities": {
+                                  "items": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 128,
+                                  "type": "array"
+                                },
+                                "schemaVersion": { "const": 1, "type": "number" },
+                                "schemas": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "input": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "output": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["input", "state", "output"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "graphDefinitionId",
+                                "graphVersion",
+                                "schemaVersion",
+                                "nodes",
+                                "edges",
+                                "schemas",
+                                "requiredCapabilities",
+                                "compatibility"
+                              ],
+                              "type": "object"
+                            },
+                            "lifecycle": {
+                              "enum": ["published", "deprecated", "revoked"],
+                              "type": "string"
+                            },
+                            "publishedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                            "reference": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contentDigest": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                              "type": "object"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "revision",
+                            "lifecycle",
+                            "content",
+                            "publishedAt",
+                            "changedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["definition"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
+    "/v1/graphs/revoke": {
+      "post": {
+        "operationId": "graph.revoke",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "caller": {
+                    "properties": {
+                      "servicePrincipalId": {
+                        "maxLength": 64,
+                        "minLength": 5,
+                        "pattern": "^svc_[a-z][a-z0-9-]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["servicePrincipalId"],
+                    "type": "object"
+                  },
+                  "commandId": { "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "contractVersion": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "major": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                    },
+                    "required": ["major", "minor"],
+                    "type": "object"
+                  },
+                  "correlation": {
+                    "properties": {
+                      "causationCommandId": {
+                        "pattern": "^cmd_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "parentEventId": {
+                        "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+                        "type": "string"
+                      },
+                      "traceId": { "pattern": "^trc_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                    },
+                    "required": ["traceId"],
+                    "type": "object"
+                  },
+                  "idempotencyKey": {
+                    "maxLength": 128,
+                    "minLength": 16,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "issuedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation": { "const": "graph.revoke", "type": "string" },
+                  "payload": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedRevision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                      "reference": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contentDigest": { "pattern": "^sha256:[a-f0-9]{64}$", "type": "string" },
+                          "graphDefinitionId": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                            "type": "string"
+                          },
+                          "graphVersion": {
+                            "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["reference", "expectedRevision", "reason"],
+                    "type": "object"
+                  },
+                  "payloadHash": { "pattern": "^[a-f0-9]{64}$", "type": "string" },
+                  "requestId": { "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" },
+                  "workspaceId": { "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$", "type": "string" }
+                },
+                "required": [
+                  "caller",
+                  "contractVersion",
+                  "requestId",
+                  "workspaceId",
+                  "correlation",
+                  "commandId",
+                  "idempotencyKey",
+                  "payloadHash",
+                  "operation",
+                  "issuedAt",
+                  "payload"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "definition": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "changedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "content": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "compatibility": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "adapterVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "compilerVersions": {
+                                      "items": {
+                                        "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "contractMajorVersions": {
+                                      "items": {
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991,
+                                        "type": "integer"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "contractMajorVersions",
+                                    "compilerVersions",
+                                    "adapterVersions"
+                                  ],
+                                  "type": "object"
+                                },
+                                "edges": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "from": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__start__", "type": "string" }
+                                        ]
+                                      },
+                                      "to": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 128,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z][a-z0-9._-]*$",
+                                            "type": "string"
+                                          },
+                                          { "const": "__end__", "type": "string" }
+                                        ]
+                                      },
+                                      "when": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "equals": {
+                                            "anyOf": [
+                                              { "maxLength": 4096, "type": "string" },
+                                              { "type": "number" },
+                                              { "type": "boolean" },
+                                              { "type": "null" }
+                                            ]
+                                          },
+                                          "path": {
+                                            "items": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "maxItems": 16,
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": ["path", "equals"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["from", "to"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 1024,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                },
+                                "nodes": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "join": { "enum": ["all", "any"], "type": "string" },
+                                      "node": {
+                                        "maxLength": 128,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z][a-z0-9._-]*$",
+                                        "type": "string"
+                                      },
+                                      "operation": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "enum": ["runtime", "model", "tool", "delegation"],
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "maxLength": 256,
+                                            "minLength": 1,
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["kind", "name"],
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": ["node", "operation"],
+                                    "type": "object"
+                                  },
+                                  "maxItems": 256,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
+                                "requiredCapabilities": {
+                                  "items": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 128,
+                                  "type": "array"
+                                },
+                                "schemaVersion": { "const": 1, "type": "number" },
+                                "schemas": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "input": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "output": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["input", "state", "output"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "graphDefinitionId",
+                                "graphVersion",
+                                "schemaVersion",
+                                "nodes",
+                                "edges",
+                                "schemas",
+                                "requiredCapabilities",
+                                "compatibility"
+                              ],
+                              "type": "object"
+                            },
+                            "lifecycle": {
+                              "enum": ["published", "deprecated", "revoked"],
+                              "type": "string"
+                            },
+                            "publishedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                              "type": "string"
+                            },
+                            "reason": { "maxLength": 1024, "minLength": 1, "type": "string" },
+                            "reference": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contentDigest": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "graphDefinitionId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                  "type": "string"
+                                },
+                                "graphVersion": {
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["graphDefinitionId", "graphVersion", "contentDigest"],
+                              "type": "object"
+                            },
+                            "revision": {
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "revision",
+                            "lifecycle",
+                            "content",
+                            "publishedAt",
+                            "changedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["definition"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "data"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contractVersion": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "major": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "minor": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+                      },
+                      "required": ["major", "minor"],
+                      "type": "object"
+                    },
+                    "correlation": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "causationCommandId": {},
+                        "parentEventId": {},
+                        "traceId": {}
+                      },
+                      "required": ["traceId"],
+                      "type": "object"
+                    },
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "enum": [
+                            "validation",
+                            "authentication",
+                            "authorization",
+                            "conflict",
+                            "stale_reference",
+                            "capability_mismatch",
+                            "runtime_unavailable",
+                            "internal"
+                          ],
+                          "type": "string"
+                        },
+                        "code": {
+                          "maxLength": 96,
+                          "minLength": 1,
+                          "pattern": "^[A-Z][A-Z0-9_]*$",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": {},
+                          "propertyNames": { "maxLength": 64, "type": "string" },
+                          "type": "object"
+                        },
+                        "message": { "maxLength": 512, "minLength": 1, "type": "string" },
+                        "remediation": { "maxLength": 256, "minLength": 1, "type": "string" },
+                        "retryable": { "type": "boolean" },
+                        "source": {
+                          "enum": [
+                            "client",
+                            "auth",
+                            "policy",
+                            "runtime",
+                            "provider",
+                            "persistence",
+                            "workflow",
+                            "system"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["class", "code", "message", "retryable", "source"],
+                      "type": "object"
+                    },
+                    "requestId": {}
+                  },
+                  "required": ["contractVersion", "requestId", "correlation", "error"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Normalized error response"
+          }
+        },
+        "security": [{ "serviceBearer": [] }]
+      }
+    },
     "/v1/interactions/respond": {
       "post": {
         "operationId": "interaction.respond",

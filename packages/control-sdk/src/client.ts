@@ -1,4 +1,9 @@
 import {
+  type GraphDefinitionPublishRequest,
+  type GraphDefinitionDeprecationRequest,
+  type GraphDefinitionRevocationRequest,
+  type GraphDefinitionResolutionRequest,
+  type GraphDefinitionResponse,
   type ExecutionCancellationCommand,
   type ExecutionCancellationCommandResult,
   type InteractionResponseCommand,
@@ -112,6 +117,22 @@ export class ControlPlaneClient {
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs <= 0) {
       throw new Error('Control Plane client timeout must be a positive integer')
     }
+  }
+
+  publishGraph(input: GraphDefinitionPublishRequest): Promise<GraphDefinitionResponse> {
+    return this.#request(ControlApiOperations.publishGraph, input)
+  }
+
+  deprecateGraph(input: GraphDefinitionDeprecationRequest): Promise<GraphDefinitionResponse> {
+    return this.#request(ControlApiOperations.deprecateGraph, input)
+  }
+
+  revokeGraph(input: GraphDefinitionRevocationRequest): Promise<GraphDefinitionResponse> {
+    return this.#request(ControlApiOperations.revokeGraph, input)
+  }
+
+  resolveGraph(input: GraphDefinitionResolutionRequest): Promise<GraphDefinitionResponse> {
+    return this.#request(ControlApiOperations.resolveGraph, input)
   }
 
   verifyAuthentication(

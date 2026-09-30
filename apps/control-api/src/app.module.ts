@@ -1,3 +1,9 @@
+import { GraphAdministrationController } from './graphs/graph-administration.controller.js'
+import {
+  GRAPH_ADMINISTRATION_SERVICE,
+  UnavailableGraphAdministrationService,
+  type GraphAdministrationService,
+} from './graphs/graph-administration.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
 import {
   createOpenTelemetryMetricAdapter,
@@ -86,6 +92,7 @@ import {
 } from './queries/context-package-resolution.service.js'
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
+  readonly graphAdministrationService?: GraphAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
@@ -120,6 +127,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     module: AppModule,
     controllers: [
       AuthenticationController,
+      GraphAdministrationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
@@ -133,6 +141,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       SystemController,
     ],
     providers: [
+      {
+        provide: GRAPH_ADMINISTRATION_SERVICE,
+        useValue: options.graphAdministrationService ?? new UnavailableGraphAdministrationService(),
+      },
       {
         provide: INTERACTION_COMMAND_SERVICE,
         useValue: options.interactionCommandService ?? new UnavailableInteractionCommandService(),

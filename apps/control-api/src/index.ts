@@ -187,3 +187,5 @@ export {
   createPrivateApiAuthentication,
   type PrivateApiAuthentication,
 } from './auth/private-api-authentication.js'
+
+export * from './graphs/graph-administration.service.js'
