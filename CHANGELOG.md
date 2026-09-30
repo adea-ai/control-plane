@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.59.16](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.15...workspace-v1.59.16) (2026-09-30)
+
+
+### Maintenance
+
+* add Renovate for dependency updates ([e6133a7](https://github.com/adea-ai/control-plane/commit/e6133a75b34a1da949a967303729bacf5d6ef053))
+* renovate ([#791](https://github.com/adea-ai/control-plane/issues/791)) ([e6133a7](https://github.com/adea-ai/control-plane/commit/e6133a75b34a1da949a967303729bacf5d6ef053))
+
 ## [1.59.15](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.14...workspace-v1.59.15) (2026-09-30)
 
 
