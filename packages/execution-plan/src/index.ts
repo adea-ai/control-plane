@@ -450,7 +450,7 @@ export class ExecutionPlanAcceptanceValidator {
     readonly options?: ExecutionPlanAcceptanceValidatorOptions
   ) {}
 
-  /** Rechecks only object ownership, including when an already accepted command is replayed. */
+  /** Rechecks current ownership on exact replay when the historical plan is still retained. */
   async authorize(input: {
     readonly executionPlan: ExecutionPlanReference & { readonly schemaVersion: number }
     readonly workspaceId: string
@@ -460,6 +460,10 @@ export class ExecutionPlanAcceptanceValidator {
     readonly callerPrincipalId: string
   }): Promise<boolean> {
     const plan = await this.repository.get(input.executionPlan)
+    // This authorizer is used only after CommandInboxService finds an exact
+    // payload replay under caller/workspace/project/idempotency scope. Retention
+    // may remove its plan first; acknowledging it creates or dispatches no work.
+    if (plan === undefined) return true
     if (!executionPlanCorrelates(plan, input)) return false
     const options = this.options
     if (options === undefined) return true
