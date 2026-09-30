@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/database-v1.35.6...database-v1.36.0) (2026-09-30)
+
+
+### Features
+
+* **graph:** persist workspace-scoped graph definitions ([#798](https://github.com/adea-ai/control-plane/issues/798)) ([313de71](https://github.com/adea-ai/control-plane/commit/313de7109c9066cefe4b2ba65b146c0b805fa29f))
+
 ## [1.35.6](https://github.com/adea-ai/control-plane/compare/database-v1.35.5...database-v1.35.6) (2026-09-30)
 
 
