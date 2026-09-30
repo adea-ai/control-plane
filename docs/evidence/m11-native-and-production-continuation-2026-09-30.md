@@ -10,6 +10,12 @@ The successful probe used a credential-free deterministic local model endpoint. 
 
 The script reported completed cleanup. Recorded runner, child-test and Restate process IDs were subsequently absent; the fixture temporary directory and disposable package installation were removed. Unrelated listeners and the user’s global runtime remained untouched.
 
+## Default embedded-SQLite Pi follow-up
+
+The bounded follow-up at candidate `0b616155d2a6a7c21303fbb426bdb0f44109d501` runs the real Pi 0.84.2 process through Local without supplying a `durableExecution` override. The test verifies the `embedded-sqlite` default, SQLite persistence, `externalServices: 0`, unavailable Restate discovery, zero workflow Restate lookups, and successful queue outcomes through `awaitLocalWorkflowOutcome`. The actual native completion and cancellation cases passed, including the integrated root rerun recorded in the projection; the ordinary fixture E2E also retains and passes its explicit Local Restate compatibility path. The [default-Local qualification projection](m11-native-pi-default-local-2026-09-30.json) records the outcomes, package provenance and limitations.
+
+The fresh exact-version NPM tarball integrity and executable SHA256 match the earlier recorded values. The fresh disposable Bun lock hash differs because its root workspace name differs; the lock diff contains no other change. Global Pi remained at 0.99.1 and was not modified. The certifier closed its processes and loopback listeners and removed its per-run fixture state. The separately reserved disposable package and empty runtime scratch directories remain retained because the global destructive-command guard blocked their removal; no alternate deletion method was used. This is default Local transport/topology evidence against the credential-free deterministic fixture. It does not establish live-provider quality/cost, in-flight restart recovery, approval execution, human acceptance, every harness/profile, or full M11 acceptance.
+
 ## Current installed Codex ACP qualification
 
 The [current projection](m11-installed-acp-continuation-2026-09-30.json) records the bounded installed-native result at source candidate `928b2889050bc80374dba6ebaaa614eebb322751`, incorporating main `f078c0b6c25544d6ca771d64e0613ef65bd3f328` and the catalog-owner fixture repair. This candidate is distinct from the earlier Pi candidate above.

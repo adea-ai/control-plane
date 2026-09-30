@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "candidate": "0b616155d2a6a7c21303fbb426bdb0f44109d501",
+  "base": "2ae1169f17721ecbd6f809c900c025cf4bd718b7",
+  "package": {
+    "name": "@earendil-works/pi-coding-agent",
+    "version": "0.84.2",
+    "source": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.84.2.tgz",
+    "tarballIntegrity": "sha512-l4E+B7hgXKWddRo8bC/eSue2aWZjEgJ9xIpf5p0Og+lq8a2TArCwJ0HCoCPCgaBP/tN4zbYH/wOwvx9pJpeLCA==",
+    "disposableBunLockSha256": "9f2363df161b600166730c75814b27c44cbb31286e2561116e43019d51ae5b91",
+    "historicalBunLockSha256": "71974ed3d43fc9aad073d8115eb18bf5c3ce169fc8c536aef1c8eeb3afb2563f",
+    "historicalLockDiff": "The only lock text difference is the disposable root workspace name.",
+    "executableSha256": "840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    "historicalExecutableSha256": "840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    "comparison": {
+      "tarballIntegrityMatchesHistorical": true,
+      "executableSha256MatchesHistorical": true,
+      "disposableBunLockSha256MatchesHistorical": false
+    }
+  },
+  "environment": {
+    "nodeVersion": "v24.18.0",
+    "bunVersion": "1.4.0",
+    "globalPiVersion": "0.99.1",
+    "globalPiModified": false
+  },
+  "qualification": {
+    "suite": "m11-real-pi-process",
+    "runtimeVersion": "0.84.2",
+    "runtimeExecutableSha256": "840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    "transport": "direct-local",
+    "model": "local-deterministic-http-fixture",
+    "requests": 4,
+    "completed": true,
+    "cancellation": true,
+    "duplicateStart": "same-handle-one-request",
+    "concurrentNativeStarts": 8,
+    "changedNativeCommand": "rejected",
+    "clientRecreationAfterCleanup": "original-terminal-handle-no-new-request",
+    "terminalRecoveryAfterCleanup": ["succeeded-with-original-output-and-usage", "cancelled"],
+    "terminalCancellationAfterCleanup": "original-terminal-state-no-new-request",
+    "eventRecoveryAfterCleanup": "exact-history-and-cursor-filtering",
+    "localComposition": {
+      "persistence": "sqlite",
+      "durableExecution": "embedded-sqlite",
+      "defaultSelectionVerified": true,
+      "externalServices": 0,
+      "restateDiscovery": {
+        "availabilityProbe": "SERVICE_ENDPOINT_NOT_FOUND",
+        "workflowLookupCount": 0
+      },
+      "completionAndCancellationCasesPassed": 2,
+      "sdkCancellation": "authenticated-lost-ack-replay-single-attempt",
+      "cancellationModelStream": "closed-before-runtime-cleanup",
+      "assertions": 23
+    },
+    "usage": {
+      "inputTokens": 11,
+      "outputTokens": 3
+    },
+    "limitations": [
+      "PI_NATIVE_TOOLS_DISABLED",
+      "PI_AMBIENT_CONTEXT_DISABLED",
+      "PI_APPROVAL_INTERACTION_UNSUPPORTED",
+      "PI_INFLIGHT_RESTART_RECONCILIATION_UNSUPPORTED"
+    ],
+    "cleanup": "completed"
+  },
+  "resourceRetention": {
+    "processesAndListeners": "stopped; absence checked",
+    "perRunFixtureState": "removed by certifier",
+    "disposablePackageAndEmptyRuntimeScratch": "retained; global destructive-command guard blocked removal"
+  },
+  "regressions": {
+    "defaultEmbeddedSqliteFixtureE2E": {
+      "passed": 2,
+      "assertions": 22
+    },
+    "optionalRestateFixtureE2E": {
+      "passed": 2,
+      "assertions": 14,
+      "mode": "explicit-restate"
+    }
+  },
+  "validation": {
+    "frozenInstall": "passed",
+    "workspaceBuild": "41/41 tasks passed; 31 cached",
+    "oxfmt": "passed on changed JavaScript files",
+    "oxlint": "passed on changed JavaScript files",
+    "nodeSyntax": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "scope": "Real Pi 0.84.2 process and default Local embedded-SQLite workflow against a deterministic credential-free loopback provider. This is bounded transport and topology evidence; it does not establish live-provider quality/cost, in-flight restart recovery, approval execution, human acceptance, every harness/profile, or full M11 acceptance.",
+  "integratedVerification": {
+    "candidate": "15db7ddabbcc51310ca626f1080428e61487ed68",
+    "mainBase": "e6133a75b34a1da949a967303729bacf5d6ef053",
+    "observedAt": "2026-09-30T18:04:37.137454+00:00",
+    "commandExit": 0,
+    "workspaceBuildPackages": 41,
+    "providerRequests": 4,
+    "localCases": 2,
+    "assertions": 23,
+    "executableHashMatchesOriginal": true,
+    "ownedProcessesAndListeners": "matching task processes absent after the completed command",
+    "cleanupReceipt": "m11-default-pi-cleanup-2026-09-30.json",
+    "cleanupReceiptSha256": "602d5fb5c96f4488d212007b5b492f1e68b403cfebdbc6b41864b0e3c57937cf",
+    "runtimeScratch": "empty; disposable package retained under cleanup guard"
+  }
+}

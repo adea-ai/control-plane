@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "candidate": "15db7ddabbcc51310ca626f1080428e61487ed68",
+  "observedAt": "2026-09-30T18:03:27.380844+00:00",
+  "commandSession": "63365",
+  "commandExit": 0,
+  "inspection": "Post-run process command identity scan and reserved runtime scratch directory listing",
+  "processSelection": [
+    "certify-m11-managed-pi.mjs",
+    "native Pi under the reserved disposable package",
+    "processes referencing the reserved runtime scratch"
+  ],
+  "matchingSelectedProcesses": [],
+  "runtimeScratchEntries": [],
+  "disposablePackageRetained": true,
+  "emptyRuntimeScratchRetained": true,
+  "retentionReason": "Global destructive-command guard rejected removal; no alternative deletion method used",
+  "scope": "Matching task process identities and empty per-run scratch, after the completed native command; not a machine-wide resource audit"
+}
