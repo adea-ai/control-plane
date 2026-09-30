@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.59.15](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.14...workspace-v1.59.15) (2026-09-30)
+
+
+### Bug Fixes
+
+* **acp:** seed catalog owners for installed native qualification ([#790](https://github.com/adea-ai/control-plane/issues/790)) ([9a292b5](https://github.com/adea-ai/control-plane/commit/9a292b576296646f488470c534147d9f55abcc9f))
+
+
+### Documentation
+
+* **requirements:** audit recovered canonical source figures ([#788](https://github.com/adea-ai/control-plane/issues/788)) ([002a10c](https://github.com/adea-ai/control-plane/commit/002a10c333b14c9702e58e20cc2e8e55eb5d28bc))
+* **requirements:** inventory the remaining canonical source text ([#786](https://github.com/adea-ai/control-plane/issues/786)) ([da25f16](https://github.com/adea-ai/control-plane/commit/da25f164d218a188b2287ada0aa5f1aad61bd85f))
+
 ## [1.59.14](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.13...workspace-v1.59.14) (2026-09-30)
 
 
