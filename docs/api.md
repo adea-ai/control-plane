@@ -108,6 +108,12 @@ agent correlation. Workflow graph reference, input and thread identity derive
 from that stored plan; caller-supplied graph data cannot replace them. A missing
 or mismatched retained plan leaves dispatch unconfirmed for reconciliation.
 
+Delegated children retain their parent's policy and resource ceilings, but do not
+implicitly inherit its graph program. Control Plane child-plan derivation selects
+a child graph explicitly when graph semantics are needed; that pin and input enter
+the child plan digest and require the same catalog admission and execution-time
+authorization. A child without an explicit selection follows its runtime plan.
+
 The catalog administration and declarative compiler build on this admission
 contract. Production runtime/model/tool/delegation bindings, graph activity and
 checkpoint wiring, and deployed acceptance remain required by M11. Catalog and
