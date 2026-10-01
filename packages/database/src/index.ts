@@ -158,7 +158,11 @@ export {
   skills,
   marketplaceInstallationState,
   marketplaceInstallations,
+  toolCalls,
+  toolDefinitions,
+  toolVersions,
 } from './schema/index.js'
+export { PostgresToolCallRepository, PostgresToolRegistryRepository } from './tool-repositories.js'
 export { withDomainTransaction } from './transaction.js'
 export type { DomainTransaction } from './transaction.js'
 export { PostgresInteractionCommandRepository } from './interaction-command-repository.js'

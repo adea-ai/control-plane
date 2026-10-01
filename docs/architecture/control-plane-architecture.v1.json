@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "785aad99dc03a166b52309c9a8d04536c37c6085",
-    "ref": "main",
-    "recordedAt": "2026-10-01T05:01:29.329884Z"
+    "commit": "070fb8c1650e5db1d0ef403740d9011c5cfa1568",
+    "ref": "codex/m11-pg-tool-storage-20261001",
+    "recordedAt": "2026-10-01T05:13:11.867047Z"
   },
   "packages": [
     {
@@ -185,6 +185,8 @@
         "@control-plane/production-readiness",
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk",
+        "@control-plane/tool-execution",
+        "@control-plane/tool-sdk",
         "@control-plane/usage-ledger"
       ],
       "externalDependencies": ["drizzle-orm", "postgres"],
