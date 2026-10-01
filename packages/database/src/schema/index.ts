@@ -38,6 +38,7 @@ export {
 } from './executions.js'
 export { executionPlans } from './execution-plans.js'
 export { graphDefinitionCommands, graphDefinitionVersions } from './graph-definitions.js'
+export { toolCalls, toolDefinitions, toolVersions } from './tool-execution.js'
 export { executionValidationCommands } from './execution-validation-commands.js'
 export {
   projectStateMutations,

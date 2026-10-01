@@ -284,6 +284,8 @@
         "@control-plane/production-readiness": "workspace:*",
         "@control-plane/runtime-gateway-protocol": "workspace:*",
         "@control-plane/runtime-sdk": "workspace:*",
+        "@control-plane/tool-execution": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
         "@control-plane/usage-ledger": "workspace:*",
         "drizzle-orm": "0.45.3",
         "postgres": "3.4.9",
