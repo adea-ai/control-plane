@@ -136,6 +136,22 @@ describe('ExecutionEvent log', () => {
     ).rejects.toBeInstanceOf(ExecutionEventError)
   })
 
+  test('accepts only the explicitly published graph lifecycle vocabulary', async () => {
+    const { repository, service } = setup()
+    const types = ['graph.started', 'graph.node_started', 'graph.node_completed', 'graph.completed']
+    for (const [index, type] of types.entries()) {
+      await service.append(base(`evt_01GRZ3NDEKTSV4RRFFQ69G5FA${index}`, type))
+    }
+
+    await expect(
+      service.append(base('evt_01GRZ3NDEKTSV4RRFFQ69G5FAV', 'graph.node.started'))
+    ).rejects.toMatchObject({ code: 'INVALID_EVENT' })
+    await expect(
+      service.append(base('evt_01GRZ3NDEKTSV4RRFFQ69G5FBW', 'graph.unreviewed'))
+    ).rejects.toMatchObject({ code: 'INVALID_EVENT' })
+    expect((await repository.queryPending(10)).map(({ type }) => type)).toEqual(types)
+  })
+
   test('keeps a stable event identity across publication retries', async () => {
     const { repository, service } = setup()
     const event = await service.append(
