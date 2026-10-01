@@ -16,8 +16,8 @@ is historical context, not an active compatibility or portability target.
 
 ## Prerequisites
 
-- Node.js 24.18.0 (`.node-version`)
-- Bun 1.4.0 (`.bun-version` and `packageManager`)
+- Node.js 24.21.0 (`.node-version`)
+- Bun 1.4.2 (`.bun-version` and `packageManager`)
 
 Newer compatible Bun 1.x patch releases may run the workspace, but the pinned version is the reproducible baseline.
 

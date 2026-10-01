@@ -34,6 +34,6 @@
     "@control-plane/workflow-worker": "workspace:*"
   },
   "engines": {
-    "node": "24.18.0"
+    "node": "24.21.0"
   }
 }

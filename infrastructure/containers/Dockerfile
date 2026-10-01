@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dependencies
+FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dependencies
 
 WORKDIR /workspace
 
@@ -33,7 +33,7 @@ RUN bun install --frozen-lockfile --production --ignore-scripts \
         -cf /tmp/runtime-artifact.tar . \
     && tar -xf /tmp/runtime-artifact.tar -C /runtime-artifact
 
-FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS runtime
+FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS runtime
 
 ARG APP_NAME
 ARG COMMIT_SHA
