@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "1058675aff4c2c8f06833139b61a62e19dd681fc",
-    "ref": "codex/m11-graph-execution-20261001",
-    "recordedAt": "2026-10-01T03:36:24.675Z"
+    "commit": "f38c22b78db1429ce2d5280657a265c753817381",
+    "ref": "codex/m11-tool-storage-20261001",
+    "recordedAt": "2026-10-01T04:29:01.221Z"
   },
   "packages": [
     {
@@ -687,6 +687,8 @@
         "@control-plane/orchestration",
         "@control-plane/production-readiness",
         "@control-plane/runtime-sdk",
+        "@control-plane/tool-execution",
+        "@control-plane/tool-sdk",
         "@control-plane/usage-ledger"
       ],
       "externalDependencies": ["drizzle-orm"],
