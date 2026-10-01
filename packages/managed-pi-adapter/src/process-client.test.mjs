@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, test } from 'bun:test'
+import { ProcessRpcLink } from '@control-plane/deployment'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
 import { ManagedPiAdapter, ManagedPiDriver, translateExecutionPlanToManagedPi } from './index.ts'
@@ -625,24 +626,45 @@ describe('ManagedPiProcessClient', () => {
   })
 
   test('bounded stats timeout preserves cancellation without zero or late mutation', async () => {
-    const fixture = await processAdapterFixture('cancel-stats-hang', { rpcTimeoutMs: 5_000 })
+    const fixture = await processAdapterFixture('cancel-stats-after-window', {
+      rpcTimeoutMs: 5_000,
+      captureStatsResponse: true,
+    })
+    const statsResponsePath = fixture.statsResponsePath
     let handle
+    let rpcCapture
     try {
       handle = await fixture.adapter.start({
         attemptId: 'att_01JBCDEF0123456789ABCDEFGH',
-        idempotencyKey: 'process-client:cancel-stats-hang',
+        idempotencyKey: 'process-client:cancel-stats-after-window',
         executionPlan: fixture.plan,
       })
-      const start = performance.now()
-      const status = await fixture.adapter.cancel(handle, {
-        idempotencyKey: 'cancel-stats-hang',
-        requestedAt: new Date().toISOString(),
-      })
-      // Allow CI process/filesystem scheduling headroom while staying below the RPC deadline.
-      expect(performance.now() - start).toBeLessThan(1_500)
+      rpcCapture = captureProcessRpcLinkRequest('get_session_stats', { after: 'abort' })
+      let status
+      try {
+        status = await fixture.adapter.cancel(handle, {
+          idempotencyKey: 'cancel-stats-after-window',
+          requestedAt: new Date().toISOString(),
+        })
+      } finally {
+        rpcCapture.restore()
+      }
       expect(status.state).toBe('cancelled')
       expect(status.terminalUsage).toBeUndefined()
       expect(status.result).toBeUndefined()
+      await waitForFile(statsResponsePath)
+      expect(rpcCapture.captured).toBe(true)
+      // The same-link probe's FIFO response proves the queued stats frame was read first.
+      const readBarrier = await rpcCapture.request(
+        { type: 'get_state' },
+        { id: 'late-stats-read-barrier', timeoutMs: 5_000 }
+      )
+      expect(readBarrier).toMatchObject({
+        command: 'get_state',
+        success: true,
+        data: { isStreaming: false },
+      })
+      expect((await fixture.adapter.status(handle)).terminalUsage).toBeUndefined()
       await fixture.adapter.cleanup(handle)
       const recovered = await fixture.recreate().reconcile(handle)
       expect(recovered.state).toBe('cancelled')
@@ -781,11 +803,18 @@ async function processAdapterFixture(mode, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-rpc-case-'))
   const executablePath = join(directory, 'pi-fixture.mjs')
   await writeManagedPiRpcFixture(executablePath)
+  const statsResponsePath = options.captureStatsResponse
+    ? join(directory, 'stats-response.json')
+    : options.statsResponsePath
   const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
     ...(options.rpcTimeoutMs === undefined ? {} : { rpcTimeoutMs: options.rpcTimeoutMs }),
-    environment: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_MODE: mode },
+    environment: {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      MOCK_MODE: mode,
+      ...(statsResponsePath === undefined ? {} : { MOCK_STATS_RESPONSE_PATH: statsResponsePath }),
+    },
     inputResolver: {
       resolve: async () => ({
         systemPrompt: 'immutable system instruction',
@@ -810,11 +839,55 @@ async function processAdapterFixture(mode, options = {}) {
     adapter,
     recreate: () => new ManagedPiProcessClient(clientOptions),
     directory,
+    statsResponsePath,
     plan: createExecutionPlanTestFixture({
       profileCapabilityRequirements: ['stream.output'],
       skillRequiredCapabilities: [],
     }),
     cleanup: () => rm(directory, { recursive: true, force: true }),
+  }
+}
+
+async function waitForFile(path) {
+  const deadline = performance.now() + 3_000
+  while (performance.now() < deadline) {
+    try {
+      await access(path)
+      return
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      await delay(10)
+    }
+  }
+  throw new Error('PI_FIXTURE_STATS_RESPONSE_NOT_OBSERVED')
+}
+
+function captureProcessRpcLinkRequest(commandType, { after }) {
+  const originalRequest = ProcessRpcLink.prototype.request
+  let capturedLink
+  let precedingLink
+  const capturingRequest = function (request, options) {
+    if (request?.type === after) precedingLink = this
+    if (capturedLink === undefined && request?.type === commandType && this === precedingLink) {
+      capturedLink = this
+    }
+    return originalRequest.call(this, request, options)
+  }
+  ProcessRpcLink.prototype.request = capturingRequest
+
+  return {
+    get captured() {
+      return capturedLink !== undefined
+    },
+    request(request, options) {
+      if (capturedLink === undefined) throw new Error('PI_RPC_TEST_LINK_NOT_CAPTURED')
+      return originalRequest.call(capturedLink, request, options)
+    },
+    restore() {
+      if (ProcessRpcLink.prototype.request === capturingRequest) {
+        ProcessRpcLink.prototype.request = originalRequest
+      }
+    },
   }
 }
 

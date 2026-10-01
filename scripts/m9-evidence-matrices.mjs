@@ -122,13 +122,13 @@ export const isolationEvidence = [
   evidence(
     'tool',
     'read',
-    'apps/tool-gateway/src/tool-registry.test.mjs',
+    'packages/tool-execution/src/tool-registry.test.mjs',
     'lists, reads, and resolves exact immutable versions within workspace scope'
   ),
   evidence(
     'tool',
     'mutate',
-    'apps/tool-gateway/src/tool-registry.test.mjs',
+    'packages/tool-execution/src/tool-registry.test.mjs',
     'executes only registered, granted, schema-valid, bounded operations'
   ),
   evidence(

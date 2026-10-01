@@ -48,7 +48,15 @@ function handle(command) {
       }))
     }
     send({ id: command.id, type: 'response', command: 'prompt', success: true })
-    if (['hold', 'cancel-with-stats', 'cancel-stats-delayed', 'cancel-stats-hang'].includes(process.env.MOCK_MODE)) return
+    if (
+      [
+        'hold',
+        'cancel-with-stats',
+        'cancel-stats-delayed',
+        'cancel-stats-hang',
+        'cancel-stats-after-window',
+      ].includes(process.env.MOCK_MODE)
+    ) return
     if (process.env.MOCK_MODE === 'error-with-stats') {
       queueMicrotask(() => {
         send({ type: 'agent_start' })
@@ -96,19 +104,31 @@ function handle(command) {
   if (command.type === 'get_session_stats') {
     let data = { tokens: { input: 11, output: 3 } }
     if (process.env.MOCK_MODE === 'error-with-stats') data = { tokens: { input: 17, output: 4 } }
-    if (process.env.MOCK_MODE === 'cancel-with-stats' || process.env.MOCK_MODE === 'cancel-stats-delayed') data = { tokens: { input: 23, output: 6 } }
+    if (
+      process.env.MOCK_MODE === 'cancel-with-stats' ||
+      process.env.MOCK_MODE === 'cancel-stats-delayed' ||
+      process.env.MOCK_MODE === 'cancel-stats-after-window'
+    ) data = { tokens: { input: 23, output: 6 } }
     if (process.env.MOCK_MODE === 'stats-missing') data = {}
     if (process.env.MOCK_MODE === 'stats-malformed') data = { tokens: { input: 1.5, output: 3 } }
     if (process.env.MOCK_MODE === 'stats-unsafe') data = { tokens: { input: Number.MAX_SAFE_INTEGER + 1, output: 0 } }
     if (process.env.MOCK_MODE === 'stats-total-overflow') data = { tokens: { input: Number.MAX_SAFE_INTEGER, output: 1 } }
     const respond = () => {
       const response = { id: command.id, type: 'response', command: command.type, success: true, data }
+      const responsePath = process.env.MOCK_STATS_RESPONSE_PATH
+      if (responsePath !== undefined) {
+        process.stdout.write(JSON.stringify(response) + '\\n', () => {
+          writeFileSync(responsePath, 'sent')
+        })
+        return
+      }
       if (process.env.MOCK_MODE === 'exit-with-stats-pending-text') {
         process.stdout.write(JSON.stringify(response) + '\\n', () => setTimeout(() => process.exit(17), 100))
       } else send(response)
     }
     if (process.env.MOCK_MODE === 'cancel-stats-hang') return
     if (process.env.MOCK_MODE === 'cancel-stats-delayed') setTimeout(respond, 150)
+    else if (process.env.MOCK_MODE === 'cancel-stats-after-window') setTimeout(respond, 800)
     else if (process.env.MOCK_MODE === 'cancel-race') setTimeout(respond, 20)
     else if (process.env.MOCK_MODE === 'cancel-race-late-stats') setTimeout(respond, 800)
     else respond()

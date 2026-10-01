@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "cf84024255f2da51b77c46fe34f2cdd93fad10d1",
+    "commit": "1058675aff4c2c8f06833139b61a62e19dd681fc",
     "ref": "codex/m11-graph-execution-20261001",
-    "recordedAt": "2026-10-01T02:56:37.283Z"
+    "recordedAt": "2026-10-01T03:36:24.675Z"
   },
   "packages": [
     {
@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.11.1",
+      "version": "1.12.0",
       "lockVersion": "1.11.0",
       "kind": "package",
       "private": false,
@@ -89,7 +89,7 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.16.5",
+      "version": "1.17.0",
       "lockVersion": "1.16.4",
       "kind": "application",
       "private": true,
@@ -166,7 +166,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.36.1",
+      "version": "1.37.0",
       "lockVersion": "1.36.0",
       "kind": "package",
       "private": true,
@@ -251,7 +251,7 @@
     {
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
-      "version": "1.6.2",
+      "version": "1.7.0",
       "lockVersion": "1.6.1",
       "kind": "package",
       "private": true,
@@ -271,7 +271,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.13.3",
+      "version": "1.14.0",
       "lockVersion": "1.13.2",
       "kind": "application",
       "private": true,
@@ -302,7 +302,7 @@
     {
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
-      "version": "1.3.3",
+      "version": "1.4.0",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
@@ -333,7 +333,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.19.5",
+      "version": "1.20.0",
       "lockVersion": "1.19.4",
       "kind": "application",
       "private": true,
@@ -438,7 +438,7 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.3.1",
+      "version": "1.4.0",
       "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
@@ -511,7 +511,7 @@
     {
       "name": "@control-plane/remote-control-relay",
       "path": "packages/remote-control-relay",
-      "version": "1.2.3",
+      "version": "1.3.0",
       "lockVersion": "1.2.2",
       "kind": "package",
       "private": true,
@@ -641,7 +641,7 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "lockVersion": "1.8.0",
       "kind": "package",
       "private": false,
@@ -671,7 +671,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.29.1",
+      "version": "1.30.0",
       "lockVersion": "1.29.0",
       "kind": "package",
       "private": true,
@@ -756,16 +756,8 @@
       "private": true,
       "browser": false,
       "exports": [],
-      "workspaceDependencies": [
-        "@control-plane/bootstrap",
-        "@control-plane/config",
-        "@control-plane/contracts",
-        "@control-plane/domain",
-        "@control-plane/policy",
-        "@control-plane/tool-execution",
-        "@control-plane/tool-sdk"
-      ],
-      "externalDependencies": ["ajv"],
+      "workspaceDependencies": ["@control-plane/bootstrap", "@control-plane/tool-execution"],
+      "externalDependencies": [],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -803,7 +795,7 @@
     {
       "name": "@control-plane/workflow-runtime",
       "path": "packages/workflow-runtime",
-      "version": "1.5.2",
+      "version": "1.6.0",
       "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
