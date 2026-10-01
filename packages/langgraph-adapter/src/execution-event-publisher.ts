@@ -45,7 +45,7 @@ const publicTypes: Partial<Record<GraphEvent['type'], GraphExecutionEventType>> 
 }
 
 export interface DurableGraphEventPublisherOptions {
-  /** Root execution command authority; child executions without their own accepted command fail closed. */
+  /** Root-execution command authority; parented children fail closed until delegation authority exists. */
   readonly commands: Pick<CommandAcceptanceRepository, 'getByExecutionId' | 'getExecution'>
   readonly attempts: Pick<ExecutionRepository, 'getAttempt'>
   readonly plans: Pick<ExecutionPlanRepository, 'get'>
@@ -159,6 +159,7 @@ export class DurableGraphEventPublisher implements GraphEventPublisher {
     if (
       acceptedCommand.operation !== 'execution.accept' ||
       acceptedCommand.executionId !== acceptedExecution.executionId ||
+      acceptedExecution.parentExecutionId !== undefined ||
       acceptedCommand.workspaceId !== acceptedExecution.correlation.workspaceId ||
       acceptedCommand.projectId !== acceptedExecution.correlation.projectId ||
       acceptedCommand.taskId !== acceptedExecution.correlation.taskId ||

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { CommandInboxService, ExecutionLifecycleService } from '@control-plane/domain'
-import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
+import { deriveExecutionPlan, ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import {
   SqliteCommandAcceptanceRepository,
@@ -344,6 +344,102 @@ test('rejects forged scope, thread, stale attempt and plans without a pinned gra
   } finally {
     await unpinned.provider.close()
     await rm(unpinned.directory, { recursive: true, force: true })
+  }
+})
+
+test('rejects graph publication for a parented accepted execution', async () => {
+  const environment = await createEnvironment()
+  const childExecutionId = 'exe_01JABCDEF0123456789ABCDEFH'
+  const childAttemptId = 'att_01JABCDEF0123456789ABCDEFJ'
+  try {
+    const childPlan = deriveExecutionPlan(environment.plan, {
+      correlation: {
+        ...environment.plan.correlation,
+        taskId: 'tsk_01JABCDEF0123456789ABCDEFH',
+        requestId: 'req_01JABCDEF0123456789ABCDEFH',
+      },
+      contextPackage: contextPackageSerializationFixtures.futurePi,
+      constraints: structuredClone(environment.plan.constraints),
+      runtimeRequirements: environment.plan.runtimeRequirements,
+      outputContract: environment.plan.outputContract,
+      compiledAt: '2026-09-30T12:00:00.000Z',
+    })
+    await environment.plans.put(childPlan)
+
+    const childAcceptance = new CommandInboxService({
+      repository: environment.commands,
+      executionIdFactory: () => childExecutionId,
+      executionPlanValidator: { validate: async () => true, authorize: async () => true },
+      now: () => now,
+    })
+    const acceptedChild = await childAcceptance.acceptExecution({
+      callerPrincipalId: 'svc_agent-hq',
+      operation: 'execution.accept',
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFH',
+      requestId: childPlan.correlation.requestId,
+      idempotencyKey: 'graph-events-child-acceptance-1',
+      payloadHash: 'b'.repeat(64),
+      correlation: {
+        workspaceId: childPlan.correlation.workspaceId,
+        projectId: childPlan.correlation.projectId,
+        taskId: childPlan.correlation.taskId,
+        agentId: childPlan.correlation.agentId,
+      },
+      executionPlan: {
+        executionPlanId: childPlan.executionPlanId,
+        contentDigest: childPlan.contentDigest,
+        schemaVersion: childPlan.schemaVersion,
+      },
+      parentExecutionId: executionId,
+      receivedAt: now,
+      retentionExpiresAt: '2027-01-01T12:00:00.000Z',
+    })
+    expect(acceptedChild.execution.parentExecutionId).toBe(executionId)
+    expect(await environment.commands.getByExecutionId(childExecutionId)).toMatchObject({
+      operation: 'execution.accept',
+      executionId: childExecutionId,
+    })
+
+    const lifecycle = new ExecutionLifecycleService(environment.executions)
+    let child = await lifecycle.transitionExecution({
+      executionId: childExecutionId,
+      expectedVersion: acceptedChild.execution.version,
+      to: 'queued',
+      transitionedAt: '2026-09-30T12:00:01.000Z',
+    })
+    const attempt = await lifecycle.createAttempt({
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      expectedExecutionVersion: child.version,
+      queuedAt: '2026-09-30T12:00:02.000Z',
+    })
+    child = await lifecycle.getExecution(childExecutionId)
+    await lifecycle.transitionExecution({
+      executionId: childExecutionId,
+      expectedVersion: child.version,
+      to: 'running',
+      transitionedAt: '2026-09-30T12:00:03.000Z',
+    })
+    await lifecycle.transitionAttempt({
+      attemptId: childAttemptId,
+      expectedVersion: attempt.version,
+      to: 'running',
+      transitionedAt: '2026-09-30T12:00:03.000Z',
+    })
+
+    const event = graphEvent({
+      executionId: childExecutionId,
+      attemptId: childAttemptId,
+      workflowId: `wfl_${childExecutionId.slice(4)}`,
+      threadId: `graph:${childExecutionId}`,
+    })
+    await expect(
+      environment.publisher().publish(event, 'graph:child:step:prepare:visit:1')
+    ).rejects.toMatchObject({ code: 'GRAPH_EVENT_SCOPE_MISMATCH' })
+    expect(await environment.events.queryPending(10)).toEqual([])
+  } finally {
+    await environment.provider.close()
+    await rm(environment.directory, { recursive: true, force: true })
   }
 })
 
