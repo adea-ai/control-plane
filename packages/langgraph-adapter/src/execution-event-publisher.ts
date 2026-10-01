@@ -45,6 +45,7 @@ const publicTypes: Partial<Record<GraphEvent['type'], GraphExecutionEventType>> 
 }
 
 export interface DurableGraphEventPublisherOptions {
+  /** Root execution command authority; child executions without their own accepted command fail closed. */
   readonly commands: Pick<CommandAcceptanceRepository, 'getByExecutionId' | 'getExecution'>
   readonly attempts: Pick<ExecutionRepository, 'getAttempt'>
   readonly plans: Pick<ExecutionPlanRepository, 'get'>
@@ -133,6 +134,7 @@ export class DurableGraphEventPublisher implements GraphEventPublisher {
       if (existing === undefined) {
         throw new GraphEventPublicationError('GRAPH_EVENT_REPLAY_UNAVAILABLE')
       }
+      // The current attempt was authenticated above; keep the first durable row's attempt provenance.
       if (!sameEventSemantics(existing, sanitized)) {
         throw new GraphEventPublicationError('GRAPH_EVENT_IDEMPOTENCY_CONFLICT')
       }
@@ -290,7 +292,6 @@ function sameEventSemantics(event: ExecutionEvent, draft: ExecutionEventDraft): 
   return (
     event.eventId === draft.eventId &&
     event.executionId === draft.executionId &&
-    event.attemptId === draft.attemptId &&
     event.workflowId === draft.workflowId &&
     event.type === draft.type &&
     event.schemaVersion === draft.schemaVersion &&

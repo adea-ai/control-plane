@@ -242,6 +242,63 @@ test('maps only the canonical graph lifecycle vocabulary to public event names',
   }
 })
 
+test('acknowledges exact event replays from a new current attempt and rejects stale attempts', async () => {
+  const environment = await createEnvironment()
+  const publisher = environment.publisher()
+  const key = 'graph:retry:prepare:visit:1'
+  const originalEvent = graphEvent()
+  try {
+    await publisher.publish(originalEvent, key)
+    const [original] = await environment.events.queryPending(10)
+
+    const lifecycle = new ExecutionLifecycleService(environment.executions)
+    const execution = await environment.commands.getExecution(executionId)
+    const nextAttempt = await lifecycle.createAttempt({
+      executionId,
+      attemptId: staleAttemptId,
+      expectedExecutionVersion: execution.version,
+      queuedAt: '2026-09-30T12:00:04.000Z',
+    })
+    await lifecycle.transitionAttempt({
+      attemptId: staleAttemptId,
+      expectedVersion: nextAttempt.version,
+      to: 'running',
+      transitionedAt: '2026-09-30T12:00:05.000Z',
+    })
+
+    const currentAttemptEvent = { ...originalEvent, attemptId: staleAttemptId }
+    await expect(
+      environment.publisher(() => '2026-09-30T12:01:00.000Z').publish(currentAttemptEvent, key)
+    ).resolves.toBeUndefined()
+
+    const [replayed] = await environment.events.queryPending(10)
+    expect(replayed).toMatchObject({
+      eventId: original.eventId,
+      attemptId,
+      occurredAt: original.occurredAt,
+      recordedAt: original.recordedAt,
+      payload: original.payload,
+    })
+    expect(await environment.events.queryPending(10)).toHaveLength(1)
+    await expect(publisher.publish(originalEvent, key)).rejects.toMatchObject({
+      code: 'GRAPH_EVENT_ATTEMPT_MISMATCH',
+    })
+
+    for (const changed of [
+      { node: 'different-node' },
+      { type: 'graph.node.completed' },
+      { details: { kind: 'runtime', operation: 'different' } },
+    ]) {
+      await expect(
+        environment.publisher().publish({ ...currentAttemptEvent, ...changed }, key)
+      ).rejects.toMatchObject({ code: 'GRAPH_EVENT_IDEMPOTENCY_CONFLICT' })
+    }
+  } finally {
+    await environment.provider.close()
+    await rm(environment.directory, { recursive: true, force: true })
+  }
+})
+
 test('rejects forged scope, thread, stale attempt and plans without a pinned graph', async () => {
   const environment = await createEnvironment()
   try {
