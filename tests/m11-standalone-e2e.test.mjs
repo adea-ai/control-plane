@@ -175,7 +175,8 @@ describe('M11 standalone execution composition', () => {
         graphVersion: '1.0.0',
         contentDigest: `sha256:${'a'.repeat(64)}`,
       }
-      const plan = createRegisteredGraphPlan(graph, { objective: 'recover graph approval' })
+      const graphInput = { objective: 'recover graph approval' }
+      const plan = createRegisteredGraphPlan(graph, graphInput)
       const operations = []
       const registration = deterministicInterruptGraph(graph)
       const createLocal = () =>
@@ -236,7 +237,10 @@ describe('M11 standalone execution composition', () => {
         )
       try {
         await local.start()
-        const executionPlanValidator = await seedRegisteredGraphPlan(local, plan)
+        const executionPlanValidator = await seedRegisteredGraphPlan(local, plan, {
+          reference: graph,
+          input: graphInput,
+        })
         const acceptedAt = new Date().toISOString()
         const deadlineAt = new Date(Date.now() + 90000).toISOString()
         const executionPlan = {

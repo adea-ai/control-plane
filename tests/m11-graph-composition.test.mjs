@@ -27,7 +27,7 @@ const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
 
 async function acceptGraphExecution(composition, selection) {
   const plan = createRegisteredGraphPlan(selection.reference, selection.input)
-  const executionPlanValidator = await seedRegisteredGraphPlan(composition, plan)
+  const executionPlanValidator = await seedRegisteredGraphPlan(composition, plan, selection)
   const executionPlan = {
     executionPlanId: plan.executionPlanId,
     contentDigest: plan.contentDigest,
@@ -250,6 +250,49 @@ test('Local refuses graph options that would silently be ignored', () => {
     () => new LocalControlPlaneComposition({ dataDirectory: '/unused', graphActivities: {} })
   ).toThrow('LOCAL_GRAPH_RUNTIME_REQUIRED')
 })
+
+test.each(['pin', 'input'])(
+  'registered graph fixture admission rejects a substituted plan %s',
+  async (substitution) => {
+    const directory = await mkdtemp(join(tmpdir(), 'm11-graph-admission-'))
+    const composition = new LocalControlPlaneComposition({ dataDirectory: directory })
+    const registered = {
+      reference: {
+        graphDefinitionId: 'registered-recovery',
+        graphVersion: '1.0.0',
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      },
+      input: { objective: 'registered fixture input' },
+    }
+    const plan = createRegisteredGraphPlan(
+      substitution === 'pin'
+        ? { ...registered.reference, graphVersion: '2.0.0' }
+        : registered.reference,
+      substitution === 'input' ? { objective: 'substituted input' } : registered.input
+    )
+    try {
+      await composition.persistence.migrate()
+      const validator = await seedRegisteredGraphPlan(composition, plan, registered)
+      expect(
+        await validator.validate({
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          ...plan.correlation,
+          callerPrincipalId: 'svc_m11-graph-test',
+        })
+      ).toBe(false)
+    } finally {
+      try {
+        await closeUnstartedLocalComposition(composition)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  }
+)
 
 test('Local and Hosted Simple resume graph approval from their own SQLite database after reconstruction', async () => {
   for (const profile of ['local', 'hosted-simple']) {
