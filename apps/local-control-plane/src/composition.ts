@@ -73,6 +73,10 @@ import type { MetricAdapter } from '@control-plane/telemetry'
 import { DirectRuntimeActivityPort } from './direct-runtime-activities.js'
 import { LocalRuntimeInteractions } from './runtime-interactions.js'
 import { LocalControlApiComposition } from './local-api-composition.js'
+import {
+  ManagedLocalGraphRuntime,
+  type ManagedLocalGraphRuntimeOptions,
+} from './managed-graph-runtime.js'
 import type { LocalRuntimeApprovalGate } from './published-runtime-inputs.js'
 
 import {
@@ -194,6 +198,7 @@ export interface LocalControlPlaneCompositionOptions {
   readonly workflowRuntime?: WorkflowRuntime
   readonly endpointFactory?: RestateEndpointFactory
   readonly activities?: ExecutionLifecycleActivities
+  readonly graphRuntime?: ManagedLocalGraphRuntimeOptions
   readonly graphActivities?: GraphSegmentActivityPort
   readonly graphActivitiesFactory?: (input: {
     readonly persistence: SqlitePersistenceProvider
@@ -269,8 +274,18 @@ export class LocalControlPlaneComposition {
   #started = false
 
   constructor(options: LocalControlPlaneCompositionOptions) {
+    if (
+      options.graphRuntime !== undefined &&
+      (options.graphActivities !== undefined ||
+        options.graphActivitiesFactory !== undefined ||
+        options.activities !== undefined)
+    ) {
+      throw new Error('LOCAL_GRAPH_CONFIGURATION_CONFLICT')
+    }
     const graphConfigured =
-      options.graphActivities !== undefined || options.graphActivitiesFactory !== undefined
+      options.graphRuntime !== undefined ||
+      options.graphActivities !== undefined ||
+      options.graphActivitiesFactory !== undefined
     if (options.graphActivities !== undefined && options.graphActivitiesFactory !== undefined)
       throw new Error('LOCAL_GRAPH_FACTORY_CONFIGURATION_CONFLICT')
     if (graphConfigured && options.activities !== undefined)
@@ -364,13 +379,18 @@ export class LocalControlPlaneComposition {
       this.durableExecution === 'embedded-sqlite'
         ? new EmbeddedExecutionWorkflowDispatcher({ store: this.workflowJobs })
         : undefined
+    const graphRuntime =
+      options.graphRuntime === undefined
+        ? undefined
+        : new ManagedLocalGraphRuntime(this.persistence, options.graphRuntime)
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,
       contextAuthoring,
       consistencyMetrics,
       this.workflowDispatcher,
-      options.catalogApprovalPolicy
+      options.catalogApprovalPolicy,
+      graphRuntime?.authority
     )
     const runtimeTransport =
       options.runtimeTransport ??
@@ -435,6 +455,7 @@ export class LocalControlPlaneComposition {
               new LocalRuntimeInteractions(this.interactions, this.commandRepository)
             ),
             graph:
+              graphRuntime?.activities(controlApi, options.retention?.executionEventsMs) ??
               options.graphActivities ??
               options.graphActivitiesFactory?.({ persistence: this.persistence }) ??
               new DisabledGraphSegmentActivities(),

@@ -22,7 +22,10 @@ import {
   ContextPackageAuthoringService,
   type ContextAuthoringCompositionOptions,
 } from '@control-plane/context'
-import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
+import {
+  ExecutionPlanAcceptanceValidator,
+  type ExecutionGraphAuthority,
+} from '@control-plane/execution-plan'
 import {
   SqliteCommandAcceptanceRepository,
   SqliteGraphDefinitionRepository,
@@ -86,7 +89,8 @@ export class LocalControlApiComposition {
     contextAuthoring?: ContextAuthoringCompositionOptions,
     inboxMetrics?: CommandInboxMetrics,
     workflowDispatcher?: LocalWorkflowDispatcher,
-    catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
+    catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string },
+    graphs?: ExecutionGraphAuthority
   ) {
     const dispatcher: LocalWorkflowDispatcher =
       workflowDispatcher ??
@@ -121,6 +125,7 @@ export class LocalControlApiComposition {
     this.runtimeDiscoveryRepository = new SqliteRuntimeDiscoveryRepository(persistence)
     const catalogApprovals = new SqliteCatalogApprovalRepository(persistence)
     const executionPlanValidatorOptions = {
+      ...(graphs === undefined ? {} : { graphs }),
       catalog: { profiles: this.catalog, skills: this.catalog },
       ...(catalogApprovalPolicy === undefined
         ? {}
@@ -147,6 +152,7 @@ export class LocalControlApiComposition {
     })
     this.executionValidationService = new DurableExecutionValidationService({
       compilerVersion: '1.0.0',
+      ...(graphs === undefined ? {} : { graphs }),
       contextPackages: this.contextPackages,
       commands: new SqliteExecutionValidationCommandRepository(persistence),
       ...(contextAuthoring === undefined
