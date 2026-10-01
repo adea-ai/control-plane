@@ -171,6 +171,7 @@
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/policy": "workspace:*",
+        "@control-plane/tool-execution": "workspace:*",
         "@control-plane/tool-sdk": "workspace:*",
         "ajv": "8.20.0",
       },
@@ -534,6 +535,18 @@
         "@control-plane/database": "workspace:*",
       },
     },
+    "packages/tool-execution": {
+      "name": "@control-plane/tool-execution",
+      "version": "1.0.0",
+      "dependencies": {
+        "@control-plane/config": "workspace:*",
+        "@control-plane/contracts": "workspace:*",
+        "@control-plane/domain": "workspace:*",
+        "@control-plane/policy": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
+        "ajv": "8.20.0",
+      },
+    },
     "packages/tool-sdk": {
       "name": "@control-plane/tool-sdk",
       "version": "1.4.1",
@@ -687,6 +700,8 @@
     "@control-plane/telemetry": ["@control-plane/telemetry@workspace:packages/telemetry"],
 
     "@control-plane/testing": ["@control-plane/testing@workspace:packages/testing"],
+
+    "@control-plane/tool-execution": ["@control-plane/tool-execution@workspace:packages/tool-execution"],
 
     "@control-plane/tool-gateway": ["@control-plane/tool-gateway@workspace:apps/tool-gateway"],
 

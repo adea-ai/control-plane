@@ -1,0 +1,49 @@
+{
+  "name": "@control-plane/tool-execution",
+  "version": "1.0.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "browser": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "node": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./registry": {
+      "types": "./dist/tool-registry.d.ts",
+      "node": "./dist/tool-registry.js",
+      "default": "./dist/tool-registry.js"
+    },
+    "./execution": {
+      "types": "./dist/tool-execution.d.ts",
+      "node": "./dist/tool-execution.js",
+      "default": "./dist/tool-execution.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp-adapter.d.ts",
+      "node": "./dist/mcp-adapter.js",
+      "default": "./dist/mcp-adapter.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint src",
+    "test": "bun test src/*.test.mjs"
+  },
+  "dependencies": {
+    "@control-plane/config": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
+    "@control-plane/domain": "workspace:*",
+    "@control-plane/policy": "workspace:*",
+    "@control-plane/tool-sdk": "workspace:*",
+    "ajv": "8.20.0"
+  },
+  "engines": {
+    "node": "24.21.0"
+  }
+}

@@ -309,7 +309,11 @@
       "browser": false,
       "exports": ["."],
       "workspaceDependencies": [
+        "@control-plane/contracts",
         "@control-plane/deployment",
+        "@control-plane/domain",
+        "@control-plane/events",
+        "@control-plane/execution-plan",
         "@control-plane/orchestration",
         "@control-plane/telemetry"
       ],
@@ -319,7 +323,10 @@
         "@langchain/langgraph-checkpoint-postgres",
         "zod"
       ],
-      "developmentWorkspaceDependencies": ["@control-plane/sqlite-persistence"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/context",
+        "@control-plane/sqlite-persistence"
+      ],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
     },
@@ -718,6 +725,27 @@
       "layer": "adapter-infrastructure"
     },
     {
+      "name": "@control-plane/tool-execution",
+      "path": "packages/tool-execution",
+      "version": "1.0.0",
+      "lockVersion": "1.0.0",
+      "kind": "package",
+      "private": true,
+      "browser": false,
+      "exports": [".", "./execution", "./mcp", "./registry"],
+      "workspaceDependencies": [
+        "@control-plane/config",
+        "@control-plane/contracts",
+        "@control-plane/domain",
+        "@control-plane/policy",
+        "@control-plane/tool-sdk"
+      ],
+      "externalDependencies": ["ajv"],
+      "developmentWorkspaceDependencies": [],
+      "developmentExternalDependencies": [],
+      "layer": "adapter-infrastructure"
+    },
+    {
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
       "version": "1.3.4",
@@ -732,6 +760,7 @@
         "@control-plane/contracts",
         "@control-plane/domain",
         "@control-plane/policy",
+        "@control-plane/tool-execution",
         "@control-plane/tool-sdk"
       ],
       "externalDependencies": ["ajv"],

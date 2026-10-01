@@ -4,7 +4,7 @@ Generated from [control-plane-architecture.v1.json](./control-plane-architecture
 
 ## Audit summary
 
-- 41 workspace packages and applications.
+- 42 workspace packages and applications.
 - 20 public SDK operations.
 - 4 deployment profiles.
 - 12 persistence parity boundaries.
@@ -50,11 +50,12 @@ flowchart LR
   P33["sqlite-persistence"]
   P34["telemetry"]
   P35["testing"]
-  P36["tool-gateway"]
-  P37["tool-sdk"]
-  P38["usage-ledger"]
-  P39["workflow-runtime"]
-  P40["workflow-worker"]
+  P36["tool-execution"]
+  P37["tool-gateway"]
+  P38["tool-sdk"]
+  P39["usage-ledger"]
+  P40["workflow-runtime"]
+  P41["workflow-worker"]
   P0 --> P9
   P0 --> P10
   P0 --> P27
@@ -75,7 +76,7 @@ flowchart LR
   P5 --> P12
   P5 --> P20
   P5 --> P34
-  P5 --> P38
+  P5 --> P39
   P6 --> P3
   P6 --> P4
   P6 --> P27
@@ -93,7 +94,7 @@ flowchart LR
   P8 --> P22
   P8 --> P27
   P8 --> P28
-  P8 --> P38
+  P8 --> P39
   P10 --> P4
   P11 --> P4
   P11 --> P10
@@ -115,9 +116,13 @@ flowchart LR
   P13 --> P25
   P13 --> P32
   P13 --> P34
-  P13 --> P39
   P13 --> P40
+  P13 --> P41
+  P14 --> P4
   P14 --> P9
+  P14 --> P10
+  P14 --> P11
+  P14 --> P12
   P14 --> P20
   P14 --> P34
   P15 --> P0
@@ -137,9 +142,9 @@ flowchart LR
   P15 --> P32
   P15 --> P33
   P15 --> P34
-  P15 --> P38
   P15 --> P39
   P15 --> P40
+  P15 --> P41
   P16 --> P9
   P16 --> P10
   P16 --> P27
@@ -203,40 +208,46 @@ flowchart LR
   P33 --> P20
   P33 --> P22
   P33 --> P28
-  P33 --> P38
+  P33 --> P39
   P35 --> P2
   P35 --> P8
-  P36 --> P1
   P36 --> P2
   P36 --> P4
   P36 --> P10
   P36 --> P21
-  P36 --> P37
+  P36 --> P38
+  P37 --> P1
+  P37 --> P2
   P37 --> P4
+  P37 --> P10
+  P37 --> P21
+  P37 --> P36
+  P37 --> P38
   P38 --> P4
-  P39 --> P2
   P39 --> P4
-  P39 --> P9
-  P39 --> P10
-  P39 --> P20
-  P39 --> P28
-  P40 --> P1
   P40 --> P2
-  P40 --> P3
   P40 --> P4
-  P40 --> P8
+  P40 --> P9
   P40 --> P10
-  P40 --> P11
-  P40 --> P12
-  P40 --> P16
-  P40 --> P19
   P40 --> P20
-  P40 --> P21
-  P40 --> P27
   P40 --> P28
-  P40 --> P34
-  P40 --> P38
-  P40 --> P39
+  P41 --> P1
+  P41 --> P2
+  P41 --> P3
+  P41 --> P4
+  P41 --> P8
+  P41 --> P10
+  P41 --> P11
+  P41 --> P12
+  P41 --> P16
+  P41 --> P19
+  P41 --> P20
+  P41 --> P21
+  P41 --> P27
+  P41 --> P28
+  P41 --> P34
+  P41 --> P39
+  P41 --> P40
 ```
 
 ## Deployment composition diagram
@@ -273,7 +284,7 @@ flowchart LR
 | `@control-plane/events`<br>`packages/events`                                     | 1.8.0 / 1.8.0           | core-port              | package     | `@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/telemetry`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `zod`                                                                                                                                                                                                                                        | `.`                                                                                                                                                        |
 | `@control-plane/execution-plan`<br>`packages/execution-plan`                     | 1.6.1 / 1.6.1           | core-port              | package     | `@control-plane/context`<br>`@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/runtime-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `zod`                                                                                                                                                                                                                                        | `.`<br>`./testing`                                                                                                                                         |
 | `@control-plane/hosted-control-plane`<br>`apps/hosted-control-plane`             | 1.13.2 / 1.13.2         | composition-root       | application | `@control-plane/bootstrap`<br>`@control-plane/config`<br>`@control-plane/context`<br>`@control-plane/control-api`<br>`@control-plane/database`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/execution-plan`<br>`@control-plane/object-store`<br>`@control-plane/remote-control-relay`<br>`@control-plane/restate-runtime`<br>`@control-plane/secrets`<br>`@control-plane/telemetry`<br>`@control-plane/workflow-runtime`<br>`@control-plane/workflow-worker`                                                                                                                                                                                 | —                                                                                                                                                                                                                                            | —                                                                                                                                                          |
-| `@control-plane/langgraph-adapter`<br>`packages/langgraph-adapter`               | 1.3.2 / 1.3.2           | adapter-infrastructure | package     | `@control-plane/deployment`<br>`@control-plane/orchestration`<br>`@control-plane/telemetry`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `@langchain/langgraph`<br>`@langchain/langgraph-checkpoint`<br>`@langchain/langgraph-checkpoint-postgres`<br>`zod`                                                                                                                           | `.`                                                                                                                                                        |
+| `@control-plane/langgraph-adapter`<br>`packages/langgraph-adapter`               | 1.3.2 / 1.3.2           | adapter-infrastructure | package     | `@control-plane/contracts`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/events`<br>`@control-plane/execution-plan`<br>`@control-plane/orchestration`<br>`@control-plane/telemetry`                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `@langchain/langgraph`<br>`@langchain/langgraph-checkpoint`<br>`@langchain/langgraph-checkpoint-postgres`<br>`zod`                                                                                                                           | `.`                                                                                                                                                        |
 | `@control-plane/local-control-plane`<br>`apps/local-control-plane`               | 1.19.4 / 1.19.4         | composition-root       | application | `@control-plane/acp-adapter`<br>`@control-plane/bootstrap`<br>`@control-plane/config`<br>`@control-plane/context`<br>`@control-plane/contracts`<br>`@control-plane/control-api`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/execution-plan`<br>`@control-plane/managed-pi-adapter`<br>`@control-plane/object-store`<br>`@control-plane/remote-control-relay`<br>`@control-plane/restate-runtime`<br>`@control-plane/runtime-sdk`<br>`@control-plane/secrets`<br>`@control-plane/sqlite-persistence`<br>`@control-plane/telemetry`<br>`@control-plane/usage-ledger`<br>`@control-plane/workflow-runtime`<br>`@control-plane/workflow-worker` | `@nestjs/common`<br>`@restatedev/restate-server`<br>`fastify`                                                                                                                                                                                | —                                                                                                                                                          |
 | `@control-plane/managed-pi-adapter`<br>`packages/managed-pi-adapter`             | 1.6.2 / 1.6.2           | adapter-infrastructure | package     | `@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/runtime-gateway-protocol`<br>`@control-plane/runtime-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `zod`                                                                                                                                                                                                                                        | `.`                                                                                                                                                        |
 | `@control-plane/memory-writeback`<br>`packages/memory-writeback`                 | 1.3.0 / 1.3.0           | adapter-infrastructure | package     | `@control-plane/contracts`<br>`@control-plane/domain`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `zod`                                                                                                                                                                                                                                        | `.`                                                                                                                                                        |
@@ -295,7 +306,8 @@ flowchart LR
 | `@control-plane/sqlite-persistence`<br>`packages/sqlite-persistence`             | 1.29.0 / 1.29.0         | adapter-infrastructure | package     | `@control-plane/context`<br>`@control-plane/contracts`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/events`<br>`@control-plane/execution-plan`<br>`@control-plane/orchestration`<br>`@control-plane/production-readiness`<br>`@control-plane/runtime-sdk`<br>`@control-plane/usage-ledger`                                                                                                                                                                                                                                                                                                                                                   | `drizzle-orm`                                                                                                                                                                                                                                | `.`<br>`./catalog`<br>`./context-administration`<br>`./provider`                                                                                           |
 | `@control-plane/telemetry`<br>`packages/telemetry`                               | 1.5.2 / 1.5.2           | core-port              | package     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `@opentelemetry/api`<br>`@sentry/node`                                                                                                                                                                                                       | `.`<br>`./catalog`<br>`./opentelemetry`<br>`./sentry`                                                                                                      |
 | `@control-plane/testing`<br>`packages/testing`                                   | 1.2.0 / 1.2.0           | adapter-infrastructure | package     | `@control-plane/config`<br>`@control-plane/database`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | —                                                                                                                                                                                                                                            | `.`<br>`./postgres`                                                                                                                                        |
-| `@control-plane/tool-gateway`<br>`apps/tool-gateway`                             | 1.3.4 / 1.3.4           | composition-root       | application | `@control-plane/bootstrap`<br>`@control-plane/config`<br>`@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/policy`<br>`@control-plane/tool-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `ajv`                                                                                                                                                                                                                                        | —                                                                                                                                                          |
+| `@control-plane/tool-execution`<br>`packages/tool-execution`                     | 1.0.0 / 1.0.0           | adapter-infrastructure | package     | `@control-plane/config`<br>`@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/policy`<br>`@control-plane/tool-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `ajv`                                                                                                                                                                                                                                        | `.`<br>`./execution`<br>`./mcp`<br>`./registry`                                                                                                            |
+| `@control-plane/tool-gateway`<br>`apps/tool-gateway`                             | 1.3.4 / 1.3.4           | composition-root       | application | `@control-plane/bootstrap`<br>`@control-plane/config`<br>`@control-plane/contracts`<br>`@control-plane/domain`<br>`@control-plane/policy`<br>`@control-plane/tool-execution`<br>`@control-plane/tool-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `ajv`                                                                                                                                                                                                                                        | —                                                                                                                                                          |
 | `@control-plane/tool-sdk`<br>`packages/tool-sdk`                                 | 1.4.1 / 1.4.1           | core-port              | package     | `@control-plane/contracts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `zod`                                                                                                                                                                                                                                        | `.`                                                                                                                                                        |
 | `@control-plane/usage-ledger`<br>`packages/usage-ledger`                         | 1.3.0 / 1.3.0           | core-port              | package     | `@control-plane/contracts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `zod`                                                                                                                                                                                                                                        | `.`<br>`./durable-contract`                                                                                                                                |
 | `@control-plane/workflow-runtime`<br>`packages/workflow-runtime`                 | 1.5.1 / 1.5.1           | core-port              | package     | `@control-plane/config`<br>`@control-plane/contracts`<br>`@control-plane/deployment`<br>`@control-plane/domain`<br>`@control-plane/orchestration`<br>`@control-plane/runtime-sdk`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `@restatedev/restate-sdk`<br>`zod`                                                                                                                                                                                                           | `.`                                                                                                                                                        |
