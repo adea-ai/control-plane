@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/local-control-plane",
-  "version": "1.19.5",
+  "version": "1.20.0",
   "private": true,
   "files": [
     "dist"
