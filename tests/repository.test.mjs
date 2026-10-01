@@ -64,16 +64,16 @@ test('pins the required Node and Bun toolchain', async () => {
   const manifest = await readJson('package.json')
   const testTsconfig = await readJson('tsconfig.json')
 
-  assert.equal(manifest.packageManager, 'bun@1.4.0')
-  assert.equal(manifest.engines.node, '24.18.0')
+  assert.equal(manifest.packageManager, 'bun@1.4.2')
+  assert.equal(manifest.engines.node, '24.21.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
   assert.match(
     await readFile(new URL('../.mise.toml', import.meta.url), 'utf8'),
-    /node = "24\.18\.0"/
+    /node = "24\.21\.0"/
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
-    '1.4.0'
+    '1.4.2'
   )
   assert.equal(testTsconfig.extends, './tsconfig.base.json')
   assert.equal(testTsconfig.compilerOptions.experimentalDecorators, true)
@@ -694,7 +694,7 @@ test('scaffolds every application with an executable placeholder target', async 
     assert.equal(manifest.name, `@control-plane/${app}`)
     assert.equal(manifest.private, true)
     assert.equal(manifest.browser, false)
-    assert.equal(manifest.engines.node, '24.18.0')
+    assert.equal(manifest.engines.node, '24.21.0')
     assert.equal(typeof manifest.scripts.build, 'string')
     assert.equal(typeof manifest.scripts.dev, 'string')
     assert.equal(manifest.scripts.dev, 'bun --watch src/start.ts')

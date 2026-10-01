@@ -68,7 +68,7 @@ services:
           memory: ${CONTROL_PLANE_MEMORY_RESERVATION:-256M}
 
   postgres:
-    image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     profiles: [server]
     restart: unless-stopped
     environment:
@@ -112,7 +112,7 @@ services:
       - no-new-privileges:true
 
   database-bootstrap:
-    image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     profiles: [server]
     restart: 'no'
     entrypoint: [/bin/sh, /opt/control-plane/bootstrap-roles.sh]
@@ -138,7 +138,7 @@ services:
       - no-new-privileges:true
 
   restate:
-    image: docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2
+    image: docker.restate.dev/restatedev/restate:1.7.12@sha256:bfe48559e64706510d3d5fe736414c52557cd7753100fa4e63ff44d8198ab176
     profiles: [server]
     restart: unless-stopped
     environment:

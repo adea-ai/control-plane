@@ -36,11 +36,11 @@
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
-    "@nestjs/common": "12.1.0",
+    "@nestjs/common": "12.1.2",
     "@restatedev/restate-server": "1.7.12",
     "fastify": "5.12.5"
   },
   "engines": {
-    "node": "24.18.0"
+    "node": "24.21.0"
   }
 }
