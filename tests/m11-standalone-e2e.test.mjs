@@ -81,6 +81,11 @@ import {
 } from '../apps/runtime-gateway/dist/index.js'
 import { writeManagedPiRpcFixture } from '../packages/managed-pi-adapter/src/test-support/managed-pi-rpc-fixture.mjs'
 import { awaitLocalWorkflowOutcome } from '../scripts/native-local-workflow.mjs'
+import { CommandInboxService } from '@control-plane/domain'
+import {
+  createRegisteredGraphPlan,
+  seedRegisteredGraphPlan,
+} from './fixtures/registered-graph-plan.mjs'
 
 const observedAt = '2026-08-30T12:00:00.000Z'
 const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
@@ -164,13 +169,13 @@ describe('M11 standalone execution composition', () => {
       const directory = await mkdtemp(join(tmpdir(), 'control-plane-m11-graph-restate-'))
       const ports = await isolatedLocalPorts()
       let dataDirectory = join(directory, 'original')
-      const plan = createExecutionPlanTestFixture()
       let executionId, artifactId, resultKey
       const graph = {
         graphDefinitionId: 'local-restate-recovery',
         graphVersion: '1.0.0',
         contentDigest: `sha256:${'a'.repeat(64)}`,
       }
+      const plan = createRegisteredGraphPlan(graph, { objective: 'recover graph approval' })
       const operations = []
       const registration = deterministicInterruptGraph(graph)
       const createLocal = () =>
@@ -231,8 +236,7 @@ describe('M11 standalone execution composition', () => {
         )
       try {
         await local.start()
-        await seedExecutionPlanInputs(local)
-        await local.executionPlans.put(plan)
+        const executionPlanValidator = await seedRegisteredGraphPlan(local, plan)
         const acceptedAt = new Date().toISOString()
         const deadlineAt = new Date(Date.now() + 90000).toISOString()
         const executionPlan = {
@@ -240,7 +244,12 @@ describe('M11 standalone execution composition', () => {
           contentDigest: plan.contentDigest,
           schemaVersion: plan.schemaVersion,
         }
-        const accepted = await local.commands.acceptExecution({
+        const fixtureCommands = new CommandInboxService({
+          repository: local.commandRepository,
+          executionIdFactory: () => `exe_${plan.executionPlanId.slice(4)}`,
+          executionPlanValidator,
+        })
+        const accepted = await fixtureCommands.acceptExecution({
           ...command(plan),
           receivedAt: acceptedAt,
           retentionExpiresAt: new Date(Date.parse(acceptedAt) + 30 * 86400000).toISOString(),
@@ -256,8 +265,8 @@ describe('M11 standalone execution composition', () => {
           graph: {
             workspaceId: plan.correlation.workspaceId,
             reference: graph,
-            threadId: 'local-restate-thread',
-            input: { objective: 'recover graph approval' },
+            threadId: `graph:${executionId}`,
+            input: plan.graph.input,
           },
         }
         expect((await post('run/send', input)).ok).toBe(true)

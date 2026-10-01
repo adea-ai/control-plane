@@ -3,13 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { CommandInboxService } from '../packages/domain/src/index.ts'
-import { contextPackageSerializationFixtures } from '../packages/context/src/index.ts'
 import { createExecutionPlanTestFixture } from '../packages/execution-plan/src/testing.ts'
 import {
   SqliteCommandAcceptanceRepository,
-  SqliteContextPackageRepository,
   SqliteDurableUsageStore,
-  SqliteExecutionPlanRepository,
 } from '../packages/sqlite-persistence/src/index.ts'
 import { DurableUsageLedger } from '../packages/usage-ledger/src/index.ts'
 import { LocalControlPlaneComposition } from '../apps/local-control-plane/src/composition.ts'
@@ -19,24 +16,29 @@ import {
   deterministicInterruptGraph,
 } from '../packages/langgraph-adapter/src/index.ts'
 import { OrchestrationGraphSegmentActivities } from '../packages/workflow-runtime/src/index.ts'
+import {
+  createRegisteredGraphPlan,
+  seedRegisteredGraphPlan,
+} from './fixtures/registered-graph-plan.mjs'
 
 const acceptedAt = '2026-09-27T00:00:00.000Z'
 const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
 const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
 
-async function acceptGraphExecution(composition) {
-  const plan = createExecutionPlanTestFixture()
-  await new SqliteContextPackageRepository(composition.persistence).put(
-    contextPackageSerializationFixtures.futurePi
-  )
-  const planReference = await new SqliteExecutionPlanRepository(composition.persistence).put(plan)
-  const executionPlan = { ...planReference, schemaVersion: plan.schemaVersion }
+async function acceptGraphExecution(composition, selection) {
+  const plan = createRegisteredGraphPlan(selection.reference, selection.input)
+  const executionPlanValidator = await seedRegisteredGraphPlan(composition, plan)
+  const executionPlan = {
+    executionPlanId: plan.executionPlanId,
+    contentDigest: plan.contentDigest,
+    schemaVersion: plan.schemaVersion,
+  }
   const commands = new CommandInboxService({
     repository: new SqliteCommandAcceptanceRepository(composition.persistence, {
       budgetAdmission: true,
     }),
     executionIdFactory: () => executionId,
-    executionPlanValidator: { validate: async () => true },
+    executionPlanValidator,
     now: () => acceptedAt,
   })
   const accepted = await commands.acceptExecution({
@@ -128,20 +130,23 @@ test('Local and Hosted Simple forward graph lifecycle operations after SQLite ad
     })
     try {
       await composition.persistence.migrate()
-      const owner = await acceptGraphExecution(composition)
+      const owner = await acceptGraphExecution(composition, {
+        reference: {
+          graphDefinitionId: 'graph-one',
+          graphVersion: '1.0.0',
+          contentDigest: `sha256:${'a'.repeat(64)}`,
+        },
+        input: { objective: 'forward graph operations' },
+      })
       const activities = composition.executionLifecycleActivities
       const input = {
         executionId: owner.accepted.execution.executionId,
         attemptId: owner.attempt.attemptId,
         workspaceId: owner.plan.correlation.workspaceId,
         workflowId,
-        graph: {
-          graphDefinitionId: 'graph-one',
-          graphVersion: '1.0.0',
-          contentDigest: `sha256:${'a'.repeat(64)}`,
-        },
-        threadId: 'thread-one',
-        input: { objective: 'forward graph operations' },
+        graph: owner.plan.graph.reference,
+        threadId: `graph:${executionId}`,
+        input: owner.plan.graph.input,
         idempotencyKey: 'effect-one',
       }
       const expectedGraphInputs = []
@@ -288,15 +293,18 @@ test('Local and Hosted Simple resume graph approval from their own SQLite databa
     let composition = createComposition()
     try {
       await composition.persistence.migrate()
-      const owner = await acceptGraphExecution(composition)
+      const owner = await acceptGraphExecution(composition, {
+        reference: graph,
+        input: { objective: 'recover approval' },
+      })
       const request = {
         executionId: owner.accepted.execution.executionId,
         attemptId: owner.attempt.attemptId,
         workspaceId: owner.plan.correlation.workspaceId,
         workflowId,
         graph,
-        threadId: 'local-thread',
-        input: { objective: 'recover approval' },
+        threadId: `graph:${executionId}`,
+        input: owner.plan.graph.input,
         idempotencyKey: 'local:graph:run',
       }
       await composition.start()
