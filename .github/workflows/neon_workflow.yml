@@ -7,9 +7,13 @@ on:
 
 permissions: {}
 
+# One verification per main at a time: the previous group embedded
+# github.run_id, which made the group unique per run and let concurrent main
+# pushes run overlapping 90-minute Neon verifications against the same
+# project. A newer main supersedes the verification of the older one.
 concurrency:
-  group: neon-main-preview-${{ github.run_id }}
-  cancel-in-progress: false
+  group: neon-main-preview
+  cancel-in-progress: true
 
 jobs:
   verify_neon_preview:
