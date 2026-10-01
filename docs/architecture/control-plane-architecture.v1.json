@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "81a1fcf2e577e6cb45cfbf973605ab1c76c40c44",
-    "ref": "codex/m11-local-graph-runtime-20261001",
-    "recordedAt": "2026-10-01T04:49:19.475387Z"
+    "commit": "8b6faff2c92d42a1e64d66456d27da291db4160c",
+    "ref": "codex/m11-pg-tool-storage-20261001",
+    "recordedAt": "2026-10-01T05:03:58.904394Z"
   },
   "packages": [
     {

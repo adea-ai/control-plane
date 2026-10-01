@@ -1,6 +1,6 @@
 # Control Plane architecture, contracts, persistence, and production wiring audit
 
-Generated from [control-plane-architecture.v1.json](./control-plane-architecture.v1.json) for candidate `81a1fcf2e577e6cb45cfbf973605ab1c76c40c44`. Do not edit this report directly; run `bun run architecture:write`.
+Generated from [control-plane-architecture.v1.json](./control-plane-architecture.v1.json) for candidate `8b6faff2c92d42a1e64d66456d27da291db4160c`. Do not edit this report directly; run `bun run architecture:write`.
 
 ## Audit summary
 
