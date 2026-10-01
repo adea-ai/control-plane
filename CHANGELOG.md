@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.63.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.62.0...workspace-v1.63.0) (2026-10-01)
+
+
+### Features
+
+* **database:** persist tool execution receipts in postgres ([#814](https://github.com/adea-ai/control-plane/issues/814)) ([6c922d4](https://github.com/adea-ai/control-plane/commit/6c922d487c3c2e70a047c11c55a1cb4ddbabad26))
+
+
+### Documentation
+
+* **m11:** record tool storage evidence against merged source ([#816](https://github.com/adea-ai/control-plane/issues/816)) ([cf4d3a0](https://github.com/adea-ai/control-plane/commit/cf4d3a001f93f68870df9768fac3157085fa9c54))
+
 ## [1.62.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.61.0...workspace-v1.62.0) (2026-10-01)
 
 
