@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "d429b311b26a6eb03b0aebbcea4013c04432f5f7",
-    "ref": "staging",
-    "recordedAt": "2026-08-31T03:57:41Z"
+    "commit": "bd0d5e8a7e4207d2d05856374e1cfcac3994cb32",
+    "ref": "codex/m11-public-graphs-20260930",
+    "recordedAt": "2026-10-01T00:14:52.010Z"
   },
   "packages": [
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
       "version": "1.8.2",
-      "lockVersion": "1.8.1",
+      "lockVersion": "1.8.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -45,7 +45,7 @@
       "name": "@control-plane/config",
       "path": "packages/config",
       "version": "1.11.1",
-      "lockVersion": "1.11.0",
+      "lockVersion": "1.11.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -90,7 +90,7 @@
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
       "version": "1.16.4",
-      "lockVersion": "1.16.2",
+      "lockVersion": "1.16.4",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -122,7 +122,10 @@
         "reflect-metadata",
         "rxjs"
       ],
-      "developmentWorkspaceDependencies": ["@control-plane/testing"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/sqlite-persistence",
+        "@control-plane/testing"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
@@ -163,8 +166,8 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.35.6",
-      "lockVersion": "1.35.2",
+      "version": "1.36.0",
+      "lockVersion": "1.36.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -193,7 +196,7 @@
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
       "version": "1.10.3",
-      "lockVersion": "1.10.0",
+      "lockVersion": "1.10.3",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -208,7 +211,7 @@
       "name": "@control-plane/domain",
       "path": "packages/domain",
       "version": "1.26.1",
-      "lockVersion": "1.26.0",
+      "lockVersion": "1.26.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -249,7 +252,7 @@
       "name": "@control-plane/execution-plan",
       "path": "packages/execution-plan",
       "version": "1.6.1",
-      "lockVersion": "1.6.0",
+      "lockVersion": "1.6.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -269,7 +272,7 @@
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
       "version": "1.13.2",
-      "lockVersion": "1.13.1",
+      "lockVersion": "1.13.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -300,7 +303,7 @@
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
       "version": "1.3.2",
-      "lockVersion": "1.3.1",
+      "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -324,7 +327,7 @@
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
       "version": "1.19.4",
-      "lockVersion": "1.19.1",
+      "lockVersion": "1.19.4",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -414,7 +417,7 @@
       "name": "@control-plane/object-store",
       "path": "packages/object-store",
       "version": "1.5.1",
-      "lockVersion": "1.5.0",
+      "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -428,8 +431,8 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.2.4",
-      "lockVersion": "1.2.4",
+      "version": "1.3.0",
+      "lockVersion": "1.3.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -479,7 +482,7 @@
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
       "version": "1.4.1",
-      "lockVersion": "1.4.0",
+      "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -517,7 +520,7 @@
       "name": "@control-plane/restate-runtime",
       "path": "packages/restate-runtime",
       "version": "1.2.1",
-      "lockVersion": "1.2.0",
+      "lockVersion": "1.2.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -532,7 +535,7 @@
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
       "version": "1.7.2",
-      "lockVersion": "1.7.1",
+      "lockVersion": "1.7.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -661,8 +664,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.28.3",
-      "lockVersion": "1.28.1",
+      "version": "1.29.0",
+      "lockVersion": "1.29.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -688,7 +691,7 @@
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
       "version": "1.5.2",
-      "lockVersion": "1.5.1",
+      "lockVersion": "1.5.2",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -718,7 +721,7 @@
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
       "version": "1.3.4",
-      "lockVersion": "1.3.3",
+      "lockVersion": "1.3.4",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -770,7 +773,7 @@
       "name": "@control-plane/workflow-runtime",
       "path": "packages/workflow-runtime",
       "version": "1.5.1",
-      "lockVersion": "1.5.0",
+      "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -792,7 +795,7 @@
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
       "version": "1.11.3",
-      "lockVersion": "1.11.0",
+      "lockVersion": "1.11.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -905,7 +908,7 @@
       "path": "/v1/executions/accept",
       "inOpenApi": true,
       "controllerReachable": true,
-      "classification": "verified",
+      "classification": "partially_verified",
       "trace": {
         "auth": "service bearer with execution:accept scope",
         "service": "ExecutionAcceptanceController -> DurableExecutionAcceptanceService",
@@ -914,7 +917,7 @@
         "delivery": "acceptance status, result/error reference, and reconciliation state",
         "cleanup": "workflow activity cleanup and composition shutdown"
       },
-      "assessment": "The operation is reachable when a supported composition injects durable services; the base module fails closed with an unavailable service.",
+      "assessment": "The operation is reachable when a supported composition injects durable services; the base module fails closed with an unavailable service. Graphless behavior remains covered. Optional graph selection is bounded and pinned in stored plans, and acceptance derives graph arguments from the retained plan; production composition graph admission and execution activities remain fail-closed until explicitly configured.",
       "evidence": [
         {
           "kind": "test",
@@ -924,7 +927,13 @@
       "openApiOperationId": "execution.accept",
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
-      "openApiHasRequestSchema": true
+      "openApiHasRequestSchema": true,
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Bind the shared compiler admission authority, policy-controlled runtime/model/tool/delegation operations and profile-appropriate graph checkpoints, then certify publish-to-execution and recovery from the frozen deployed candidate."
+      }
     },
     {
       "id": "OP-EXECUTION-CANCEL",
@@ -977,7 +986,7 @@
       "path": "/v1/executions/validate",
       "inOpenApi": true,
       "controllerReachable": true,
-      "classification": "verified",
+      "classification": "partially_verified",
       "trace": {
         "auth": "service bearer with execution:validate scope",
         "service": "ExecutionValidationController -> DurableExecutionValidationService",
@@ -986,7 +995,7 @@
         "delivery": "immutable ExecutionPlan public reference",
         "cleanup": "no external side effect; composition closes repositories"
       },
-      "assessment": "The operation is reachable in Cloud, Local, Hosted Simple, and Hosted Server compositions; the base module fails closed when not configured.",
+      "assessment": "The operation is reachable in Cloud, Local, Hosted Simple, and Hosted Server compositions; the base module fails closed when not configured. Graphless behavior remains covered. Optional graph selection is bounded and pinned in stored plans, and acceptance derives graph arguments from the retained plan; production composition graph admission and execution activities remain fail-closed until explicitly configured.",
       "evidence": [
         {
           "kind": "test",
@@ -996,7 +1005,13 @@
       "openApiOperationId": "execution.validate",
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
-      "openApiHasRequestSchema": true
+      "openApiHasRequestSchema": true,
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Bind the shared compiler admission authority, policy-controlled runtime/model/tool/delegation operations and profile-appropriate graph checkpoints, then certify publish-to-execution and recovery from the frozen deployed candidate."
+      }
     },
     {
       "id": "OP-EXTERNAL-SESSION-GET",
@@ -1071,6 +1086,194 @@
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-GRAPH-DEPRECATE",
+      "name": "deprecateGraph",
+      "operation": "graph.deprecate",
+      "method": "POST",
+      "path": "/v1/graphs/deprecate",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with graph:manage scope; authenticated caller and workspace binding",
+        "service": "GraphAdministrationController -> RepositoryGraphAdministrationService",
+        "persistence": "workspace-scoped SQLite or PostgreSQL GraphDefinitionCommandRepository; catalog mutation and immutable receipt in one transaction",
+        "execution": "expected-revision lifecycle compare-and-swap; exact replay retains original receipt",
+        "delivery": "strict public graph definition snapshot; current request response identity",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Administration repositories are bound in all four profile compositions. Real SQLite HTTP and Local/Simple restart tests and focused PostgreSQL receipt integration cover source behavior; deployed all-profile administration is not certified, and production graph execution bindings remain unavailable.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/graphs/graph-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/graphs/graph-administration.service.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/embedded-composition.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/graph-definition-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Verify authenticated administration from deployed frozen candidates in all profiles and wire policy-controlled graph admission, durable checkpoints and operation effects before certifying graph execution."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "graph.deprecate",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-GRAPH-PUBLISH",
+      "name": "publishGraph",
+      "operation": "graph.publish",
+      "method": "POST",
+      "path": "/v1/graphs/publish",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with graph:publish scope; authenticated caller and workspace binding",
+        "service": "GraphAdministrationController -> RepositoryGraphAdministrationService",
+        "persistence": "workspace-scoped SQLite or PostgreSQL GraphDefinitionCommandRepository; catalog mutation and immutable receipt in one transaction",
+        "execution": "bounded declarative definition validation and immutable content digest",
+        "delivery": "strict public graph definition snapshot; current request response identity",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Administration repositories are bound in all four profile compositions. Real SQLite HTTP and Local/Simple restart tests and focused PostgreSQL receipt integration cover source behavior; deployed all-profile administration is not certified, and production graph execution bindings remain unavailable.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/graphs/graph-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/graphs/graph-administration.service.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/embedded-composition.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/graph-definition-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Verify authenticated administration from deployed frozen candidates in all profiles and wire policy-controlled graph admission, durable checkpoints and operation effects before certifying graph execution."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "graph.publish",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-GRAPH-RESOLVE",
+      "name": "resolveGraph",
+      "operation": "graph.resolve",
+      "method": "POST",
+      "path": "/v1/graphs/resolve",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with graph:resolve scope; authenticated caller and workspace binding",
+        "service": "GraphAdministrationController -> RepositoryGraphAdministrationService",
+        "persistence": "workspace-scoped SQLite or PostgreSQL GraphDefinitionRepository",
+        "execution": "retained immutable pin and current lifecycle inspection; not execution authorization",
+        "delivery": "strict public graph definition snapshot; current request response identity",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Administration repositories are bound in all four profile compositions. Real SQLite HTTP and Local/Simple restart tests and focused PostgreSQL receipt integration cover source behavior; deployed all-profile administration is not certified, and production graph execution bindings remain unavailable.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/graphs/graph-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/graphs/graph-administration.service.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/embedded-composition.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/graph-definition-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Verify authenticated administration from deployed frozen candidates in all profiles and wire policy-controlled graph admission, durable checkpoints and operation effects before certifying graph execution."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "graph.resolve",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-GRAPH-REVOKE",
+      "name": "revokeGraph",
+      "operation": "graph.revoke",
+      "method": "POST",
+      "path": "/v1/graphs/revoke",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with graph:manage scope; authenticated caller and workspace binding",
+        "service": "GraphAdministrationController -> RepositoryGraphAdministrationService",
+        "persistence": "workspace-scoped SQLite or PostgreSQL GraphDefinitionCommandRepository; catalog mutation and immutable receipt in one transaction",
+        "execution": "expected-revision lifecycle compare-and-swap; exact replay retains original receipt",
+        "delivery": "strict public graph definition snapshot; current request response identity",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Administration repositories are bound in all four profile compositions. Real SQLite HTTP and Local/Simple restart tests and focused PostgreSQL receipt integration cover source behavior; deployed all-profile administration is not certified, and production graph execution bindings remain unavailable.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/graphs/graph-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/graphs/graph-administration.service.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/local-control-plane/src/embedded-composition.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/graph-definition-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "graph-execution",
+        "disposition": "Verify authenticated administration from deployed frozen candidates in all profiles and wire policy-controlled graph admission, durable checkpoints and operation effects before certifying graph execution."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "graph.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
     },
     {
       "id": "OP-INTERACTION-RESPOND",
@@ -1438,7 +1641,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:2978583b44d62f595ee276ea6366ed2ee47621830819fa337ca1292a2a7cdea0"
+      "sourceDigest": "sha256:7685829e23bf7023279740f07150745e07e4b7124bbcedf36b03b915dea73bdb"
     },
     {
       "id": "hosted-server",
@@ -1477,7 +1680,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6f508acd81e1a12cab114f9e9c0f6d15854c686f745f3cb2c4a992fdf032c917"
+      "sourceDigest": "sha256:cc79dfb94854c22ef34e36be0885573d0ee892cc43d6ecd13b5ff0f2174c0cbb"
     },
     {
       "id": "hosted-simple",
@@ -1516,7 +1719,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:7681e003e4f15c03d3f542e562e360f273c6bea845bb0e418c954c701029f95c"
+      "sourceDigest": "sha256:d96f48c0c787f68a95ab25677a054b0ad0a51b3b728c1bf26a98ec33dceb9c46"
     },
     {
       "id": "local",
@@ -1559,7 +1762,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:7681e003e4f15c03d3f542e562e360f273c6bea845bb0e418c954c701029f95c"
+      "sourceDigest": "sha256:d96f48c0c787f68a95ab25677a054b0ad0a51b3b728c1bf26a98ec33dceb9c46"
     }
   ],
   "ownership": [
@@ -1706,7 +1909,7 @@
         "NestJS controllers"
       ],
       "classification": "verified",
-      "assessment": "Contracts, SDK, generated OpenAPI, and reachable NestJS controllers agree on all 11 versioned operations; the architecture drift test inspects the runtime controller graph.",
+      "assessment": "Contracts, SDK, generated OpenAPI, and reachable NestJS controllers agree on the declared versioned operations; the architecture drift test inspects the runtime controller graph.",
       "evidence": [
         {
           "kind": "source",
