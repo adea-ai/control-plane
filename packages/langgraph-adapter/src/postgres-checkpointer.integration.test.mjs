@@ -75,14 +75,18 @@ describe.skipIf(!enabled)('LangGraph PostgreSQL checkpointer', () => {
       input: { objective: 'survive restart' },
       idempotencyKey: 'postgres:segment:1',
     }
-    const effects = []
+    const effects = new Map()
+    const deliveries = []
     const adapterOptions = () => ({
       graphs: [deterministicInterruptGraph(graph)],
       checkpointer: provider.checkpointer,
       operations: {
         async invoke(operation) {
-          effects.push(operation.idempotencyKey)
-          return { value: operation.name }
+          deliveries.push(operation)
+          if (!effects.has(operation.idempotencyKey)) {
+            effects.set(operation.idempotencyKey, { value: operation.name })
+          }
+          return effects.get(operation.idempotencyKey)
         },
         async cancel() {
           return true
@@ -107,6 +111,35 @@ describe.skipIf(!enabled)('LangGraph PostgreSQL checkpointer', () => {
       idempotencyKey: 'postgres:segment:resume',
     })
     expect(resumed).toMatchObject({ status: 'completed', output: { decision: 'approve' } })
-    expect(effects).toEqual(['postgres:segment:1:prepare', 'postgres:segment:resume:finalize'])
+    expect(deliveries.map(({ node, kind }) => ({ node, kind }))).toEqual([
+      { node: 'prepare', kind: 'runtime' },
+      { node: 'finalize', kind: 'tool' },
+    ])
+    const effectKeys = [...effects.keys()]
+    expect(effectKeys).toHaveLength(2)
+    for (const key of effectKeys) expect(key).toMatch(/^graph-op-v1:[a-f0-9]{64}$/)
+
+    await provider.close()
+    provider = LangGraphPostgresCheckpointProvider.fromConnectionString(connectionString)
+    const replayed = await new LangGraphOrchestrationAdapter(adapterOptions()).resume({
+      executionId,
+      workspaceId,
+      workflowId: request.workflowId,
+      graph,
+      threadId: executionThreadId,
+      attemptId: 'att_01JABCDEF0123456789ABCDEFH',
+      checkpointId: interrupted.checkpointId,
+      response: { action: 'approve' },
+      idempotencyKey: 'postgres:segment:redelivery',
+    })
+    expect(replayed).toMatchObject({ status: 'completed', output: { decision: 'approve' } })
+    expect([...effects.keys()]).toEqual(effectKeys)
+    for (const delivery of deliveries) {
+      expect(delivery.idempotencyKey).toBe(
+        deliveries.find(({ node }) => node === delivery.node).idempotencyKey
+      )
+      expect(delivery.workspaceId).toBe(workspaceId)
+      expect(delivery.executionId).toBe(executionId)
+    }
   })
 })
