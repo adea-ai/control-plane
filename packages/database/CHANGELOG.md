@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/adea-ai/control-plane/compare/database-v1.37.0...database-v1.38.0) (2026-10-01)
+
+
+### Features
+
+* **database:** persist tool execution receipts in postgres ([#814](https://github.com/adea-ai/control-plane/issues/814)) ([6c922d4](https://github.com/adea-ai/control-plane/commit/6c922d487c3c2e70a047c11c55a1cb4ddbabad26))
+
 ## [1.37.0](https://github.com/adea-ai/control-plane/compare/database-v1.36.1...database-v1.37.0) (2026-10-01)
 
 
