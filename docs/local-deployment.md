@@ -41,6 +41,21 @@ factory runs only after the SQLite catalog and ContextPackage repositories exist
 client can resolve immutable inputs without copying repository internals into the adapter contract.
 The result must be a `RuntimeAdapterWithTransport` whose `transportKind` is `direct-local`.
 
+A packaged host can configure `graphRuntime` under `compositionOptions` to bind published graph
+programs from this composition's workspace-scoped SQLite graph catalog. Supply the server-owned
+`compiler` schema registry and operation allowlist, advertised `capabilities`, and an `operations`
+port that enforces accepted-plan policy, approvals, budget reservations and durable provider receipts.
+The same compiler and catalog authorize both execution validation and acceptance, then execute
+bounded segments with SQLite checkpoints and the normal pending execution-event queue. Checkpoints
+share the existing backup and database-close lifecycle; storage threads include workspace and
+execution identity. The configured execution-event retention duration is used by graph events.
+
+This configuration requires a direct runtime transport and cannot be combined with `activities`,
+`graphActivities`, or `graphActivitiesFactory`. The latter remain explicit injection seams without
+implicit graph admission. Without `graphRuntime`, default graph admission remains closed. This
+assembly does not itself implement tool/model/runtime/delegation providers, authorize operations,
+or establish deployed profile acceptance; those provider bindings must be supplied and verified.
+
 The standalone launcher packages managed Pi with:
 
 ```sh

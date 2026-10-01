@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "f38c22b78db1429ce2d5280657a265c753817381",
-    "ref": "codex/m11-tool-storage-20261001",
-    "recordedAt": "2026-10-01T04:29:01.221Z"
+    "commit": "81a1fcf2e577e6cb45cfbf973605ab1c76c40c44",
+    "ref": "codex/m11-local-graph-runtime-20261001",
+    "recordedAt": "2026-10-01T04:49:19.475387Z"
   },
   "packages": [
     {
@@ -349,8 +349,10 @@
         "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/execution-plan",
+        "@control-plane/langgraph-adapter",
         "@control-plane/managed-pi-adapter",
         "@control-plane/object-store",
+        "@control-plane/orchestration",
         "@control-plane/remote-control-relay",
         "@control-plane/restate-runtime",
         "@control-plane/runtime-sdk",
@@ -1742,7 +1744,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d96f48c0c787f68a95ab25677a054b0ad0a51b3b728c1bf26a98ec33dceb9c46"
+      "sourceDigest": "sha256:859555ded95b5ec3f067f01c59fdadc55645da8c71b262deb187ea24e54fa4ec"
     },
     {
       "id": "local",
@@ -1785,7 +1787,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:d96f48c0c787f68a95ab25677a054b0ad0a51b3b728c1bf26a98ec33dceb9c46"
+      "sourceDigest": "sha256:859555ded95b5ec3f067f01c59fdadc55645da8c71b262deb187ea24e54fa4ec"
     }
   ],
   "ownership": [
