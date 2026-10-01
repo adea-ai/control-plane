@@ -469,7 +469,6 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
     new URL('../.github/workflows/draft-pr.yml', import.meta.url),
     'utf8'
   )
-  const dependabot = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8')
 
   assert.match(
     validation,
@@ -492,7 +491,6 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.match(release, /billing-pause-bypass:/)
   assert.match(draftPr, /if: vars\.CI_BILLING_PAUSED != 'true'/)
   assert.match(draftPr, /base: main/)
-  assert.equal((dependabot.match(/target-branch: main/g) ?? []).length, 2)
   // The direct workflow has no staging promotion caller: release-pr.yml must be gone.
   const callerWorkflows = readdirSync(new URL('../.github/workflows/', import.meta.url))
   assert(!callerWorkflows.includes('release-pr.yml'))
@@ -872,3 +870,28 @@ test('rejects concrete vendor imports from core packages', async () => {
     await unlink(fixture)
   }
 }, 60_000)
+
+test('uses one draft-first dependency updater with reviewed major and non-major batches', async () => {
+  assert(!readdirSync(new URL('../.github/', import.meta.url)).includes('dependabot.yml'))
+  const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8'))
+  assert.equal(renovate.draftPR, true)
+  assert.notEqual(renovate.automerge, true)
+  const nonMajor = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('patch'))
+  const major = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('major'))
+  assert.equal(nonMajor.groupName, 'external non-major dependencies')
+  assert.deepEqual(nonMajor.matchUpdateTypes, ['patch', 'minor', 'pin', 'digest'])
+  assert.equal(major.groupName, 'external major dependencies')
+  for (const rule of renovate.packageRules) assert.notEqual(rule.automerge, true)
+  const managed = renovate.packageRules.find((rule) => rule.enabled === false)
+  assert(managed, 'Sync-managed Code Foundry pins must be excluded from Renovate updates')
+  assert(
+    managed.matchPackageNames.some((pattern) => {
+      const expression = new RegExp(pattern.slice(1, -1))
+      return (
+        expression.test('0xPlayerOne/code-foundry') &&
+        expression.test('0xPlayerOne/code-foundry/.github/workflows/validation.yml') &&
+        !expression.test('actions/checkout')
+      )
+    })
+  )
+})
