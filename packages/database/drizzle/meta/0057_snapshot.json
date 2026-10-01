@@ -5658,7 +5658,7 @@
         },
         "revision": {
           "name": "revision",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true
         },
@@ -5729,7 +5729,7 @@
         },
         "tool_calls_identity_check": {
           "name": "tool_calls_identity_check",
-          "value": "jsonb_typeof(\"tool_calls\".\"call\") = 'object' and \"tool_calls\".\"call\"->>'toolCallId' = \"tool_calls\".\"tool_call_id\" and \"tool_calls\".\"call\"->>'workspaceId' = \"tool_calls\".\"workspace_id\" and \"tool_calls\".\"call\"->>'idempotencyKey' = \"tool_calls\".\"idempotency_key\" and \"tool_calls\".\"call\"->>'executionId' = \"tool_calls\".\"execution_id\" and (\"tool_calls\".\"call\"->>'revision')::integer = \"tool_calls\".\"revision\""
+          "value": "jsonb_typeof(\"tool_calls\".\"call\") = 'object' and \"tool_calls\".\"call\"->>'toolCallId' = \"tool_calls\".\"tool_call_id\" and \"tool_calls\".\"call\"->>'workspaceId' = \"tool_calls\".\"workspace_id\" and \"tool_calls\".\"call\"->>'idempotencyKey' = \"tool_calls\".\"idempotency_key\" and \"tool_calls\".\"call\"->>'executionId' = \"tool_calls\".\"execution_id\" and (\"tool_calls\".\"call\"->>'revision')::bigint = \"tool_calls\".\"revision\""
         }
       },
       "isRLSEnabled": false

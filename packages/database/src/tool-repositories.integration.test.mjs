@@ -413,6 +413,34 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
     }
   })
 
+  test('tool-call revisions above PostgreSQL int32 range persist and advance through CAS', async () => {
+    const connection = await openIndependentConnection()
+    try {
+      const repository = new PostgresToolCallRepository(connection.database, workspaceId)
+      const maxInt32PlusOne = 2_147_483_648
+      const initial = call({
+        toolCallId: 'tlc_01JABCDEF0123456789ABCDEFD',
+        idempotencyKey: 'tool-revision-boundary-pg',
+        revision: maxInt32PlusOne,
+      })
+
+      expect(await repository.insert(initial)).toBe(true)
+      expect(await repository.get(initial.toolCallId)).toEqual(initial)
+
+      const next = {
+        ...initial,
+        status: 'authorized',
+        revision: maxInt32PlusOne + 1,
+        authorizedAt: requestedAt,
+        history: [...initial.history, { status: 'authorized', at: requestedAt }],
+      }
+      expect(await repository.compareAndSet(maxInt32PlusOne, next)).toBe(true)
+      expect(await repository.get(initial.toolCallId)).toEqual(next)
+    } finally {
+      await connection.close()
+    }
+  })
+
   test('policy-controlled tool effects preserve completed and ambiguous receipts across independent restarts', async () => {
     const firstConnection = await openIndependentConnection()
     const versionedRegistry = new PostgresToolRegistryRepository(

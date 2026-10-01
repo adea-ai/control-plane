@@ -3,11 +3,11 @@ CREATE TABLE "tool_calls" (
 	"tool_call_id" varchar(64) NOT NULL,
 	"idempotency_key" varchar(256) NOT NULL,
 	"execution_id" varchar(64) NOT NULL,
-	"revision" integer NOT NULL,
+	"revision" bigint NOT NULL,
 	"call" jsonb NOT NULL,
 	CONSTRAINT "tool_calls_workspace_id_tool_call_id_pk" PRIMARY KEY("workspace_id","tool_call_id"),
 	CONSTRAINT "tool_calls_revision_check" CHECK ("tool_calls"."revision" > 0),
-	CONSTRAINT "tool_calls_identity_check" CHECK (jsonb_typeof("tool_calls"."call") = 'object' and "tool_calls"."call"->>'toolCallId' = "tool_calls"."tool_call_id" and "tool_calls"."call"->>'workspaceId' = "tool_calls"."workspace_id" and "tool_calls"."call"->>'idempotencyKey' = "tool_calls"."idempotency_key" and "tool_calls"."call"->>'executionId' = "tool_calls"."execution_id" and ("tool_calls"."call"->>'revision')::integer = "tool_calls"."revision")
+	CONSTRAINT "tool_calls_identity_check" CHECK (jsonb_typeof("tool_calls"."call") = 'object' and "tool_calls"."call"->>'toolCallId' = "tool_calls"."tool_call_id" and "tool_calls"."call"->>'workspaceId' = "tool_calls"."workspace_id" and "tool_calls"."call"->>'idempotencyKey' = "tool_calls"."idempotency_key" and "tool_calls"."call"->>'executionId' = "tool_calls"."execution_id" and ("tool_calls"."call"->>'revision')::bigint = "tool_calls"."revision")
 );
 --> statement-breakpoint
 CREATE TABLE "tool_definitions" (

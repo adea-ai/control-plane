@@ -3,8 +3,8 @@ import { sql } from 'drizzle-orm'
 import {
   check,
   foreignKey,
+  bigint,
   index,
-  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -68,7 +68,7 @@ export const toolCalls = pgTable(
     toolCallId: varchar('tool_call_id', { length: 64 }).notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 256 }).notNull(),
     executionId: varchar('execution_id', { length: 64 }).notNull(),
-    revision: integer('revision').notNull(),
+    revision: bigint('revision', { mode: 'number' }).notNull(),
     call: jsonb('call').$type<ToolCall>().notNull(),
   },
   (table) => [
@@ -81,7 +81,7 @@ export const toolCalls = pgTable(
     check('tool_calls_revision_check', sql`${table.revision} > 0`),
     check(
       'tool_calls_identity_check',
-      sql`jsonb_typeof(${table.call}) = 'object' and ${table.call}->>'toolCallId' = ${table.toolCallId} and ${table.call}->>'workspaceId' = ${table.workspaceId} and ${table.call}->>'idempotencyKey' = ${table.idempotencyKey} and ${table.call}->>'executionId' = ${table.executionId} and (${table.call}->>'revision')::integer = ${table.revision}`
+      sql`jsonb_typeof(${table.call}) = 'object' and ${table.call}->>'toolCallId' = ${table.toolCallId} and ${table.call}->>'workspaceId' = ${table.workspaceId} and ${table.call}->>'idempotencyKey' = ${table.idempotencyKey} and ${table.call}->>'executionId' = ${table.executionId} and (${table.call}->>'revision')::bigint = ${table.revision}`
     ),
   ]
 )
