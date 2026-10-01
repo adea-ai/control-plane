@@ -69,6 +69,7 @@
         "rxjs": "7.8.2",
       },
       "devDependencies": {
+        "@control-plane/sqlite-persistence": "workspace:*",
         "@control-plane/testing": "workspace:*",
       },
     },
@@ -274,7 +275,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.35.6",
+      "version": "1.36.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -388,7 +389,7 @@
     },
     "packages/orchestration": {
       "name": "@control-plane/orchestration",
-      "version": "1.2.4",
+      "version": "1.3.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -486,7 +487,7 @@
     },
     "packages/sqlite-persistence": {
       "name": "@control-plane/sqlite-persistence",
-      "version": "1.28.3",
+      "version": "1.29.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
