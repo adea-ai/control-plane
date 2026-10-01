@@ -5,25 +5,27 @@
   "labels": ["dependencies"],
   "rebaseWhen": "behind-base-branch",
   "pruneStaleBranches": true,
+  "draftPR": true,
   "vulnerabilityAlerts": {
     "labels": ["security"]
   },
   "packageRules": [
     {
-      "description": "Non-major external dependency updates ride one branch and automerge once this repository's checks pass.",
-      "matchPackagePatterns": ["*"],
+      "description": "Non-major external dependency updates ride one grouped draft branch per cycle. No auto-merge: GitHub refuses to attach it to a draft PR, and every PR must open as a draft because the code-foundry gates only run on the ready-for-review transition — a human marks each batch ready and merges it once the gates pass.",
       "matchUpdateTypes": ["patch", "minor", "pin", "digest"],
       "groupName": "external non-major dependencies",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true,
       "schedule": ["after 8am and before 8pm every weekday"]
     },
     {
-      "description": "Major bumps of external dependencies get a reviewed PR, one per package.",
-      "matchPackagePatterns": ["*"],
+      "description": "Major external bumps share one draft PR per cycle instead of one per package — a grouped major PR reads as one upgrade decision.",
       "matchUpdateTypes": ["major"],
+      "groupName": "external major dependencies",
       "labels": ["dependencies", "major"]
+    },
+    {
+      "description": "Code Foundry runtime pins are sync-managed (runtime_ref in code-foundry.yml) and must not be independently upgraded; a bump branched before a sync can resurrect legacy caller files when merged.",
+      "matchPackageNames": ["/^0xPlayerOne\\/code-foundry/"],
+      "enabled": false
     }
   ]
 }
