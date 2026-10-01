@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.4](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.3...workflow-worker-v1.11.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#802](https://github.com/adea-ai/control-plane/issues/802)) ([76aafec](https://github.com/adea-ai/control-plane/commit/76aafec17902426c55e782e210d90d6e5aa7370a))
+
 ## [1.11.3](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.2...workflow-worker-v1.11.3) (2026-09-30)
 
 

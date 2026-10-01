@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.6.1...execution-plan-v1.6.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#802](https://github.com/adea-ai/control-plane/issues/802)) ([76aafec](https://github.com/adea-ai/control-plane/commit/76aafec17902426c55e782e210d90d6e5aa7370a))
+
 ## [1.6.1](https://github.com/adea-ai/control-plane/compare/execution-plan-v1.6.0...execution-plan-v1.6.1) (2026-09-30)
 
 
