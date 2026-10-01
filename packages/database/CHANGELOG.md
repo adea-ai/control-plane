@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/adea-ai/control-plane/compare/database-v1.36.1...database-v1.37.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** add durable catalog administration and pinned declarative plans ([#803](https://github.com/adea-ai/control-plane/issues/803)) ([a7813c0](https://github.com/adea-ai/control-plane/commit/a7813c0b0c3f456e168fe06db99f15661b07a29f))
+
 ## [1.36.1](https://github.com/adea-ai/control-plane/compare/database-v1.36.0...database-v1.36.1) (2026-10-01)
 
 

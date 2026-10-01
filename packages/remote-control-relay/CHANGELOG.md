@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.2.3...remote-control-relay-v1.3.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** add durable catalog administration and pinned declarative plans ([#803](https://github.com/adea-ai/control-plane/issues/803)) ([a7813c0](https://github.com/adea-ai/control-plane/commit/a7813c0b0c3f456e168fe06db99f15661b07a29f))
+
 ## [1.2.3](https://github.com/adea-ai/control-plane/compare/remote-control-relay-v1.2.2...remote-control-relay-v1.2.3) (2026-10-01)
 
 
