@@ -689,6 +689,8 @@
         "@control-plane/orchestration",
         "@control-plane/production-readiness",
         "@control-plane/runtime-sdk",
+        "@control-plane/tool-execution",
+        "@control-plane/tool-sdk",
         "@control-plane/usage-ledger"
       ],
       "externalDependencies": ["drizzle-orm"],
