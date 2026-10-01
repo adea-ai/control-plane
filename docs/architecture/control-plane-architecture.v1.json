@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "f38c22b78db1429ce2d5280657a265c753817381",
-    "ref": "codex/m11-tool-storage-20261001",
-    "recordedAt": "2026-10-01T04:29:01.221Z"
+    "commit": "b01397f0c6c4682690421c5dceeb929cc5d6108f",
+    "ref": "main",
+    "recordedAt": "2026-10-01T04:46:33.635110Z"
   },
   "packages": [
     {
