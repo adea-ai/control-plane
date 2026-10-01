@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import {
   copyFile,
   mkdir,
@@ -873,27 +873,31 @@ test('rejects concrete vendor imports from core packages', async () => {
   }
 }, 60_000)
 
-test('uses one draft-first dependency updater with reviewed major and non-major batches', async () => {
-  assert(!readdirSync(new URL('../.github/', import.meta.url)).includes('dependabot.yml'))
-  const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8'))
-  assert.equal(renovate.draftPR, true)
-  assert.notEqual(renovate.automerge, true)
-  const nonMajor = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('patch'))
-  const major = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('major'))
-  assert.equal(nonMajor.groupName, 'external non-major dependencies')
-  assert.deepEqual(nonMajor.matchUpdateTypes, ['patch', 'minor', 'pin', 'digest'])
-  assert.equal(major.groupName, 'external major dependencies')
-  for (const rule of renovate.packageRules) assert.notEqual(rule.automerge, true)
-  const managed = renovate.packageRules.find((rule) => rule.enabled === false)
-  assert(managed, 'Sync-managed Code Foundry pins must be excluded from Renovate updates')
+test('uses the managed Dependabot updater with grouped batches and sync-managed holds', async () => {
   assert(
-    managed.matchPackageNames.some((pattern) => {
-      const expression = new RegExp(pattern.slice(1, -1))
-      return (
-        expression.test('0xPlayerOne/code-foundry') &&
-        expression.test('0xPlayerOne/code-foundry/.github/workflows/validation.yml') &&
-        !expression.test('actions/checkout')
-      )
-    })
+    !existsSync(new URL('../renovate.json', import.meta.url)),
+    'Renovate must not race the managed Dependabot updater'
   )
+  const dependabot = Bun.YAML.parse(
+    await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8')
+  )
+  const ignoredNames = (update) => (update.ignore ?? []).map((rule) => rule['dependency-name'])
+  const actions = dependabot.updates.find(
+    (update) => update['package-ecosystem'] === 'github-actions'
+  )
+  const bun = dependabot.updates.find((update) => update['package-ecosystem'] === 'bun')
+  assert(actions, 'github-actions ecosystem must stay covered')
+  assert(bun, 'bun ecosystem must stay covered')
+  assert(
+    ignoredNames(actions).some((name) => name.startsWith('0xPlayerOne/code-foundry')),
+    'Sync-managed Code Foundry pins must be excluded from dependency updates'
+  )
+  assert.equal(actions.groups['github-actions'].patterns[0], '*')
+  assert.equal(bun.groups['bun-dependencies'].patterns[0], '*')
+  const holds = Object.fromEntries(
+    (bun.ignore ?? []).map((rule) => [rule['dependency-name'], rule.versions?.[0]])
+  )
+  assert.equal(holds['typescript'], '>=7.0.0')
+  assert.equal(holds['@types/node'], '>=23')
+  assert.equal(JSON.stringify(dependabot).includes('auto-merge'), false)
 })
