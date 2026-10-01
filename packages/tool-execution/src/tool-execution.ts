@@ -257,7 +257,10 @@ export class PolicyControlledToolExecutionService {
     this.now = options.now ?? (() => new Date().toISOString())
   }
 
-  async execute(input: unknown): Promise<DurableToolExecutionOutcome> {
+  async execute(
+    input: unknown,
+    options: { readonly signal?: AbortSignal } = {}
+  ): Promise<DurableToolExecutionOutcome> {
     const request = DurableToolCallRequestSchema.parse(input)
     const prepared = await this.gateway.prepare(toGatewayRequest(request))
     const requestDigest = toolRequestDigest(request)
@@ -271,7 +274,7 @@ export class PolicyControlledToolExecutionService {
         fail('IDEMPOTENCY_CONFLICT')
       return active.promise
     }
-    const promise = this.#executePrepared(request, prepared, requestDigest)
+    const promise = this.#executePrepared(request, prepared, requestDigest, options)
     this.#inFlight.set(key, { requestDigest, promise })
     try {
       return await promise
@@ -283,7 +286,8 @@ export class PolicyControlledToolExecutionService {
   async #executePrepared(
     request: DurableToolCallRequest,
     prepared: PreparedToolExecution,
-    requestDigest: string
+    requestDigest: string,
+    options: { readonly signal?: AbortSignal }
   ): Promise<DurableToolExecutionOutcome> {
     let call = await this.calls.getByIdempotencyKey(request.workspaceId, request.idempotencyKey)
     if (call) {
@@ -417,7 +421,7 @@ export class PolicyControlledToolExecutionService {
 
     call = await this.#transition(call, 'executing', this.now(), { startedAt: this.now() })
     try {
-      const result = await this.gateway.invoke(prepared)
+      const result = await this.gateway.invoke(prepared, options)
       call = await this.#transition(call, 'succeeded', this.now(), {
         result,
         completedAt: this.now(),

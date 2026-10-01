@@ -251,8 +251,11 @@ export class ToolGateway {
     this.#executors.set(executorKey(parsed.type, parsed.reference), executor)
   }
 
-  async execute(input: unknown): Promise<ToolExecutionResult> {
-    return this.invoke(await this.prepare(input))
+  async execute(
+    input: unknown,
+    options: { readonly signal?: AbortSignal } = {}
+  ): Promise<ToolExecutionResult> {
+    return this.invoke(await this.prepare(input), options)
   }
 
   async prepare(input: unknown): Promise<PreparedToolExecution> {
@@ -280,7 +283,10 @@ export class ToolGateway {
     return { request, version, operation, executor }
   }
 
-  async invoke(prepared: PreparedToolExecution): Promise<ToolExecutionResult> {
+  async invoke(
+    prepared: PreparedToolExecution,
+    options: { readonly signal?: AbortSignal } = {}
+  ): Promise<ToolExecutionResult> {
     const { request, version, operation, executor } = prepared
     const retryPolicy = operation.retryPolicy ?? { maxAttempts: 1, retryableErrorCodes: [] }
     let result: Awaited<ReturnType<ToolExecutor['execute']>> | undefined
@@ -290,7 +296,8 @@ export class ToolGateway {
       try {
         result = await withTimeout(
           (signal) => executor.execute(request, version, signal),
-          version.limits.timeoutMs
+          version.limits.timeoutMs,
+          options.signal
         )
         break
       } catch (error) {
@@ -310,29 +317,33 @@ export class ToolGateway {
         )
       }
     }
-    if (!result) failGateway('EXECUTION_FAILED')
-    assertSize(result.output, version.limits.maxOutputBytes, 'OUTPUT_LIMIT_EXCEEDED')
+    if (!result) failGateway('INVALID_OUTPUT', false, 'committed')
+    assertSize(result.output, version.limits.maxOutputBytes, 'OUTPUT_LIMIT_EXCEEDED', 'committed')
     const validateOutput = this.#validator(this.#outputValidators, version, 'output')
-    if (!validateOutput(result.output)) failGateway('INVALID_OUTPUT')
-    return ToolExecutionResultSchema.parse({
-      toolDefinitionId: version.toolDefinitionId,
-      toolVersionId: version.toolVersionId,
-      operation: request.operation,
-      output: result.output,
-      artifactRefs: result.artifactRefs ?? [],
-      executor: version.executor,
-      attempts,
-      audit: {
-        ...request.audit,
-        contentDigest: digest({
-          requestId: request.requestId,
-          toolVersionId: request.toolVersionId,
-          operation: request.operation,
-          input: request.input,
-          output: result.output,
-        }),
-      },
-    })
+    if (!validateOutput(result.output)) failGateway('INVALID_OUTPUT', false, 'committed')
+    try {
+      return ToolExecutionResultSchema.parse({
+        toolDefinitionId: version.toolDefinitionId,
+        toolVersionId: version.toolVersionId,
+        operation: request.operation,
+        output: result.output,
+        artifactRefs: result.artifactRefs ?? [],
+        executor: version.executor,
+        attempts,
+        audit: {
+          ...request.audit,
+          contentDigest: digest({
+            requestId: request.requestId,
+            toolVersionId: request.toolVersionId,
+            operation: request.operation,
+            input: request.input,
+            output: result.output,
+          }),
+        },
+      })
+    } catch {
+      failGateway('INVALID_OUTPUT', false, 'committed')
+    }
   }
 
   #validator(
@@ -389,8 +400,21 @@ function hasScope(definition: ToolDefinition, workspaceId: string): boolean {
   return definition.ownership.scope === 'system' || definition.ownership.workspaceId === workspaceId
 }
 
-function assertSize(value: unknown, limit: number, code: ToolGatewayErrorCode): void {
-  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > limit) failGateway(code)
+function assertSize(
+  value: unknown,
+  limit: number,
+  code: ToolGatewayErrorCode,
+  effectState: 'none' | 'committed' | 'unknown' = 'none'
+): void {
+  let serialized: string | undefined
+  try {
+    serialized = JSON.stringify(value)
+  } catch {
+    failGateway(code, false, effectState)
+  }
+  if (serialized === undefined || Buffer.byteLength(serialized, 'utf8') > limit) {
+    failGateway(code, false, effectState)
+  }
 }
 
 function executorKey(type: ToolExecutorType, reference: string): string {
@@ -417,20 +441,47 @@ function failRegistry(code: ToolRegistryErrorCode): never {
   throw new ToolRegistryError(code)
 }
 
-function failGateway(code: ToolGatewayErrorCode): never {
-  throw new ToolGatewayError(code)
+function failGateway(
+  code: ToolGatewayErrorCode,
+  retryable = false,
+  effectState: 'none' | 'committed' | 'unknown' = 'none'
+): never {
+  throw new ToolGatewayError(code, retryable, effectState)
 }
 
 async function withTimeout<Value>(
   operation: (signal: AbortSignal) => Promise<Value>,
-  timeoutMs: number
+  timeoutMs: number,
+  callerSignal?: AbortSignal
 ): Promise<Value> {
   const timeoutError = new ToolExecutorError('TIMEOUT', true, 'unknown')
   const controller = new AbortController()
+  if (callerSignal?.aborted) throw new ToolExecutorError('ABORTED', false, 'none')
+
+  let operationStarted = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  let rejectCallerAbort: ((error: ToolExecutorError) => void) | undefined
+  const callerAbort = new Promise<never>((_resolve, reject) => {
+    rejectCallerAbort = reject
+  })
+  const onCallerAbort = () => {
+    const abortError = new ToolExecutorError(
+      'ABORTED',
+      false,
+      operationStarted ? 'unknown' : 'none'
+    )
+    controller.abort(abortError)
+    rejectCallerAbort?.(abortError)
+  }
+  callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
   try {
     return await Promise.race([
-      operation(controller.signal),
+      Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw controller.signal.reason
+        operationStarted = true
+        return operation(controller.signal)
+      }),
+      callerAbort,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           controller.abort(timeoutError)
@@ -441,6 +492,7 @@ async function withTimeout<Value>(
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    callerSignal?.removeEventListener('abort', onCallerAbort)
   }
 }
 

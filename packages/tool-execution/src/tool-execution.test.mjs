@@ -462,4 +462,117 @@ describe('policy-controlled durable tool execution', () => {
     })
     expect(executor.requests).toHaveLength(1)
   })
+
+  test('does not invoke the executor when cancellation arrives before the effect', async () => {
+    const { service, calls, executor } = await fixture({
+      versionOverrides: {
+        operations: [
+          {
+            ...version().operations[0],
+            approvalMode: 'never',
+            retryPolicy: { maxAttempts: 1, retryableErrorCodes: [] },
+          },
+        ],
+      },
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      service.execute(request({ approval: undefined }), { signal: controller.signal })
+    ).rejects.toMatchObject({ code: 'TOOL_EXECUTION_FAILED' })
+
+    expect(await calls.getByIdempotencyKey(ids.workspace, 'tool-effect-0001')).toMatchObject({
+      status: 'failed',
+      errorCode: 'ABORTED',
+    })
+    expect(executor.requests).toHaveLength(0)
+  })
+
+  test('reconciles cancellation after executor entry and never replays the uncertain effect', async () => {
+    let markStarted
+    let executorObservedAbort = false
+    const started = new Promise((resolve) => {
+      markStarted = resolve
+    })
+    const { service, executor } = await fixture({
+      executorResponse: (_request, _version, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              executorObservedAbort = true
+              reject(signal.reason)
+            },
+            { once: true }
+          )
+          markStarted()
+        }),
+      versionOverrides: {
+        operations: [
+          {
+            ...version().operations[0],
+            approvalMode: 'never',
+            idempotency: 'provider_key',
+            retryPolicy: { maxAttempts: 2, retryableErrorCodes: ['ABORTED'] },
+          },
+        ],
+        limits: { ...version().limits, timeoutMs: 1_000 },
+      },
+    })
+    const controller = new AbortController()
+    const pending = service.execute(request({ approval: undefined }), {
+      signal: controller.signal,
+    })
+
+    await started
+    controller.abort()
+    const outcome = await pending
+    const replay = await service.execute(request({ approval: undefined }))
+
+    expect(outcome).toMatchObject({
+      state: 'reconciliation_required',
+      call: { status: 'reconciliation_required', errorCode: 'ABORTED' },
+    })
+    expect(replay).toMatchObject({ state: 'reconciliation_required' })
+    expect(executor.requests).toHaveLength(1)
+    expect(executorObservedAbort).toBe(true)
+  })
+
+  test('preserves a committed effect when output schema or size validation fails', async () => {
+    for (const [label, executorResponse, expectedErrorCode] of [
+      ['schema', () => ({ saved: 'not-a-boolean' }), 'INVALID_OUTPUT'],
+      ['size', () => ({ saved: true, instruction: 'x'.repeat(300) }), 'OUTPUT_LIMIT_EXCEEDED'],
+    ]) {
+      const { service, executor } = await fixture({
+        executorResponse,
+        versionOverrides: {
+          operations: [
+            {
+              ...version().operations[0],
+              approvalMode: 'never',
+              retryPolicy: { maxAttempts: 1, retryableErrorCodes: [] },
+            },
+          ],
+        },
+      })
+
+      const outcome = await service.execute(
+        request({ approval: undefined, idempotencyKey: `invalid-${label}` })
+      )
+      const replay = await service.execute(
+        request({ approval: undefined, idempotencyKey: `invalid-${label}` })
+      )
+
+      expect(outcome).toMatchObject({
+        state: 'reconciliation_required',
+        call: {
+          status: 'reconciliation_required',
+          errorCode: expectedErrorCode,
+        },
+      })
+      expect(replay).toMatchObject({ state: 'reconciliation_required' })
+      expect(executor.requests).toHaveLength(1)
+    }
+  })
 })

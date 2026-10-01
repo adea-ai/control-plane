@@ -160,7 +160,20 @@ describe('Tool Gateway registry', () => {
       'files-v1',
       new FakeToolExecutor(() => ({ unexpected: 'unsafe' }))
     )
-    await expect(gateway.execute(request)).rejects.toMatchObject({ code: 'INVALID_OUTPUT' })
+    await expect(gateway.execute(request)).rejects.toMatchObject({
+      code: 'INVALID_OUTPUT',
+      effectState: 'committed',
+    })
+
+    gateway.registerExecutor(
+      'internal',
+      'files-v1',
+      new FakeToolExecutor(() => ({ content: 'x'.repeat(300) }))
+    )
+    await expect(gateway.execute(request)).rejects.toMatchObject({
+      code: 'OUTPUT_LIMIT_EXCEEDED',
+      effectState: 'committed',
+    })
 
     gateway.registerExecutor(
       'internal',
