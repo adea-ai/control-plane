@@ -39,7 +39,7 @@
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
     "@nestjs/common": "12.1.2",
-    "@restatedev/restate-server": "1.7.12",
+    "@restatedev/restate-server": "1.7.13",
     "fastify": "5.12.5"
   },
   "engines": {
