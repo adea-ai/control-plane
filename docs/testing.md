@@ -110,6 +110,12 @@ An in-memory cloud baseline is contract evidence only and never substitutes for 
 lane. Provider branches used for release checks must be created from the intended environment,
 expire automatically, and be deleted after evidence is recorded.
 
+The trusted-main Neon verification partitions `test:integration` into three shards
+(`scripts/integration-shards.mjs`), each provisioning its own disposable branch so shards never
+share a Neon compute instance. Files still run one at a time inside a shard, preserving the
+per-case database isolation; new integration files must be assigned to a shard explicitly, which
+`tests/integration-shards.test.mjs` enforces.
+
 ## M11 test architecture
 
 M11 owns the final release validation layout. At minimum it must classify each suite as one primary lane:
