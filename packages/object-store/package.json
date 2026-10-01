@@ -21,10 +21,10 @@
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1141.0",
+    "@aws-sdk/client-s3": "3.1144.0",
     "@control-plane/deployment": "workspace:*"
   },
   "engines": {
-    "node": "24.18.0"
+    "node": "24.21.0"
   }
 }

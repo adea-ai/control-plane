@@ -1,8 +1,8 @@
 {
   "milestone": "M1: Platform Foundation",
   "toolchain": {
-    "node": "24.18.0",
-    "bun": "1.4.0"
+    "node": "24.21.0",
+    "bun": "1.4.2"
   },
   "dependencies": [
     {
