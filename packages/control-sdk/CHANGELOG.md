@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.8.0...sdk-v1.8.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#802](https://github.com/adea-ai/control-plane/issues/802)) ([76aafec](https://github.com/adea-ai/control-plane/commit/76aafec17902426c55e782e210d90d6e5aa7370a))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.7.2...sdk-v1.8.0) (2026-09-25)
 
 

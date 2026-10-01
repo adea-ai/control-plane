@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.4](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.3...deployment-v1.10.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#802](https://github.com/adea-ai/control-plane/issues/802)) ([76aafec](https://github.com/adea-ai/control-plane/commit/76aafec17902426c55e782e210d90d6e5aa7370a))
+
 ## [1.10.3](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.2...deployment-v1.10.3) (2026-09-30)
 
 
