@@ -133,6 +133,8 @@ describe.skipIf(!enabled)('LangGraph PostgreSQL checkpointer', () => {
       idempotencyKey: 'postgres:segment:redelivery',
     })
     expect(replayed).toMatchObject({ status: 'completed', output: { decision: 'approve' } })
+    expect(deliveries.map(({ node }) => node)).toEqual(['prepare', 'finalize', 'finalize'])
+    expect(deliveries.at(-1).attemptId).toBe('att_01JABCDEF0123456789ABCDEFH')
     expect([...effects.keys()]).toEqual(effectKeys)
     for (const delivery of deliveries) {
       expect(delivery.idempotencyKey).toBe(
