@@ -84,3 +84,77 @@ contracts only when their owning milestone defines and versions them.
 The Adea-facing typed client is published separately as `@control-plane/sdk`. Its generated
 OpenAPI boundary and deterministic pre-execution stub are documented in [`sdk.md`](sdk.md). The SDK
 does not import this application or any server implementation package.
+
+## Graph selection and immutable plans
+
+Execution validation may include `payload.graph` with an exact
+`{ graphDefinitionId, graphVersion, contentDigest }` reference and JSON-object
+`input`. Validation rejects graph selections unless composition supplies a
+workspace-scoped graph authority that checks published lifecycle, compatibility,
+registered operations and the declared input schema. The plan digest binds both
+reference and input. Inputs are limited to 65,536 serialized UTF-8 bytes, 4,096
+values and 16 nested levels; cycles, accessors, sparse arrays, executable values
+and non-finite numbers are rejected before persistence.
+
+Exact validation retries preserve the original plan and reject changed inputs.
+New execution admission rechecks graph authority; replay checks the original
+workspace-scoped immutable pin. Graph declaration does not grant permission to
+perform runtime, model, tool or delegation effects. Their execution-time policy,
+approval, capability, budget and revocation checks remain required.
+
+Execution acceptance receives the plan reference. Before submitting pending work,
+it loads the retained plan and verifies its reference and workspace/project/task/
+agent correlation. Workflow graph reference, input and thread identity derive
+from that stored plan; caller-supplied graph data cannot replace them. A missing
+or mismatched retained plan leaves dispatch unconfirmed for reconciliation.
+
+The catalog administration and declarative compiler build on this admission
+contract. Production runtime/model/tool/delegation bindings, graph activity and
+checkpoint wiring, and deployed acceptance remain required by M11. Catalog and
+compiler tests do not establish the completed public graph execution path.
+
+Graph edges may include `when: { path: ["done"], equals: true }`, which compares
+an own JSON field in the source node's result with a bounded scalar. All outgoing
+edges from that source must be conditional; every matching target is scheduled,
+and no match fails the segment. Routes contain data only, with no executable
+predicates or external schema resolution. Start edges are unconditional.
+
+Nodes default to an all-branch join. Feedback edges are identified by traversal
+back edges so a fork/join inside a loop still waits for all current branches,
+including branches with different lengths. A node may declare `join: "any"` for
+mutually exclusive branches. Conditional inputs to a multi-source all-branch
+join are rejected because a skipped branch cannot satisfy its barrier. Graphs
+can therefore exit loops normally through conditional routes; the host step
+limit remains the bound for a cycle that does not exit.
+
+## Graph catalog administration
+
+The versioned graph catalog uses `POST /v1/graphs/publish`, `deprecate`, `revoke`,
+and `resolve`. Publication requires `graph:publish`, lifecycle changes require
+`graph:manage`, and inspection requires `graph:resolve`, in addition to caller
+and workspace credential matching. Definitions belong to the selected workspace;
+these envelopes do not accept a project authority field. Publication does not
+approve a profile or Skill or authorize execution effects.
+
+Publish payloads contain `definition`; lifecycle payloads contain the exact
+`reference`, `expectedRevision`, and a nonempty `reason`. Resolution parameters
+contain the exact reference and allow inspection of retained deprecated or
+revoked versions. Responses include immutable content and current lifecycle.
+Credential-bearing catalog input is rejected before persistence.
+
+Mutations commit the catalog write and an original result receipt atomically.
+Receipt identity includes workspace, caller, operation and idempotency key.
+A server-computed semantic hash binds operation and payload; changed payloads
+under the same key conflict. Retries return the original snapshot even after
+later lifecycle changes, with response metadata from the current request.
+The Control SDK exposes `publishGraph`, `deprecateGraph`, `revokeGraph`, and
+`resolveGraph`. Deployment compositions must bind a durable administration
+repository; the unconfigured service returns an explicit unavailable error.
+
+Local and Simple administration use the profile's SQLite persistence provider.
+Hosted Server and Managed Cloud administration use workspace-scoped PostgreSQL
+repositories; migration `0056` adds command receipts alongside the immutable
+version catalog. Local/Simple restart tests verify both original receipt replay
+and independent lifecycle changes for identical pins in different workspaces.
+Production graph execution admission stays fail closed until the compiler and
+policy-controlled operation bindings are configured.

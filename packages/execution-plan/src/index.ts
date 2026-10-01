@@ -8,6 +8,9 @@ import {
 } from '@control-plane/context'
 import {
   IdentifierSchemas,
+  GraphSelectionSchema,
+  type GraphReference,
+  type GraphSelection,
   ServiceCallerAssertionSchema,
   ExecutionRequestValidationRequestSchema,
 } from '@control-plane/contracts'
@@ -109,6 +112,7 @@ export const ExecutionPlanSchema = z
     constraints: ExecutionConstraintSetSchema,
     policySnapshot: ExecutionConstraintSetSchema.shape.policySnapshot,
     outputContract: OutputContractSchema,
+    graph: GraphSelectionSchema.optional(),
     parentExecutionPlan: ExecutionPlanReferenceSchema.optional(),
   })
   .refine((plan) => canonical(plan.policySnapshot) === canonical(plan.constraints.policySnapshot), {
@@ -129,6 +133,7 @@ const CompilationInputSchema = z
     runtimeRequirements: CapabilityRequirementSetSchema,
     outputContract: OutputContractSchema,
     compiledAt: TimestampSchema,
+    graph: GraphSelectionSchema.optional(),
   })
   .strict()
 
@@ -230,6 +235,7 @@ export class ExecutionPlanCompiler {
       constraints: normalizeConstraints(constraints),
       policySnapshot: constraints.policySnapshot,
       outputContract: parsed.outputContract,
+      ...(parsed.graph === undefined ? {} : { graph: parsed.graph }),
     })
   }
 }
@@ -443,6 +449,13 @@ export interface ExecutionPlanAcceptanceValidatorOptions {
     readonly approvals: Pick<CatalogApprovalRepository, 'list'>
     readonly policy: CatalogApprovalPolicy
   }
+  readonly graphs?: ExecutionGraphAuthority
+}
+
+/** Workspace-scoped catalog and trusted compiler checks supplied by composition. */
+export interface ExecutionGraphAuthority {
+  validate(workspaceId: string, selection: GraphSelection): Promise<boolean>
+  authorize(workspaceId: string, reference: GraphReference): Promise<boolean>
 }
 
 export class ExecutionPlanAcceptanceValidator {
@@ -466,6 +479,11 @@ export class ExecutionPlanAcceptanceValidator {
     // resubmit work without the authorization context used at initial acceptance.
     if (plan === undefined) return 'historical_plan_missing'
     if (!executionPlanCorrelates(plan, input)) return false
+    if (
+      plan.graph !== undefined &&
+      !(await this.options?.graphs?.authorize(input.workspaceId, plan.graph.reference))
+    )
+      return false
     const options = this.options
     if (options === undefined) return true
 
@@ -501,6 +519,12 @@ export class ExecutionPlanAcceptanceValidator {
   }): Promise<boolean> {
     const plan = await this.repository.get(input.executionPlan)
     if (!executionPlanCorrelates(plan, input)) return false
+
+    if (
+      plan.graph !== undefined &&
+      !(await this.options?.graphs?.validate(input.workspaceId, plan.graph))
+    )
+      return false
 
     const options = this.options
     if (options === undefined) return true

@@ -393,6 +393,13 @@
       "when": 1790794178078,
       "tag": "0055_careless_black_bird",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1790812003925,
+      "tag": "0056_common_jackpot",
+      "breakpoints": true
     }
   ]
 }

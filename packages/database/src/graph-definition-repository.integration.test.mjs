@@ -3,15 +3,19 @@ import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import {
   GraphDefinitionCatalog,
+  GraphCatalogError,
   InMemoryGraphDefinitionRepository,
 } from '@control-plane/orchestration'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createIsolatedTestDatabase } from './testing.ts'
 import { PostgresGraphDefinitionRepository } from './graph-definition-repository.ts'
+import { graphDefinitionCommands } from './schema/graph-definitions.ts'
 
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const otherWorkspaceId = 'wsp_01JABCDEF0123456789ABCDEGH'
 const publishedAt = '2026-09-30T00:00:00.000Z'
+const callerId = 'svc_graph-publisher'
+const idempotencyKey = 'graph-command-key-0001'
 
 async function graph(name) {
   return new GraphDefinitionCatalog(new InMemoryGraphDefinitionRepository()).publish({
@@ -34,6 +38,24 @@ async function graph(name) {
       },
     },
   })
+}
+
+function command(overrides = {}) {
+  return {
+    callerId,
+    operation: 'publish',
+    idempotencyKey,
+    payloadHash: 'a'.repeat(64),
+    ...overrides,
+  }
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
 }
 
 describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
@@ -132,6 +154,168 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
           reason: 'unsafe',
         })
       ).rejects.toThrow('GRAPH_DEFINITION_ROW_INCONSISTENT')
+    })
+
+    test('serializes eight identical commands and replays the immutable result after lifecycle changes', async () => {
+      const published = await graph('command-concurrency')
+      const input = command({ idempotencyKey: 'graph-command-concurrency-0001' })
+      const entered = deferred()
+      const release = deferred()
+      let actionCount = 0
+      const execute = () =>
+        repository.executeCommand(input, async (transactionRepository) => {
+          actionCount += 1
+          entered.resolve()
+          await release.promise
+          expect(await transactionRepository.insert(published)).toBe(true)
+          return published
+        })
+
+      const first = execute()
+      await entered.promise
+      const concurrent = Array.from({ length: 7 }, execute)
+      let lockError
+      try {
+        await isolated.waitForBlockedTransaction()
+      } catch (error) {
+        lockError = error
+      } finally {
+        release.resolve()
+      }
+      const results = await Promise.all([first, ...concurrent])
+      if (lockError !== undefined) throw lockError
+
+      expect(actionCount).toBe(1)
+      expect(results).toEqual(Array.from({ length: 8 }, () => published))
+
+      const deprecated = {
+        ...published,
+        revision: 2,
+        lifecycle: 'deprecated',
+        changedAt: '2026-09-30T01:00:00.000Z',
+        reason: 'superseded',
+      }
+      expect(await repository.compareAndSet(1, deprecated)).toBe(true)
+
+      const reconstructed = new PostgresGraphDefinitionRepository(isolated.application, workspaceId)
+      await expect(
+        reconstructed.executeCommand(input, async () => {
+          throw new Error('EXACT_REPLAY_MUST_NOT_RUN_ACTION')
+        })
+      ).resolves.toEqual(published)
+      const conflict = await reconstructed
+        .executeCommand(command({ ...input, payloadHash: 'b'.repeat(64) }), async () => {
+          throw new Error('CONFLICT_MUST_NOT_RUN_ACTION')
+        })
+        .catch((error) => error)
+      expect(conflict).toBeInstanceOf(GraphCatalogError)
+      expect(conflict).toMatchObject({ code: 'GRAPH_COMMAND_CONFLICT' })
+      expect(await reconstructed.get('graph:command-concurrency', '1.0.0')).toEqual(deprecated)
+    })
+
+    test('isolates idempotency keys by workspace, caller, and operation', async () => {
+      const primary = await graph('command-scope-primary')
+      const otherWorkspace = await graph('command-scope-workspace')
+      const otherCaller = await graph('command-scope-caller')
+      const scopeInput = command({ idempotencyKey: 'graph-command-scopes-0001' })
+      let actionCount = 0
+
+      const primaryResult = await repository.executeCommand(scopeInput, async (scoped) => {
+        actionCount += 1
+        expect(await scoped.insert(primary)).toBe(true)
+        return primary
+      })
+      const workspaceResult = await new PostgresGraphDefinitionRepository(
+        isolated.application,
+        otherWorkspaceId
+      ).executeCommand(scopeInput, async (scoped) => {
+        actionCount += 1
+        expect(await scoped.insert(otherWorkspace)).toBe(true)
+        return otherWorkspace
+      })
+      const callerResult = await repository.executeCommand(
+        command({ ...scopeInput, callerId: 'svc_other-publisher' }),
+        async (scoped) => {
+          actionCount += 1
+          expect(await scoped.insert(otherCaller)).toBe(true)
+          return otherCaller
+        }
+      )
+
+      const deprecated = {
+        ...primary,
+        revision: 2,
+        lifecycle: 'deprecated',
+        changedAt: '2026-09-30T01:00:00.000Z',
+        reason: 'operation scope',
+      }
+      const operationResult = await repository.executeCommand(
+        command({ ...scopeInput, operation: 'deprecate' }),
+        async (scoped) => {
+          actionCount += 1
+          expect(await scoped.compareAndSet(1, deprecated)).toBe(true)
+          return deprecated
+        }
+      )
+
+      expect(actionCount).toBe(4)
+      expect(primaryResult).toEqual(primary)
+      expect(workspaceResult).toEqual(otherWorkspace)
+      expect(callerResult).toEqual(otherCaller)
+      expect(operationResult).toEqual(deprecated)
+      await expect(
+        repository.executeCommand(scopeInput, async () => {
+          throw new Error('PUBLISH_REPLAY_MUST_NOT_RUN_ACTION')
+        })
+      ).resolves.toEqual(primary)
+    })
+
+    test('rolls back a failed mutation and its receipt together', async () => {
+      const published = await graph('command-rollback')
+      let actionCount = 0
+      const input = command({ idempotencyKey: 'graph-command-rollback-0001' })
+
+      await expect(
+        repository.executeCommand(input, async (scoped) => {
+          actionCount += 1
+          expect(await scoped.insert(published)).toBe(true)
+          throw new Error('ACTION_ABORTED')
+        })
+      ).rejects.toThrow('ACTION_ABORTED')
+      expect(await repository.get('graph:command-rollback', '1.0.0')).toBeUndefined()
+      const [receiptAfterRollback] = await isolated.application
+        .select()
+        .from(graphDefinitionCommands)
+        .where(eq(graphDefinitionCommands.idempotencyKey, input.idempotencyKey))
+      expect(receiptAfterRollback).toBeUndefined()
+
+      await expect(
+        repository.executeCommand(input, async (scoped) => {
+          actionCount += 1
+          expect(await scoped.insert(published)).toBe(true)
+          return published
+        })
+      ).resolves.toEqual(published)
+      expect(actionCount).toBe(2)
+    })
+
+    test('fails closed when a persisted command receipt is corrupted', async () => {
+      const published = await graph('command-corruption')
+      const input = command({ idempotencyKey: 'graph-command-corrupt-0001' })
+      await repository.executeCommand(input, async (scoped) => {
+        expect(await scoped.insert(published)).toBe(true)
+        return published
+      })
+      await isolated.application
+        .update(graphDefinitionCommands)
+        .set({ receipt: null })
+        .where(eq(graphDefinitionCommands.idempotencyKey, input.idempotencyKey))
+
+      await expect(
+        repository.executeCommand(input, async () => {
+          throw new Error('CORRUPT_REPLAY_MUST_NOT_RUN_ACTION')
+        })
+      ).rejects.toThrow('POSTGRES_GRAPH_COMMAND_RECEIPT_CORRUPT')
     })
 
     test('validates workspace scope before opening a catalog', () => {

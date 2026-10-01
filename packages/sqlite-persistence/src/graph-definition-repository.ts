@@ -4,12 +4,18 @@ import {
   GraphReferenceSchema,
   PublishedGraphDefinitionSchema,
   graphDefinitionUpdateIsValid,
+  GraphCatalogError,
+  GraphDefinitionCommandSchema,
+  GraphDefinitionCommandReceiptSchema,
+  type GraphDefinitionCommand,
+  type GraphDefinitionCommandRepository,
   type GraphDefinitionRepository,
   type PublishedGraphDefinition,
 } from '@control-plane/orchestration'
 import { json, recordId } from './record-storage.js'
 
 const namespace = 'graph-definitions'
+const commandNamespace = 'graph-definition-commands'
 
 interface StoredGraphDefinition {
   readonly workspaceId: string
@@ -18,14 +24,68 @@ interface StoredGraphDefinition {
   readonly version: unknown
 }
 
-export class SqliteGraphDefinitionRepository implements GraphDefinitionRepository {
+export class SqliteGraphDefinitionRepository implements GraphDefinitionCommandRepository {
   readonly #workspaceId: string
 
   constructor(
-    readonly provider: PersistenceProvider,
+    readonly provider: Pick<PersistenceProvider, 'transaction'>,
     workspaceId: string
   ) {
     this.#workspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
+  }
+
+  executeCommand(
+    input: GraphDefinitionCommand,
+    action: (repository: GraphDefinitionRepository) => Promise<PublishedGraphDefinition>
+  ): Promise<PublishedGraphDefinition> {
+    const command = GraphDefinitionCommandSchema.parse(input)
+    const id = recordId(
+      canonicalJsonStringify([
+        this.#workspaceId,
+        command.callerId,
+        command.operation,
+        command.idempotencyKey,
+      ])
+    )
+    return this.provider.transaction(async (transaction) => {
+      const existing = await transaction.get(commandNamespace, id)
+      if (existing !== undefined) {
+        const parsed = GraphDefinitionCommandReceiptSchema.safeParse(existing.value)
+        if (
+          !parsed.success ||
+          parsed.data.workspaceId !== this.#workspaceId ||
+          parsed.data.command.callerId !== command.callerId ||
+          parsed.data.command.operation !== command.operation ||
+          parsed.data.command.idempotencyKey !== command.idempotencyKey
+        ) {
+          throw new Error('SQLITE_GRAPH_COMMAND_RECEIPT_CORRUPT')
+        }
+        if (parsed.data.command.payloadHash !== command.payloadHash) {
+          throw new GraphCatalogError('GRAPH_COMMAND_CONFLICT')
+        }
+        return parsed.data.result
+      }
+      // The catalog uses the already-owned transaction, never a nested provider transaction.
+      const repository = new SqliteGraphDefinitionRepository(
+        {
+          transaction: async (operation) => operation(transaction),
+        },
+        this.#workspaceId
+      )
+      const result = PublishedGraphDefinitionSchema.parse(await action(repository))
+      await transaction.put({
+        namespace: commandNamespace,
+        id,
+        value: json(
+          GraphDefinitionCommandReceiptSchema.parse({
+            workspaceId: this.#workspaceId,
+            command,
+            result,
+          })
+        ),
+      })
+      return result
+    })
   }
 
   insert(input: PublishedGraphDefinition): Promise<boolean> {

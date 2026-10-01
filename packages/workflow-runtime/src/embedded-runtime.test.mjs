@@ -60,6 +60,8 @@ const cancellationCommand = {
   payload: { executionId },
 }
 
+const fixtureRuntimes = new WeakMap()
+
 /** Recording ExecutionLifecycleActivities double with overridable dispatch behavior. */
 function fakeActivities(dispatch) {
   const calls = []
@@ -105,16 +107,52 @@ function fakeActivities(dispatch) {
 async function withRuntime(run) {
   const directory = await mkdtemp(join(tmpdir(), 'embedded-runtime-'))
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'queue.sqlite') })
-  await provider.migrate()
+  const runtimes = []
+  fixtureRuntimes.set(provider, runtimes)
+  let callbackError
+  let callbackFailed = false
   try {
+    await provider.migrate()
     await run({ provider, directory })
-  } finally {
-    await rm(directory, { recursive: true, force: true })
+  } catch (error) {
+    callbackError = error
+    callbackFailed = true
   }
+
+  const cleanupErrors = (
+    await Promise.allSettled(runtimes.toReversed().map((runtime) => runtime.stop()))
+  )
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  try {
+    provider.close()
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    await rm(directory, { recursive: true, force: true })
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+
+  if (callbackFailed) {
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [callbackError, ...cleanupErrors],
+        callbackError instanceof Error
+          ? callbackError.message
+          : 'Fixture callback and cleanup failed',
+        { cause: callbackError }
+      )
+    }
+    throw callbackError
+  }
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(cleanupErrors, 'Fixture runtime cleanup failed')
 }
 
 function observeInteractionReads(provider, onRead) {
-  return {
+  const observedProvider = {
     profile: provider.profile,
     dialect: provider.dialect,
     migrate: provider.migrate.bind(provider),
@@ -134,6 +172,14 @@ function observeInteractionReads(provider, onRead) {
         })
       ),
   }
+  const runtimes = fixtureRuntimes.get(provider)
+  if (runtimes !== undefined) fixtureRuntimes.set(observedProvider, runtimes)
+  return observedProvider
+}
+
+function trackFixtureRuntime(provider, runtime) {
+  fixtureRuntimes.get(provider)?.push(runtime)
+  return runtime
 }
 
 function startedRuntime(provider, activities, options = {}) {
@@ -146,6 +192,7 @@ function startedRuntime(provider, activities, options = {}) {
     retryDelayMs: 10,
     ...options,
   })
+  trackFixtureRuntime(provider, runtime)
   const dispatcher = new EmbeddedExecutionWorkflowDispatcher({ store })
   return { store, runtime, dispatcher }
 }
@@ -216,6 +263,27 @@ describe('EmbeddedExecutionWorkflowDispatcher', () => {
 })
 
 describe('EmbeddedWorkflowRuntime', () => {
+  test('cleans up started runtimes and providers when a fixture callback fails', async () => {
+    let provider
+    let runtime
+    try {
+      await expect(
+        withRuntime(async (fixture) => {
+          provider = fixture.provider
+          runtime = startedRuntime(provider, fakeActivities().activities).runtime
+          await runtime.start()
+          throw new Error('fixture callback failed')
+        })
+      ).rejects.toThrow('fixture callback failed')
+
+      expect(await runtime.health()).toMatchObject({ ready: false })
+      await expect(provider.health()).rejects.toMatchObject({ code: 'SQLITE_CLOSED' })
+    } finally {
+      await runtime?.stop()
+      provider?.close()
+    }
+  })
+
   test('drives accepted work to completion through the portable lifecycle', async () => {
     await withRuntime(async ({ provider }) => {
       const { activities } = fakeActivities()
@@ -582,6 +650,7 @@ describe('createEmbeddedWorkflowExecution', () => {
         activities,
         pollIntervalMs: 10,
       })
+      trackFixtureRuntime(provider, pair.runtime)
       expect(pair.runtime).toBeInstanceOf(EmbeddedWorkflowRuntime)
       expect(pair.dispatcher).toBeInstanceOf(EmbeddedExecutionWorkflowDispatcher)
       await pair.runtime.start()

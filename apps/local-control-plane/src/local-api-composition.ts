@@ -1,6 +1,7 @@
 import {
   DurableExecutionAcceptanceService,
   DurableExecutionValidationService,
+  RepositoryGraphAdministrationService,
   RestateExecutionWorkflowDispatcher,
   createExecutionId,
   RepositoryProfileResolutionService,
@@ -24,6 +25,7 @@ import {
 import { ExecutionPlanAcceptanceValidator } from '@control-plane/execution-plan'
 import {
   SqliteCommandAcceptanceRepository,
+  SqliteGraphDefinitionRepository,
   SqliteContextPackageRepository,
   SqliteContextAuthoringCommandRepository,
   SqliteExecutionEventRepository,
@@ -54,6 +56,7 @@ export type LocalWorkflowDispatcher = ExecutionWorkflowDispatcher &
   ExecutionCancellationDispatcher
 
 export class LocalControlApiComposition {
+  readonly graphAdministrationService: RepositoryGraphAdministrationService
   readonly executionCancellationService: DurableExecutionCancellationService
   readonly interactionCommandService: DurableInteractionCommandService
   readonly commandRepository: SqliteCommandAcceptanceRepository
@@ -96,6 +99,9 @@ export class LocalControlApiComposition {
       this.commandRepository,
       dispatcher
     )
+    this.graphAdministrationService = new RepositoryGraphAdministrationService({
+      repository: (workspaceId) => new SqliteGraphDefinitionRepository(persistence, workspaceId),
+    })
     this.catalog = new SqliteVersionedCatalogRepository(persistence)
     this.contextPackages = new SqliteContextPackageRepository(persistence)
     this.executionPlans = new SqliteExecutionPlanRepository(persistence)
@@ -135,6 +141,7 @@ export class LocalControlApiComposition {
       ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
     })
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
+      plans: this.executionPlans,
       commands: this.commands,
       dispatcher,
     })

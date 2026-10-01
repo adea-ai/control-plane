@@ -1,4 +1,9 @@
 import {
+  GraphDefinitionPublishRequestSchema,
+  GraphDefinitionDeprecationRequestSchema,
+  GraphDefinitionRevocationRequestSchema,
+  GraphDefinitionResolutionRequestSchema,
+  GraphDefinitionResponseSchema,
   ExecutionCancellationCommandSchema,
   ExecutionCancellationCommandResultSchema,
   InteractionResponseCommandSchema,
@@ -34,6 +39,34 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  publishGraph: {
+    operation: 'graph.publish',
+    method: 'POST',
+    path: '/v1/graphs/publish',
+    requestSchema: GraphDefinitionPublishRequestSchema,
+    responseSchema: GraphDefinitionResponseSchema,
+  },
+  deprecateGraph: {
+    operation: 'graph.deprecate',
+    method: 'POST',
+    path: '/v1/graphs/deprecate',
+    requestSchema: GraphDefinitionDeprecationRequestSchema,
+    responseSchema: GraphDefinitionResponseSchema,
+  },
+  revokeGraph: {
+    operation: 'graph.revoke',
+    method: 'POST',
+    path: '/v1/graphs/revoke',
+    requestSchema: GraphDefinitionRevocationRequestSchema,
+    responseSchema: GraphDefinitionResponseSchema,
+  },
+  resolveGraph: {
+    operation: 'graph.resolve',
+    method: 'POST',
+    path: '/v1/graphs/resolve',
+    requestSchema: GraphDefinitionResolutionRequestSchema,
+    responseSchema: GraphDefinitionResponseSchema,
+  },
   cancelExecution: {
     responseStatus: 202,
     operation: 'execution.cancel',

@@ -40,6 +40,7 @@
     "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*",
     "@control-plane/testing": "workspace:*"
   },
   "engines": {

@@ -1,9 +1,19 @@
 import { createHash } from 'node:crypto'
-import { IdentifierSchemas } from '@control-plane/contracts'
+import {
+  IdentifierSchemas,
+  GraphReferenceSchema,
+  GraphDefinitionContentSchema,
+  GraphSelectionSchema,
+  ServiceCallerAssertionSchema,
+  type GraphInput,
+  type GraphReference,
+  type GraphSelection,
+} from '@control-plane/contracts'
+import type { ExecutionGraphAuthority } from '@control-plane/execution-plan'
+export { GraphDefinitionContentSchema } from '@control-plane/contracts'
 import { z } from 'zod'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 
-const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const TimestampSchema = z.iso.datetime()
 const SemverSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 const ReferenceSchema = z
@@ -11,90 +21,6 @@ const ReferenceSchema = z
   .min(1)
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
-const CapabilitySchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-z][a-z0-9.-]*$/)
-const unique = <Value>(values: Value[]) => new Set(values).size === values.length
-
-const GraphReferenceSchema = z
-  .object({
-    graphDefinitionId: ReferenceSchema,
-    graphVersion: SemverSchema,
-    contentDigest: DigestSchema,
-  })
-  .strict()
-
-const NodeNameSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-z][a-z0-9._-]*$/)
-
-export const GraphDefinitionContentSchema = z
-  .object({
-    graphDefinitionId: ReferenceSchema,
-    graphVersion: SemverSchema,
-    schemaVersion: z.literal(1),
-    nodes: z
-      .array(
-        z
-          .object({
-            node: NodeNameSchema,
-            operation: z
-              .object({
-                kind: z.enum(['runtime', 'model', 'tool', 'delegation']),
-                name: ReferenceSchema,
-              })
-              .strict(),
-          })
-          .strict()
-      )
-      .min(1)
-      .max(256)
-      .refine((nodes) => unique(nodes.map(({ node }) => node)), 'Graph node names must be unique'),
-    edges: z
-      .array(
-        z
-          .object({
-            from: z.union([NodeNameSchema, z.literal('__start__')]),
-            to: z.union([NodeNameSchema, z.literal('__end__')]),
-          })
-          .strict()
-      )
-      .min(1)
-      .max(1_024),
-    schemas: z
-      .object({ input: ReferenceSchema, state: ReferenceSchema, output: ReferenceSchema })
-      .strict(),
-    requiredCapabilities: z.array(CapabilitySchema).max(128).refine(unique),
-    compatibility: z
-      .object({
-        contractMajorVersions: z.array(z.number().int().positive()).min(1).refine(unique),
-        compilerVersions: z.array(SemverSchema).min(1).refine(unique),
-        adapterVersions: z.array(SemverSchema).min(1).refine(unique),
-      })
-      .strict(),
-  })
-  .strict()
-  .superRefine((definition, context) => {
-    const nodes = new Set(definition.nodes.map(({ node }) => node))
-    for (const edge of definition.edges) {
-      if (edge.from !== '__start__' && !nodes.has(edge.from)) {
-        context.addIssue({ code: 'custom', message: `Unknown edge source: ${edge.from}` })
-      }
-      if (edge.to !== '__end__' && !nodes.has(edge.to)) {
-        context.addIssue({ code: 'custom', message: `Unknown edge target: ${edge.to}` })
-      }
-    }
-    if (!definition.edges.some(({ from }) => from === '__start__')) {
-      context.addIssue({ code: 'custom', message: 'Graph requires a start edge' })
-    }
-    if (!definition.edges.some(({ to }) => to === '__end__')) {
-      context.addIssue({ code: 'custom', message: 'Graph requires an end edge' })
-    }
-  })
 
 export const PublishedGraphDefinitionSchema = z
   .object({
@@ -193,6 +119,82 @@ export interface GraphDefinitionRepository {
   compareAndSet(expectedRevision: number, version: PublishedGraphDefinition): Promise<boolean>
 }
 
+export const GraphDefinitionCommandSchema = z
+  .object({
+    callerId: ServiceCallerAssertionSchema.shape.servicePrincipalId,
+    operation: z.enum(['publish', 'deprecate', 'revoke']),
+    idempotencyKey: z
+      .string()
+      .min(16)
+      .max(128)
+      .regex(/^[A-Za-z0-9._:-]+$/),
+    payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict()
+
+export const GraphDefinitionCommandReceiptSchema = z
+  .object({
+    workspaceId: IdentifierSchemas.workspaceId,
+    command: GraphDefinitionCommandSchema,
+    result: PublishedGraphDefinitionSchema,
+  })
+  .strict()
+
+export type GraphDefinitionCommand = z.output<typeof GraphDefinitionCommandSchema>
+
+/** The mutation and immutable response receipt must commit in one storage transaction. */
+export interface GraphDefinitionCommandRepository extends GraphDefinitionRepository {
+  executeCommand(
+    command: GraphDefinitionCommand,
+    action: (repository: GraphDefinitionRepository) => Promise<PublishedGraphDefinition>
+  ): Promise<PublishedGraphDefinition>
+}
+
+/** New admission checks live catalog/compiler policy; exact replay checks the immutable pin. */
+export class GraphDefinitionExecutionAuthority implements ExecutionGraphAuthority {
+  constructor(
+    readonly options: {
+      readonly repository: (workspaceId: string) => GraphDefinitionRepository
+      readonly environment: GraphCompatibilityEnvironment
+      readonly validateDefinitionAndInput: (
+        definition: PublishedGraphDefinition,
+        input: GraphInput
+      ) => boolean | Promise<boolean>
+    }
+  ) {}
+
+  async validate(workspaceId: string, selection: GraphSelection): Promise<boolean> {
+    const parsed = GraphSelectionSchema.parse(selection)
+    const catalog = this.#catalog(workspaceId)
+    try {
+      const definition = PublishedGraphDefinitionSchema.parse(
+        await catalog.resolveForNewExecution(parsed.reference, this.options.environment)
+      )
+      return await this.options.validateDefinitionAndInput(definition, parsed.input)
+    } catch (error) {
+      if (error instanceof GraphCatalogError) return false
+      throw error
+    }
+  }
+
+  async authorize(workspaceId: string, reference: GraphReference): Promise<boolean> {
+    const catalog = this.#catalog(workspaceId)
+    try {
+      PublishedGraphDefinitionSchema.parse(await catalog.getPinned(reference))
+      return true
+    } catch (error) {
+      if (error instanceof GraphCatalogError) return false
+      throw error
+    }
+  }
+
+  #catalog(workspaceId: string): GraphDefinitionCatalog {
+    return new GraphDefinitionCatalog(
+      this.options.repository(IdentifierSchemas.workspaceId.parse(workspaceId))
+    )
+  }
+}
+
 export class InMemoryGraphDefinitionRepository implements GraphDefinitionRepository {
   readonly #versions = new Map<string, PublishedGraphDefinition>()
 
@@ -229,6 +231,7 @@ export class InMemoryGraphDefinitionRepository implements GraphDefinitionReposit
 }
 
 export type GraphCatalogErrorCode =
+  | 'GRAPH_COMMAND_CONFLICT'
   | 'GRAPH_VERSION_CONFLICT'
   | 'GRAPH_NOT_FOUND'
   | 'GRAPH_DIGEST_MISMATCH'

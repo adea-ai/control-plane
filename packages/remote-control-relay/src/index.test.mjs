@@ -313,6 +313,18 @@ describe('durable execution acceptance bridge', () => {
     const repository = new InMemoryCommandAcceptanceRepository()
     const submissions = []
     const acceptance = new DurableExecutionAcceptanceService({
+      plans: {
+        get: async (reference) => ({
+          ...reference,
+          schemaVersion: 1,
+          correlation: {
+            workspaceId: request.workspaceId,
+            projectId: request.projectId,
+            taskId: request.payload.taskId,
+            agentId: request.payload.agentId,
+          },
+        }),
+      },
       commands: new CommandInboxService({
         repository,
         executionIdFactory: () => 'exe_01JABCDEF0123456789ABCDEFG',

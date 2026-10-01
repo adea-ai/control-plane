@@ -1,4 +1,4 @@
-import { IdentifierSchemas } from '@control-plane/contracts'
+import { IdentifierSchemas, GraphReferenceSchema } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -16,14 +16,6 @@ const SafeReferenceSchema = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 const JsonObjectSchema = z.record(z.string(), z.json())
-
-export const GraphReferenceSchema = z
-  .object({
-    graphDefinitionId: SafeReferenceSchema,
-    graphVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
-    contentDigest: DigestSchema,
-  })
-  .strict()
 
 const GraphCorrelationSchema = z
   .object({
@@ -163,7 +155,8 @@ export const ExecutionWorkflowInputSchema = z
     }
   })
 
-export type GraphReference = z.output<typeof GraphReferenceSchema>
+export { GraphReferenceSchema } from '@control-plane/contracts'
+export type { GraphReference } from '@control-plane/contracts'
 export type GraphExecutionRequest = z.output<typeof GraphExecutionRequestSchema>
 export type GraphResumeRequest = z.output<typeof GraphResumeRequestSchema>
 export type GraphContinueRequest = z.output<typeof GraphContinueRequestSchema>
