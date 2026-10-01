@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.64.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.63.0...workspace-v1.64.0) (2026-10-01)
+
+
+### Features
+
+* **ci:** shard the trusted-main Neon verification into per-branch matrix legs ([#821](https://github.com/adea-ai/control-plane/issues/821)) ([965de43](https://github.com/adea-ai/control-plane/commit/965de43c8ecebf1bea7f1d40e6930f0b4bc62392))
+
+
+### Maintenance
+
+* code-foundry-1.39.3 ([#819](https://github.com/adea-ai/control-plane/issues/819)) ([533c97a](https://github.com/adea-ai/control-plane/commit/533c97abe75e24c1463d8a89bdba8bd8cf70c3bb))
+
 ## [1.63.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.62.0...workspace-v1.63.0) (2026-10-01)
 
 
