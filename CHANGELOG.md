@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.62.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.61.0...workspace-v1.62.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** persist events and secure accepted effects ([#809](https://github.com/adea-ai/control-plane/issues/809)) ([8ea6111](https://github.com/adea-ai/control-plane/commit/8ea61113e900b4bf39bbc9f41b4d4c995d107f5b))
+* **local:** assemble managed graph admission and execution ([#812](https://github.com/adea-ai/control-plane/issues/812)) ([785aad9](https://github.com/adea-ai/control-plane/commit/785aad99dc03a166b52309c9a8d04536c37c6085))
+* **sqlite-persistence:** persist tool execution receipts ([#811](https://github.com/adea-ai/control-plane/issues/811)) ([b01397f](https://github.com/adea-ai/control-plane/commit/b01397f0c6c4682690421c5dceeb929cc5d6108f))
+
+
+### Documentation
+
+* **audit:** retain merged source provenance after squash ([#813](https://github.com/adea-ai/control-plane/issues/813)) ([44cca2c](https://github.com/adea-ai/control-plane/commit/44cca2cf041a0d70caf56e1e6694eabbfde5ffb1))
+
 ## [1.61.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.60.3...workspace-v1.61.0) (2026-10-01)
 
 

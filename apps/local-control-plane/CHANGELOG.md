@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.20.0...local-control-plane-v1.21.0) (2026-10-01)
+
+
+### Features
+
+* **local:** assemble managed graph admission and execution ([#812](https://github.com/adea-ai/control-plane/issues/812)) ([785aad9](https://github.com/adea-ai/control-plane/commit/785aad99dc03a166b52309c9a8d04536c37c6085))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.19.5...local-control-plane-v1.20.0) (2026-10-01)
 
 

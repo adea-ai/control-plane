@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.30.0...sqlite-persistence-v1.31.0) (2026-10-01)
+
+
+### Features
+
+* **sqlite-persistence:** persist tool execution receipts ([#811](https://github.com/adea-ai/control-plane/issues/811)) ([b01397f](https://github.com/adea-ai/control-plane/commit/b01397f0c6c4682690421c5dceeb929cc5d6108f))
+
 ## [1.30.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.29.1...sqlite-persistence-v1.30.0) (2026-10-01)
 
 
