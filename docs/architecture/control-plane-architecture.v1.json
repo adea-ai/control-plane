@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "070fb8c1650e5db1d0ef403740d9011c5cfa1568",
-    "ref": "codex/m11-pg-tool-storage-20261001",
-    "recordedAt": "2026-10-01T05:13:11.867047Z"
+    "commit": "6c922d487c3c2e70a047c11c55a1cb4ddbabad26",
+    "ref": "main",
+    "recordedAt": "2026-10-01T05:35:06.688175Z"
   },
   "packages": [
     {

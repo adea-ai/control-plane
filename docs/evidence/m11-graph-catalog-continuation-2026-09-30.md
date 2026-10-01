@@ -1,5 +1,12 @@
 # M11 graph catalog continuation — 2026-09-30
 
+This is the historical September 30 checkpoint. Later merges added public graph
+administration, accepted-plan graph pins, a declarative compiler, and configured
+Local/Simple admission, checkpoint and event assembly. Current evidence and
+remaining provider/deployment gates are recorded in
+[the October 1 checkpoint](./m11-tool-storage-2026-10-01.md). The original
+commands, failures and limitations below describe the earlier candidate.
+
 This implementation starts from main `379e02544dded874d65a3fbf7bd6d7f2762feea1`.
 It incorporates main through `2a2ba5fbee0af0fe43a552ab4df4c80ba2515e2a`;
 the final base update changes only generated release metadata.
