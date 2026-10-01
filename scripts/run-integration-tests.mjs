@@ -1,12 +1,25 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
+import { parseIntegrationShard, selectIntegrationShard } from './integration-shards.mjs'
 
 // Keep the documented production-like command visible to repository policy tests.
 const COMPOSE_COMMAND = 'docker compose'
 
+// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite
+// from scripts/integration-shards.mjs instead of the full turbo sweep. The
+// Neon workflow pairs each shard with its own disposable branch; unsharded
+// runs keep the exact historical behavior.
+const integrationShard = parseIntegrationShard(
+  process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
+    process.env.INTEGRATION_SHARD
+)
+if (integrationShard !== null) {
+  console.log(`Running integration shard ${integrationShard} of the partitioned suite.`)
+}
+
 function run(command, arguments_, options = {}) {
   const result = spawnSync(command, arguments_, {
-    cwd: process.cwd(),
+    cwd: options.cwd ?? process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
     env: options.environment ?? process.env,
@@ -107,10 +120,22 @@ try {
   }
   // Stream progress even while a remote database task is unfinished. Grouped
   // CI logs hide test/setup timing until the whole package exits.
-  run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
-    environment: integrationEnvironment,
-  })
-  run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
+  if (integrationShard === null) {
+    run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
+      environment: integrationEnvironment,
+    })
+  } else {
+    for (const group of selectIntegrationShard(integrationShard)) {
+      run('bun', ['test', '--timeout', '30000', ...group.files], {
+        cwd: group.package,
+        environment: integrationEnvironment,
+      })
+    }
+  }
+  // One drill execution per verification: shard 1 owns it in sharded runs.
+  if (integrationShard === null || integrationShard === 1) {
+    run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
+  }
   if (remoteDatabase) {
     console.log('Skipping PostgreSQL disruption and restore drills against a remote target.')
   } else {

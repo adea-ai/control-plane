@@ -17,14 +17,26 @@ concurrency:
 
 jobs:
   verify_neon_preview:
-    name: Verify migrations and PostgreSQL profile conformance
+    name: Verify Neon shard ${{ matrix.shard }} (migrations and integration slice)
     runs-on: ubuntu-latest
     # Each case keeps an independent database. Remote migration setup alone
     # takes about 30 seconds per database; preserve that isolation and allow
     # the expanded integration suite to complete with streamed progress.
-    timeout-minutes: 90
+    #
+    # The suite is partitioned by scripts/integration-shards.mjs from measured
+    # per-file durations, and every shard provisions its own disposable branch
+    # so shards never share a Neon compute instance (the #146 contention fix
+    # only ever required serializing work that shares one database). Shard 1
+    # additionally carries the cross-profile conformance matrix and the cloud
+    # remote drill; the former 2,327s serial chain collapses to the largest
+    # shard's slice.
+    timeout-minutes: 45
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       # Only the protected main push gets Neon credentials. Pull-request
       # coverage runs separately against disposable local PostgreSQL.
@@ -51,7 +63,7 @@ jobs:
       - name: Name this run's disposable branch
         if: steps.credentials.outputs.available == 'true'
         id: preview_branch
-        run: echo "name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+        run: echo "name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-s${{ matrix.shard }}" >> "$GITHUB_OUTPUT"
 
       - name: Set disposable branch expiration
         if: steps.credentials.outputs.available == 'true'
@@ -179,18 +191,18 @@ jobs:
           '
 
       - name: Verify cross-profile conformance matrix (Postgres)
-        if: steps.credentials.outputs.available == 'true'
+        if: steps.credentials.outputs.available == 'true' && matrix.shard == 1
         env:
           RUN_M10_POSTGRES_CONFORMANCE: 'true'
         run: |
           bun test tests/cp1-embedded-durable-execution.test.mjs
 
-      - name: Verify migrations and transactions
+      - name: Verify migrations and this shard's integration slice
         if: steps.credentials.outputs.available == 'true'
         run: |
           bun --cwd=packages/database run db:check
           bun --cwd=packages/database run db:migrate
-          bun run test:integration
+          bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}
 
       - name: Find exact preview branch for cleanup
         if: always() && steps.create_neon_branch.outcome == 'success'
@@ -198,6 +210,7 @@ jobs:
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          SHARD: ${{ matrix.shard }}
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
           DATABASE_MIGRATION_URL: ''
@@ -206,20 +219,22 @@ jobs:
           node <<'CLEANUP'
           const { appendFileSync } = require('node:fs');
           (async () => {
-            const {
-              NEON_API_KEY,
-              NEON_PROJECT_ID,
-              GITHUB_RUN_ID,
-              GITHUB_RUN_ATTEMPT,
-              GITHUB_OUTPUT,
-            } = process.env;
-            if (
-              !NEON_API_KEY || !GITHUB_OUTPUT ||
-              !/^[a-z0-9-]{1,60}$/.test(NEON_PROJECT_ID ?? '') ||
-              !/^[1-9][0-9]*$/.test(GITHUB_RUN_ID ?? '') ||
-              !/^[1-9][0-9]*$/.test(GITHUB_RUN_ATTEMPT ?? '')
-            ) throw new Error('Neon cleanup inputs are unavailable or invalid');
-            const targetName = "preview/main-" + GITHUB_RUN_ID + "-" + GITHUB_RUN_ATTEMPT;
+          const {
+            NEON_API_KEY,
+            NEON_PROJECT_ID,
+            SHARD,
+            GITHUB_RUN_ID,
+            GITHUB_RUN_ATTEMPT,
+            GITHUB_OUTPUT,
+          } = process.env;
+          if (
+            !NEON_API_KEY || !GITHUB_OUTPUT ||
+            !/^[a-z0-9-]{1,60}$/.test(NEON_PROJECT_ID ?? '') ||
+            !/^[0-9]+$/.test(SHARD ?? '') ||
+            !/^[1-9][0-9]*$/.test(GITHUB_RUN_ID ?? '') ||
+            !/^[1-9][0-9]*$/.test(GITHUB_RUN_ATTEMPT ?? '')
+          ) throw new Error('Neon cleanup inputs are unavailable or invalid');
+          const targetName = "preview/main-" + GITHUB_RUN_ID + "-" + GITHUB_RUN_ATTEMPT + "-s" + SHARD;
             const cursors = new Set();
             let cursor;
             let target;
