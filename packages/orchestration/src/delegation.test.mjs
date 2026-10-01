@@ -11,6 +11,11 @@ import {
   InMemoryExecutionPlanRepository,
 } from '@control-plane/execution-plan'
 import {
+  GraphDefinitionCatalog,
+  GraphDefinitionExecutionAuthority,
+  InMemoryGraphDefinitionRepository,
+} from './graph-catalog.ts'
+import {
   DelegationService,
   delegationInputLegacyDigest,
   InMemoryDelegationRepository,
@@ -69,6 +74,64 @@ describe('durable parent and child delegation', () => {
     await expect(fixture.lifecycle.getExecution(ids.childExecutionId)).rejects.toMatchObject({
       code: 'EXECUTION_MISSING',
     })
+  })
+
+  for (const scenario of [
+    'missing-authority',
+    'unpublished',
+    'wrong-digest',
+    'wrong-workspace',
+    'incompatible',
+    'invalid-input',
+    'deprecated',
+    'revoked',
+  ]) {
+    test(`rejects child graph admission before persistence: ${scenario}`, async () => {
+      const graph = await graphFixture(scenario)
+      const fixture = await createFixture(
+        scenario === 'missing-authority' ? undefined : graph.authority
+      )
+      const input = delegationInput(fixture)
+      input.childPlan.graph = graph.selection
+      const derived = fixture.service.deriveChildPlan(input.parentPlan, input.childPlan)
+      await expect(fixture.service.delegate(input)).rejects.toMatchObject({
+        code: 'GRAPH_ADMISSION_DENIED',
+      })
+      expect(await fixture.plans.get(derived)).toBeUndefined()
+      await expect(fixture.lifecycle.getExecution(ids.childExecutionId)).rejects.toMatchObject({
+        code: 'EXECUTION_MISSING',
+      })
+      expect(await fixture.service.listChildren(ids.parentExecutionId)).toEqual([])
+      expect(fixture.events).toEqual([])
+    })
+  }
+
+  test('accepts an admitted child graph and replays the same child after deprecation', async () => {
+    const graph = await graphFixture()
+    const fixture = await createFixture(graph.authority)
+    const input = delegationInput(fixture)
+    input.childPlan.graph = graph.selection
+    const accepted = await fixture.service.delegate(input)
+    expect(accepted.plan.graph).toEqual(graph.selection)
+    expect(await fixture.plans.get(accepted.plan)).toEqual(accepted.plan)
+    await graph.catalog.deprecate({
+      reference: graph.selection.reference,
+      expectedRevision: 1,
+      changedAt: '2026-08-25T18:02:00.000Z',
+      reason: 'replaced',
+    })
+    expect(await fixture.service.delegate(input)).toEqual(accepted)
+    const unauthorized = new DelegationService({
+      delegations: fixture.delegations,
+      lifecycle: fixture.lifecycle,
+      plans: fixture.plans,
+      events: { async publish() {} },
+    })
+    await expect(unauthorized.delegate(input)).rejects.toMatchObject({
+      code: 'GRAPH_ADMISSION_DENIED',
+    })
+    expect(await fixture.service.listChildren(ids.parentExecutionId)).toHaveLength(1)
+    expect(fixture.events).toHaveLength(1)
   })
 
   test('dispatches the child independently to another runtime and emits parent progress', async () => {
@@ -251,7 +314,7 @@ describe('durable parent and child delegation', () => {
   })
 })
 
-async function createFixture() {
+async function createFixture(graphs) {
   const parentPlan = new ExecutionPlanCompiler('1.0.0').compile(parentPlanInput())
   const executions = new InMemoryExecutionRepository()
   const lifecycle = new ExecutionLifecycleService(executions)
@@ -269,17 +332,19 @@ async function createFixture() {
     deadlineAt: '2026-08-25T19:00:00.000Z',
   })
   const events = []
+  const delegations = new InMemoryDelegationRepository()
   const service = new DelegationService({
-    delegations: new InMemoryDelegationRepository(),
+    delegations,
     lifecycle,
     plans,
+    graphs,
     events: {
       async publish(event) {
         events.push(event)
       },
     },
   })
-  return { parentPlan, executions, lifecycle, plans, events, service }
+  return { parentPlan, executions, lifecycle, plans, events, service, delegations }
 }
 
 function delegationInput({ parentPlan }) {
@@ -384,5 +449,66 @@ function parentPlanInput() {
     ],
     outputContract: { contractRef: 'contract://execution-result/v1' },
     compiledAt: '2026-08-25T17:00:00.000Z',
+  }
+}
+
+async function graphFixture(scenario) {
+  const repository = new InMemoryGraphDefinitionRepository()
+  const catalog = new GraphDefinitionCatalog(repository)
+  const published = await catalog.publish({
+    definition: {
+      graphDefinitionId: 'worker-graph',
+      graphVersion: '1.0.0',
+      schemaVersion: 1,
+      nodes: [{ node: 'work', operation: { kind: 'runtime', name: 'execute' } }],
+      edges: [
+        { from: '__start__', to: 'work' },
+        { from: 'work', to: '__end__' },
+      ],
+      schemas: {
+        input: 'schema://worker/input/v1',
+        state: 'schema://worker/state/v1',
+        output: 'schema://worker/output/v1',
+      },
+      requiredCapabilities: ['runtime.invoke'],
+      compatibility: {
+        contractMajorVersions: [1],
+        compilerVersions: ['1.0.0'],
+        adapterVersions: ['1.4.12'],
+      },
+    },
+    publishedAt: '2026-08-25T17:00:00.000Z',
+  })
+  if (scenario === 'deprecated' || scenario === 'revoked')
+    await catalog[scenario === 'deprecated' ? 'deprecate' : 'revoke']({
+      reference: published.reference,
+      expectedRevision: 1,
+      changedAt: '2026-08-25T17:30:00.000Z',
+      reason: 'retired',
+    })
+  const other = new InMemoryGraphDefinitionRepository()
+  const authority = new GraphDefinitionExecutionAuthority({
+    repository: (workspaceId) =>
+      workspaceId === ids.workspaceId && scenario !== 'wrong-workspace' ? repository : other,
+    environment: {
+      capabilities: ['runtime.invoke'],
+      contractMajorVersion: 1,
+      compilerVersion: '1.0.0',
+      adapterVersion: scenario === 'incompatible' ? '2.0.0' : '1.4.12',
+    },
+    validateDefinitionAndInput: (_definition, input) =>
+      Object.keys(input).length === 1 && input.objective === 'review',
+  })
+  return {
+    catalog,
+    authority,
+    selection: {
+      reference: {
+        ...published.reference,
+        ...(scenario === 'unpublished' ? { graphVersion: '2.0.0' } : {}),
+        ...(scenario === 'wrong-digest' ? { contentDigest: digest('f') } : {}),
+      },
+      input: { objective: scenario === 'invalid-input' ? 'invalid' : 'review' },
+    },
   }
 }

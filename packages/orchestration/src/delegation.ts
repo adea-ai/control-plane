@@ -12,6 +12,7 @@ import {
   ExecutionPlanSchema,
   deriveExecutionPlan,
   type ExecutionPlan,
+  type ExecutionGraphAuthority,
   type ExecutionPlanRepository,
 } from '@control-plane/execution-plan'
 import { z } from 'zod'
@@ -175,6 +176,7 @@ export type DelegationErrorCode =
   | 'PROFILE_EXPANSION'
   | 'CHILD_DEADLINE_EXPANSION'
   | 'DELEGATION_STATE_CONFLICT'
+  | 'GRAPH_ADMISSION_DENIED'
 
 export class DelegationError extends Error {
   constructor(readonly code: DelegationErrorCode) {
@@ -266,17 +268,20 @@ export class DelegationService {
   readonly #lifecycle: ExecutionLifecycleService
   readonly #plans: ExecutionPlanRepository
   readonly #events: DelegationEventPublisher
+  readonly #graphs: ExecutionGraphAuthority | undefined
 
   constructor(options: {
     readonly delegations: DelegationRepository
     readonly lifecycle: ExecutionLifecycleService
     readonly plans: ExecutionPlanRepository
     readonly events: DelegationEventPublisher
+    readonly graphs?: ExecutionGraphAuthority
   }) {
     this.#delegations = options.delegations
     this.#lifecycle = options.lifecycle
     this.#plans = options.plans
     this.#events = options.events
+    this.#graphs = options.graphs
   }
 
   deriveChildPlan(parentPlan: unknown, childPlan: unknown): ExecutionPlan {
@@ -303,6 +308,12 @@ export class DelegationService {
         contentDigest: existing.childExecutionPlanDigest,
       })
       if (!plan) throw new DelegationError('DELEGATION_CONFLICT')
+      if (
+        plan.graph &&
+        !(await this.#graphs?.authorize(plan.correlation.workspaceId, plan.graph.reference))
+      ) {
+        throw new DelegationError('GRAPH_ADMISSION_DENIED')
+      }
       return { record: existing, execution, plan }
     }
 
@@ -324,6 +335,9 @@ export class DelegationService {
 
     const plan = this.deriveChildPlan(parsed.parentPlan, parsed.childPlan)
     assertDeadline(parent, plan, parsed.acceptedAt, parsed.deadlineAt, parsed.policy.deadline)
+    if (plan.graph && !(await this.#graphs?.validate(plan.correlation.workspaceId, plan.graph))) {
+      throw new DelegationError('GRAPH_ADMISSION_DENIED')
+    }
     await this.#plans.put(plan)
     const execution = await this.#createOrRecoverChild(parsed, plan)
     const record = DelegationRecordSchema.parse({
