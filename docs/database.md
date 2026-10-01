@@ -200,16 +200,18 @@ SQLite startup runs the ordered forward registry in
 `migration:<version>` in `control_plane_metadata`, alongside `schema_version`. Startup rejects a
 newer version, missing history (except the released legacy v1), or a changed applied checksum.
 Legacy v1 adoption first checks its exact table/index definitions and retains existing records.
-The registry currently contains only the released v1 schema; append future steps without editing
-that baseline. The entire pending sequence and history updates commit in one SQLite transaction.
+The released registry contains v1, which creates the base schema, and v2, which adds expiry indexes.
+The v1 statements and checksum remain immutable. Append future steps without changing either
+released version. The entire pending sequence and history updates commit in one SQLite transaction.
 
 Before an upgrade, stop new work, drain active writes, and retain a digest-verified backup. A failed
 transaction rolls back to the prior version; diagnose and correct the unapplied step before retrying.
 After a successful upgrade, use a reviewed new forward step for repair. An older binary cannot
 automatically downgrade a newer schema: restore the pre-upgrade backup into an isolated destination,
 verify integrity and retained records, and account for post-backup work before an explicit switch.
-Migration-runner tests exercise a synthetic v2 upgrade/failure/repair; that is not certification of
-an actual future product schema or a measured cross-version recovery objective.
+Migration-runner tests append a synthetic v3 step to exercise forward upgrade, failure rollback, and
+repair. The production registry currently ends at v2. These generic runner tests do not certify an
+actual future product schema or establish a measured cross-version recovery objective.
 
 Never edit an applied migration. Correct mistakes with a reviewed forward repair or, where data recovery is required, a separately reviewed restore procedure.
 

@@ -28,8 +28,8 @@ rather than silently recompiling against new state.
 
 `ExecutionPlanRepository` stores immutable plans by `{ executionPlanId, contentDigest }` and verifies
 content integrity on every write. Retrieval returns an isolated copy suitable for audit, retry, eval,
-and reproduction. The plan contains only normalized references and policy requirements—never raw
-provider, connector, runtime-harness, secret-manager, or user credentials.
+and reproduction. The plan contains only normalized references and policy requirements. It never
+contains raw provider, connector, runtime-harness, secret-manager, or user credentials.
 
 ## Validation-command replay
 

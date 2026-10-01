@@ -4,10 +4,10 @@ This runbook covers the accepted Control Plane deployment sequence and must dist
 
 ## Milestone sequence
 
-- **M9 — Managed Cloud Deployment, Hardening & Evals:** make the Railway + Neon + R2 + Restate profile actually deploy, recover, and pass the cloud hardening/eval gates.
-- **M10 — Local & Hosted Portability:** port the accepted M9 semantics to Local and user-controlled Hosted profiles.
-- **M11 — Feature Completion & Production Audit:** rerun production-readiness evidence across managed cloud, Local, and Hosted.
-- **M12 — Cross-Product Integration & Release:** connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
+- **M9: Managed Cloud Deployment, Hardening & Evals.** Make the Railway + Neon + R2 + Restate profile deploy, recover, and pass the cloud hardening/eval gates.
+- **M10: Local & Hosted Portability.** Port the accepted M9 semantics to Local and user-controlled Hosted profiles.
+- **M11: Feature Completion & Production Audit.** Rerun production-readiness evidence across managed cloud, Local, and Hosted.
+- **M12: Cross-Product Integration & Release.** Connect the independently approved Control Plane candidate to Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
 
 Historical AWS/ECS/Terraform procedures are not the current first-party cloud runbook.
 
@@ -39,11 +39,11 @@ deployment statuses do not establish production availability or M11 profile acce
 
 Use these terms precisely:
 
-- **configured** — the service graph, provider mappings, variable names, health policy, and resource
+- **configured:** the service graph, provider mappings, variable names, health policy, and resource
   limits are reproducible from the repository;
-- **deployed** — Railway has a built service revision or image deployment record;
-- **running** — the environment currently has one or more live replicas;
-- **availability enabled** — the environment has passed its release, migration, dependency, health,
+- **deployed:** Railway has a built service revision or image deployment record;
+- **running:** the environment currently has one or more live replicas;
+- **availability enabled:** the environment has passed its release, migration, dependency, health,
   smoke, and rollback gates and is intentionally allowed to serve users.
 
 A configured environment can therefore be neither running nor available. The 2026-08-28 staging
@@ -111,8 +111,11 @@ To activate staging for a bounded Cloud test:
    `railway config apply` to reconcile the activation profile, reconnect the staging sources, and
    deploy the one-replica topology. A source-only redeploy is acceptable when the project graph is
    already current.
-3. Verify Restate health and registration, private worker readiness, public `/health` and `/ready`,
-   explicit Neon schema compatibility, and the required smoke/certification scenario.
+3. Verify Restate health and registration, private worker readiness, and public `/health` and
+   `/ready` through the intended paths. The Cloud API `/ready` check covers process state and
+   PostgreSQL connectivity, not physical schema definitions. Confirm Neon schema compatibility
+   through the explicit migration and journal checks, then run the required smoke/certification
+   scenario.
 4. After evidence is captured, preview and apply the guarded standby transition. It disconnects both
    application sources, removes the exact active and reactivatable deployment revisions in admission
    order, and verifies that running replicas and nonterminal deployment work are both zero:
@@ -217,7 +220,7 @@ Railway build/readiness results, Restate registration/restart evidence, resource
 sanitized harness record together in the M9.6 evidence attachment. The harness is not by itself
 proof of rollback, restart recovery, load, isolation, secret-canary, or cost acceptance.
 
-## M11 intake rollout fence — incomplete operator workflow
+## M11 intake rollout fence: incomplete operator workflow
 
 The development candidate adds migration 0052 and a durable PostgreSQL intake
 gate. A newly empty database starts open; any retained execution, attempt,
@@ -308,8 +311,8 @@ stderr; a completed audit that does not permit resume returns exit code 2.
 
 Approval is a version-bound decision separate from publication: a catalog profile or skill version is
 either explicitly approved or explicitly rejected by a recorded decision bound to its revision and
-content digest. The gate is **off unless configured**, and it gates execution-time resolution, not
-publication — unapproved versions stay authorable and listable.
+content digest. The gate is **off unless configured** and controls execution-time resolution, not
+publication. Unapproved versions remain authorable and listable.
 
 - Configuration (control-api): `CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED=true|false` and, optionally,
   `CONTROL_PLANE_CATALOG_APPROVAL_REQUIRED_SINCE=<ISO instant>`. Any other value fails startup rather
@@ -414,7 +417,7 @@ interaction requests, events, a reconciliation checkpoint or a non-terminal
 attempt still exists, so a pass over the earlier classes is what frees it.
 Interaction requests currently have no configured retention deletion class;
 they remain a durable reference until that lifecycle is defined. Running
-`--class executions` first is harmless — the pass reports `reference_pending`
+`--class executions` first is harmless. The pass reports `reference_pending`
 until those records are gone.
 
 The default is a dry run: it reports how many expired candidates exist, how many
@@ -425,8 +428,8 @@ class-wide `sweep` authority. Confirmation alone is not authorization, even when
 the database has no holds. Only records that are expired, terminal,
 reconciled, unreferenced and already carry their reserved rejection key are
 removed; the rejection key itself is kept, so a replay of the same scoped
-idempotency key still fails closed. `raced` counts candidates whose state moved
-between selection and deletion — those are left alone and picked up by a later
+idempotency key still fails closed. `raced` counts candidates whose state changed
+between selection and deletion. Those candidates are left alone and picked up by a later
 pass. `--bound` limits a pass; `--now <instant>` selects an assessment instant
 for dry runs and historical backfills. A physical apply rejects future instants
 so replay tombstones cannot be expired ahead of the host's current clock.
@@ -558,9 +561,9 @@ requires the dedicated `DATABASE_MIGRATION_URL`; the command never falls back
 to the application URL for that deletion. Keep the application role
 insert-only for retired-command tombstones.
 
-Which classes can ever be swept, and which the policy keeps reference-governed,
-is one command away — it prints the decided duration, the governance mode, the
-hold owner and whether a deletion path exists:
+Use this command to see which classes can be swept and which remain
+reference-governed. It prints the decided duration, governance mode, hold owner,
+and whether a deletion path exists:
 
 ```sh
 bun scripts/retention-report.mjs --classes
@@ -619,7 +622,7 @@ first event deletion on a PostgreSQL deployment.
 - On gateway disconnect, replay only durably identified commands and reconcile ambiguous outcomes before retry.
 - On model/tool/sandbox/ContextProvider degradation, follow the pinned policy and approved fallback behavior; optional providers must not become undeclared startup dependencies.
 
-## Local operations — M10
+## Local operations (M10)
 
 Local uses all-in-one Control Plane + SQLite's embedded workflow queue (no Restate process) + filesystem storage + direct RuntimeTransport.
 
@@ -668,7 +671,7 @@ Operational requirements include:
 - no Docker/PostgreSQL/Redis/Temporal/Runtime Gateway requirement for ordinary Local execution;
 - explicit unavailable/queued behavior when the selected node is offline, with no silent cloud failover.
 
-## Hosted operations — M10
+## Hosted operations (M10)
 
 Hosted `simple` uses SQLite; `server` uses PostgreSQL. Both use Restate and user-controlled storage/secrets.
 

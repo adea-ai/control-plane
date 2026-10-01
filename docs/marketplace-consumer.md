@@ -38,9 +38,9 @@ deployment serving the pointer from anywhere else produced a base that 404'd.
 It may additionally serve `catalog-index.v1.json`, the consumer browsing index
 (added in #709). That one artifact is optional, because a snapshot published
 before #709 predates it: Control Plane omits it from the response and clients
-fall back to rendering from the full catalog. Only a genuine 404 is read as
-absence — a 5xx, a timeout, or a transport failure fails the refresh, so a
-registry outage can never masquerade as an older snapshot. When the index _is_
+fall back to rendering from the full catalog. Only a genuine 404 means the
+index is absent. A 5xx, timeout, or transport failure fails the refresh, so a
+registry outage cannot masquerade as an older snapshot. When the index is
 published it is verified in full and its digest must be declared in
 `integrity.json` alongside the other artifacts.
 

@@ -8,17 +8,17 @@ All deployable services enter through `@control-plane/bootstrap`, which loads ty
 
 Deployment profile is a separate concept from application environment:
 
-- managed cloud — Railway services using Neon, R2 and Restate;
-- Local — all-in-one composition using SQLite, the embedded SQLite workflow queue (no Restate
+- managed cloud: Railway services using Neon, R2 and Restate;
+- Local: all-in-one composition using SQLite, the embedded SQLite workflow queue (no Restate
   process) and direct RuntimeTransport;
-- Hosted `simple` — containerized all-in-one with SQLite and bundled Restate;
-- Hosted `server` — PostgreSQL-backed server composition with Restate.
+- Hosted `simple`: containerized all-in-one with SQLite and bundled Restate;
+- Hosted `server`: PostgreSQL-backed server composition with Restate.
 
 The same public/domain behavior must not depend on an environment-specific variable name.
 
 Development and test may load local dotenv files. Staging and production do not load dotenv files automatically; configuration comes from the deployment/runtime secret/configuration boundary.
 
-## Managed-cloud configuration — M9
+## Managed-cloud configuration (M9)
 
 Railway service/shared variables are the accepted initial source for **service/bootstrap configuration** such as:
 
@@ -83,7 +83,7 @@ Railway environment variables are not the storage model for arbitrary user-scope
 
 Managed Cloud uses `NeonEncryptedSecretProvider` backed by the repo-owned `credential_secrets` table. `CONTROL_PLANE_SECRET_ENCRYPTION_KEY` is a Railway secret used only to encrypt/decrypt dynamic credentials; it does not replace the credential vault or expose one environment variable per user credential. AWS Secrets Manager is not an active dependency.
 
-## Local and Hosted configuration — M10
+## Local and Hosted configuration (M10)
 
 Local and Hosted compositions consume the same typed configuration model through different adapters:
 
@@ -162,7 +162,13 @@ provide a RuntimeNode gateway command-consumption loop.
 - Effective non-secret configuration/profile/version information is exposed for readiness/diagnostics.
 - Sensitive keys/values are redacted before serialization.
 - Optional providers do not become startup dependencies unless the selected immutable policy explicitly requires them.
-- Schema/config incompatibility prevents readiness rather than allowing a partially configured revision to serve traffic.
+- Invalid service configuration prevents startup or readiness. The design also requires incompatible
+  schemas to fail closed. In Cloud, the API `/ready` endpoint checks process state and bounded
+  PostgreSQL connectivity with `SELECT 1`; it does not compare physical schema definitions. The
+  production promotion gate separately checks migration history and selected runtime schema/role
+  requirements before changing image sources, but this is not a general schema comparison. SQLite
+  startup applies its versioned migrations, while restore separately validates staged table and index
+  definitions.
 
 ## Shutdown
 
