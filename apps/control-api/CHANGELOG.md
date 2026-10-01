@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.5](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.4...control-api-v1.16.5) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#802](https://github.com/adea-ai/control-plane/issues/802)) ([76aafec](https://github.com/adea-ai/control-plane/commit/76aafec17902426c55e782e210d90d6e5aa7370a))
+
 ## [1.16.4](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.3...control-api-v1.16.4) (2026-09-30)
 
 
