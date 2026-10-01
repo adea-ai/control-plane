@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.14.0...hosted-control-plane-v1.15.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** persist events and secure accepted effects ([#809](https://github.com/adea-ai/control-plane/issues/809)) ([8ea6111](https://github.com/adea-ai/control-plane/commit/8ea61113e900b4bf39bbc9f41b4d4c995d107f5b))
+
 ## [1.14.0](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.13.3...hosted-control-plane-v1.14.0) (2026-10-01)
 
 

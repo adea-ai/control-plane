@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.3.5...tool-gateway-v1.4.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** persist events and secure accepted effects ([#809](https://github.com/adea-ai/control-plane/issues/809)) ([8ea6111](https://github.com/adea-ai/control-plane/commit/8ea61113e900b4bf39bbc9f41b4d4c995d107f5b))
+
 ## [1.3.5](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.3.4...tool-gateway-v1.3.5) (2026-10-01)
 
 

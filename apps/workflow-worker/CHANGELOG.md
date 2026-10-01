@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.4...workflow-worker-v1.12.0) (2026-10-01)
+
+
+### Features
+
+* **graph:** persist events and secure accepted effects ([#809](https://github.com/adea-ai/control-plane/issues/809)) ([8ea6111](https://github.com/adea-ai/control-plane/commit/8ea61113e900b4bf39bbc9f41b4d4c995d107f5b))
+
 ## [1.11.4](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.3...workflow-worker-v1.11.4) (2026-10-01)
 
 
