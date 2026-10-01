@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.60.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.60.1...workspace-v1.60.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* make the Neon main-verification concurrency group actually dedupe ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
+* neon-verify-concurrency-group ([#804](https://github.com/adea-ai/control-plane/issues/804)) ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
+
+
+### Maintenance
+
+* renovate-draft-grouping ([#805](https://github.com/adea-ai/control-plane/issues/805)) ([8115251](https://github.com/adea-ai/control-plane/commit/81152517cfaca8c8706ba3504dc25a2e6b4bc9c9))
+
 ## [1.60.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.60.0...workspace-v1.60.1) (2026-09-30)
 
 
