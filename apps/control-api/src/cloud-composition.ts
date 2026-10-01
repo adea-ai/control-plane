@@ -1,3 +1,4 @@
+import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   decidedRetentionPolicy,
@@ -13,6 +14,7 @@ import {
   createPostgresConnection,
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
+  PostgresGraphDefinitionRepository,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionEventRepository,
   PostgresInteractionRepository,
@@ -79,6 +81,7 @@ export interface ManagedCloudControlApiComposition {
   readonly executionCancellationService: DurableExecutionCancellationService
   readonly connection: PostgresConnection
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
+  readonly graphAdministrationService: RepositoryGraphAdministrationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly serviceAuthenticator: PolicyServiceAuthenticator
   readonly profileResolutionService: RepositoryProfileResolutionService
@@ -214,6 +217,10 @@ export function createManagedCloudControlApiComposition(
       dispatcher: new RestateExecutionWorkflowDispatcher({
         ingressUrl: configuration.restate.ingressUrl,
       }),
+    }),
+    graphAdministrationService: new RepositoryGraphAdministrationService({
+      repository: (workspaceId) =>
+        new PostgresGraphDefinitionRepository(connection.database, workspaceId),
     }),
     executionValidationService: new DurableExecutionValidationService({
       compilerVersion: executionPlanCompilerVersion,

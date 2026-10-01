@@ -95,6 +95,7 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
         executionCancellationService: composition.executionCancellationService,
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
+        graphAdministrationService: composition.graphAdministrationService,
         profileResolutionService: composition.profileResolutionService,
         projectStateResolutionService: composition.projectStateResolutionService,
         contextPackageResolutionService: composition.contextPackageResolutionService,

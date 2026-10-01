@@ -108,10 +108,10 @@ agent correlation. Workflow graph reference, input and thread identity derive
 from that stored plan; caller-supplied graph data cannot replace them. A missing
 or mismatched retained plan leaves dispatch unconfirmed for reconciliation.
 
-This contract and admission plumbing are prerequisites for the public graph
-execution path. Durable authenticated graph administration, the production
-compiler and operation bindings, profile wiring, and deployed acceptance remain
-required by M11; this increment does not establish those results.
+The catalog administration and declarative compiler build on this admission
+contract. Production runtime/model/tool/delegation bindings, graph activity and
+checkpoint wiring, and deployed acceptance remain required by M11. Catalog and
+compiler tests do not establish the completed public graph execution path.
 
 Graph edges may include `when: { path: ["done"], equals: true }`, which compares
 an own JSON field in the source node's result with a bounded scalar. All outgoing
@@ -150,3 +150,11 @@ later lifecycle changes, with response metadata from the current request.
 The Control SDK exposes `publishGraph`, `deprecateGraph`, `revokeGraph`, and
 `resolveGraph`. Deployment compositions must bind a durable administration
 repository; the unconfigured service returns an explicit unavailable error.
+
+Local and Simple administration use the profile's SQLite persistence provider.
+Hosted Server and Managed Cloud administration use workspace-scoped PostgreSQL
+repositories; migration `0056` adds command receipts alongside the immutable
+version catalog. Local/Simple restart tests verify both original receipt replay
+and independent lifecycle changes for identical pins in different workspaces.
+Production graph execution admission stays fail closed until the compiler and
+policy-controlled operation bindings are configured.

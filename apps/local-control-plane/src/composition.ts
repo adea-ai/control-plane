@@ -234,6 +234,7 @@ export class LocalControlPlaneComposition {
   readonly runtimeTransport: LocalRuntimeTransport | undefined
   readonly remoteControl: RemoteControlHostAdapter<unknown> | undefined
   readonly executionAcceptanceService: ExecutionAcceptanceService
+  readonly graphAdministrationService: LocalControlApiComposition['graphAdministrationService']
   readonly executionValidationService: LocalControlApiComposition['executionValidationService']
   readonly profileResolutionService: LocalControlApiComposition['profileResolutionService']
   readonly projectStateResolutionService: LocalControlApiComposition['projectStateResolutionService']
@@ -394,6 +395,7 @@ export class LocalControlPlaneComposition {
       options.activities === undefined && runtimeTransport === undefined
         ? new UnavailableExecutionAcceptanceService()
         : controlApi.executionAcceptanceService
+    this.graphAdministrationService = controlApi.graphAdministrationService
     this.executionValidationService = controlApi.executionValidationService
     this.interactionCommandService = controlApi.interactionCommandService
     this.executionCancellationService = controlApi.executionCancellationService

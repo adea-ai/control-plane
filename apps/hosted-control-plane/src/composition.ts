@@ -9,6 +9,7 @@ import {
 import {
   DurableExecutionAcceptanceService,
   DurableExecutionValidationService,
+  RepositoryGraphAdministrationService,
   RestateExecutionWorkflowDispatcher,
   RepositoryProfileResolutionService,
   RepositoryProjectStateResolutionService,
@@ -19,6 +20,7 @@ import {
   createPostgresConnection,
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
+  PostgresGraphDefinitionRepository,
   PostgresCommandAcceptanceRepository,
   PostgresDurableUsageStore,
   PostgresContextPackageRepository,
@@ -221,6 +223,7 @@ export class HostedServerControlPlaneComposition {
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly interactionCommandService: DurableInteractionCommandService
   readonly executionCancellationService: DurableExecutionCancellationService
+  readonly graphAdministrationService: RepositoryGraphAdministrationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
@@ -281,6 +284,10 @@ export class HostedServerControlPlaneComposition {
         ? undefined
         : createConsistencyMetricEmitter(options.metricAdapter, 'hosted-control-plane')
     const inboxMetrics: CommandInboxMetrics | undefined = consistencyMetrics
+    this.graphAdministrationService = new RepositoryGraphAdministrationService({
+      repository: (workspaceId) =>
+        new PostgresGraphDefinitionRepository(this.connection.database, workspaceId),
+    })
     const plans = new PostgresExecutionPlanRepository(this.connection.database)
     const catalog = new PostgresCatalogRepository(this.connection.database)
     const catalogApprovals = new PostgresCatalogApprovalRepository(this.connection.database)

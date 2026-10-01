@@ -50,6 +50,7 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
         interactionCommandService: composition.interactionCommandService,
         executionCancellationService: composition.executionCancellationService,
         executionValidationService: composition.executionValidationService,
+        graphAdministrationService: composition.graphAdministrationService,
         profileResolutionService: composition.profileResolutionService,
         projectStateResolutionService: composition.projectStateResolutionService,
         contextPackageResolutionService: composition.contextPackageResolutionService,

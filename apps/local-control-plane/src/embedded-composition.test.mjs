@@ -213,3 +213,103 @@ describe('Local control plane embedded durable execution', () => {
     }
   })
 })
+
+test.each(['local', 'hosted-simple'])(
+  'graph catalog administration in %s retains workspace pins and receipts across composition restart',
+  async (profile) => {
+    const { ControlApiFixtures } = await import('@control-plane/contracts')
+    const directory = await mkdtemp(join(tmpdir(), 'control-plane-graph-admin-'))
+    const request = {
+      ...ControlApiFixtures.executionValidation.request,
+      operation: 'graph.publish',
+      idempotencyKey: 'graph:composition:publish:1',
+      payload: {
+        definition: {
+          graphDefinitionId: 'graph:composition',
+          graphVersion: '1.0.0',
+          schemaVersion: 1,
+          nodes: [{ node: 'run', operation: { kind: 'runtime', name: 'execute' } }],
+          edges: [
+            { from: '__start__', to: 'run' },
+            { from: 'run', to: '__end__' },
+          ],
+          schemas: { input: 'schema:input', state: 'schema:state', output: 'schema:output' },
+          requiredCapabilities: [],
+          compatibility: {
+            contractMajorVersions: [1],
+            compilerVersions: ['1.0.0'],
+            adapterVersions: ['1.0.0'],
+          },
+        },
+      },
+    }
+    delete request.projectId
+    let composition = new LocalControlPlaneComposition({ profile, dataDirectory: directory })
+    try {
+      await composition.persistence.migrate()
+      const published = await composition.graphAdministrationService.publish(
+        request,
+        request.caller.servicePrincipalId
+      )
+      await composition.close()
+      composition.persistence.close()
+      composition = new LocalControlPlaneComposition({ profile, dataDirectory: directory })
+      await composition.persistence.migrate()
+      expect(
+        await composition.graphAdministrationService.publish(
+          request,
+          request.caller.servicePrincipalId
+        )
+      ).toEqual(published)
+      const otherRequest = { ...request, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFH' }
+      const otherPublished = await composition.graphAdministrationService.publish(
+        otherRequest,
+        request.caller.servicePrincipalId
+      )
+      expect(otherPublished.data.definition.reference).toEqual(published.data.definition.reference)
+      expect(otherPublished.data.definition.content).toEqual(published.data.definition.content)
+      expect(
+        await composition.graphAdministrationService.publish(
+          otherRequest,
+          request.caller.servicePrincipalId
+        )
+      ).toEqual(otherPublished)
+      const deprecated = await composition.graphAdministrationService.deprecate(
+        {
+          ...otherRequest,
+          operation: 'graph.deprecate',
+          idempotencyKey: 'graph:composition:deprecate:1',
+          payload: {
+            reference: otherPublished.data.definition.reference,
+            expectedRevision: 1,
+            reason: 'other workspace only',
+          },
+        },
+        request.caller.servicePrincipalId
+      )
+      expect(deprecated.data.definition.lifecycle).toBe('deprecated')
+      const resolution = {
+        caller: request.caller,
+        workspaceId: request.workspaceId,
+        requestId: request.requestId,
+        contractVersion: request.contractVersion,
+        correlation: request.correlation,
+        operation: 'graph.resolve',
+        requestedAt: request.issuedAt,
+        parameters: { reference: published.data.definition.reference },
+      }
+      expect(
+        (
+          await composition.graphAdministrationService.resolve(
+            resolution,
+            request.caller.servicePrincipalId
+          )
+        ).data.definition
+      ).toEqual(published.data.definition)
+    } finally {
+      await composition.close()
+      composition.persistence.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
