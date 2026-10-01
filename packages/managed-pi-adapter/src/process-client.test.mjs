@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, test } from 'bun:test'
+import { ProcessRpcLink } from '@control-plane/deployment'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
 import { ManagedPiAdapter, ManagedPiDriver, translateExecutionPlanToManagedPi } from './index.ts'
@@ -631,21 +632,38 @@ describe('ManagedPiProcessClient', () => {
     })
     const statsResponsePath = fixture.statsResponsePath
     let handle
+    let rpcCapture
     try {
       handle = await fixture.adapter.start({
         attemptId: 'att_01JBCDEF0123456789ABCDEFGH',
         idempotencyKey: 'process-client:cancel-stats-after-window',
         executionPlan: fixture.plan,
       })
-      const status = await fixture.adapter.cancel(handle, {
-        idempotencyKey: 'cancel-stats-after-window',
-        requestedAt: new Date().toISOString(),
-      })
+      rpcCapture = captureProcessRpcLinkRequest('get_session_stats', { after: 'abort' })
+      let status
+      try {
+        status = await fixture.adapter.cancel(handle, {
+          idempotencyKey: 'cancel-stats-after-window',
+          requestedAt: new Date().toISOString(),
+        })
+      } finally {
+        rpcCapture.restore()
+      }
       expect(status.state).toBe('cancelled')
       expect(status.terminalUsage).toBeUndefined()
       expect(status.result).toBeUndefined()
       await waitForFile(statsResponsePath)
-      await delay(20)
+      expect(rpcCapture.captured).toBe(true)
+      // The same-link probe's FIFO response proves the queued stats frame was read first.
+      const readBarrier = await rpcCapture.request(
+        { type: 'get_state' },
+        { id: 'late-stats-read-barrier', timeoutMs: 5_000 }
+      )
+      expect(readBarrier).toMatchObject({
+        command: 'get_state',
+        success: true,
+        data: { isStreaming: false },
+      })
       expect((await fixture.adapter.status(handle)).terminalUsage).toBeUndefined()
       await fixture.adapter.cleanup(handle)
       const recovered = await fixture.recreate().reconcile(handle)
@@ -842,6 +860,35 @@ async function waitForFile(path) {
     }
   }
   throw new Error('PI_FIXTURE_STATS_RESPONSE_NOT_OBSERVED')
+}
+
+function captureProcessRpcLinkRequest(commandType, { after }) {
+  const originalRequest = ProcessRpcLink.prototype.request
+  let capturedLink
+  let precedingLink
+  const capturingRequest = function (request, options) {
+    if (request?.type === after) precedingLink = this
+    if (capturedLink === undefined && request?.type === commandType && this === precedingLink) {
+      capturedLink = this
+    }
+    return originalRequest.call(this, request, options)
+  }
+  ProcessRpcLink.prototype.request = capturingRequest
+
+  return {
+    get captured() {
+      return capturedLink !== undefined
+    },
+    request(request, options) {
+      if (capturedLink === undefined) throw new Error('PI_RPC_TEST_LINK_NOT_CAPTURED')
+      return originalRequest.call(capturedLink, request, options)
+    },
+    restore() {
+      if (ProcessRpcLink.prototype.request === capturingRequest) {
+        ProcessRpcLink.prototype.request = originalRequest
+      }
+    },
+  }
 }
 
 function expectTerminalUsage(status, inputTokens, outputTokens) {
