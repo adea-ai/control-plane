@@ -206,7 +206,13 @@ export class SqliteToolCallRepository implements ToolCallRepository {
     return this.provider.transaction(async (transaction) => {
       const existingCall = await transaction.get(this.#callsNamespace, callId)
       if (existingCall !== undefined) {
-        readStoredCall(existingCall.value, existingCall.id, this.#workspaceId, call.toolCallId)
+        const existingStoredCall = readStoredCall(
+          existingCall.value,
+          existingCall.id,
+          this.#workspaceId,
+          call.toolCallId
+        )
+        await this.#hasIdempotencyIndex(transaction, existingStoredCall)
         return false
       }
 
@@ -223,12 +229,15 @@ export class SqliteToolCallRepository implements ToolCallRepository {
           callRecordId(this.#workspaceId, indexed.toolCallId)
         )
         if (indexedCallRecord === undefined) throw new Error('SQLITE_TOOL_CALL_IDEMPOTENCY_CORRUPT')
-        readStoredCall(
+        const indexedStoredCall = readStoredCall(
           indexedCallRecord.value,
           indexedCallRecord.id,
           this.#workspaceId,
           indexed.toolCallId
         )
+        if (indexedStoredCall.idempotencyKey !== call.idempotencyKey)
+          throw new Error('SQLITE_TOOL_CALL_IDEMPOTENCY_CORRUPT')
+        await this.#hasIdempotencyIndex(transaction, indexedStoredCall)
         return false
       }
 

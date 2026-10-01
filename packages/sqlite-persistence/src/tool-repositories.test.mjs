@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import {
   FakeToolExecutor,
   InMemoryToolRegistryRepository,
@@ -16,6 +17,7 @@ import {
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import { ToolExecutorError } from '@control-plane/tool-sdk'
 import { SqlitePersistenceProvider } from './provider.ts'
+import { recordId } from './record-storage.ts'
 import { SqliteToolCallRepository, SqliteToolRegistryRepository } from './tool-repositories.ts'
 
 const ids = {
@@ -131,6 +133,13 @@ function call(overrides = {}) {
     requestedAt,
     history: [{ status: 'requested', at: requestedAt }],
     ...overrides,
+  }
+}
+
+function storedRecord(namespace, workspaceId, ...identityParts) {
+  return {
+    namespace: `${namespace}-${recordId(workspaceId)}`,
+    id: recordId(canonicalJsonStringify([workspaceId, ...identityParts]) ?? 'null'),
   }
 }
 
@@ -405,6 +414,71 @@ describe('SQLite tool repositories', () => {
         workspaceId: ids.workspace,
         toolCallId: winner.toolCallId,
       })
+    })
+  })
+
+  test('duplicate call insertion fails closed when its idempotency index is missing', async () => {
+    await withDatabase(async ({ provider }) => {
+      const persistence = provider()
+      const repository = new SqliteToolCallRepository(persistence, ids.workspace)
+      const original = call()
+      expect(await repository.insert(original)).toBe(true)
+
+      const indexRecord = storedRecord(
+        'tool-call-idempotency',
+        ids.workspace,
+        original.idempotencyKey
+      )
+      await persistence.transaction((transaction) =>
+        transaction.delete(indexRecord.namespace, indexRecord.id)
+      )
+
+      await expect(repository.insert(original)).rejects.toThrow(
+        'SQLITE_TOOL_CALL_IDEMPOTENCY_CORRUPT'
+      )
+      expect(await repository.get(original.toolCallId)).toEqual(original)
+    })
+  })
+
+  test('duplicate idempotency insertion fails closed when the index targets a different call key', async () => {
+    await withDatabase(async ({ provider }) => {
+      const persistence = provider()
+      const repository = new SqliteToolCallRepository(persistence, ids.workspace)
+      const original = call()
+      const indexedCall = call({
+        toolCallId: ids.otherCall,
+        idempotencyKey: 'tool-effect-0002',
+      })
+      expect(await repository.insert(original)).toBe(true)
+      expect(await repository.insert(indexedCall)).toBe(true)
+
+      const indexRecord = storedRecord(
+        'tool-call-idempotency',
+        ids.workspace,
+        original.idempotencyKey
+      )
+      await persistence.transaction(async (transaction) => {
+        const current = await transaction.get(indexRecord.namespace, indexRecord.id)
+        expect(current).toBeDefined()
+        await transaction.put({
+          ...indexRecord,
+          expectedRevision: current.revision,
+          value: {
+            workspaceId: ids.workspace,
+            idempotencyKey: original.idempotencyKey,
+            toolCallId: indexedCall.toolCallId,
+          },
+        })
+      })
+
+      const duplicateRequest = call({
+        toolCallId: 'tlc_01JABCDEF0123456789ABCDEFA',
+      })
+      await expect(repository.insert(duplicateRequest)).rejects.toThrow(
+        'SQLITE_TOOL_CALL_IDEMPOTENCY_CORRUPT'
+      )
+      expect(await repository.get(duplicateRequest.toolCallId)).toBeUndefined()
+      expect(await repository.get(indexedCall.toolCallId)).toEqual(indexedCall)
     })
   })
 
