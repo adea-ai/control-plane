@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
@@ -192,6 +193,18 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
     const inputs = createExecutionPlanTestFixtureInputs()
     inputs.profile.definition.skills = []
     inputs.skills = []
+    // This server-owned registration authorizes only the injected graph fixture.
+    // It does not establish default production graph-catalog composition.
+    const registeredSelection = {
+      reference: {
+        graphDefinitionId: 'hosted-pg-graph',
+        graphVersion: '1.0.0',
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      },
+      input: { objective: 'forward graph operation' },
+    }
+    const registeredWorkspaceId = inputs.correlation.workspaceId
+    inputs.graph = structuredClone(registeredSelection)
 
     const database = isolated.application
     const catalogRepository = new PostgresCatalogRepository(database)
@@ -226,6 +239,14 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       executionIdFactory: () => executionId,
       executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
         catalog: { profiles: catalogRepository, skills: catalogRepository },
+        graphs: {
+          validate: async (workspaceId, selection) =>
+            workspaceId === registeredWorkspaceId &&
+            isDeepStrictEqual(selection, registeredSelection),
+          authorize: async (workspaceId, reference) =>
+            workspaceId === registeredWorkspaceId &&
+            isDeepStrictEqual(reference, registeredSelection.reference),
+        },
       }),
       now: () => acceptedAt,
     })
@@ -261,19 +282,16 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       queuedAt: '2026-09-27T00:00:01.000Z',
       deadlineAt: execution.deadlineAt,
     })
-    const graph = {
-      graphDefinitionId: 'hosted-pg-graph',
-      graphVersion: '1.0.0',
-      contentDigest: `sha256:${'a'.repeat(64)}`,
-    }
+    const graph = plan.graph.reference
+    const threadId = `graph:${executionId}`
     const runInput = {
       executionId,
       attemptId: attempt.attemptId,
       workspaceId: plan.correlation.workspaceId,
       workflowId,
       graph,
-      threadId: 'hosted-pg-thread',
-      input: { objective: 'forward graph operation' },
+      threadId,
+      input: plan.graph.input,
       idempotencyKey: 'hosted-pg-graph-run',
     }
     const resumeInput = {
@@ -282,7 +300,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       workspaceId: plan.correlation.workspaceId,
       workflowId,
       graph,
-      threadId: 'hosted-pg-thread',
+      threadId,
       checkpointId: 'hosted-pg-checkpoint',
       response: { action: 'approve' },
       idempotencyKey: 'hosted-pg-graph-resume',
@@ -293,7 +311,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       workspaceId: plan.correlation.workspaceId,
       workflowId,
       graph,
-      threadId: 'hosted-pg-thread',
+      threadId,
       checkpointId: 'hosted-pg-checkpoint',
       idempotencyKey: 'hosted-pg-graph-continue',
     }
@@ -357,7 +375,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       graph: {
         workspaceId: plan.correlation.workspaceId,
         reference: graph,
-        threadId: 'hosted-pg-thread',
+        threadId,
       },
     })
     expect(graphCalls.at(-1)).toEqual({
@@ -368,7 +386,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
         workspaceId: plan.correlation.workspaceId,
         workflowId,
         graph,
-        threadId: 'hosted-pg-thread',
+        threadId,
         reason: 'deadline',
         idempotencyKey: 'hosted-pg-graph-cancel-after-denial',
       },
