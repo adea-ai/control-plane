@@ -875,15 +875,48 @@ describe('immutable graph selection in execution plans', () => {
     expect(() => assertExecutionPlanIntegrity({ ...plan, graph: changedInput.graph })).toThrow()
   })
 
-  test('children inherit the graph pin and input without caller substitution', () => {
+  test('delegated children do not implicitly rerun the parent manager graph', () => {
     const input = baseInput()
     const parent = compile({ ...input, graph })
     const child = deriveExecutionPlan(parent, childInput(parent.constraints, input.contextPackage))
-    expect(child.graph).toEqual(graph)
+    expect(child.graph).toBeUndefined()
+    expect(Object.hasOwn(child, 'graph')).toBe(false)
+    expect(parent.graph).toEqual(graph)
+    expect(child.parentExecutionPlan).toEqual({
+      executionPlanId: parent.executionPlanId,
+      contentDigest: parent.contentDigest,
+    })
+    expect(
+      assertExecutionPlanDerivedFrom(parent, child, input.contextPackage, input.contextPackage)
+    ).toEqual(child)
+  })
+
+  test('binds an explicitly selected child graph without changing inherited policy or limits', () => {
+    const input = baseInput()
+    const parent = compile({ ...input, graph })
+    const workerGraph = {
+      reference: {
+        ...graph.reference,
+        graphDefinitionId: 'worker-task',
+        contentDigest: digest('d'),
+      },
+      input: { objective: 'Review one assigned item' },
+    }
+    const child = deriveExecutionPlan(parent, {
+      ...childInput(parent.constraints, input.contextPackage),
+      graph: workerGraph,
+    })
+    expect(child.graph).toEqual(workerGraph)
+    expect(child.constraints).toEqual(parent.constraints)
+    expect(child.policySnapshot).toEqual(parent.policySnapshot)
+    expect(
+      assertExecutionPlanDerivedFrom(parent, child, input.contextPackage, input.contextPackage)
+    ).toEqual(child)
+    expect(() => assertExecutionPlanIntegrity({ ...child, graph })).toThrow()
     expect(() =>
       deriveExecutionPlan(parent, {
         ...childInput(parent.constraints, input.contextPackage),
-        graph: { ...graph, input: {} },
+        graph: { ...workerGraph, input: { run: () => 'execute' } },
       })
     ).toThrow()
   })

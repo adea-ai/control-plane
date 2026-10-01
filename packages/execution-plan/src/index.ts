@@ -145,6 +145,7 @@ const ChildInputSchema = z
     runtimeRequirements: CapabilityRequirementSetSchema,
     outputContract: OutputContractSchema,
     compiledAt: TimestampSchema,
+    graph: GraphSelectionSchema.optional(),
   })
   .strict()
 
@@ -269,6 +270,9 @@ export function deriveExecutionPlan(parentInput: unknown, input: unknown): Execu
     executionPlanId: undefined,
     contentDigest: undefined,
     compiledAt: child.compiledAt,
+    // A delegated worker has its own program. Reusing the manager graph must
+    // be an explicit Control Plane selection, never an inherited side effect.
+    graph: child.graph,
     correlation: child.correlation,
     contextPackage: contextPin(child.contextPackage),
     runtimeRequirements: normalizeRuntimeRequirements(child.runtimeRequirements),
@@ -323,6 +327,7 @@ export function assertExecutionPlanDerivedFrom(
     runtimeRequirements: child.runtimeRequirements,
     outputContract: child.outputContract,
     compiledAt: child.compiledAt,
+    ...(child.graph === undefined ? {} : { graph: child.graph }),
   })
   if (
     canonical(withoutExecutionPlanIdentity(derived)) !==

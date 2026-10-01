@@ -167,12 +167,7 @@
       "version": "1.3.4",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
-        "@control-plane/config": "workspace:*",
-        "@control-plane/contracts": "workspace:*",
-        "@control-plane/domain": "workspace:*",
-        "@control-plane/policy": "workspace:*",
-        "@control-plane/tool-sdk": "workspace:*",
-        "ajv": "8.20.0",
+        "@control-plane/tool-execution": "workspace:*",
       },
     },
     "apps/workflow-worker": {
@@ -334,7 +329,11 @@
       "name": "@control-plane/langgraph-adapter",
       "version": "1.3.2",
       "dependencies": {
+        "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
+        "@control-plane/domain": "workspace:*",
+        "@control-plane/events": "workspace:*",
+        "@control-plane/execution-plan": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
         "@langchain/langgraph": "1.4.18",
@@ -343,6 +342,7 @@
         "zod": "4.6.5",
       },
       "devDependencies": {
+        "@control-plane/context": "workspace:*",
         "@control-plane/sqlite-persistence": "workspace:*",
       },
     },
@@ -529,6 +529,18 @@
         "@control-plane/database": "workspace:*",
       },
     },
+    "packages/tool-execution": {
+      "name": "@control-plane/tool-execution",
+      "version": "1.0.0",
+      "dependencies": {
+        "@control-plane/config": "workspace:*",
+        "@control-plane/contracts": "workspace:*",
+        "@control-plane/domain": "workspace:*",
+        "@control-plane/policy": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
+        "ajv": "8.20.0",
+      },
+    },
     "packages/tool-sdk": {
       "name": "@control-plane/tool-sdk",
       "version": "1.4.1",
@@ -682,6 +694,8 @@
     "@control-plane/telemetry": ["@control-plane/telemetry@workspace:packages/telemetry"],
 
     "@control-plane/testing": ["@control-plane/testing@workspace:packages/testing"],
+
+    "@control-plane/tool-execution": ["@control-plane/tool-execution@workspace:packages/tool-execution"],
 
     "@control-plane/tool-gateway": ["@control-plane/tool-gateway@workspace:apps/tool-gateway"],
 

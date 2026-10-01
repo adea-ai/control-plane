@@ -202,6 +202,10 @@
       "release-type": "node",
       "package-name": "@control-plane/testing"
     },
+    "packages/tool-execution": {
+      "release-type": "node",
+      "package-name": "@control-plane/tool-execution"
+    },
     "packages/tool-sdk": {
       "release-type": "node",
       "package-name": "@control-plane/tool-sdk"

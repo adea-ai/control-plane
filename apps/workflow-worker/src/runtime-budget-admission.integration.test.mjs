@@ -18,8 +18,13 @@ import {
   PostgresDurableUsageStore,
   PostgresExecutionPlanRepository,
   PostgresExecutionRepository,
+  PostgresGraphDefinitionRepository,
 } from '@control-plane/database'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
+import {
+  GraphDefinitionCatalog,
+  GraphDefinitionExecutionAuthority,
+} from '@control-plane/orchestration'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { createManagedCloudWorkflowWorkerComposition } from './cloud-composition.ts'
 
@@ -31,6 +36,8 @@ let isolated
 let fixtureCatalogRepository
 let fixturePlans
 let fixtureBasePlan
+let fixtureGraphSelection
+let fixtureGraphAuthority
 let fixturePlanInputs
 let workerConfiguration
 let testFailure
@@ -140,16 +147,17 @@ function openComposition() {
   return composition
 }
 
-async function seedOwner() {
+async function seedOwner(graph) {
   fixturePlanSequence += 1
   let executionPlan = fixtureBasePlan
-  if (fixturePlanSequence > 1) {
+  if (fixturePlanSequence > 1 || graph) {
     const inputs = structuredClone(fixturePlanInputs)
     inputs.correlation = {
       ...inputs.correlation,
       taskId: nextId('tsk'),
       requestId: nextId('req'),
     }
+    if (graph) inputs.graph = graph
     inputs.compiledAt = new Date(Date.parse(acceptedAt) + fixturePlanSequence * 1_000).toISOString()
     executionPlan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
     await fixturePlans.put(executionPlan)
@@ -229,6 +237,50 @@ if (enabled) {
       fixturePlans = seeded.plans
       fixtureBasePlan = seeded.basePlan
       fixturePlanInputs = seeded.inputs
+      const graphs = new PostgresGraphDefinitionRepository(
+        isolated.application,
+        seeded.inputs.correlation.workspaceId
+      )
+      const graph = await new GraphDefinitionCatalog(graphs).publish({
+        definition: {
+          graphDefinitionId: 'budget-admission-graph',
+          graphVersion: '1.0.0',
+          schemaVersion: 1,
+          nodes: [{ node: 'work', operation: { kind: 'runtime', name: 'execute' } }],
+          edges: [
+            { from: '__start__', to: 'work' },
+            { from: 'work', to: '__end__' },
+          ],
+          schemas: {
+            input: 'schema://budget/input/v1',
+            state: 'schema://budget/state/v1',
+            output: 'schema://budget/output/v1',
+          },
+          requiredCapabilities: ['runtime.invoke'],
+          compatibility: {
+            contractMajorVersions: [1],
+            compilerVersions: ['1.0.0'],
+            adapterVersions: ['1.4.12'],
+          },
+        },
+        publishedAt: acceptedAt,
+      })
+      fixtureGraphSelection = {
+        reference: graph.reference,
+        input: { objective: 'integration admission denial' },
+      }
+      fixtureGraphAuthority = new GraphDefinitionExecutionAuthority({
+        repository: (workspaceId) =>
+          new PostgresGraphDefinitionRepository(isolated.application, workspaceId),
+        environment: {
+          capabilities: ['runtime.invoke'],
+          contractMajorVersion: 1,
+          compilerVersion: '1.0.0',
+          adapterVersion: '1.4.12',
+        },
+        validateDefinitionAndInput: (_definition, input) =>
+          Object.keys(input).length === 1 && input.objective === 'integration admission denial',
+      })
 
       const databaseUrl = new URL(credentials.application.url)
       databaseUrl.pathname = `/${isolated.name}`
@@ -305,6 +357,7 @@ if (enabled) {
         repository: currentFixture.firstComposition.commands.repository,
         executionIdFactory: () => nextId('exe'),
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(fixturePlans, {
+          graphs: fixtureGraphAuthority,
           catalog: {
             profiles: fixtureCatalogRepository,
             skills: fixtureCatalogRepository,
@@ -416,6 +469,7 @@ registerAdmissionTest(
 registerAdmissionTest(
   'actual Cloud worker composition denies dispatch for a corrupt usage receipt and blocks interactions and graphs',
   async ({ callbacks, firstComposition, owner }) => {
+    owner = await seedOwner(fixtureGraphSelection)
     const [corruptReceiptRow] = await firstComposition.connection.database.$client.unsafe(
       'select * from usage_operation_receipts where execution_id = $1',
       [owner.accepted.execution.executionId]
@@ -446,24 +500,27 @@ registerAdmissionTest(
         effectKey: `interaction:${identity.executionId}`,
       })
     ).rejects.toMatchObject({ code: 'RUNTIME_BUDGET_ADMISSION_DENIED' })
+    const beforeGraph = await snapshotAdmission(
+      firstComposition.connection.database,
+      identity.executionId
+    )
     await expect(
       firstComposition.activities.runGraphSegment({
         executionId: identity.executionId,
         attemptId: owner.attempt.attemptId,
         workspaceId: identity.correlation.workspaceId,
-        workflowId: nextId('wfl'),
-        graph: {
-          graphDefinitionId: 'manager-graph',
-          graphVersion: '1.0.0',
-          contentDigest: `sha256:${'a'.repeat(64)}`,
-        },
-        threadId: 'thread-runtime-admission',
-        input: { objective: 'integration admission denial' },
+        workflowId: `wfl_${identity.executionId.slice(4)}`,
+        graph: owner.executionPlan.graph.reference,
+        threadId: `graph:${identity.executionId}`,
+        input: owner.executionPlan.graph.input,
         idempotencyKey: `graph:${identity.executionId}`,
       })
     ).rejects.toMatchObject({ code: 'RUNTIME_BUDGET_ADMISSION_DENIED' })
     expect(callbacks.interaction).toHaveLength(interactionCount)
     expect(callbacks.graph).toHaveLength(graphCount)
+    expect(
+      await snapshotAdmission(firstComposition.connection.database, identity.executionId)
+    ).toEqual(beforeGraph)
   }
 )
 

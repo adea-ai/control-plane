@@ -6,9 +6,21 @@ import { canonicalJsonStringify } from '@control-plane/contracts'
 import { z } from 'zod'
 
 const TimestampSchema = z.iso.datetime()
-const EventTypeSchema = z
-  .string()
-  .regex(/^(?:execution|attempt|interaction|usage|artifact|reconciliation)\.[a-z][a-z0-9_-]*$/)
+/** Only the graph events with a public Data API contract may be persisted. */
+export const GraphExecutionEventTypeSchema = z.enum([
+  'graph.started',
+  'graph.node_started',
+  'graph.node_completed',
+  'graph.completed',
+])
+export type GraphExecutionEventType = z.output<typeof GraphExecutionEventTypeSchema>
+
+const EventTypeSchema = z.union([
+  GraphExecutionEventTypeSchema,
+  z
+    .string()
+    .regex(/^(?:execution|attempt|interaction|usage|artifact|reconciliation)\.[a-z][a-z0-9_-]*$/),
+])
 const ErrorReferenceSchema = z
   .string()
   .max(512)

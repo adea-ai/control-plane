@@ -22,6 +22,7 @@ This is the no-cross-database-access rule.
 - `apps/runtime-worker` owns separated Hosted/server runtime-worker composition where that topology is required.
 - `apps/runtime-gateway` owns transport for non-co-located RuntimeNodes.
 - `apps/tool-gateway` owns tool-facing Hosted/server composition where separated deployment is required.
+- `packages/tool-execution` shares tool registry, policy/approval-controlled execution, and MCP adapter behavior across composition roots; `tool-sdk` retains the stable tool contracts.
 - `packages/domain`, `contracts`, `events`, `execution-plan`, `policy`, `context`, `runtime-sdk`, and `tool-sdk` own stable models and ports.
 - `packages/database`, `telemetry`, `bootstrap`, and named adapters own infrastructure details.
 

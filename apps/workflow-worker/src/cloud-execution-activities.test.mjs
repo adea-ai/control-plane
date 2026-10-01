@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { InMemoryExecutionRepository, ExecutionLifecycleService } from '@control-plane/domain'
-import { InMemoryExecutionPlanRepository } from '@control-plane/execution-plan'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  ExecutionPlanCompiler,
+  InMemoryExecutionPlanRepository,
+} from '@control-plane/execution-plan'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import { DurableExecutionLifecycleActivities } from './cloud-execution-activities.ts'
 
 const ids = {
@@ -205,7 +211,7 @@ describe('durable Cloud execution activities', () => {
   })
 
   test('denies dispatch and graph starts before effects, while cancellation and cleanup remain available', async () => {
-    const fixture = await lifecycleFixture()
+    const fixture = await lifecycleFixture(graphExecutionPlan())
     const runtime = runtimePort()
     const graphCalls = []
     const budgetAdmission = {
@@ -222,7 +228,7 @@ describe('durable Cloud execution activities', () => {
     await activity.persistStatus(status('queued'))
     await activity.ensureAttempt(attemptInput())
 
-    await expect(activity.dispatch(dispatchInput())).rejects.toThrow(
+    await expect(activity.dispatch(dispatchInput(fixture.plan))).rejects.toThrow(
       'RUNTIME_BUDGET_ADMISSION_DENIED'
     )
     const graphInput = graphSegmentInput(fixture.plan)
@@ -269,7 +275,7 @@ describe('durable Cloud execution activities', () => {
   })
 
   test('authorizes dispatch, interaction, and graph effects with current identity and preserves graph input', async () => {
-    const fixture = await lifecycleFixture()
+    const fixture = await lifecycleFixture(graphExecutionPlan())
     const runtime = runtimePort()
     const graphCalls = []
     const admissions = []
@@ -284,7 +290,7 @@ describe('durable Cloud execution activities', () => {
     await activity.persistStatus(status('queued'))
     await activity.ensureAttempt(attemptInput())
 
-    await activity.dispatch(dispatchInput())
+    await activity.dispatch(dispatchInput(fixture.plan))
     await activity.applyInteraction({
       executionId: ids.executionId,
       attemptId: ids.attemptId,
@@ -318,6 +324,115 @@ describe('durable Cloud execution activities', () => {
     expect(graphCalls[2]).toBe(continueInput)
   })
 
+  test('rejects substituted graph authority before a node effect even without budget configuration', async () => {
+    const fixture = await lifecycleFixture(graphExecutionPlan())
+    const graphCalls = []
+    const activity = activities({
+      ...fixture,
+      runtime: runtimePort(),
+      graph: graphPort(graphCalls),
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    const valid = graphSegmentInput(fixture.plan)
+    for (const substitute of [
+      { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+      { workflowId: 'wfl_01JBBCDEF0123456789ABCDEFG' },
+      { attemptId: 'att_01JBBCDEF0123456789ABCDEFG' },
+      { threadId: 'graph:other-execution' },
+      { graph: { ...valid.graph, graphVersion: '2.0.0' } },
+      { graph: { ...valid.graph, contentDigest: `sha256:${'b'.repeat(64)}` } },
+      { input: { objective: 'replace the accepted task' } },
+    ]) {
+      await expect(activity.runGraphSegment({ ...valid, ...substitute })).rejects.toThrow()
+    }
+    expect(graphCalls).toHaveLength(0)
+    await activity.runGraphSegment(valid)
+    expect(graphCalls).toEqual([valid])
+  })
+
+  test('rejects unpinned continuations and cancellation before graph effects', async () => {
+    const fixture = await lifecycleFixture(graphExecutionPlan())
+    const graphCalls = []
+    const activity = activities({
+      ...fixture,
+      runtime: runtimePort(),
+      graph: graphPort(graphCalls),
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    const valid = graphSegmentInput(fixture.plan)
+    const substituted = { ...valid, graph: { ...valid.graph, graphVersion: '2.0.0' } }
+    await expect(
+      activity.resumeGraphSegment({
+        ...substituted,
+        checkpointId: 'checkpoint-1',
+        response: 'approve',
+      })
+    ).rejects.toThrow()
+    await expect(
+      activity.continueGraphSegment({ ...substituted, checkpointId: 'checkpoint-1' })
+    ).rejects.toThrow()
+    await expect(
+      activity.cancelActive({
+        executionId: valid.executionId,
+        attemptId: valid.attemptId,
+        workflowId: valid.workflowId,
+        effectKey: 'cancel-pinned-graph',
+        reason: 'user_request',
+        graph: {
+          workspaceId: valid.workspaceId,
+          reference: substituted.graph,
+          threadId: valid.threadId,
+        },
+      })
+    ).rejects.toThrow()
+    expect(graphCalls).toHaveLength(0)
+  })
+
+  test('rejects a graph segment for an execution whose immutable plan has no graph', async () => {
+    const fixture = await lifecycleFixture()
+    const graphCalls = []
+    const activity = activities({
+      ...fixture,
+      runtime: runtimePort(),
+      graph: graphPort(graphCalls),
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await expect(
+      activity.runGraphSegment(graphSegmentInput(graphExecutionPlan()))
+    ).rejects.toThrow()
+    expect(graphCalls).toHaveLength(0)
+  })
+
+  test('rejects corrupt or substituted retained plans before graph effects', async () => {
+    const fixture = await lifecycleFixture(graphExecutionPlan())
+    const graphCalls = []
+    const valid = graphSegmentInput(fixture.plan)
+    const bootstrap = activities({ ...fixture, runtime: runtimePort() })
+    await bootstrap.persistStatus(status('queued'))
+    await bootstrap.ensureAttempt(attemptInput())
+    for (const stored of [
+      {
+        ...fixture.plan,
+        graph: { ...fixture.plan.graph, input: { objective: 'tampered persisted input' } },
+      },
+      { ...fixture.plan, contentDigest: `sha256:${'b'.repeat(64)}` },
+      { ...fixture.plan, schemaVersion: 2 },
+      undefined,
+    ]) {
+      const activity = activities({
+        ...fixture,
+        plans: { get: async () => stored },
+        runtime: runtimePort(),
+        graph: graphPort(graphCalls),
+      })
+      await expect(activity.runGraphSegment(valid)).rejects.toThrow()
+    }
+    expect(graphCalls).toHaveLength(0)
+  })
+
   test('reloads the current execution identity before applying an interaction', async () => {
     const fixture = await lifecycleFixture()
     const runtime = runtimePort()
@@ -345,11 +460,10 @@ describe('durable Cloud execution activities', () => {
   })
 })
 
-async function lifecycleFixture() {
+async function lifecycleFixture(plan = executionPlan()) {
   const repository = new InMemoryExecutionRepository()
   const lifecycle = new ExecutionLifecycleService(repository)
   const plans = new InMemoryExecutionPlanRepository()
-  const plan = executionPlan()
   await plans.put(plan)
   await lifecycle.createExecution({
     executionId: ids.executionId,
@@ -451,13 +565,9 @@ function graphSegmentInput(plan) {
     attemptId: ids.attemptId,
     workspaceId: plan.correlation.workspaceId,
     workflowId: ids.workflowId,
-    graph: {
-      graphDefinitionId: 'manager-graph',
-      graphVersion: '1.0.0',
-      contentDigest: `sha256:${'a'.repeat(64)}`,
-    },
-    threadId: 'thread-manager-1',
-    input: { objective: 'admit before starting' },
+    graph: plan.graph.reference,
+    threadId: `graph:${ids.executionId}`,
+    input: plan.graph.input,
     idempotencyKey: 'workflow:segment:1',
   }
 }
@@ -470,8 +580,7 @@ function attemptInput() {
   }
 }
 
-function dispatchInput() {
-  const plan = executionPlan()
+function dispatchInput(plan = executionPlan()) {
   return {
     executionId: ids.executionId,
     attemptId: ids.attemptId,
@@ -495,4 +604,18 @@ function status(state, attempt = false) {
 
 function executionPlan() {
   return createExecutionPlanTestFixture()
+}
+
+function graphExecutionPlan() {
+  return new ExecutionPlanCompiler('1.0.0').compile({
+    ...createExecutionPlanTestFixtureInputs(),
+    graph: {
+      reference: {
+        graphDefinitionId: 'manager-graph',
+        graphVersion: '1.0.0',
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      },
+      input: { objective: 'admit before starting' },
+    },
+  })
 }

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import {
   ExecutionAttemptSchema,
   ExecutionLifecycleError,
@@ -6,7 +7,11 @@ import {
   type ExecutionAttempt,
   type ExecutionLifecycleService,
 } from '@control-plane/domain'
-import type { ExecutionPlan, ExecutionPlanRepository } from '@control-plane/execution-plan'
+import {
+  assertExecutionPlanIntegrity,
+  type ExecutionPlan,
+  type ExecutionPlanRepository,
+} from '@control-plane/execution-plan'
 import type { ExecutionWorkflowInput } from '@control-plane/orchestration'
 import type { GraphSegmentActivityPort } from './graph-segment-activity.js'
 import type {
@@ -193,25 +198,19 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
   }
 
   async runGraphSegment(input: Parameters<GraphSegmentActivityPort['runGraphSegment']>[0]) {
-    if (this.#budgetAdmission !== undefined) {
-      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
-    }
+    await this.#authorizeGraphSegment(input)
     return this.#graph.runGraphSegment(input)
   }
 
   async resumeGraphSegment(input: Parameters<GraphSegmentActivityPort['resumeGraphSegment']>[0]) {
-    if (this.#budgetAdmission !== undefined) {
-      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
-    }
+    await this.#authorizeGraphSegment(input)
     return this.#graph.resumeGraphSegment(input)
   }
 
   async continueGraphSegment(
     input: Parameters<GraphSegmentActivityPort['continueGraphSegment']>[0]
   ) {
-    if (this.#budgetAdmission !== undefined) {
-      await this.#authorizeGraphSegment(input.executionId, input.attemptId, input.workspaceId)
-    }
+    await this.#authorizeGraphSegment(input)
     return this.#graph.continueGraphSegment(input)
   }
 
@@ -219,7 +218,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     input: Parameters<ExecutionLifecycleActivities['cancelActive']>[0]
   ): Promise<void> {
     if (input.graph !== undefined) {
-      await this.#graph.cancelGraphSegment({
+      const cancellation = {
         executionId: input.executionId,
         attemptId: input.attemptId,
         workspaceId: input.graph.workspaceId,
@@ -228,7 +227,9 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
         threadId: input.graph.threadId,
         reason: input.reason,
         idempotencyKey: input.effectKey,
-      })
+      }
+      await this.#authorizeGraphSegment(cancellation, false)
+      await this.#graph.cancelGraphSegment(cancellation)
       return
     }
     await this.#runtime.cancel(input)
@@ -239,19 +240,53 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
   }
 
   async #authorizeGraphSegment(
-    executionId: string,
-    attemptId: string,
-    workspaceId: string
+    request:
+      | Parameters<GraphSegmentActivityPort['runGraphSegment']>[0]
+      | Parameters<GraphSegmentActivityPort['resumeGraphSegment']>[0]
+      | Parameters<GraphSegmentActivityPort['continueGraphSegment']>[0]
+      | Parameters<GraphSegmentActivityPort['cancelGraphSegment']>[0],
+    authorizeBudget = true
   ): Promise<void> {
-    const execution = await this.#lifecycle.getExecution(executionId)
-    if (execution.correlation.workspaceId !== workspaceId) {
+    const execution = await this.#lifecycle.getExecution(request.executionId)
+    if (
+      execution.correlation.workspaceId !== request.workspaceId ||
+      request.workflowId !== `wfl_${execution.executionId.slice(4)}` ||
+      request.threadId !== `graph:${execution.executionId}` ||
+      execution.latestAttemptId !== request.attemptId
+    ) {
       throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
     }
-    const plan = await this.#plans.get(execution.executionPlan)
-    if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
-      throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
+    const storedPlan = await this.#plans.get(execution.executionPlan)
+    if (storedPlan === undefined) throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
+    const plan = assertExecutionPlanIntegrity(storedPlan)
+    if (
+      plan.executionPlanId !== execution.executionPlan.executionPlanId ||
+      plan.contentDigest !== execution.executionPlan.contentDigest ||
+      plan.schemaVersion !== execution.executionPlan.schemaVersion ||
+      !isDeepStrictEqual(plan.correlation, execution.correlation)
+    ) {
+      throw new Error('WORKFLOW_EXECUTION_PLAN_MISMATCH')
     }
-    await this.#authorizeBudgetAdmission(execution, plan, attemptId)
+    if (
+      plan.graph === undefined ||
+      !isDeepStrictEqual(request.graph, plan.graph.reference) ||
+      ('input' in request && !isDeepStrictEqual(request.input, plan.graph.input))
+    ) {
+      throw new Error('WORKFLOW_EXECUTION_GRAPH_MISMATCH')
+    }
+    const attempt = ExecutionAttemptSchema.safeParse(
+      await this.#lifecycle.repository.getAttempt(request.attemptId)
+    )
+    if (
+      !attempt.success ||
+      attempt.data.attemptId !== request.attemptId ||
+      attempt.data.executionId !== execution.executionId
+    ) {
+      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    }
+    // Cancellation retains the same immutable authority, but must remain
+    // available after a budget has been exhausted or admission has been revoked.
+    if (authorizeBudget) await this.#authorizeBudgetAdmission(execution, plan, request.attemptId)
   }
 
   async #authorizeBudgetAdmission(

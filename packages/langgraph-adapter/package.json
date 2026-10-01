@@ -22,7 +22,11 @@
     "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
   "dependencies": {
+    "@control-plane/contracts": "workspace:*",
     "@control-plane/deployment": "workspace:*",
+    "@control-plane/domain": "workspace:*",
+    "@control-plane/events": "workspace:*",
+    "@control-plane/execution-plan": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
     "@langchain/langgraph": "1.4.18",
@@ -31,6 +35,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@control-plane/context": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {
