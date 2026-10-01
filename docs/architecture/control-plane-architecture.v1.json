@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "81a1fcf2e577e6cb45cfbf973605ab1c76c40c44",
-    "ref": "codex/m11-local-graph-runtime-20261001",
-    "recordedAt": "2026-10-01T04:49:19.475387Z"
+    "commit": "785aad99dc03a166b52309c9a8d04536c37c6085",
+    "ref": "main",
+    "recordedAt": "2026-10-01T05:01:29.329884Z"
   },
   "packages": [
     {
