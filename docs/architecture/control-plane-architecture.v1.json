@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "candidate": {
-    "commit": "bd0d5e8a7e4207d2d05856374e1cfcac3994cb32",
-    "ref": "codex/m11-public-graphs-20260930",
-    "recordedAt": "2026-10-01T00:14:52.010Z"
+    "commit": "cf84024255f2da51b77c46fe34f2cdd93fad10d1",
+    "ref": "codex/m11-graph-execution-20261001",
+    "recordedAt": "2026-10-01T02:56:37.283Z"
   },
   "packages": [
     {
