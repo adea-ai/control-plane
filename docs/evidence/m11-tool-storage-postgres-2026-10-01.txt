@@ -1,0 +1,11 @@
+bun test v1.4.2 (744846f84)
+(pass) PostgreSQL tool storage > migration creates tool definition, version, and call storage tables [22.60ms]
+(pass) PostgreSQL tool storage > registry immutability, workspace scope, semantic uniqueness, and concurrent inserts survive reconnect [160.86ms]
+(pass) PostgreSQL tool storage > call idempotency insert and compare-and-set serialize across independent database connections [172.70ms]
+(pass) PostgreSQL tool storage > tool-call revisions above PostgreSQL int32 range persist and advance through CAS [53.30ms]
+(pass) PostgreSQL tool storage > policy-controlled tool effects preserve completed and ambiguous receipts across independent restarts [407.90ms]
+(pass) PostgreSQL tool storage > repositories fail closed when a persisted definition, version, or call no longer matches its schema [67.44ms]
+ 6 pass
+ 0 fail
+ 70 expect() calls
+Ran 6 tests across 1 file. [2.54s]

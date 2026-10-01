@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "sourceCandidate": "6c922d487c3c2e70a047c11c55a1cb4ddbabad26",
+  "validationHead": "319f12575f1447f29363a7a481d6ba0030db0b26",
+  "recordedAt": "2026-10-01T05:35:06.690693Z",
+  "sourceFiles": [
+    {
+      "path": "packages/sqlite-persistence/src/tool-repositories.ts",
+      "sha256": "99d7952a33eb0f6dbb312028ae0155793250a1aee8f39259c0d1e038792fa45d"
+    },
+    {
+      "path": "packages/sqlite-persistence/src/tool-repositories.test.mjs",
+      "sha256": "d0988d54d07a19ce9f2d50437841ea0214d8d8a4262f3449586dedcf5171cb10"
+    },
+    {
+      "path": "packages/database/src/tool-repositories.ts",
+      "sha256": "493d20f3bbe4c351c41745ab1bcf073c3f0bb456c65d222316ced2970eafbd62"
+    },
+    {
+      "path": "packages/database/src/tool-repositories.integration.test.mjs",
+      "sha256": "80668fa23bfde67fe03dbb41bec6d2632017d19496e4f895c31bf61b662e92a8"
+    },
+    {
+      "path": "packages/database/src/schema/tool-execution.ts",
+      "sha256": "1300b424d46c96e4b3c469962cd6c9c11d2e97685e7e8e6cf33e7efab0bd7f0a"
+    },
+    {
+      "path": "packages/database/drizzle/0057_low_mentallo.sql",
+      "sha256": "41bf943ede7f18ff13e2ad424b9bda86b5818bf9768323e1e78328dd634e1ad3"
+    },
+    {
+      "path": "apps/local-control-plane/src/managed-graph-runtime.ts",
+      "sha256": "a7e9cb3833d8aa38a063084a33b7a6cf7af5cc8572c214bfa112ea60f7441622"
+    }
+  ],
+  "toolchain": {
+    "bun": "1.4.2",
+    "node": "24.21.0",
+    "postgres": "18.3-alpine",
+    "postgresImageId": "sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7"
+  },
+  "localValidation": {
+    "build": {
+      "passed": 42
+    },
+    "realPostgres": {
+      "passed": 6,
+      "failed": 0,
+      "assertions": 70
+    },
+    "unit": {
+      "passed": 2033,
+      "failed": 0,
+      "assertions": 8900,
+      "lineCoveragePercent": 81.03,
+      "functionCoveragePercent": 83.71,
+      "coverageMinimumPercent": 80
+    },
+    "e2e": {
+      "passed": 185,
+      "failed": 0,
+      "assertions": 1089
+    },
+    "smoke": {
+      "passed": 241,
+      "failed": 0,
+      "skipped": 2,
+      "assertions": 2560
+    },
+    "staticChecks": [
+      "frozen install",
+      "format",
+      "lint",
+      "type-check",
+      "OpenAPI",
+      "Drizzle schema",
+      "runtime compatibility",
+      "requirements",
+      "architecture"
+    ],
+    "credentialScan": {
+      "repositoryFiles": 1406,
+      "findings": 0
+    },
+    "dependencyAudit": {
+      "packages": 311,
+      "findings": 0
+    }
+  },
+  "limitations": [
+    "Tool effect boundary test uses FakeToolExecutor",
+    "No production tool/model/runtime/delegation graph-operation binding is established",
+    "No deployed profile, VPS, outage, retention, recovery or independent final acceptance is established",
+    "Two smoke PostgreSQL portability cases require separately credentialed integration execution"
+  ]
+}
