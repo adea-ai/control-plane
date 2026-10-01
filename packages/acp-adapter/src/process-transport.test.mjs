@@ -3,7 +3,7 @@ import { AcpDriver } from './index.ts'
 import { AcpProcessTransport } from './process-transport.ts'
 
 const source = `
-let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0, resumes=0, lateCreate=null;
+let buffer='', creates=0, prompts=0, closes=0, lateCancelled=0, resumes=0, listRequests=0, lateCreate=null;
 const pending=new Map();
 const creating=[];
 const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
@@ -45,6 +45,7 @@ process.stdin.on('data',chunk=>{
   }
   if(m.method==='late-probe')reply(m.id,{lateCancelled});
   if(m.method==='session/list'){
+   listRequests++;
    if(process.env.SCENARIO==='list-cycle')reply(m.id,{sessions:[],nextCursor:'repeat'});
    else if(process.env.SCENARIO==='list-item-limit')reply(m.id,m.params.cursor?{sessions:[{sessionId:'overflow'}]}:{sessions:Array.from({length:128},(_,i)=>({sessionId:'listed-'+i})),nextCursor:'next'});
    else if(process.env.SCENARIO==='list-limit')reply(m.id,{sessions:[],nextCursor:String(Number(m.params.cursor||0)+1)});
@@ -84,6 +85,7 @@ process.stdin.on('data',chunk=>{
   else if(m.method==='session/cancel'&&process.env.SCENARIO!=='ignore-cancel')finish(m.params.sessionId,true);
   if(typeof m.id==='string'&&m.id.startsWith('late:')&&m.result){if(m.result.outcome.outcome==='cancelled')lateCancelled++;finish(m.id.slice(5),true);}
   if(m.method==='probe')reply(m.id,{creates,prompts});
+  if(m.method==='list-probe')reply(m.id,{listRequests});
   if(typeof m.id==='string'&&m.id.startsWith('permission:')&&m.result){
    const outcome=m.result.outcome;
    if(outcome.outcome==='selected'&&outcome.optionId!=='opaque-allow')throw Error('wrong native option');
@@ -295,6 +297,9 @@ test.each(['list-cycle', 'list-limit', 'list-item-limit', 'list-duplicate'])(
       await transport.open()
       await driver.inspect()
       await expect(transport.request('session/list', {})).rejects.toThrow('ACP_NATIVE_LIST_')
+      if (scenario === 'list-limit') {
+        expect(await transport.request('list-probe', {})).toEqual({ listRequests: 16 })
+      }
     } finally {
       await transport.close()
     }
@@ -422,7 +427,10 @@ function fixture(scenario = 'complete') {
     cwd: import.meta.dir,
     environment: { SCENARIO: scenario },
     turnTimeoutMs: 4000,
-    requestTimeoutMs: 1000,
+    // The page-cap case uses the transport's production default while it
+    // exercises all 16 sequential process round trips. Keep the 1s deadline
+    // for the timeout-specific process fixtures.
+    ...(scenario === 'list-limit' ? {} : { requestTimeoutMs: 1000 }),
   })
   const driver = new AcpDriver({
     transport,
