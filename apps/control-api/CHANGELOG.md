@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.17.0...control-api-v1.17.1) (2026-10-02)
+
+
+### Maintenance
+
+* **infra:** align production with the local-first MVP cost posture ([#839](https://github.com/adea-ai/control-plane/issues/839)) ([e8af976](https://github.com/adea-ai/control-plane/commit/e8af97608f103d1312cb907ba5819f4398e9c414))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.16.5...control-api-v1.17.0) (2026-10-01)
 
 
