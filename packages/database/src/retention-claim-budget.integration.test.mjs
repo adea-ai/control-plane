@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { eq } from 'drizzle-orm'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresMessagingRetention } from './messaging-retention.ts'
 import { inboxMessages, outboxEvents } from './schema/messaging.ts'
 
@@ -107,111 +107,119 @@ describe.skipIf(!enabled)('PostgreSQL retention claim budget', () => {
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
   })
 
-  test('a raced first outbox candidate consumes bound before inbox compaction', async () => {
-    const isolated = await createDatabase()
-    const database = isolated.application
-    const oldTime = new Date('2024-01-01T00:00:00.000Z')
-    const laterOldTime = new Date('2024-01-02T00:00:00.000Z')
-    const [first] = await database
-      .insert(outboxEvents)
-      .values([
-        {
-          aggregateType: 'retention-budget-test',
-          aggregateId: 'first',
-          eventType: 'retention.test',
-          payload: { sequence: 1 },
-          status: 'published',
-          publishedAt: oldTime,
-        },
-        {
-          aggregateType: 'retention-budget-test',
-          aggregateId: 'second',
-          eventType: 'retention.test',
-          payload: { sequence: 2 },
-          status: 'published',
-          publishedAt: laterOldTime,
-        },
-      ])
-      .returning({ id: outboxEvents.id })
-    await database.insert(inboxMessages).values({
-      consumer: 'retention-budget-test',
-      messageId: 'delivery-1',
-      payload: { original: true },
-      createdAt: oldTime,
-    })
+  test(
+    'a raced first outbox candidate consumes bound before inbox compaction',
+    async () => {
+      const isolated = await createDatabase()
+      const database = isolated.application
+      const oldTime = new Date('2024-01-01T00:00:00.000Z')
+      const laterOldTime = new Date('2024-01-02T00:00:00.000Z')
+      const [first] = await database
+        .insert(outboxEvents)
+        .values([
+          {
+            aggregateType: 'retention-budget-test',
+            aggregateId: 'first',
+            eventType: 'retention.test',
+            payload: { sequence: 1 },
+            status: 'published',
+            publishedAt: oldTime,
+          },
+          {
+            aggregateType: 'retention-budget-test',
+            aggregateId: 'second',
+            eventType: 'retention.test',
+            payload: { sequence: 2 },
+            status: 'published',
+            publishedAt: laterOldTime,
+          },
+        ])
+        .returning({ id: outboxEvents.id })
+      await database.insert(inboxMessages).values({
+        consumer: 'retention-budget-test',
+        messageId: 'delivery-1',
+        payload: { original: true },
+        createdAt: oldTime,
+      })
 
-    const journal = []
-    const racedDatabase = deleteFirstOutboxAfterSelection(database)
-    const result = await new PostgresMessagingRetention(racedDatabase).sweepEligibleMessaging(
-      expiredAt,
-      {
-        policyRetainMs: retentionMs,
-        bound: 1,
-        dryRun: false,
-        journal: async (entries) => journal.push(...entries),
-      }
-    )
-    expect(result).toMatchObject({
-      scanned: 1,
-      raced: 1,
-      truncated: true,
-      deleted: 0,
-      compacted: 0,
-    })
-    expect(journal).toEqual([])
-    expect(
-      await database.select().from(outboxEvents).where(eq(outboxEvents.id, first.id))
-    ).toHaveLength(0)
-    expect(
-      await database.select().from(outboxEvents).where(eq(outboxEvents.aggregateId, 'second'))
-    ).toHaveLength(1)
-    const [inbox] = await database
-      .select()
-      .from(inboxMessages)
-      .where(eq(inboxMessages.messageId, 'delivery-1'))
-    expect(inbox).toMatchObject({ payload: { original: true }, deletedAt: null, revision: 1n })
-  }, 30_000)
+      const journal = []
+      const racedDatabase = deleteFirstOutboxAfterSelection(database)
+      const result = await new PostgresMessagingRetention(racedDatabase).sweepEligibleMessaging(
+        expiredAt,
+        {
+          policyRetainMs: retentionMs,
+          bound: 1,
+          dryRun: false,
+          journal: async (entries) => journal.push(...entries),
+        }
+      )
+      expect(result).toMatchObject({
+        scanned: 1,
+        raced: 1,
+        truncated: true,
+        deleted: 0,
+        compacted: 0,
+      })
+      expect(journal).toEqual([])
+      expect(
+        await database.select().from(outboxEvents).where(eq(outboxEvents.id, first.id))
+      ).toHaveLength(0)
+      expect(
+        await database.select().from(outboxEvents).where(eq(outboxEvents.aggregateId, 'second'))
+      ).toHaveLength(1)
+      const [inbox] = await database
+        .select()
+        .from(inboxMessages)
+        .where(eq(inboxMessages.messageId, 'delivery-1'))
+      expect(inbox).toMatchObject({ payload: { original: true }, deletedAt: null, revision: 1n })
+    },
+    integrationTestTimeout()
+  )
 
-  test('zero bound admits no candidate claim or class-mutex query', async () => {
-    const isolated = await createDatabase()
-    const database = isolated.application
-    await database.insert(outboxEvents).values({
-      aggregateType: 'retention-budget-test',
-      aggregateId: 'zero-bound',
-      eventType: 'retention.test',
-      payload: { untouched: true },
-      status: 'published',
-      publishedAt: new Date('2024-01-01T00:00:00.000Z'),
-    })
-    await database.insert(inboxMessages).values({
-      consumer: 'retention-budget-test',
-      messageId: 'zero-bound-delivery',
-      payload: { original: true },
-      createdAt: new Date('2024-01-01T00:00:00.000Z'),
-    })
-    const counter = { calls: 0 }
-    const countedDatabase = countTransactionExecuteCalls(database, counter)
-    const result = await new PostgresMessagingRetention(countedDatabase).sweepEligibleMessaging(
-      expiredAt,
-      { policyRetainMs: retentionMs, bound: 0, dryRun: false }
-    )
-    expect(result).toMatchObject({
-      scanned: 0,
-      truncated: true,
-      raced: 0,
-      deleted: 0,
-      compacted: 0,
-    })
-    expect(counter.calls).toBe(0)
-    const [outbox] = await database
-      .select()
-      .from(outboxEvents)
-      .where(eq(outboxEvents.aggregateId, 'zero-bound'))
-    const [inbox] = await database
-      .select()
-      .from(inboxMessages)
-      .where(eq(inboxMessages.messageId, 'zero-bound-delivery'))
-    expect(outbox).toMatchObject({ status: 'published', payload: { untouched: true } })
-    expect(inbox).toMatchObject({ payload: { original: true }, deletedAt: null, revision: 1n })
-  }, 30_000)
+  test(
+    'zero bound admits no candidate claim or class-mutex query',
+    async () => {
+      const isolated = await createDatabase()
+      const database = isolated.application
+      await database.insert(outboxEvents).values({
+        aggregateType: 'retention-budget-test',
+        aggregateId: 'zero-bound',
+        eventType: 'retention.test',
+        payload: { untouched: true },
+        status: 'published',
+        publishedAt: new Date('2024-01-01T00:00:00.000Z'),
+      })
+      await database.insert(inboxMessages).values({
+        consumer: 'retention-budget-test',
+        messageId: 'zero-bound-delivery',
+        payload: { original: true },
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      })
+      const counter = { calls: 0 }
+      const countedDatabase = countTransactionExecuteCalls(database, counter)
+      const result = await new PostgresMessagingRetention(countedDatabase).sweepEligibleMessaging(
+        expiredAt,
+        { policyRetainMs: retentionMs, bound: 0, dryRun: false }
+      )
+      expect(result).toMatchObject({
+        scanned: 0,
+        truncated: true,
+        raced: 0,
+        deleted: 0,
+        compacted: 0,
+      })
+      expect(counter.calls).toBe(0)
+      const [outbox] = await database
+        .select()
+        .from(outboxEvents)
+        .where(eq(outboxEvents.aggregateId, 'zero-bound'))
+      const [inbox] = await database
+        .select()
+        .from(inboxMessages)
+        .where(eq(inboxMessages.messageId, 'zero-bound-delivery'))
+      expect(outbox).toMatchObject({ status: 'published', payload: { untouched: true } })
+      expect(inbox).toMatchObject({ payload: { original: true }, deletedAt: null, revision: 1n })
+    },
+    integrationTestTimeout()
+  )
 })

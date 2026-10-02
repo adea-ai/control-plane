@@ -27,6 +27,7 @@ import {
 } from '@control-plane/orchestration'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { createManagedCloudWorkflowWorkerComposition } from './cloud-composition.ts'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const acceptedAt = '2026-09-20T10:00:00.000Z'
@@ -309,7 +310,7 @@ if (enabled) {
       }
       throw error
     }
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   beforeEach(async () => {
     testFailure = undefined
@@ -381,7 +382,7 @@ if (enabled) {
       }
       throw error
     }
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterEach(async () => {
     if (currentFixture === undefined) return
@@ -393,7 +394,7 @@ if (enabled) {
         'ISOLATED_TEST_COMPOSITION_DISPOSAL_FAILED'
       )
     }
-  }, 30_000)
+  }, integrationTestTimeout())
 
   afterAll(async () => {
     try {
@@ -406,7 +407,7 @@ if (enabled) {
       )
       throw disposalFailure
     }
-  }, 30_000)
+  }, integrationTestTimeout())
 }
 
 registerAdmissionTest(

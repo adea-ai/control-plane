@@ -27,6 +27,7 @@ import {
 } from '@control-plane/database'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import { HostedServerControlPlaneComposition } from './composition.ts'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const now = '2026-09-01T12:00:00.000Z'
@@ -164,7 +165,7 @@ describe.skipIf(!integrationEnabled)('reconciliation projection against PostgreS
       // production projection over the isolated PostgreSQL database.
       reconciliation: { projection: 'observation', intervalMs: 10, batchLimit: 10 },
     })
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     await composition?.close().catch(() => undefined)

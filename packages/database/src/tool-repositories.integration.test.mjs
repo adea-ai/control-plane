@@ -17,7 +17,7 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { ToolExecutorError } from '@control-plane/tool-sdk'
 import { sql } from 'drizzle-orm'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import * as schema from './schema/index.ts'
 import { PostgresToolCallRepository, PostgresToolRegistryRepository } from './tool-repositories.ts'
 
@@ -241,7 +241,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
       migration,
     })
     await isolated.migrate()
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     await Promise.all([...openClients.keys()].map((client) => client.end({ timeout: 5 })))

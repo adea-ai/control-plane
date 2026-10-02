@@ -12,7 +12,7 @@ import {
   PostgresExecutionPlanRepository,
   PostgresExecutionPlanRetention,
 } from './execution-plan-repository.js'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { contextPackages } from './schema/context-packages.js'
 import { executionPlans } from './schema/execution-plans.js'
 import { eq, sql } from 'drizzle-orm'
@@ -119,273 +119,293 @@ describe.skipIf(!enabled)('PostgreSQL ancestry retention', () => {
       }
       throw error
     }
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterEach(async () => {
     const isolated = isolatedDatabase
     isolatedDatabase = undefined
     if (isolated) await timedPhase('dispose', () => isolated.dispose())
-  }, 30_000)
+  }, integrationTestTimeout())
 
-  test('retains a parent plan until its child is swept, then releases the ancestor', async () => {
-    await withDatabase(async (database) => {
-      const package_ = contextPackageSerializationFixtures.futurePi
-      await new PostgresContextPackageRepository(database).put(package_)
-      const parent = planAt('2024-01-01T00:00:00.000Z')
-      const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
-      const plans = new PostgresExecutionPlanRepository(database)
-      await plans.put(parent)
-      const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(
-        parentObservedAt,
-        { policyRetainMs: retentionMs, dryRun: false }
-      )
-      const [parentClockBeforeChild] = await database
-        .select({ clock: executionPlans.unreferencedSince })
-        .from(executionPlans)
-        .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
-        .limit(1)
-      expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
-      await plans.put(child)
-      const [parentClockAfterChild] = await database
-        .select({ clock: executionPlans.unreferencedSince })
-        .from(executionPlans)
-        .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
-        .limit(1)
-      expect(parentClockAfterChild?.clock).toBeNull()
+  test(
+    'retains a parent plan until its child is swept, then releases the ancestor',
+    async () => {
+      await withDatabase(async (database) => {
+        const package_ = contextPackageSerializationFixtures.futurePi
+        await new PostgresContextPackageRepository(database).put(package_)
+        const parent = planAt('2024-01-01T00:00:00.000Z')
+        const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
+        const plans = new PostgresExecutionPlanRepository(database)
+        await plans.put(parent)
+        const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+        await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(
+          parentObservedAt,
+          { policyRetainMs: retentionMs, dryRun: false }
+        )
+        const [parentClockBeforeChild] = await database
+          .select({ clock: executionPlans.unreferencedSince })
+          .from(executionPlans)
+          .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
+          .limit(1)
+        expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
+        await plans.put(child)
+        const [parentClockAfterChild] = await database
+          .select({ clock: executionPlans.unreferencedSince })
+          .from(executionPlans)
+          .where(eq(executionPlans.executionPlanId, parent.executionPlanId))
+          .limit(1)
+        expect(parentClockAfterChild?.clock).toBeNull()
 
-      const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
-      const retention = new PostgresExecutionPlanRetention(database)
-      const first = await retention.deleteEligibleExecutionPlans(observedAt, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(first.deleted).toBe(0)
-      expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
-      expect(await plans.get(planReference(parent))).toBeDefined()
-      expect(await plans.get(planReference(child))).toBeDefined()
-
-      const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
-      const second = await retention.deleteEligibleExecutionPlans(firstExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(second.deleted).toBe(1)
-      expect(second.retainedByReason).toEqual({ reference_pending: 1 })
-      expect(await plans.get(planReference(child))).toBeUndefined()
-
-      const ancestorObserved = await retention.deleteEligibleExecutionPlans(firstExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(ancestorObserved.deleted).toBe(0)
-      expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
-      const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
-      const third = await retention.deleteEligibleExecutionPlans(parentExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(third.deleted).toBe(1)
-      expect(await plans.get(planReference(parent))).toBeUndefined()
-    })
-  }, 30_000)
-
-  test('retains a parent context package until its child is swept, then releases the ancestor', async () => {
-    await withDatabase(async (database) => {
-      const parent = contextPackageSerializationFixtures.futurePi
-      const child = childPackageAt(parent, '2026-09-22T12:00:00.000Z')
-      const packages = new PostgresContextPackageRepository(database)
-      await packages.put(parent)
-      const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
-        parentObservedAt,
-        { policyRetainMs: retentionMs, dryRun: false }
-      )
-      const [parentClockBeforeChild] = await database
-        .select({ clock: contextPackages.unreferencedSince })
-        .from(contextPackages)
-        .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
-        .limit(1)
-      expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
-      await packages.put(child)
-      const [parentClockAfterChild] = await database
-        .select({ clock: contextPackages.unreferencedSince })
-        .from(contextPackages)
-        .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
-        .limit(1)
-      expect(parentClockAfterChild?.clock).toBeNull()
-
-      const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
-      const retention = new PostgresContextPackageRetention(database)
-      const first = await retention.deleteEligibleContextPackages(observedAt, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(first.deleted).toBe(0)
-      expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
-      expect(await packages.get(packageReference(parent))).toBeDefined()
-      expect(await packages.get(packageReference(child))).toBeDefined()
-
-      const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
-      const second = await retention.deleteEligibleContextPackages(firstExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(second.deleted).toBe(1)
-      expect(second.retainedByReason).toEqual({ reference_pending: 1 })
-      expect(await packages.get(packageReference(child))).toBeUndefined()
-
-      const ancestorObserved = await retention.deleteEligibleContextPackages(firstExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(ancestorObserved.deleted).toBe(0)
-      expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
-      const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
-      const third = await retention.deleteEligibleContextPackages(parentExpiry, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(third.deleted).toBe(1)
-      expect(await packages.get(packageReference(parent))).toBeUndefined()
-    })
-  }, 30_000)
-
-  test('new child puts require exact parents while identical replay survives parent cleanup', async () => {
-    await withDatabase(async (database) => {
-      const package_ = contextPackageSerializationFixtures.futurePi
-      const packages = new PostgresContextPackageRepository(database)
-      await packages.put(package_)
-      const parentPlan = planAt('2024-01-01T00:00:00.000Z')
-      const childPlan = childPlanAt(parentPlan, '2024-02-01T00:00:00.000Z')
-      const wrongParentPlan = planAt('2024-03-01T00:00:00.000Z')
-      const plans = new PostgresExecutionPlanRepository(database)
-
-      await expect(plans.put(childPlan)).rejects.toMatchObject({ code: 'INVALID_REFERENCE' })
-      await plans.put(parentPlan)
-      const childReference = await plans.put(childPlan)
-      await database
-        .delete(executionPlans)
-        .where(eq(executionPlans.executionPlanId, parentPlan.executionPlanId))
-      expect(await plans.put(childPlan)).toEqual(childReference)
-
-      await database.insert(executionPlans).values({
-        executionPlanId: parentPlan.executionPlanId,
-        contentDigest: wrongParentPlan.contentDigest,
-        schemaVersion: wrongParentPlan.schemaVersion,
-        workspaceId: wrongParentPlan.correlation.workspaceId,
-        projectId: wrongParentPlan.correlation.projectId,
-        taskId: wrongParentPlan.correlation.taskId,
-        agentId: wrongParentPlan.correlation.agentId,
-        plan: wrongParentPlan,
-        compiledAt: new Date(wrongParentPlan.compiledAt),
-      })
-      await expect(
-        plans.put(childPlanAt(parentPlan, '2024-02-02T00:00:00.000Z'))
-      ).rejects.toMatchObject({
-        code: 'INVALID_REFERENCE',
-      })
-
-      const packageParent = package_
-      const childPackage = childPackageAt(packageParent, '2026-08-22T12:00:00.000Z')
-      const wrongParentPackage = childPackageAt(
-        packageParent,
-        '2026-08-23T12:00:00.000Z',
-        'wrong stored ancestor fixture'
-      )
-      await database
-        .delete(contextPackages)
-        .where(eq(contextPackages.contextPackageId, packageParent.contextPackageId))
-      await expect(packages.put(childPackage)).rejects.toMatchObject({
-        code: 'CONTRADICTORY_CONTEXT_REFERENCE',
-      })
-      await packages.put(packageParent)
-      const childPackageReference = await packages.put(childPackage)
-      await database
-        .delete(contextPackages)
-        .where(eq(contextPackages.contextPackageId, packageParent.contextPackageId))
-      expect(await packages.put(childPackage)).toEqual(childPackageReference)
-
-      await database.insert(contextPackages).values({
-        contextPackageId: packageParent.contextPackageId,
-        contentDigest: wrongParentPackage.contentDigest,
-        schemaVersion: wrongParentPackage.schemaVersion,
-        workspaceId: wrongParentPackage.projectState.workspaceId,
-        projectId: wrongParentPackage.projectState.projectId,
-        contextPackage: wrongParentPackage,
-        compiledAt: new Date(wrongParentPackage.compiledAt),
-      })
-      await expect(
-        packages.put(childPackageAt(packageParent, '2026-08-24T12:00:00.000Z'))
-      ).rejects.toThrow('CONTEXT_PACKAGE_PERSISTENCE_INTEGRITY_ERROR')
-    })
-  }, 30_000)
-
-  test('plan deletion claim blocks a racing child-plan insertion', async () => {
-    await withDatabase(async (database) => {
-      const package_ = contextPackageSerializationFixtures.futurePi
-      await new PostgresContextPackageRepository(database).put(package_)
-      const parent = planAt('2024-01-01T00:00:00.000Z')
-      const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
-      const plans = new PostgresExecutionPlanRepository(database)
-      await plans.put(parent)
-      const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      const retention = new PostgresExecutionPlanRetention(database)
-      const observed = await retention.deleteEligibleExecutionPlans(observedAt, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(observed.deleted).toBe(0)
-      expect(observed.retainedByReason).toEqual({ not_expired: 1 })
-      let competingPut
-      const result = await retention.deleteEligibleExecutionPlans(
-        new Date(observedAt.getTime() + retentionMs + 1),
-        {
+        const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
+        const retention = new PostgresExecutionPlanRetention(database)
+        const first = await retention.deleteEligibleExecutionPlans(observedAt, {
           policyRetainMs: retentionMs,
           dryRun: false,
-          journal: async () => {
-            competingPut = plans.put(child)
-            await waitForLockWait(database, 'execution_plans')
-          },
-        }
-      )
-      expect(result.deleted).toBe(1)
-      await expect(competingPut).rejects.toMatchObject({ code: 'INVALID_REFERENCE' })
-      expect(await plans.get(planReference(child))).toBeUndefined()
-    })
-  }, 30_000)
+        })
+        expect(first.deleted).toBe(0)
+        expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
+        expect(await plans.get(planReference(parent))).toBeDefined()
+        expect(await plans.get(planReference(child))).toBeDefined()
 
-  test('context deletion claim blocks a racing child-package insertion', async () => {
-    await withDatabase(async (database) => {
-      const parent = contextPackageSerializationFixtures.futurePi
-      const child = childPackageAt(parent, '2026-08-22T12:00:00.000Z')
-      const packages = new PostgresContextPackageRepository(database)
-      await packages.put(parent)
-      const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
-      const retention = new PostgresContextPackageRetention(database)
-      const observed = await retention.deleteEligibleContextPackages(observedAt, {
-        policyRetainMs: retentionMs,
-        dryRun: false,
-      })
-      expect(observed.deleted).toBe(0)
-      expect(observed.retainedByReason).toEqual({ not_expired: 1 })
-      let competingPut
-      const result = await retention.deleteEligibleContextPackages(
-        new Date(observedAt.getTime() + retentionMs + 1),
-        {
+        const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+        const second = await retention.deleteEligibleExecutionPlans(firstExpiry, {
           policyRetainMs: retentionMs,
           dryRun: false,
-          journal: async () => {
-            competingPut = packages.put(child)
-            await waitForLockWait(database, 'context_packages')
-          },
-        }
-      )
-      expect(result.deleted).toBe(1)
-      await expect(competingPut).rejects.toMatchObject({
-        code: 'CONTRADICTORY_CONTEXT_REFERENCE',
+        })
+        expect(second.deleted).toBe(1)
+        expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(await plans.get(planReference(child))).toBeUndefined()
+
+        const ancestorObserved = await retention.deleteEligibleExecutionPlans(firstExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(ancestorObserved.deleted).toBe(0)
+        expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+        const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
+        const third = await retention.deleteEligibleExecutionPlans(parentExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(third.deleted).toBe(1)
+        expect(await plans.get(planReference(parent))).toBeUndefined()
       })
-      expect(await packages.get(packageReference(child))).toBeUndefined()
-    })
-  }, 30_000)
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'retains a parent context package until its child is swept, then releases the ancestor',
+    async () => {
+      await withDatabase(async (database) => {
+        const parent = contextPackageSerializationFixtures.futurePi
+        const child = childPackageAt(parent, '2026-09-22T12:00:00.000Z')
+        const packages = new PostgresContextPackageRepository(database)
+        await packages.put(parent)
+        const parentObservedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+        await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
+          parentObservedAt,
+          { policyRetainMs: retentionMs, dryRun: false }
+        )
+        const [parentClockBeforeChild] = await database
+          .select({ clock: contextPackages.unreferencedSince })
+          .from(contextPackages)
+          .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
+          .limit(1)
+        expect(parentClockBeforeChild?.clock?.toISOString()).toBe(parentObservedAt.toISOString())
+        await packages.put(child)
+        const [parentClockAfterChild] = await database
+          .select({ clock: contextPackages.unreferencedSince })
+          .from(contextPackages)
+          .where(eq(contextPackages.contextPackageId, parent.contextPackageId))
+          .limit(1)
+        expect(parentClockAfterChild?.clock).toBeNull()
+
+        const observedAt = new Date(Date.parse(child.compiledAt) + retentionMs + 60_000)
+        const retention = new PostgresContextPackageRetention(database)
+        const first = await retention.deleteEligibleContextPackages(observedAt, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(first.deleted).toBe(0)
+        expect(first.retainedByReason).toEqual({ reference_pending: 1, not_expired: 1 })
+        expect(await packages.get(packageReference(parent))).toBeDefined()
+        expect(await packages.get(packageReference(child))).toBeDefined()
+
+        const firstExpiry = new Date(observedAt.getTime() + retentionMs + 1)
+        const second = await retention.deleteEligibleContextPackages(firstExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(second.deleted).toBe(1)
+        expect(second.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(await packages.get(packageReference(child))).toBeUndefined()
+
+        const ancestorObserved = await retention.deleteEligibleContextPackages(firstExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(ancestorObserved.deleted).toBe(0)
+        expect(ancestorObserved.retainedByReason).toEqual({ not_expired: 1 })
+        const parentExpiry = new Date(firstExpiry.getTime() + retentionMs + 1)
+        const third = await retention.deleteEligibleContextPackages(parentExpiry, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(third.deleted).toBe(1)
+        expect(await packages.get(packageReference(parent))).toBeUndefined()
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'new child puts require exact parents while identical replay survives parent cleanup',
+    async () => {
+      await withDatabase(async (database) => {
+        const package_ = contextPackageSerializationFixtures.futurePi
+        const packages = new PostgresContextPackageRepository(database)
+        await packages.put(package_)
+        const parentPlan = planAt('2024-01-01T00:00:00.000Z')
+        const childPlan = childPlanAt(parentPlan, '2024-02-01T00:00:00.000Z')
+        const wrongParentPlan = planAt('2024-03-01T00:00:00.000Z')
+        const plans = new PostgresExecutionPlanRepository(database)
+
+        await expect(plans.put(childPlan)).rejects.toMatchObject({ code: 'INVALID_REFERENCE' })
+        await plans.put(parentPlan)
+        const childReference = await plans.put(childPlan)
+        await database
+          .delete(executionPlans)
+          .where(eq(executionPlans.executionPlanId, parentPlan.executionPlanId))
+        expect(await plans.put(childPlan)).toEqual(childReference)
+
+        await database.insert(executionPlans).values({
+          executionPlanId: parentPlan.executionPlanId,
+          contentDigest: wrongParentPlan.contentDigest,
+          schemaVersion: wrongParentPlan.schemaVersion,
+          workspaceId: wrongParentPlan.correlation.workspaceId,
+          projectId: wrongParentPlan.correlation.projectId,
+          taskId: wrongParentPlan.correlation.taskId,
+          agentId: wrongParentPlan.correlation.agentId,
+          plan: wrongParentPlan,
+          compiledAt: new Date(wrongParentPlan.compiledAt),
+        })
+        await expect(
+          plans.put(childPlanAt(parentPlan, '2024-02-02T00:00:00.000Z'))
+        ).rejects.toMatchObject({
+          code: 'INVALID_REFERENCE',
+        })
+
+        const packageParent = package_
+        const childPackage = childPackageAt(packageParent, '2026-08-22T12:00:00.000Z')
+        const wrongParentPackage = childPackageAt(
+          packageParent,
+          '2026-08-23T12:00:00.000Z',
+          'wrong stored ancestor fixture'
+        )
+        await database
+          .delete(contextPackages)
+          .where(eq(contextPackages.contextPackageId, packageParent.contextPackageId))
+        await expect(packages.put(childPackage)).rejects.toMatchObject({
+          code: 'CONTRADICTORY_CONTEXT_REFERENCE',
+        })
+        await packages.put(packageParent)
+        const childPackageReference = await packages.put(childPackage)
+        await database
+          .delete(contextPackages)
+          .where(eq(contextPackages.contextPackageId, packageParent.contextPackageId))
+        expect(await packages.put(childPackage)).toEqual(childPackageReference)
+
+        await database.insert(contextPackages).values({
+          contextPackageId: packageParent.contextPackageId,
+          contentDigest: wrongParentPackage.contentDigest,
+          schemaVersion: wrongParentPackage.schemaVersion,
+          workspaceId: wrongParentPackage.projectState.workspaceId,
+          projectId: wrongParentPackage.projectState.projectId,
+          contextPackage: wrongParentPackage,
+          compiledAt: new Date(wrongParentPackage.compiledAt),
+        })
+        await expect(
+          packages.put(childPackageAt(packageParent, '2026-08-24T12:00:00.000Z'))
+        ).rejects.toThrow('CONTEXT_PACKAGE_PERSISTENCE_INTEGRITY_ERROR')
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'plan deletion claim blocks a racing child-plan insertion',
+    async () => {
+      await withDatabase(async (database) => {
+        const package_ = contextPackageSerializationFixtures.futurePi
+        await new PostgresContextPackageRepository(database).put(package_)
+        const parent = planAt('2024-01-01T00:00:00.000Z')
+        const child = childPlanAt(parent, '2024-02-01T00:00:00.000Z')
+        const plans = new PostgresExecutionPlanRepository(database)
+        await plans.put(parent)
+        const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+        const retention = new PostgresExecutionPlanRetention(database)
+        const observed = await retention.deleteEligibleExecutionPlans(observedAt, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(observed.deleted).toBe(0)
+        expect(observed.retainedByReason).toEqual({ not_expired: 1 })
+        let competingPut
+        const result = await retention.deleteEligibleExecutionPlans(
+          new Date(observedAt.getTime() + retentionMs + 1),
+          {
+            policyRetainMs: retentionMs,
+            dryRun: false,
+            journal: async () => {
+              competingPut = plans.put(child)
+              await waitForLockWait(database, 'execution_plans')
+            },
+          }
+        )
+        expect(result.deleted).toBe(1)
+        await expect(competingPut).rejects.toMatchObject({ code: 'INVALID_REFERENCE' })
+        expect(await plans.get(planReference(child))).toBeUndefined()
+      })
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'context deletion claim blocks a racing child-package insertion',
+    async () => {
+      await withDatabase(async (database) => {
+        const parent = contextPackageSerializationFixtures.futurePi
+        const child = childPackageAt(parent, '2026-08-22T12:00:00.000Z')
+        const packages = new PostgresContextPackageRepository(database)
+        await packages.put(parent)
+        const observedAt = new Date(Date.parse(parent.compiledAt) + retentionMs + 60_000)
+        const retention = new PostgresContextPackageRetention(database)
+        const observed = await retention.deleteEligibleContextPackages(observedAt, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        expect(observed.deleted).toBe(0)
+        expect(observed.retainedByReason).toEqual({ not_expired: 1 })
+        let competingPut
+        const result = await retention.deleteEligibleContextPackages(
+          new Date(observedAt.getTime() + retentionMs + 1),
+          {
+            policyRetainMs: retentionMs,
+            dryRun: false,
+            journal: async () => {
+              competingPut = packages.put(child)
+              await waitForLockWait(database, 'context_packages')
+            },
+          }
+        )
+        expect(result.deleted).toBe(1)
+        await expect(competingPut).rejects.toMatchObject({
+          code: 'CONTRADICTORY_CONTEXT_REFERENCE',
+        })
+        expect(await packages.get(packageReference(child))).toBeUndefined()
+      })
+    },
+    integrationTestTimeout()
+  )
 })

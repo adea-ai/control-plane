@@ -4,7 +4,7 @@ import process from 'node:process'
 import { loadDatabaseCredentials, loadDatabaseSessionCredentials } from '@control-plane/config'
 import { RuntimeNodeCredentialClaimsSchema } from '@control-plane/runtime-gateway-protocol'
 import { sql } from 'drizzle-orm'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { createPostgresConnection } from './connection.ts'
 import { PostgresRuntimeNodeIdentityRepository } from './runtime-node-identity-repository.ts'
 
@@ -39,7 +39,7 @@ describe.skipIf(!enabled)('PostgreSQL RuntimeNode identity persistence', () => {
     applicationRepository = new PostgresRuntimeNodeIdentityRepository(isolated.application, {
       revocationClient: notificationConnection.database.$client,
     })
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     try {
