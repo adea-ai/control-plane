@@ -4,10 +4,10 @@ Production-shaped TypeScript monorepo for the Control Plane. The repository is o
 
 ## Current delivery sequence
 
-- **M9 — Managed Cloud Deployment, Hardening & Evals:** make the Railway + Neon + R2 + Restate managed-cloud profile fully operational and freeze deployment-independent behavior.
-- **M10 — Local & Hosted Portability:** port the accepted M9 semantics to embedded Local and user-controlled VPS/container profiles.
-- **M11 — Feature Completion & Production Audit:** independently audit managed cloud, Local, and Hosted.
-- **M12 — Cross-Product Integration & Release:** connect the approved Control Plane candidate to Adea and optional Cortana; per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
+- **M9: Managed Cloud Deployment, Hardening & Evals.** Make the Railway + Neon + R2 + Restate managed-cloud profile fully operational and freeze deployment-independent behavior.
+- **M10: Local & Hosted Portability.** Port the accepted M9 semantics to embedded Local and user-controlled VPS/container profiles.
+- **M11: Feature Completion & Production Audit.** Independently audit managed cloud, Local, and Hosted.
+- **M12: Cross-Product Integration & Release.** Connect the approved Control Plane candidate to Adea and optional Cortana. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
 
 M9 replaced the former AWS/ECS/Terraform and Temporal implementation with the active Cloud profile:
 Railway + Neon + Cloudflare R2 + Restate. The product has exactly three deployment profiles: Cloud,

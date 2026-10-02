@@ -11,7 +11,7 @@ Control Plane recovery is profile-specific but preserves one semantic rule: comm
 Historical AWS/RDS/ECS recovery text is retained only as decision provenance. It is not executable
 recovery code, a compatibility layer, or the current first-party Cloud runbook.
 
-## Managed-cloud recovery target — M9
+## Managed-cloud recovery target (M9)
 
 The accepted cloud profile is Railway compute, separate Control Plane Neon PostgreSQL, Cloudflare R2, and Restate.
 
@@ -34,7 +34,7 @@ Required M9 evidence includes:
 M9.6 #73 did not close from configuration shape alone; its live staging restart/recovery evidence is
 recorded in `docs/evidence/m9-cloud-certification-2026-08-28.md`.
 
-## Local recovery target — M10
+## Local recovery target (M10)
 
 Local uses the all-in-one Control Plane composition, Node 24 `node:sqlite` embedded workflow queue, filesystem storage, and direct RuntimeTransport; it has no Restate process.
 
@@ -54,7 +54,7 @@ Required behavior:
 - no Runtime Gateway dependency for co-located execution;
 - no silent failover to Adea Cloud when the selected Local node is unavailable.
 
-## Hosted recovery target — M10
+## Hosted recovery target (M10)
 
 `simple` uses SQLite + Restate + filesystem storage. `server` uses PostgreSQL + Restate and filesystem or S3-compatible storage.
 

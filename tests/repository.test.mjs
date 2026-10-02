@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import {
   copyFile,
   mkdir,
@@ -220,6 +220,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/container-promotion.test.mjs',
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
+    'tests/integration-shards.test.mjs',
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
@@ -400,7 +401,8 @@ end_of_record
 test('configures the Code Foundry CI baseline for the public direct-workflow repository', async () => {
   const config = await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')
 
-  assert.match(config, /^features: all$/m)
+  assert.match(config, /^features: validation,release,draft-pr$/m)
+  assert.match(config, /^dependency_updater: renovate$/m)
   assert.match(config, /^license: apache-2\.0$/m)
   assert.match(config, /^git_workflow: direct$/m)
   assert.match(config, /^release_merge_strategy: squash$/m)
@@ -478,7 +480,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
       `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${runtimeRef}`
     )
   )
-  assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
+  assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
   assert.match(validation, /codeql-runner: ubuntu-latest/)
   assert.match(validation, /unit-runner: ubuntu-slim/)
@@ -635,6 +637,10 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /database system is accepting SQL connections/)
   assert.match(runner, /'test:integration', '--concurrency=1'/)
   assert.match(runner, /'stop', '--timeout', '60', 'postgres'/)
+  // The sharded remote lane survives Neon pooler connection drops: a raised
+  // per-test ceiling plus one fresh-process retry per file.
+  assert.match(runner, /remoteDatabase \? '120000' : '30000'/)
+  assert.match(runner, /retrying once before failing the shard/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
   assert.match(testing.scripts['test:integration'], /--timeout 30000/)
   assert.match(sharedPostgresSuite, /30_000/)
@@ -873,27 +879,38 @@ test('rejects concrete vendor imports from core packages', async () => {
   }
 }, 60_000)
 
-test('uses one draft-first dependency updater with reviewed major and non-major batches', async () => {
-  assert(!readdirSync(new URL('../.github/', import.meta.url)).includes('dependabot.yml'))
-  const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8'))
-  assert.equal(renovate.draftPR, true)
-  assert.notEqual(renovate.automerge, true)
-  const nonMajor = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('patch'))
-  const major = renovate.packageRules.find((rule) => rule.matchUpdateTypes?.includes('major'))
-  assert.equal(nonMajor.groupName, 'external non-major dependencies')
-  assert.deepEqual(nonMajor.matchUpdateTypes, ['patch', 'minor', 'pin', 'digest'])
-  assert.equal(major.groupName, 'external major dependencies')
-  for (const rule of renovate.packageRules) assert.notEqual(rule.automerge, true)
-  const managed = renovate.packageRules.find((rule) => rule.enabled === false)
-  assert(managed, 'Sync-managed Code Foundry pins must be excluded from Renovate updates')
+test('uses Renovate with grouped draft batches and sync-managed holds', async () => {
   assert(
-    managed.matchPackageNames.some((pattern) => {
-      const expression = new RegExp(pattern.slice(1, -1))
-      return (
-        expression.test('0xPlayerOne/code-foundry') &&
-        expression.test('0xPlayerOne/code-foundry/.github/workflows/validation.yml') &&
-        !expression.test('actions/checkout')
-      )
-    })
+    !existsSync(new URL('../.github/dependabot.yml', import.meta.url)),
+    'Dependabot must not race the managed Renovate updater'
+  )
+  const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8'))
+  assert(
+    (renovate.extends ?? []).includes('config:recommended'),
+    'every ecosystem stays covered by the recommended preset'
+  )
+  assert.equal(renovate.draftPR, true, 'every dependency PR must open as a draft')
+  const nonMajor = renovate.packageRules.find(
+    (rule) => rule.groupName === 'external non-major dependencies'
+  )
+  const major = renovate.packageRules.find(
+    (rule) => rule.groupName === 'external major dependencies'
+  )
+  assert(nonMajor, 'non-major updates must ride one grouped PR')
+  assert.deepEqual(nonMajor.matchUpdateTypes, ['patch', 'minor', 'pin', 'digest'])
+  assert(major, 'major bumps must share one grouped PR')
+  assert.deepEqual(major.matchUpdateTypes, ['major'])
+  const pinHold = renovate.packageRules.find((rule) =>
+    (rule.matchPackageNames ?? []).some((name) => name.startsWith('/^0xPlayerOne\\/code-foundry/'))
+  )
+  assert.equal(
+    pinHold?.enabled,
+    false,
+    'Sync-managed Code Foundry pins must be excluded from dependency updates'
+  )
+  assert.equal('automerge' in renovate, false, 'dependency PRs must never automerge')
+  assert(
+    renovate.packageRules.every((rule) => !('automerge' in rule)),
+    'dependency PRs must never automerge'
   )
 })

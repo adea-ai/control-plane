@@ -51,13 +51,14 @@ function pluginFixture() {
   }
 }
 
-function snapshotFixture() {
+function snapshotFixture(overrides = {}) {
   const plugin = pluginFixture()
   const body = {
     generatedAt: '2026-08-31T00:00:00.000Z',
     plugins: [plugin],
     schemaVersion: 1,
     sources: [{ sourceId: 'openai-official' }],
+    ...overrides,
   }
   const catalogId = `catalog:${digest(body).slice('sha256:'.length)}`
   const catalog = { ...body, catalogId }
@@ -387,6 +388,109 @@ describe('Control Plane marketplace contract', () => {
     // Let the background refresh settle before asserting the stale marker.
     await new Promise((resolve) => setTimeout(resolve, 5))
     expect((await registry.getCatalog()).state).toBe('stale')
+  })
+
+  test('skips the immutable artifact download while the pointer names the held catalog', async () => {
+    // Steady-state polling must cost one small pointer request, not a full
+    // ~50 MB re-download: artifacts are content-addressed by the catalog
+    // identity, so a matching pointer proves the held snapshot is current.
+    const fixture = snapshotFixture()
+    const bodies = new Map(Object.entries(fixture.artifacts).map(([name, body]) => [name, body]))
+    const requested = []
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input) => {
+        const url = String(input)
+        requested.push(url.split('/').at(-1))
+        const name = requested.at(-1)
+        return new Response(bodies.get(name) ?? 'not found', {
+          status: bodies.has(name) ? 200 : 404,
+        })
+      },
+      latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+      immutableArtifactBaseUrl: 'https://registry.example/catalogs/{catalogId}',
+      refreshIntervalMs: 0,
+    })
+    expect((await registry.getCatalog()).state).toBe('ready')
+    expect(requested.length).toBeGreaterThan(1)
+
+    requested.length = 0
+    expect((await registry.getCatalog()).catalogId).toBe(fixture.catalog.catalogId)
+    // Let the background refresh settle before asserting what it fetched.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(requested).toEqual(['catalog-latest.v1.json'])
+  })
+
+  test('downloads the full catalog again once the pointer names a new one', async () => {
+    const fixture = snapshotFixture()
+    const next = snapshotFixture({ generatedAt: '2026-09-30T00:00:00.000Z' })
+    const bodies = new Map(Object.entries(fixture.artifacts).map(([name, body]) => [name, body]))
+    const requested = []
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input) => {
+        const url = String(input)
+        const name = url.split('/').at(-1)
+        requested.push(name)
+        return new Response(bodies.get(name) ?? 'not found', {
+          status: bodies.has(name) ? 200 : 404,
+        })
+      },
+      latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+      immutableArtifactBaseUrl: 'https://registry.example/catalogs/{catalogId}',
+      refreshIntervalMs: 0,
+    })
+    expect((await registry.getCatalog()).catalogId).toBe(fixture.catalog.catalogId)
+
+    requested.length = 0
+    for (const [name, body] of Object.entries(next.artifacts)) bodies.set(name, body)
+    // The cached snapshot is served while the background refresh downloads
+    // the new catalog; wait for it to settle before asserting the swap.
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if ((await registry.getCatalog()).catalogId === next.catalog.catalogId) break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect((await registry.getCatalog()).catalogId).toBe(next.catalog.catalogId)
+    expect(requested).toContain('catalog.v1.json')
+    expect(requested.filter((name) => name === 'catalog-latest.v1.json').length).toBeGreaterThan(0)
+  })
+
+  test('a pointer failure turns the snapshot stale and a pointer-only refresh clears it', async () => {
+    // Only the pointer can make an unchanged catalog stale: artifacts are
+    // identity-addressed and are not re-fetched while the pointer matches.
+    const fixture = snapshotFixture()
+    let failPointer = false
+    const requested = []
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input) => {
+        const url = String(input)
+        const name = url.split('/').at(-1)
+        requested.push(name)
+        if (failPointer && name === 'catalog-latest.v1.json')
+          return new Response('boom', { status: 500 })
+        return new Response(fixture.artifacts[name] ?? 'not found', {
+          status: fixture.artifacts[name] === undefined ? 404 : 200,
+        })
+      },
+      latestUrl: 'https://registry.example/catalog-assets/catalog-latest.v1.json',
+      immutableArtifactBaseUrl: 'https://registry.example/catalogs/{catalogId}',
+      refreshIntervalMs: 0,
+    })
+    expect((await registry.getCatalog()).state).toBe('ready')
+
+    failPointer = true
+    await registry.getCatalog()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect((await registry.getCatalog()).state).toBe('stale')
+
+    // Healing the pointer resolves the stale state with one small request:
+    // the held catalog still verifies for the named identity.
+    failPointer = false
+    requested.length = 0
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if ((await registry.getCatalog()).state === 'ready') break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect((await registry.getCatalog()).state).toBe('ready')
+    expect(requested.every((name) => name === 'catalog-latest.v1.json')).toBe(true)
   })
 
   test('rejects the apollo-skills symlink escape and traversal paths', async () => {

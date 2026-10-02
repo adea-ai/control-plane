@@ -1,12 +1,25 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
+import { parseIntegrationShard, selectIntegrationShard } from './integration-shards.mjs'
 
 // Keep the documented production-like command visible to repository policy tests.
 const COMPOSE_COMMAND = 'docker compose'
 
+// `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite
+// from scripts/integration-shards.mjs instead of the full turbo sweep. The
+// Neon workflow pairs each shard with its own disposable branch; unsharded
+// runs keep the exact historical behavior.
+const integrationShard = parseIntegrationShard(
+  process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
+    process.env.INTEGRATION_SHARD
+)
+if (integrationShard !== null) {
+  console.log(`Running integration shard ${integrationShard} of the partitioned suite.`)
+}
+
 function run(command, arguments_, options = {}) {
   const result = spawnSync(command, arguments_, {
-    cwd: process.cwd(),
+    cwd: options.cwd ?? process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
     env: options.environment ?? process.env,
@@ -107,10 +120,41 @@ try {
   }
   // Stream progress even while a remote database task is unfinished. Grouped
   // CI logs hide test/setup timing until the whole package exits.
-  run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
-    environment: integrationEnvironment,
-  })
-  run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
+  if (integrationShard === null) {
+    run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
+      environment: integrationEnvironment,
+    })
+  } else {
+    // A remote branch stretches tests that finish in seconds locally to
+    // 30-70 seconds each, and its pooler occasionally severs a pooled
+    // connection mid-run (CONNECTION_CLOSED / CONNECTION_ENDED), leaving
+    // later queries blocked long enough to trip the per-test timeout. The
+    // remote lane therefore raises the ceiling and runs every file in its
+    // own process with one retry, so a transient drop costs one file
+    // instead of poisoning the rest of the shard. The local lane keeps the
+    // fast-fail ceiling and the package-level sweep.
+    const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
+    for (const group of selectIntegrationShard(integrationShard)) {
+      for (const file of group.files) {
+        try {
+          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+            cwd: group.package,
+            environment: integrationEnvironment,
+          })
+        } catch {
+          console.log(`Integration file ${file} failed; retrying once before failing the shard.`)
+          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+            cwd: group.package,
+            environment: integrationEnvironment,
+          })
+        }
+      }
+    }
+  }
+  // One drill execution per verification: shard 1 owns it in sharded runs.
+  if (integrationShard === null || integrationShard === 1) {
+    run('bun', ['scripts/run-cloud-remote-drill.mjs'], { environment: integrationEnvironment })
+  }
   if (remoteDatabase) {
     console.log('Skipping PostgreSQL disruption and restore drills against a remote target.')
   } else {

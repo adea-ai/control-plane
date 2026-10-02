@@ -32,14 +32,14 @@ Applications may select concrete adapters. Stable packages must not import appli
 
 The accepted implementation sequence is:
 
-1. **M9 — Managed Cloud Deployment, Hardening & Evals:** establish a working Railway + Neon + R2 + Restate managed-cloud reference and freeze deployment-independent contracts/behavior.
-2. **M10 — Local & Hosted Portability:** extract/consume infrastructure ports and add Local/Hosted adapters while preserving the M9 semantic baseline.
-3. **M11 — Feature Completion & Production Audit:** independently audit managed cloud, Local, and Hosted as one portable product.
-4. **M12 — Cross-Product Integration & Release:** connect independently approved Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
+1. **M9: Managed Cloud Deployment, Hardening & Evals.** Establish a working Railway + Neon + R2 + Restate managed-cloud reference and freeze deployment-independent contracts and behavior.
+2. **M10: Local & Hosted Portability.** Extract and consume infrastructure ports, then add Local/Hosted adapters while preserving the M9 semantic baseline.
+3. **M11: Feature Completion & Production Audit.** Independently audit managed cloud, Local, and Hosted as one portable product.
+4. **M12: Cross-Product Integration & Release.** Connect independently approved Adea and optional Cortana release candidates. Per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459), CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it.
 
 This implementation order is distinct from Adea product rollout. The Control Plane cloud profile is implemented in M9 even though `agent_hq_cloud` remains a later user-visible Adea execution-location option.
 
-### Managed cloud — M9 reference
+### Managed cloud (M9 reference)
 
 - Railway compute/service lifecycle.
 - Separate Control Plane Neon PostgreSQL.
@@ -49,13 +49,23 @@ This implementation order is distinct from Adea product rollout. The Control Pla
 - Railway service/shared variables for bootstrap/service configuration.
 - Dynamic connector/provider credentials remain behind the credential-vault secret boundary rather than becoming per-user environment variables.
 
+Cloud readiness and schema compatibility are separate checks. The API `/ready` endpoint checks
+service readiness and runs a PostgreSQL `SELECT 1` probe with a three-second timeout; it does not
+compare physical table or index definitions. The design requires incompatible schemas to fail
+closed, but PostgreSQL `/ready` does not implement a general physical-schema check. The production
+promotion gate separately verifies the release migration-history prefix, applies migrations, then
+checks the complete history, runtime role privileges, and selected retention-clock columns. Those
+targeted checks do not satisfy a general physical-schema comparison. SQLite restore validation
+checks staged database integrity, schema version, base table definitions, and expiry indexes before
+replacing the live database.
+
 Control Plane R2 storage and Adea Artifact storage are separate authorities even if they use the same Cloudflare account/provider. Each product uses separately scoped buckets/environment sets and credentials; Control Plane's `ctrl-plane` bucket is not Adea Artifact storage.
 
 **Promotion triggers and the production deploy step.** A published `workspace-v*` release (and manual dispatch with a `workspace-v*` tag) triggers `container-promotion.yml` to validate the tagged candidate, build the images, scan them, publish to GHCR, attest the digest, and then promote the attested digests to Railway production. The deploy step's trigger is the event, not the release: a published `workspace-v*` release deploys production automatically as part of the same promotion run, while a manual `workflow_dispatch` deploys only when invoked with `deploy: true` (the replay path for re-promoting an already-attested release). Deploy verification requires Railway to report the promoted `image@sha256:…` source **and** digest on both production services; `/health` must then report the release's commit (baked as `SOURCE_SHA` → image `COMMIT_SHA`, no service-level pin), `/ready` must answer 200, and unauthenticated `/v1` requests must fail closed with 401.
 
 **Production image build path (canonical).** `.github/workflows/container-promotion.yml` builds the `control-api` and `workflow-worker` release images once from the repository's digest-pinned `infrastructure/containers/Dockerfile`, with the deployable service selected by the baked `APP_NAME`. Before publication, that exact local image passes the pinned Trivy CRITICAL/HIGH gate and produces a CycloneDX SBOM. The workflow then publishes it to the public GHCR release namespace, records and attests the registry digest, and changes each Railway production service to the corresponding `image@sha256:…` source. Deployment verification requires Railway to report both that exact source reference and digest. Railway source builds and Railpack inference are not supported production paths.
 
-### Local — M10, Restate-free since CP1 (#548)
+### Local (M10, Restate-free since CP1 #548)
 
 - all-in-one Control Plane composition;
 - Node 24 `node:sqlite` through Drizzle behind `PersistenceProvider`;
@@ -64,7 +74,7 @@ Control Plane R2 storage and Adea Artifact storage are separate authorities even
 - direct co-located RuntimeTransport/RuntimeDriver path;
 - no Docker, PostgreSQL, Redis/Valkey, Temporal, or Runtime Gateway requirement for ordinary execution.
 
-### Hosted — M10
+### Hosted (M10)
 
 - `simple`: all-in-one + SQLite + Restate + filesystem storage;
 - `server`: PostgreSQL + Restate + filesystem or S3-compatible storage, with split services/Runtime Gateway only where topology requires them;

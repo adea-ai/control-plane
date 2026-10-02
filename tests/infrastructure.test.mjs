@@ -62,7 +62,8 @@ test('owns the active Railway project graph as code without committed secrets', 
   assert.match(source, /service\('restate'/)
   assert.match(source, /volume\('restate-data'/)
   assert.match(source, /docker\.restate\.dev\/restatedev\/restate:1\.7\.7@sha256:/)
-  assert.match(source, /healthcheckPath: '\/ready'/)
+  assert.match(source, /healthcheckPath: production \? '\/health' : '\/ready'/)
+  assert.match(source, /memoryBytes: 1_073_741_824/)
   assert.match(source, /['"]\/restate-data['"]: restateData/)
   assert.match(source, /DATABASE_URL: preserve\(\)/)
   assert.match(source, /RESTATE_INGRESS_URL:/)
@@ -114,26 +115,31 @@ test('maps Railway staging and production to isolated Neon branches', async () =
   assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 1)
 })
 
-test('defines a zero-compute production standby and bounded staging cost posture', async () => {
+test('keeps production down to the MVP dependency set and staging on-demand', async () => {
   const policy = JSON.parse(await readRepositoryFile('infrastructure/railway/cost-policy.json'))
   const source = await readRepositoryFile('.railway/railway.ts')
 
-  assert.deepEqual(policy.environments.production, {
-    availability: 'configured-not-running',
-    sourceConnected: false,
-    activationBranch: 'main',
-    standbyAction: 'remove-active-deployment',
-    services: {
-      'control-api': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
+  assert.equal(policy.environments.production.availability, 'control-api-online-runtime-on-demand')
+  assert.equal(policy.environments.production.sourceConnected, false)
+  assert.equal(policy.environments.production.activationBranch, 'main')
+  assert.equal(policy.environments.production.standbyAction, 'remove-active-deployment')
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(policy.environments.production.services).map(([name, value]) => [
+        name,
+        {
+          configuredReplicas: value.configuredReplicas,
+          runningReplicas: value.runningReplicas,
+          serverless: value.serverless,
+        },
+      ])
+    ),
+    {
+      'control-api': { configuredReplicas: 1, runningReplicas: 1, serverless: false },
       'workflow-worker': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-      restate: {
-        configuredReplicas: 1,
-        runningReplicas: 0,
-        serverless: false,
-        preserveVolume: true,
-      },
-    },
-  })
+      restate: { configuredReplicas: 1, runningReplicas: 0, serverless: false },
+    }
+  )
   assert.equal(policy.environments.staging.availability, 'configured-on-demand-reference')
   assert.equal(policy.environments.staging.sourceConnected, false)
   assert.equal(policy.environments.staging.activationBranch, 'main')
@@ -159,6 +165,12 @@ test('defines a zero-compute production standby and bounded staging cost posture
   assert.equal((source.match(/numReplicas: desiredReplicas/g) ?? []).length, 3)
   assert.equal((source.match(/sleepApplication: false/g) ?? []).length, 3)
   assert.match(source, /const applicationSource = production \? undefined : github/)
+  // Production activation shape: control-api only, so the disabled runtime
+  // placeholders hold no compute. Staging keeps the full qualification set.
+  assert.match(
+    source,
+    /resources: production \? \[controlApi\] : \[controlApi, workflowWorker, restate, restateData\]/
+  )
 })
 
 test('plans a deterministic Railway standby transition without deleting services', async () => {
@@ -393,7 +405,7 @@ test('packages the hosted simple profile as one hardened user-owned composition'
   assert.match(compose, /^\s+POSTGRES_PASSWORD: \$\{POSTGRES_PASSWORD:-\}$/m)
   assert.match(compose, /profiles:\s*\[server\]/)
   assert.match(compose, /postgres:18\.6-alpine@sha256:[a-f0-9]{64}/)
-  assert.match(compose, /restatedev\/restate:1\.7\.12@sha256:[a-f0-9]{64}/)
+  assert.match(compose, /restatedev\/restate:1\.7\.13@sha256:[a-f0-9]{64}/)
   assert.match(compose, /condition:\s*service_completed_successfully/)
   assert.match(compose, /DATABASE_MIGRATION_URL:/)
   assert.match(compose, /postgresql:\/\/control_plane_migrator:/)

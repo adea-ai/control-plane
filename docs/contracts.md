@@ -59,7 +59,7 @@ data rather than persistence rows.
 - Events identify the event, workspace/project, occurrence time, causation, and normalized data.
 - Usage records expose provider-neutral token, duration, and optional ISO-currency cost totals.
 - Artifact references expose an opaque locator, media type, immutable version, size, and SHA-256
-  digest—not a database row or provider credential.
+  digest. They do not expose a database row or provider credential.
 - Runtime read models expose Control Plane status and opaque RuntimeNode/connection references. They
   never expose local paths, device credentials, process handles, or native harness configuration.
 

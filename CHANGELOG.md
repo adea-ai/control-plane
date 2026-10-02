@@ -1,5 +1,73 @@
 # Changelog
 
+## [1.64.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.6...workspace-v1.64.7) (2026-10-02)
+
+
+### Bug Fixes
+
+* silence shellcheck SC2034 in the production readiness retry loop ([#841](https://github.com/adea-ai/control-plane/issues/841)) ([3d27837](https://github.com/adea-ai/control-plane/commit/3d278371a2574d11c726e9b7fd824db222da587c))
+
+## [1.64.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.5...workspace-v1.64.6) (2026-10-02)
+
+
+### Maintenance
+
+* **infra:** align production with the local-first MVP cost posture ([#839](https://github.com/adea-ai/control-plane/issues/839)) ([e8af976](https://github.com/adea-ai/control-plane/commit/e8af97608f103d1312cb907ba5819f4398e9c414))
+
+## [1.64.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.4...workspace-v1.64.5) (2026-10-02)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade to v1.41.0 ([#836](https://github.com/adea-ai/control-plane/issues/836)) ([5f67a5d](https://github.com/adea-ai/control-plane/commit/5f67a5d142921e50051b360e99d8a4321c35ffd4))
+
+## [1.64.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.3...workspace-v1.64.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** survive Neon pooler drops in the sharded integration lane ([#834](https://github.com/adea-ai/control-plane/issues/834)) ([0e0e2f5](https://github.com/adea-ai/control-plane/commit/0e0e2f52873220a60fc5d58b5238b911f55e8505))
+
+## [1.64.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.2...workspace-v1.64.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** retry the Neon integration slice once inside the verify step ([#832](https://github.com/adea-ai/control-plane/issues/832)) ([6d5aea4](https://github.com/adea-ai/control-plane/commit/6d5aea45d4c6c829e62dd4eb6e1322b45aacb6b7))
+
+## [1.64.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.1...workspace-v1.64.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#830](https://github.com/adea-ai/control-plane/issues/830)) ([4af601e](https://github.com/adea-ai/control-plane/commit/4af601ec859d8ca9d0b66dccb15a8d84618dd4be))
+
+## [1.64.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.0...workspace-v1.64.1) (2026-10-02)
+
+
+### Documentation
+
+* clarify migrations readiness and active guidance ([#817](https://github.com/adea-ai/control-plane/issues/817)) ([fe8cd5f](https://github.com/adea-ai/control-plane/commit/fe8cd5fdcc7100369b2bc7f2089cab1106213c45))
+
+
+### Maintenance
+
+* **deps:** update dependency @aws-sdk/client-s3 to v3.1145.0 ([#827](https://github.com/adea-ai/control-plane/issues/827)) ([ed382ab](https://github.com/adea-ai/control-plane/commit/ed382ab45cd4b3b4aa122f7a63d5adb465d10e0f))
+* **deps:** update dependency @sentry/node to v11.2.0 ([#828](https://github.com/adea-ai/control-plane/issues/828)) ([4c1341d](https://github.com/adea-ai/control-plane/commit/4c1341d678c6133133501fd33603f8f54dc539af))
+* make dependency updates Renovate-only and drop Dependabot ([#826](https://github.com/adea-ai/control-plane/issues/826)) ([86f0447](https://github.com/adea-ai/control-plane/commit/86f04473c481c4850c6c8a8209bb686b2373c0ac))
+
+## [1.64.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.63.0...workspace-v1.64.0) (2026-10-01)
+
+
+### Features
+
+* **ci:** shard the trusted-main Neon verification into per-branch matrix legs ([#821](https://github.com/adea-ai/control-plane/issues/821)) ([965de43](https://github.com/adea-ai/control-plane/commit/965de43c8ecebf1bea7f1d40e6930f0b4bc62392))
+
+
+### Maintenance
+
+* code-foundry-1.39.3 ([#819](https://github.com/adea-ai/control-plane/issues/819)) ([533c97a](https://github.com/adea-ai/control-plane/commit/533c97abe75e24c1463d8a89bdba8bd8cf70c3bb))
+
 ## [1.63.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.62.0...workspace-v1.63.0) (2026-10-01)
 
 

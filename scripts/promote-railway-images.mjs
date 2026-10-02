@@ -5,8 +5,10 @@ const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2'
 const PROJECT_ID = '18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f'
 const ENVIRONMENT_ID = '52f5b0ac-2af0-4792-aa56-30d80e5db31e'
 const SERVICE_IDS = Object.freeze({
+  // Production promotes control-api only while the cloud execution runtime is
+  // disabled. workflow-worker returns here (with a fresh Railway service ID)
+  // as part of reviewed cloud runtime reactivation work.
   'control-api': '9167a33b-af0f-4780-8614-a5a161697c9c',
-  'workflow-worker': 'd733ec0d-bda5-4be5-86b9-637154d282eb',
 })
 
 const DEPLOYMENTS_QUERY = `query($input: DeploymentListInput!) {
@@ -243,7 +245,7 @@ function validateManifests(manifests) {
     byTarget.set(manifest.target, manifest)
   }
   if (byTarget.size !== Object.keys(SERVICE_IDS).length) {
-    throw new Error('Promotion requires exactly the control-api and workflow-worker manifests')
+    throw new Error('Promotion requires exactly the control-api manifest')
   }
   return byTarget
 }

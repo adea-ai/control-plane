@@ -28,6 +28,7 @@ async function findCleanupBranch(responses, overrides = {}) {
       env: {
         NEON_API_KEY: 'synthetic-key',
         NEON_PROJECT_ID: 'synthetic-project-123',
+        SHARD: '1',
         GITHUB_RUN_ID: '404',
         GITHUB_RUN_ATTEMPT: '1',
         GITHUB_OUTPUT: '/synthetic/output',
@@ -48,7 +49,7 @@ async function findCleanupBranch(responses, overrides = {}) {
 
 const previewBranch = {
   id: 'br-synthetic-preview',
-  name: 'preview/main-404-1',
+  name: 'preview/main-404-1-s1',
   project_id: 'synthetic-project-123',
   parent_id: 'br-synthetic-parent',
   primary: false,
@@ -60,8 +61,41 @@ describe('Neon preview cleanup lookup', () => {
   test('runs Neon credentialed validation only on main pushes', () => {
     expect(workflowEvents(workflow)).toBe('  push:\n    branches:\n      - main')
     expect(workflow).toContain('preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}')
+    expect(workflow).toContain(
+      'name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-s${{ matrix.shard }}'
+    )
     expect(workflow).toContain("date -u --date '+1 day'")
     expect(workflow).toContain("if: always() && steps.create_neon_branch.outcome == 'success'")
+  })
+
+  test('partitions the suite across per-shard branches with the long pole on shard 1', () => {
+    expect(workflow).toContain('fail-fast: false')
+    expect(workflow).toContain('shard: [1, 2, 3]')
+    expect(workflow).toContain('timeout-minutes: 45')
+    expect(workflow).toContain('bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}')
+    const conformance = workflow.split('      - name: Verify cross-profile conformance matrix')[1]
+    expect(conformance).toContain(
+      "if: steps.credentials.outputs.available == 'true' && matrix.shard == 1"
+    )
+    expect(workflow).toContain('SHARD: ${{ matrix.shard }}')
+  })
+
+  test('retries the integration slice once inside the verify step for transient Neon drops', () => {
+    const step = workflow
+      .split("      - name: Verify migrations and this shard's integration slice")[1]
+      ?.split('\n      - name:')[0]
+    expect(step).toContain(
+      'if bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}; then'
+    )
+    expect(step).toContain('retrying once for a transient Neon connection drop')
+    expect(
+      (
+        step.match(/bun scripts\/run-integration-tests\.mjs --shard=\$\{\{ matrix\.shard \}\}/g) ??
+        []
+      ).length
+    ).toBe(2)
+    // Migrations stay outside the retry: only the test slice re-runs.
+    expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
   })
 
   test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
@@ -101,7 +135,7 @@ describe('Neon preview cleanup lookup', () => {
   test('scopes test database ownership setup to the freshly resolved preview administrator', () => {
     const setup = workflow
       .split('      - name: Prepare isolated preview database ownership')[1]
-      ?.split('      - name: Verify migrations and transactions')[0]
+      ?.split("      - name: Verify migrations and this shard's integration slice")[0]
     expect(setup).toContain('DATABASE_ADMIN_URL: ${{ steps.create_neon_branch.outputs.db_url }}')
     expect(setup).toContain(
       'PREVIEW_DATABASE_HOST: ${{ steps.create_neon_branch.outputs.db_host }}'
@@ -186,6 +220,9 @@ describe('Neon preview cleanup lookup', () => {
     for (const override of [
       { NEON_API_KEY: '' },
       { NEON_PROJECT_ID: '../other' },
+      { SHARD: '' },
+      { SHARD: 'x' },
+      { SHARD: '1 ' },
       { GITHUB_RUN_ID: '0' },
       { GITHUB_RUN_ATTEMPT: '0' },
       { GITHUB_RUN_ID: '404/other' },
