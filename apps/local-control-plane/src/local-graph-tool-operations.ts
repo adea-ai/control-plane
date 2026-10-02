@@ -285,13 +285,18 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         }
         if (call && ['executing', 'reconciliation_required', 'succeeded'].includes(call.status))
           throw new GraphNodeEffectUnconfirmedError()
-        if (call && ['failed', 'denied'].includes(call.status))
-          await this.#ledger.settle({
-            workspaceId: operation.workspaceId,
-            executionId: operation.executionId,
-            reservationKey: operation.idempotencyKey,
-            source: source('settle'),
-          })
+        if (call && ['failed', 'denied'].includes(call.status)) {
+          try {
+            await this.#ledger.settle({
+              workspaceId: operation.workspaceId,
+              executionId: operation.executionId,
+              reservationKey: operation.idempotencyKey,
+              source: source('settle'),
+            })
+          } catch {
+            throw new GraphNodeEffectUnconfirmedError()
+          }
+        }
         throw error
       }
     } finally {
@@ -348,17 +353,26 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
           confirmed = false
           continue
         }
-        if (call.approvalInteractionId)
-          await new InteractionService(api.interactions).resolveTerminal(
-            call.approvalInteractionId,
-            at
-          )
-        await this.#ledger.settle({
-          workspaceId: call.workspaceId,
-          executionId,
-          reservationKey: call.idempotencyKey,
-          source: { sourceId: call.toolCallId, idempotencyKey: `${call.idempotencyKey}:settle` },
-        })
+      }
+      // A previous cancellation may have committed denial before settlement failed.
+      if (
+        ['requested', 'awaiting_approval', 'authorized', 'failed', 'denied'].includes(call.status)
+      ) {
+        try {
+          if (call.approvalInteractionId)
+            await new InteractionService(api.interactions).resolveTerminal(
+              call.approvalInteractionId,
+              this.#now()
+            )
+          await this.#ledger.settle({
+            workspaceId: call.workspaceId,
+            executionId,
+            reservationKey: call.idempotencyKey,
+            source: { sourceId: call.toolCallId, idempotencyKey: `${call.idempotencyKey}:settle` },
+          })
+        } catch {
+          confirmed = false
+        }
       }
     }
     return confirmed

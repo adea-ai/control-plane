@@ -226,52 +226,91 @@ for (const lostReceipt of [false, true])
     }
   })
 
-test('cancelled pending tool approvals stay revoked after reconstructing the Local port', async () => {
-  const fixture = await createLocalGraphToolFixture()
-  const store = new FilesystemObjectStore({
-    rootDirectory: join(fixture.directory, 'objects'),
-    maxObjectBytes: 4096,
-  })
-  try {
-    const options = {
-      api: fixture.api,
-      persistence: fixture.persistence,
-      objectStore: store,
-      prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
-      now: () => fixture.at,
-    }
-    const port = new LocalGraphToolOperations(options)
-    await expect(port.invoke(fixture.operation)).rejects.toMatchObject({
-      interaction: { kind: 'approval' },
+for (const settlementFailure of [false, true])
+  test(`pending approval cancellation remains safe with settlement failure ${settlementFailure}`, async () => {
+    const fixture = await createLocalGraphToolFixture()
+    const store = new FilesystemObjectStore({
+      rootDirectory: join(fixture.directory, 'objects'),
+      maxObjectBytes: 4096,
     })
-    expect(
-      await port.cancel(
-        fixture.operation.executionId,
-        fixture.operation.threadId,
-        'graph-cancel-0001'
+    let failing = settlementFailure
+    const persistence = new Proxy(fixture.persistence, {
+      get(target, key) {
+        if (key === 'transaction')
+          return (callback) =>
+            target.transaction((transaction) =>
+              callback(
+                new Proxy(transaction, {
+                  get(inner, property) {
+                    if (property === 'put')
+                      return (input) => {
+                        if (
+                          failing &&
+                          input.namespace === 'usage-ledger-entries' &&
+                          input.value.kind === 'settlement'
+                        )
+                          throw Error('settlement unavailable')
+                        return inner.put(input)
+                      }
+                    const value = inner[property]
+                    return typeof value === 'function' ? value.bind(inner) : value
+                  },
+                })
+              )
+            )
+        const value = target[key]
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    try {
+      const options = {
+        api: fixture.api,
+        persistence,
+        objectStore: store,
+        prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
+        now: () => fixture.at,
+      }
+      const port = new LocalGraphToolOperations(options)
+      await expect(port.invoke(fixture.operation)).rejects.toMatchObject({
+        interaction: { kind: 'approval' },
+      })
+      const cancel = () =>
+        new LocalGraphToolOperations(options).cancel(
+          fixture.operation.executionId,
+          fixture.operation.threadId,
+          'graph-cancel-0001'
+        )
+      if (settlementFailure) {
+        await expect(cancel()).resolves.toBe(false)
+        await expect(cancel()).resolves.toBe(false)
+        const held = await new DurableUsageLedger({
+          store: new SqliteDurableUsageStore(fixture.persistence),
+        }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+        expect(held.reservedMicrounits).toBe(25)
+        failing = false
+      }
+      expect(await cancel()).toBe(true)
+      await expect(new LocalGraphToolOperations(options).invoke(fixture.operation)).rejects.toThrow(
+        'GRAPH_TOOL_CANCELLED'
       )
-    ).toBe(true)
-    await expect(new LocalGraphToolOperations(options).invoke(fixture.operation)).rejects.toThrow(
-      'GRAPH_TOOL_CANCELLED'
-    )
-    const calls = await new SqliteToolCallRepository(
-      fixture.persistence,
-      fixture.operation.workspaceId
-    ).listByExecution(fixture.operation.executionId)
-    expect(calls[0].status).toBe('denied')
-    expect((await fixture.api.interactions.get(calls[0].approvalInteractionId)).state).toBe(
-      'cancelled'
-    )
-    const summary = await new DurableUsageLedger({
-      store: new SqliteDurableUsageStore(fixture.persistence),
-    }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
-    expect(summary.spentMicrounits).toBe(0)
-    expect(summary.reservedMicrounits).toBe(0)
-  } finally {
-    store.close()
-    await fixture.cleanup()
-  }
-})
+      const calls = await new SqliteToolCallRepository(
+        fixture.persistence,
+        fixture.operation.workspaceId
+      ).listByExecution(fixture.operation.executionId)
+      expect(calls[0].status).toBe('denied')
+      expect((await fixture.api.interactions.get(calls[0].approvalInteractionId)).state).toBe(
+        'cancelled'
+      )
+      const summary = await new DurableUsageLedger({
+        store: new SqliteDurableUsageStore(fixture.persistence),
+      }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+      expect(summary.spentMicrounits).toBe(0)
+      expect(summary.reservedMicrounits).toBe(0)
+    } finally {
+      store.close()
+      await fixture.cleanup()
+    }
+  })
 
 for (const fault of [
   'none',
