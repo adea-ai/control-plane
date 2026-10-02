@@ -26,6 +26,7 @@ export type ToolRegistryErrorCode =
   | 'VERSION_EXISTS'
   | 'VERSION_MISSING'
   | 'SEMANTIC_VERSION_CONFLICT'
+  | 'INTEGRITY_VIOLATION'
   | 'INVALID_SCHEMA'
   | 'SCOPE_DENIED'
 
@@ -131,7 +132,7 @@ export class ToolRegistry {
     const version = await this.repository.getVersion(versionId)
     if (!version) failRegistry('VERSION_MISSING')
     await this.readDefinition(version.toolDefinitionId, workspaceId)
-    return clone(version)
+    return clone(this.#assertVersionIntegrity(version))
   }
 
   async resolve(name: string, semanticVersion: string, workspaceId: string): Promise<ToolVersion> {
@@ -179,6 +180,29 @@ export class ToolRegistry {
     } catch {
       failRegistry('INVALID_SCHEMA')
     }
+  }
+
+  #assertVersionIntegrity(version: ToolVersion): ToolVersion {
+    let parsed: ToolVersion
+    let draft: ToolVersionDraft
+    try {
+      parsed = ToolVersionSchema.parse(version)
+      draft = versionDraft(parsed)
+    } catch {
+      failRegistry('INTEGRITY_VIOLATION')
+    }
+
+    if (parsed.contentDigest !== digest(draft) && parsed.contentDigest !== legacyDigest(draft)) {
+      failRegistry('INTEGRITY_VIOLATION')
+    }
+
+    try {
+      this.validateSchemas(draft.inputSchema, draft.outputSchema)
+    } catch {
+      failRegistry('INTEGRITY_VIOLATION')
+    }
+
+    return parsed
   }
 }
 
@@ -421,12 +445,38 @@ function executorKey(type: ToolExecutorType, reference: string): string {
   return `${type}:${reference}`
 }
 
-// contentDigest is write-once in the registry (never re-verified), so digests
-// use the shared host-independent canonical form directly (#612).
+// New content digests use the shared host-independent canonical form (#612).
 function digest(value: unknown): string {
   return `sha256:${createHash('sha256')
     .update(canonicalJsonStringify(value) ?? 'null')
     .digest('hex')}`
+}
+
+// Before #612, tool versions used this private localeCompare-based canonicalizer.
+// Keep it only to verify versions that were persisted before the digest cutover.
+function legacyDigest(value: unknown): string {
+  return `sha256:${createHash('sha256').update(legacyCanonical(value)).digest('hex')}`
+}
+
+function legacyCanonical(value: unknown): string {
+  if (value === undefined) return 'null'
+  if (Array.isArray(value)) return `[${value.map(legacyCanonical).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${legacyCanonical(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function versionDraft(version: ToolVersion): ToolVersionDraft {
+  const draft: Record<string, unknown> = { ...version }
+  delete draft['revision']
+  delete draft['lifecycle']
+  delete draft['contentDigest']
+  return ToolVersionDraftSchema.parse(draft)
 }
 
 function clone<Value>(value: Value): Value {
