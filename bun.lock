@@ -33,7 +33,7 @@
         "@control-plane/workflow-worker": "workspace:*",
         "@langchain/langgraph": "1.4.18",
         "@types/node": "^26.5.1",
-        "code-foundry": "1.39.3",
+        "code-foundry": "1.40.0",
         "oxfmt": "^0.71.0",
         "oxlint": "^1.85.0",
         "railway": "3.12.0",
@@ -122,7 +122,7 @@
         "@control-plane/workflow-runtime": "workspace:*",
         "@control-plane/workflow-worker": "workspace:*",
         "@nestjs/common": "12.1.2",
-        "@restatedev/restate-server": "1.7.12",
+        "@restatedev/restate-server": "1.7.13",
         "fastify": "5.12.5",
       },
     },
@@ -386,7 +386,7 @@
     },
     "packages/object-store": {
       "name": "@control-plane/object-store",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "dependencies": {
         "@aws-sdk/client-s3": "3.1145.0",
         "@control-plane/deployment": "workspace:*",
@@ -514,10 +514,10 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.5.3",
+      "version": "1.5.4",
       "devDependencies": {
         "@opentelemetry/api": "1.9.1",
-        "@sentry/node": "11.2.0",
+        "@sentry/node": "11.3.0",
       },
       "peerDependencies": {
         "@opentelemetry/api": "^1.9.0",
@@ -952,31 +952,31 @@
 
     "@restatedev/restate-sdk-core": ["@restatedev/restate-sdk-core@1.17.2", "", {}, "sha512-nq3QexkGkKpNjMHfqs7xhqOwtfO+EYXlp5Oe3L/ig1USocmyrif8EdYk2S9UUp+ybDLdwHb1MGlcXe98i/KM4w=="],
 
-    "@restatedev/restate-server": ["@restatedev/restate-server@1.7.12", "", { "dependencies": { "@scarf/scarf": "^1.4.0" }, "optionalDependencies": { "@restatedev/restate-server-darwin-arm64": "1.7.12", "@restatedev/restate-server-darwin-x64": "1.7.12", "@restatedev/restate-server-linux-arm64": "1.7.12", "@restatedev/restate-server-linux-x64": "1.7.12" }, "bin": { "restate-server": "lib/index.js" } }, "sha512-/De/rLpv1Vg6k7eT/zMIMfb0FobmAE4jKztP7Ds4FHRm3FJhxt6ejjlByj9xmutt1YOqhlrg+cbttOD0h8Qz1g=="],
+    "@restatedev/restate-server": ["@restatedev/restate-server@1.7.13", "", { "dependencies": { "@scarf/scarf": "^1.4.0" }, "optionalDependencies": { "@restatedev/restate-server-darwin-arm64": "1.7.13", "@restatedev/restate-server-darwin-x64": "1.7.13", "@restatedev/restate-server-linux-arm64": "1.7.13", "@restatedev/restate-server-linux-x64": "1.7.13" }, "bin": { "restate-server": "lib/index.js" } }, "sha512-fdmfsKJ7xfuJ9QNPR799C5FRrGg/LqpSIDHUH4/bhzl41oOwzce+tT6Z7Gw2TEG2R0WvdDuWlIgez0aFUP5GgA=="],
 
-    "@restatedev/restate-server-darwin-arm64": ["@restatedev/restate-server-darwin-arm64@1.7.12", "", { "os": "darwin", "cpu": "arm64" }, "sha512-pHrZMaaeBJxXTgI19WG/aJvxuUDQ2nhSDEEJVseTZQiTEdJ7hboPlhvYacgXIE2iMnLMmWkN5XIlXqosHK8Byg=="],
+    "@restatedev/restate-server-darwin-arm64": ["@restatedev/restate-server-darwin-arm64@1.7.13", "", { "os": "darwin", "cpu": "arm64" }, "sha512-CpJ1WzhUs8JgqjgHnXGVMqZBRuFjNkEn9qqZSNR1CMYH4r31+vFNp0ZuAjl1/kD5Gok7Q2Fe+W9aaAiZJ/fvrA=="],
 
-    "@restatedev/restate-server-darwin-x64": ["@restatedev/restate-server-darwin-x64@1.7.12", "", { "os": "darwin", "cpu": "x64" }, "sha512-ZRS1kk3S4pzIiup2IRRQ3eHoKJSZ43FG4rDe7UbGFWwZ/Yz0xSDa4/3/kiuwaMHXWs/CsKtJe0shx8JCR0DO1g=="],
+    "@restatedev/restate-server-darwin-x64": ["@restatedev/restate-server-darwin-x64@1.7.13", "", { "os": "darwin", "cpu": "x64" }, "sha512-IBEWecmC+PQG5wyRa0C60TkCjXhqXjEmr9jEFGxg+nh8JhjanhkhR3wo6Rz/kAc/XgTZT9fqRwX4wpgHl9DlsA=="],
 
-    "@restatedev/restate-server-linux-arm64": ["@restatedev/restate-server-linux-arm64@1.7.12", "", { "os": "linux", "cpu": "arm64" }, "sha512-aV7YxWvPhp88MjQtObGDhDCTwCBa68wwZOAMmJqDreO0auHYuSfOqabEx4I90coZsx3zShNusppbTPKprOa+dw=="],
+    "@restatedev/restate-server-linux-arm64": ["@restatedev/restate-server-linux-arm64@1.7.13", "", { "os": "linux", "cpu": "arm64" }, "sha512-vKVxssRfgeTBmxArUWTNIBvY6s0ivczkq47ZwVCSlb0XT+bJ7YuukaLWEecXlYmHDxbzT87lUTOH8ONHkazKng=="],
 
-    "@restatedev/restate-server-linux-x64": ["@restatedev/restate-server-linux-x64@1.7.12", "", { "os": "linux", "cpu": "x64" }, "sha512-URotJ1AIqaSCDkRMl4OrQfTLH+NYuOZb3ZsP7wxxiuAB6pncgPhTUYSvegTF5PTrAShnNyHNpju9kjf2O3QxoA=="],
+    "@restatedev/restate-server-linux-x64": ["@restatedev/restate-server-linux-x64@1.7.13", "", { "os": "linux", "cpu": "x64" }, "sha512-BRsNUPMrSYfyXREjUkeB9aCPzSxN82tFzFxw/JSXHwg4KJ1eaHPGdZH1Ys219fDWRonaly/lgJcNQdJa0QORlA=="],
 
     "@scarf/scarf": ["@scarf/scarf@1.4.0", "", {}, "sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ=="],
 
-    "@sentry/bundler-plugins": ["@sentry/bundler-plugins@11.2.0", "", { "dependencies": { "@sentry/core": "11.2.0", "dotenv": "^17.4.2", "glob": "^13.0.6", "magic-string": "~0.30.8 || ^1.0.0", "oxc-parser": "^0.152.0", "sentry": "^0.45.0", "supports-color": "^8.1.1" }, "peerDependencies": { "@babel/core": "^7.18.5", "rollup": ">=3.2.0", "webpack": ">=5.1.0" }, "optionalPeers": ["@babel/core", "rollup", "webpack"] }, "sha512-ytSfzWJA+c4UhkUjAiiL8qIXujU2Ih6PbR8Ex6YCqoJXEHHDiZWJPWbaxgmzqKGrYBimp6UfgYn/CvK0/uksAg=="],
+    "@sentry/bundler-plugins": ["@sentry/bundler-plugins@11.3.0", "", { "dependencies": { "@sentry/core": "11.3.0", "dotenv": "^17.4.2", "glob": "^13.0.6", "magic-string": "~0.30.8 || ^1.0.0", "oxc-parser": "^0.152.0", "sentry": "^0.45.0", "supports-color": "^8.1.1" }, "peerDependencies": { "@babel/core": "^7.18.5", "rollup": ">=3.2.0", "webpack": ">=5.1.0" }, "optionalPeers": ["@babel/core", "rollup", "webpack"] }, "sha512-LMG1/aS389Yak9+7JiNqBuBsWhhAKnOMz6SqVEGNpK3ynDjLMmYW2/nQ6jDgPhxV2T6rSCegshtr1xbK86JpPw=="],
 
-    "@sentry/conventions": ["@sentry/conventions@0.24.0", "", {}, "sha512-pmmF2mLy7A23z8gnLRG87lYu4SSPIBColtfqu9cfkh1omn/0CI3w0/AqZ/uf/VGAtM/wJMN61J58Ks/IWBCHpQ=="],
+    "@sentry/conventions": ["@sentry/conventions@0.25.0", "", {}, "sha512-7SouCAX3qx+AzLsxb6gbl3dKVWNhp2wFjdYQ/T90sGwqPPQUoZVA9YwsWwvx07hqcCiSqFW9mUAzyUftASnuhQ=="],
 
-    "@sentry/core": ["@sentry/core@11.2.0", "", { "dependencies": { "@sentry/conventions": "^0.24.0" } }, "sha512-vkJDLDVk0WmMN7cixXULEkW2sopJwcTP3ODFkdrRFUJILARHS855TzJ3WG7WarNXtlzKY6ALzmsGPzHMZQfMrA=="],
+    "@sentry/core": ["@sentry/core@11.3.0", "", { "dependencies": { "@sentry/conventions": "^0.25.0" } }, "sha512-ZRexUGcm/0hojTCPTb4ZoNm0wGQsHv93t2Z/E3U1w8XFakb5DKkTx+z1tBi3KXKLo9xjGlhYyiob9cF0D2MLoQ=="],
 
-    "@sentry/node": ["@sentry/node@11.2.0", "", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@sentry/bundler-plugins": "11.2.0", "@sentry/conventions": "^0.24.0", "@sentry/core": "11.2.0", "@sentry/opentelemetry": "11.2.0", "@sentry/server-runtime-injection": "11.2.0", "@sentry/server-utils": "11.2.0" } }, "sha512-1dxeMjIi60nTOoeixlHD/Ygb6acPag0rTPDk331c/ztzrGBjKleOTqss2yoewo/WOK4gSwRXJs5gxgdq3WCIVg=="],
+    "@sentry/node": ["@sentry/node@11.3.0", "", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@sentry/bundler-plugins": "11.3.0", "@sentry/conventions": "^0.25.0", "@sentry/core": "11.3.0", "@sentry/opentelemetry": "11.3.0", "@sentry/server-runtime-injection": "11.3.0", "@sentry/server-utils": "11.3.0" } }, "sha512-pCpdOI+erDY2DdQN2cnlRTbC1xgLgv+vXdGJGNw0DANszVMxw+TVyFZbUZNkun5pv8P1Ma0X0LoxFJCXQNGOug=="],
 
-    "@sentry/opentelemetry": ["@sentry/opentelemetry@11.2.0", "", { "dependencies": { "@sentry/conventions": "^0.24.0", "@sentry/core": "11.2.0" }, "peerDependencies": { "@opentelemetry/api": "^1.9.0" } }, "sha512-QE8o8gkFX87Z47VdYFzax+l545zNC8Alj8lPL+0wCWG6GOA2qQVPbv3Vl1XGKVOCgxWS/TSz8ObWZMrSrFaHfg=="],
+    "@sentry/opentelemetry": ["@sentry/opentelemetry@11.3.0", "", { "dependencies": { "@sentry/conventions": "^0.25.0", "@sentry/core": "11.3.0" }, "peerDependencies": { "@opentelemetry/api": "^1.9.0" } }, "sha512-4flXrXRoCejIgs5lHnoMSDnFWIZL1rEkeoEEhh73oK6oqGePIAYiyCDNOJe7p0VWYusy42AqkGP2MDIyG08pyg=="],
 
-    "@sentry/server-runtime-injection": ["@sentry/server-runtime-injection@11.2.0", "", { "dependencies": { "@sentry/core": "11.2.0", "@sentry/server-utils": "11.2.0" } }, "sha512-DhIUNIYxpSsLX1IGbVf05mbNhelcRbDGP0r0vnEVGUPuqaWBDMz1I8oJKjfJhFUCU8RYAad4azBIW0PHgJVdhA=="],
+    "@sentry/server-runtime-injection": ["@sentry/server-runtime-injection@11.3.0", "", { "dependencies": { "@sentry/core": "11.3.0", "@sentry/server-utils": "11.3.0" } }, "sha512-IZyUo9j6416r2HK1sITPkNCRryvsxbPacW1X0CrjLx9SPuwqxx2iFdifUv5mtPj00NFaQMfKCq1uUfgktyNuZg=="],
 
-    "@sentry/server-utils": ["@sentry/server-utils@11.2.0", "", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@sentry/conventions": "^0.24.0", "@sentry/core": "11.2.0" } }, "sha512-duhMoTBmf3W/opOexQGtcsb5cCDOhOrM0hBMGvGGtu6LinGyEgnz3OQzlI9AFZgYiJpAkyIUkh2QOwo3vqWJiQ=="],
+    "@sentry/server-utils": ["@sentry/server-utils@11.3.0", "", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@sentry/conventions": "^0.25.0", "@sentry/core": "11.3.0" } }, "sha512-yaUgvegTIC4c/zpiInD009WqiUvx3w96Hjb846LEsQIzdYKP4hXnLL2DNd1vm9E4IM064Ixs8f2Kc/zFIhSR+A=="],
 
     "@smithy/core": ["@smithy/core@3.35.0", "", { "dependencies": { "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A=="],
 
@@ -1080,7 +1080,7 @@
 
     "class-validator": ["class-validator@0.15.1", "", { "dependencies": { "@types/validator": "^13.15.3", "libphonenumber-js": "^1.11.1", "validator": "^13.15.22" } }, "sha512-LqoS80HBBSCVhz/3KloUly0ovokxpdOLR++Al3J3+dHXWt9sTKlKd4eYtoxhxyUjoe5+UcIM+5k9MIxyBWnRTw=="],
 
-    "code-foundry": ["code-foundry@1.39.3", "", { "bin": { "code-foundry": "src/cli.mjs" } }, "sha512-PFdvWU7z+seZjg68OgciY74TJUu/JulgKgFiu+X6DQhT1c4/ymQyMtwQlsNBhPtnz6ysvr4lvZ+l+e91WSj9Ng=="],
+    "code-foundry": ["code-foundry@1.40.0", "", { "bin": { "code-foundry": "src/cli.mjs" } }, "sha512-yhLCth/tXnuTXGu2guMECryBjEr94LElnLx+hAWHRBkp1OrMHUrGHVmp9c0ZcYbV0HOcdo/1Y8fann2BMOpDWQ=="],
 
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 
