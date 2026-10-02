@@ -193,7 +193,9 @@ jobs:
       - name: Verify production readiness after deploy
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 12); do
+          # The retry count is the loop's only payload; _ keeps shellcheck's
+          # SC2034 (unused variable) from failing actionlint qualification.
+          for _ in $(seq 1 12); do
             if curl --fail --silent --show-error \
               https://control-planecontrol-api-production.up.railway.app/ready; then
               exit 0
