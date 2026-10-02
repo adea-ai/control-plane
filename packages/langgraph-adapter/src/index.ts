@@ -15,6 +15,7 @@ import {
   GraphContinueRequestSchema,
   GraphExecutionRequestSchema,
   GraphNodeApprovalRequiredError,
+  GraphNodeEffectUnconfirmedError,
   GraphNodeOperationSchema,
   GraphResumeRequestSchema,
   GraphSegmentResultSchema,
@@ -378,6 +379,13 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
         events: emitted,
       })
     } catch (error) {
+      if (error instanceof GraphNodeEffectUnconfirmedError) {
+        return GraphSegmentResultSchema.parse({
+          status: 'reconciliation_required',
+          state: {},
+          events: emitted,
+        })
+      }
       if (error instanceof OrchestrationError && error.code === 'GRAPH_CANCELLED') {
         graphOutcome = { status: 'ok' }
         return GraphSegmentResultSchema.parse({ status: 'cancelled', state: {}, events: emitted })

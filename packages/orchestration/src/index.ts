@@ -114,6 +114,7 @@ export const GraphSegmentResultSchema = z.discriminatedUnion('status', [
       .strict(),
   }).strict(),
   SegmentBaseSchema.extend({ status: z.literal('cancelled') }).strict(),
+  SegmentBaseSchema.extend({ status: z.literal('reconciliation_required') }).strict(),
 ])
 
 const GraphNodeOperationBaseSchema = GraphCorrelationSchema.extend({
@@ -213,6 +214,14 @@ export class GraphNodeApprovalRequiredError extends Error {
 
   get interaction(): GraphNodeApprovalRequired {
     return this.#interaction
+  }
+}
+
+/** An effect may have committed; retries and terminal cleanup require reconciliation. */
+export class GraphNodeEffectUnconfirmedError extends Error {
+  constructor() {
+    super('GRAPH_TOOL_RECONCILIATION_REQUIRED')
+    this.name = 'GraphNodeEffectUnconfirmedError'
   }
 }
 

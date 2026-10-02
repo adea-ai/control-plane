@@ -452,7 +452,8 @@ function digest(value: unknown): string {
     .digest('hex')}`
 }
 
-// Before #612, tool versions used this private localeCompare-based canonicalizer.
+// CANONICAL-JSON: Before #612 (d70581e5), persisted tool versions used this
+// private localeCompare-based canonicalizer. New versions use canonicalJsonStringify.
 // Keep it only to verify versions that were persisted before the digest cutover.
 function legacyDigest(value: unknown): string {
   return `sha256:${createHash('sha256').update(legacyCanonical(value)).digest('hex')}`
