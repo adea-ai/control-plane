@@ -27,7 +27,7 @@ export const WorkflowJobStatusSchema = z.enum([
 export const WorkflowJobOutcomeSchema = z.strictObject({
   executionId: z.string().min(1),
   attemptId: z.string().min(1).optional(),
-  status: z.enum(['completed', 'failed', 'cancelled', 'timed_out']),
+  status: z.enum(['completed', 'failed', 'cancelled', 'timed_out', 'reconciliation_required']),
   resultReference: z.string().min(1).optional(),
   graphCheckpointId: z.string().min(1).optional(),
   terminalUsage: RuntimeUsageSchema.optional(),

@@ -117,6 +117,7 @@ test('Local and Hosted Simple forward graph lifecycle operations after SQLite ad
           operation,
           async (input) => {
             calls.push({ operation, input })
+            if (operation === 'cancelGraphSegment') return true
             return { outcome: 'continue', checkpointId: 'checkpoint-one' }
           },
         ]

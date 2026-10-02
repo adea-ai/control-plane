@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import {
   FakeToolExecutor,
   InMemoryToolRegistryRepository,
@@ -81,14 +82,23 @@ const request = {
   audit: { principalRef: 'service:runtime-worker', traceId: ids.trace },
 }
 
-async function fixture() {
-  const registry = new ToolRegistry(new InMemoryToolRegistryRepository())
+class MutatingToolRegistryRepository extends InMemoryToolRegistryRepository {
+  transformVersion = (stored) => stored
+
+  async getVersion(toolVersionId) {
+    const stored = await super.getVersion(toolVersionId)
+    return stored === undefined ? undefined : this.transformVersion(stored)
+  }
+}
+
+async function fixture(repository = new InMemoryToolRegistryRepository()) {
+  const registry = new ToolRegistry(repository)
   await registry.createDefinition(definition)
   const published = await registry.publishVersion(version)
   const executor = new FakeToolExecutor(() => ({ content: 'hello' }))
   const gateway = new ToolGateway(registry)
   gateway.registerExecutor('internal', 'files-v1', executor)
-  return { registry, published, executor, gateway }
+  return { registry, published, executor, gateway, repository }
 }
 
 describe('Tool Gateway registry', () => {
@@ -131,6 +141,94 @@ describe('Tool Gateway registry', () => {
     ).rejects.toMatchObject({ code: 'INVALID_SCHEMA' })
   })
 
+  test('rejects stored schema and operation changes before executor effects', async () => {
+    const mutations = [
+      (stored) => ({
+        ...stored,
+        inputSchema: {
+          ...stored.inputSchema,
+          properties: {
+            ...stored.inputSchema.properties,
+            path: { ...stored.inputSchema.properties.path, maxLength: 1_024 },
+          },
+        },
+      }),
+      (stored) => ({
+        ...stored,
+        operations: stored.operations.map((operation) => ({
+          ...operation,
+          requiredCapabilities: ['filesystem.read', 'filesystem.write'],
+          riskClass: 'high',
+          approvalMode: 'always',
+          idempotency: 'none',
+        })),
+      }),
+    ]
+
+    for (const mutation of mutations) {
+      const repository = new MutatingToolRegistryRepository()
+      const { registry, executor, gateway } = await fixture(repository)
+      repository.transformVersion = mutation
+
+      const readResult = await registry.readVersion(ids.version, ids.workspace).then(
+        () => undefined,
+        (error) => error
+      )
+      expect(readResult).toMatchObject({ code: 'INTEGRITY_VIOLATION' })
+
+      const executionResult = await gateway.execute(request).then(
+        () => undefined,
+        (error) => error
+      )
+      expect(executionResult).toMatchObject({ code: 'TOOL_UNAVAILABLE' })
+      expect(executor.requests).toHaveLength(0)
+    }
+  })
+
+  test('does not include lifecycle or revision in the published content digest', async () => {
+    const { registry, published, repository } = await fixture(new MutatingToolRegistryRepository())
+    repository.transformVersion = (stored) => ({
+      ...stored,
+      revision: 2,
+      lifecycle: 'deprecated',
+    })
+
+    await expect(registry.readVersion(ids.version, ids.workspace)).resolves.toEqual({
+      ...published,
+      revision: 2,
+      lifecycle: 'deprecated',
+    })
+  })
+
+  test('accepts the historical pre-canonicalJson tool version digest', async () => {
+    const repository = new MutatingToolRegistryRepository()
+    const registry = new ToolRegistry(repository)
+    await registry.createDefinition(definition)
+    const published = await registry.publishVersion({
+      ...version,
+      inputSchema: {
+        ...version.inputSchema,
+        properties: {
+          ...version.inputSchema.properties,
+          z: { type: 'string' },
+          é: { type: 'string' },
+        },
+      },
+    })
+    const historicalDigest = historicalToolVersionDigest(versionDraft(published))
+    expect(published.contentDigest).not.toBe(historicalDigest)
+
+    repository.transformVersion = (stored) => ({
+      ...stored,
+      contentDigest: historicalDigest,
+    })
+
+    await expect(registry.readVersion(ids.version, ids.workspace)).resolves.toEqual({
+      ...published,
+      contentDigest: historicalDigest,
+    })
+  })
+
   test('executes only registered, granted, schema-valid, bounded operations', async () => {
     const { gateway, executor } = await fixture()
 
@@ -160,7 +258,20 @@ describe('Tool Gateway registry', () => {
       'files-v1',
       new FakeToolExecutor(() => ({ unexpected: 'unsafe' }))
     )
-    await expect(gateway.execute(request)).rejects.toMatchObject({ code: 'INVALID_OUTPUT' })
+    await expect(gateway.execute(request)).rejects.toMatchObject({
+      code: 'INVALID_OUTPUT',
+      effectState: 'committed',
+    })
+
+    gateway.registerExecutor(
+      'internal',
+      'files-v1',
+      new FakeToolExecutor(() => ({ content: 'x'.repeat(300) }))
+    )
+    await expect(gateway.execute(request)).rejects.toMatchObject({
+      code: 'OUTPUT_LIMIT_EXCEEDED',
+      effectState: 'committed',
+    })
 
     gateway.registerExecutor(
       'internal',
@@ -217,3 +328,30 @@ describe('Tool Gateway registry', () => {
     expect(attempts).toBe(1)
   })
 })
+
+function versionDraft(publishedVersion) {
+  const {
+    revision: _revision,
+    lifecycle: _lifecycle,
+    contentDigest: _contentDigest,
+    ...draft
+  } = publishedVersion
+  return draft
+}
+
+function historicalToolVersionDigest(value) {
+  return `sha256:${createHash('sha256').update(historicalCanonical(value)).digest('hex')}`
+}
+
+function historicalCanonical(value) {
+  if (value === undefined) return 'null'
+  if (Array.isArray(value)) return `[${value.map(historicalCanonical).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${historicalCanonical(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}

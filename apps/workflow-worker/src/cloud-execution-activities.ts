@@ -229,7 +229,15 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
         idempotencyKey: input.effectKey,
       }
       await this.#authorizeGraphSegment(cancellation, false)
-      await this.#graph.cancelGraphSegment(cancellation)
+      if ((await this.#graph.cancelGraphSegment(cancellation)) !== true) {
+        await this.persistStatus({
+          executionId: input.executionId,
+          attemptId: input.attemptId,
+          state: 'reconciliation_required',
+          effectKey: `${input.effectKey}:unconfirmed`,
+        })
+        throw new Error('GRAPH_CANCELLATION_UNCONFIRMED')
+      }
       return
     }
     await this.#runtime.cancel(input)

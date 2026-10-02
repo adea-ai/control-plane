@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.64.5",
+  "version": "1.64.8",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -94,7 +94,7 @@
     "@control-plane/workflow-worker": "workspace:*",
     "@langchain/langgraph": "1.4.18",
     "@types/node": "^26.5.1",
-    "code-foundry": "1.40.0",
+    "code-foundry": "1.41.0",
     "oxfmt": "^0.71.0",
     "oxlint": "^1.85.0",
     "railway": "3.12.0",

@@ -22,7 +22,7 @@ export const workflowPolicies = {
 export interface ExecutionWorkflowResult {
   readonly executionId: string
   readonly attemptId?: string
-  readonly status: 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  readonly status: 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'reconciliation_required'
   readonly resultReference?: string
   readonly graphCheckpointId?: string
   /** Observed terminal evidence, not a spend authorization or a settlement. */
@@ -262,6 +262,20 @@ export async function runExecutionLifecycle(
         return finishTerminal(input, activities, interactionOutcomeRace.control, key, attemptId)
       }
       runtimeOutcome = interactionOutcomeRace.value
+    }
+  }
+  if (runtimeOutcome.outcome === 'reconciliation_required') {
+    await activities.persistStatus({
+      executionId: input.executionId,
+      attemptId,
+      state: 'reconciliation_required',
+      effectKey: key('reconciliation_required'),
+    })
+    return {
+      executionId: input.executionId,
+      attemptId,
+      status: 'reconciliation_required',
+      ...(runtimeOutcome.checkpointId ? { graphCheckpointId: runtimeOutcome.checkpointId } : {}),
     }
   }
   const terminal = await control.checkTerminal?.()
