@@ -1,13 +1,20 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { MemorySaver } from '@langchain/langgraph'
+import { GRAPH_TOOL_PINS_CAPABILITY } from '@control-plane/contracts'
+import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import {
   GraphCatalogError,
   GraphDefinitionCatalog,
+  GraphNodeOperationSchema,
   InMemoryGraphDefinitionRepository,
 } from '@control-plane/orchestration'
 import {
   CatalogBackedGraphDefinitionResolver,
   DeclarativeGraphCompiler,
+  LangGraphSqliteCheckpointSaver,
   LangGraphOrchestrationAdapter,
 } from './index.ts'
 
@@ -59,6 +66,25 @@ const graphDefinition = {
     compilerVersions: ['1.0.0'],
     adapterVersions: ['1.4.12'],
   },
+}
+
+const toolPin = {
+  toolDefinitionId: 'tld_01JABCDEF0123456789ABCDEFG',
+  toolVersionId: 'tlv_01JABCDEF0123456789ABCDEFG',
+  contentDigest: `sha256:${'a'.repeat(64)}`,
+  operation: 'right',
+}
+
+function graphDefinitionWithPinnedTool() {
+  return {
+    ...structuredClone(graphDefinition),
+    nodes: graphDefinition.nodes.map((node) =>
+      node.node === 'right'
+        ? { ...node, operation: { ...node.operation, toolPin } }
+        : structuredClone(node)
+    ),
+    requiredCapabilities: [...graphDefinition.requiredCapabilities, GRAPH_TOOL_PINS_CAPABILITY],
+  }
 }
 
 const operationAllowlist = graphDefinition.nodes.map(({ operation }) => operation)
@@ -251,6 +277,364 @@ describe('declarative graph compiler', () => {
       })
     ).rejects.toMatchObject({ code: 'INVALID_GRAPH_REQUEST' })
     expect(calls).toEqual([])
+  })
+
+  test('rejects pinned tools when the configured graph environment lacks the pin capability', async () => {
+    const { catalog, published } = await publish(graphDefinitionWithPinnedTool())
+    const calls = []
+    const resolver = new CatalogBackedGraphDefinitionResolver({
+      catalogForWorkspace(workspaceId) {
+        if (workspaceId !== requestBase.workspaceId) throw new Error('Unexpected workspace')
+        return catalog
+      },
+      compatibility,
+    })
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphDefinitionResolver: resolver,
+      declarativeCompiler: compiler(),
+      checkpointer: new MemorySaver(),
+      operations: operationPort(calls),
+      events: eventPublisher(),
+    })
+
+    await expect(adapter.run({ ...requestBase, graph: published.reference })).rejects.toMatchObject(
+      {
+        code: 'GRAPH_INCOMPATIBLE',
+      }
+    )
+    expect(calls).toEqual([])
+    expect(compatibility.capabilities).not.toContain(GRAPH_TOOL_PINS_CAPABILITY)
+  })
+
+  test('passes the exact published tool pin to the authorized graph operation port', async () => {
+    const { catalog, published } = await publish(graphDefinitionWithPinnedTool())
+    const calls = []
+    const resolver = new CatalogBackedGraphDefinitionResolver({
+      catalogForWorkspace(workspaceId) {
+        if (workspaceId !== requestBase.workspaceId) throw new Error('Unexpected workspace')
+        return catalog
+      },
+      compatibility: {
+        ...compatibility,
+        capabilities: [...compatibility.capabilities, GRAPH_TOOL_PINS_CAPABILITY],
+      },
+    })
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphDefinitionResolver: resolver,
+      declarativeCompiler: compiler(),
+      checkpointer: new MemorySaver(),
+      operations: operationPort(calls),
+      events: eventPublisher(),
+    })
+
+    const result = await adapter.run({ ...requestBase, graph: published.reference })
+
+    expect(result).toMatchObject({ status: 'completed' })
+    expect(calls.find(({ node }) => node === 'right')).toMatchObject({
+      kind: 'tool',
+      name: 'right',
+      toolPin,
+    })
+  })
+
+  test('rejects a tool pin attached to a non-tool operation request', () => {
+    expect(
+      GraphNodeOperationSchema.safeParse({
+        executionId: requestBase.executionId,
+        attemptId: requestBase.attemptId,
+        workspaceId: requestBase.workspaceId,
+        workflowId: requestBase.workflowId,
+        threadId: requestBase.threadId,
+        node: 'prepare',
+        kind: 'runtime',
+        name: 'prepare',
+        input: {},
+        idempotencyKey: 'graph-op-non-tool-pin',
+        toolPin,
+      }).success
+    ).toBe(false)
+  })
+
+  test('approval signal requires a bounded JSON record', async () => {
+    const { GraphNodeApprovalRequiredError } = await import('@control-plane/orchestration')
+    const approval = {
+      interactionKey: 'tool-approval:bounded',
+      kind: 'approval',
+      payload: { summary: 'Approve the operation?' },
+    }
+    expect(new GraphNodeApprovalRequiredError(approval).interaction).toEqual(approval)
+    expect(
+      () =>
+        new GraphNodeApprovalRequiredError({
+          ...approval,
+          kind: 'input',
+        })
+    ).toThrow()
+    expect(
+      () =>
+        new GraphNodeApprovalRequiredError({
+          ...approval,
+          payload: { detail: 'x'.repeat(16_385) },
+        })
+    ).toThrow()
+  })
+
+  test('uses a typed tool approval interrupt and rechecks the same durable operation on resume', async () => {
+    const { GraphNodeApprovalRequiredError } = await import('@control-plane/orchestration')
+    const { catalog, published } = await publish(graphDefinitionWithPinnedTool())
+    const directory = await mkdtemp(join(tmpdir(), 'graph-tool-approval-'))
+    const path = join(directory, 'state.sqlite')
+    let persistence = new SqlitePersistenceProvider({ path })
+    const calls = []
+    // This state stands in for the independent durable interaction store checked by the port.
+    let approvalPersisted = false
+    const operations = {
+      async invoke(operation) {
+        calls.push(structuredClone(operation))
+        switch (operation.node) {
+          case 'prepare':
+            return { objective: operation.input.objective }
+          case 'left':
+            return { left: `left:${operation.input.prepare.objective}` }
+          case 'right':
+            if (!approvalPersisted) {
+              throw new GraphNodeApprovalRequiredError({
+                interactionKey: 'tool-approval:right',
+                kind: 'approval',
+                payload: { summary: 'Approve this pinned tool operation?' },
+              })
+            }
+            return { right: `right:${operation.input.prepare.objective}` }
+          case 'join':
+            return { joined: `${operation.input.left.left}|${operation.input.right.right}` }
+          case 'finish':
+            return { summary: operation.input.join.joined }
+          default:
+            throw new Error(`Unexpected operation node: ${operation.node}`)
+        }
+      },
+      async cancel() {
+        return true
+      },
+    }
+    const resolver = new CatalogBackedGraphDefinitionResolver({
+      catalogForWorkspace(workspaceId) {
+        if (workspaceId !== requestBase.workspaceId) throw new Error('Unexpected workspace')
+        return catalog
+      },
+      compatibility: {
+        ...compatibility,
+        capabilities: [...compatibility.capabilities, GRAPH_TOOL_PINS_CAPABILITY],
+      },
+    })
+    const adapterOptions = () => ({
+      graphDefinitionResolver: resolver,
+      declarativeCompiler: compiler(),
+      checkpointer: new LangGraphSqliteCheckpointSaver(persistence, requestBase.workspaceId),
+      operations,
+      events: eventPublisher(),
+    })
+
+    try {
+      await persistence.migrate()
+      const first = await new LangGraphOrchestrationAdapter(adapterOptions()).run({
+        ...requestBase,
+        graph: published.reference,
+      })
+      expect(first).toMatchObject({
+        status: 'awaiting_input',
+        interrupt: {
+          interactionKey: 'tool-approval:right',
+          kind: 'approval',
+          payload: { summary: 'Approve this pinned tool operation?' },
+        },
+      })
+      expect(first.checkpointId).toBeString()
+
+      await persistence.close()
+      persistence = new SqlitePersistenceProvider({ path })
+      await persistence.migrate()
+      const forgedWakeup = await new LangGraphOrchestrationAdapter(adapterOptions()).resume({
+        executionId: requestBase.executionId,
+        attemptId: requestBase.attemptId,
+        workspaceId: requestBase.workspaceId,
+        workflowId: requestBase.workflowId,
+        graph: published.reference,
+        threadId: requestBase.threadId,
+        checkpointId: first.checkpointId,
+        response: { approved: true },
+        idempotencyKey: 'declarative:resume:forged-wakeup',
+      })
+      expect(forgedWakeup).toMatchObject({ status: 'awaiting_input' })
+
+      await persistence.close()
+      persistence = new SqlitePersistenceProvider({ path })
+      await persistence.migrate()
+      approvalPersisted = true
+      const resumed = await new LangGraphOrchestrationAdapter(adapterOptions()).resume({
+        executionId: requestBase.executionId,
+        attemptId: requestBase.attemptId,
+        workspaceId: requestBase.workspaceId,
+        workflowId: requestBase.workflowId,
+        graph: published.reference,
+        threadId: requestBase.threadId,
+        checkpointId: forgedWakeup.checkpointId,
+        response: { approved: false },
+        idempotencyKey: 'declarative:resume:after-persisted-approval',
+      })
+
+      expect(resumed).toMatchObject({ status: 'completed' })
+      const rightCalls = calls.filter(({ node }) => node === 'right')
+      expect(rightCalls.length).toBeGreaterThanOrEqual(3)
+      expect(new Set(rightCalls.map(({ idempotencyKey }) => idempotencyKey)).size).toBe(1)
+      expect(
+        rightCalls.every(
+          ({ toolPin: actualPin }) => JSON.stringify(actualPin) === JSON.stringify(toolPin)
+        )
+      ).toBe(true)
+      expect(rightCalls.every(({ input }) => !Object.hasOwn(input, 'response'))).toBe(true)
+    } finally {
+      await persistence.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('does not turn a non-tool approval error into a graph interrupt', async () => {
+    const { GraphNodeApprovalRequiredError } = await import('@control-plane/orchestration')
+    const { published } = await publish()
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphs: [compiler().compile(published)],
+      checkpointer: new MemorySaver(),
+      operations: {
+        async invoke() {
+          throw new GraphNodeApprovalRequiredError({
+            interactionKey: 'tool-approval:wrong-kind',
+            kind: 'approval',
+            payload: { summary: 'Unexpected runtime approval signal' },
+          })
+        },
+        async cancel() {
+          return true
+        },
+      },
+      events: eventPublisher(),
+    })
+
+    const result = await adapter.run({ ...requestBase, graph: published.reference })
+
+    expect(result).toMatchObject({ status: 'failed', failure: { code: 'GRAPH_FAILED' } })
+  })
+
+  test('rejects sensitive approval payloads before they enter interrupt checkpoints', async () => {
+    const { GraphNodeApprovalRequiredError } = await import('@control-plane/orchestration')
+    const { published } = await publish()
+    const checkpointer = new MemorySaver()
+    const secretCanary = 'secret-canary-approval-interrupt-3c18'
+    const regularOperations = operationPort([])
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphs: [compiler().compile(published)],
+      checkpointer,
+      operations: {
+        async invoke(operation) {
+          if (operation.node === 'right') {
+            throw new GraphNodeApprovalRequiredError({
+              interactionKey: 'tool-approval:secret-payload',
+              kind: 'approval',
+              payload: { authorization: `Bearer ${secretCanary}` },
+            })
+          }
+          return regularOperations.invoke(operation)
+        },
+        async cancel() {
+          return true
+        },
+      },
+      events: eventPublisher(),
+    })
+
+    const result = await adapter.run({ ...requestBase, graph: published.reference })
+
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(JSON.stringify(result)).not.toContain(secretCanary)
+    expect(JSON.stringify(checkpointer.storage)).not.toContain(secretCanary)
+  })
+
+  test('does not interpret ordinary JSON tool output as an approval request', async () => {
+    const { published } = await publish()
+    const calls = []
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphs: [compiler().compile(published)],
+      checkpointer: new MemorySaver(),
+      operations: {
+        ...operationPort(calls),
+        async invoke(operation) {
+          calls.push(operation)
+          if (operation.node === 'right') {
+            return {
+              right: `right:${operation.input.prepare.objective}`,
+              interactionKey: 'looks-like-an-approval',
+              kind: 'approval',
+              payload: { summary: 'Ordinary operation data' },
+            }
+          }
+          return operationPort([]).invoke(operation)
+        },
+      },
+      events: eventPublisher(),
+    })
+
+    const result = await adapter.run({ ...requestBase, graph: published.reference })
+
+    expect(result).toMatchObject({ status: 'completed' })
+    expect(calls.filter(({ node }) => node === 'right')).toHaveLength(1)
+  })
+
+  test('leaves an active graph running and emits no cancellation event when cancellation is unknown', async () => {
+    const { published } = await publish()
+    let signalStarted
+    const started = new Promise((resolve) => {
+      signalStarted = resolve
+    })
+    let releaseOperation
+    const pendingOperation = new Promise((resolve) => {
+      releaseOperation = resolve
+    })
+    const events = []
+    const regularOperations = operationPort([])
+    const adapter = new LangGraphOrchestrationAdapter({
+      graphs: [compiler().compile(published)],
+      checkpointer: new MemorySaver(),
+      operations: {
+        async invoke(operation) {
+          if (operation.node !== 'prepare') return regularOperations.invoke(operation)
+          signalStarted()
+          await pendingOperation
+          return { objective: operation.input.objective }
+        },
+        async cancel() {
+          return false
+        },
+      },
+      events: eventPublisher(events),
+    })
+
+    const running = adapter.run({ ...requestBase, graph: published.reference })
+    await started
+    const cancelled = await adapter.cancel({
+      executionId: requestBase.executionId,
+      attemptId: requestBase.attemptId,
+      workspaceId: requestBase.workspaceId,
+      workflowId: requestBase.workflowId,
+      graph: published.reference,
+      threadId: requestBase.threadId,
+      reason: 'user_request',
+      idempotencyKey: 'declarative:cancel:unknown',
+    })
+    releaseOperation()
+
+    expect(cancelled).toBe(false)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+    expect(events.some(({ type }) => type === 'graph.cancelled')).toBe(false)
   })
 
   test('bounds cyclic declarative execution with its configured LangGraph recursion limit', async () => {

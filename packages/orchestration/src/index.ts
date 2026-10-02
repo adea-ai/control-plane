@@ -1,4 +1,8 @@
-import { IdentifierSchemas, GraphReferenceSchema } from '@control-plane/contracts'
+import {
+  GraphReferenceSchema,
+  GraphToolPinSchema,
+  IdentifierSchemas,
+} from '@control-plane/contracts'
 import { z } from 'zod'
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
@@ -112,14 +116,44 @@ export const GraphSegmentResultSchema = z.discriminatedUnion('status', [
   SegmentBaseSchema.extend({ status: z.literal('cancelled') }).strict(),
 ])
 
-export const GraphNodeOperationSchema = GraphCorrelationSchema.extend({
+const GraphNodeOperationBaseSchema = GraphCorrelationSchema.extend({
   threadId: SafeReferenceSchema,
   node: SafeReferenceSchema,
-  kind: z.enum(['runtime', 'model', 'tool', 'delegation']),
   name: SafeReferenceSchema,
   input: JsonObjectSchema,
   idempotencyKey: SafeReferenceSchema,
-}).strict()
+})
+
+export const GraphNodeOperationSchema = z.discriminatedUnion('kind', [
+  GraphNodeOperationBaseSchema.extend({
+    kind: z.enum(['runtime', 'model', 'delegation']),
+  }).strict(),
+  GraphNodeOperationBaseSchema.extend({
+    kind: z.literal('tool'),
+    toolPin: GraphToolPinSchema.optional(),
+  }).strict(),
+])
+
+const GraphApprovalPayloadSchema = z
+  .record(z.string(), z.json())
+  .superRefine((payload, context) => {
+    if (Object.keys(payload).length > 64) {
+      context.addIssue({ code: 'custom', message: 'Approval payload has too many fields' })
+      return
+    }
+    const serialized = JSON.stringify(payload)
+    if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > 16_384) {
+      context.addIssue({ code: 'custom', message: 'Approval payload exceeds the size limit' })
+    }
+  })
+
+export const GraphNodeApprovalRequiredSchema = z
+  .object({
+    interactionKey: SafeReferenceSchema,
+    kind: z.literal('approval'),
+    payload: GraphApprovalPayloadSchema,
+  })
+  .strict()
 
 export const ExecutionWorkflowInputSchema = z
   .object({
@@ -164,7 +198,23 @@ export type GraphCancellationRequest = z.output<typeof GraphCancellationRequestS
 export type GraphEvent = z.output<typeof GraphEventSchema>
 export type GraphSegmentResult = z.output<typeof GraphSegmentResultSchema>
 export type GraphNodeOperation = z.output<typeof GraphNodeOperationSchema>
+export type GraphNodeApprovalRequired = z.output<typeof GraphNodeApprovalRequiredSchema>
 export type ExecutionWorkflowInput = z.output<typeof ExecutionWorkflowInputSchema>
+
+/** Typed signal for a durable tool effect that must wait for its recorded approval. */
+export class GraphNodeApprovalRequiredError extends Error {
+  readonly #interaction: GraphNodeApprovalRequired
+
+  constructor(interaction: unknown) {
+    super('Graph node requires approval')
+    this.name = 'GraphNodeApprovalRequiredError'
+    this.#interaction = GraphNodeApprovalRequiredSchema.parse(interaction)
+  }
+
+  get interaction(): GraphNodeApprovalRequired {
+    return this.#interaction
+  }
+}
 
 export interface GraphNodeOperationPort {
   invoke(operation: GraphNodeOperation): Promise<Readonly<Record<string, unknown>>>
