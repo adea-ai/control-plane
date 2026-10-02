@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.12.0...workflow-worker-v1.13.0) (2026-10-02)
+
+
+### Features
+
+* **local:** execute pinned graph tools with durable approval and reconciliation ([#845](https://github.com/adea-ai/control-plane/issues/845)) ([9d01be9](https://github.com/adea-ai/control-plane/commit/9d01be92933db5a0b02a9b9def73da2abae41078))
+
 ## [1.12.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.4...workflow-worker-v1.12.0) (2026-10-01)
 
 
