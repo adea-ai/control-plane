@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.6.0...workflow-runtime-v1.7.0) (2026-10-02)
+
+
+### Features
+
+* **local:** execute pinned graph tools with durable approval and reconciliation ([#845](https://github.com/adea-ai/control-plane/issues/845)) ([9d01be9](https://github.com/adea-ai/control-plane/commit/9d01be92933db5a0b02a9b9def73da2abae41078))
+
 ## [1.6.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.5.2...workflow-runtime-v1.6.0) (2026-10-01)
 
 

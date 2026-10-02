@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.65.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.8...workspace-v1.65.0) (2026-10-02)
+
+
+### Features
+
+* **local:** execute pinned graph tools with durable approval and reconciliation ([#845](https://github.com/adea-ai/control-plane/issues/845)) ([9d01be9](https://github.com/adea-ai/control-plane/commit/9d01be92933db5a0b02a9b9def73da2abae41078))
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#838](https://github.com/adea-ai/control-plane/issues/838)) ([15677e3](https://github.com/adea-ai/control-plane/commit/15677e380137a7d564ca78d3ddc647d2d559260e))
+
 ## [1.64.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.7...workspace-v1.64.8) (2026-10-02)
 
 
