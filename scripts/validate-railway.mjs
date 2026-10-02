@@ -156,20 +156,35 @@ if (
 ) {
   throw new Error('Railway cost policy must define the versioned cloud-prelaunch profile.')
 }
-for (const environmentName of ['staging', 'production']) {
+// Production stays online only where the local-first MVP depends on it:
+// control-api serves the web/mobile marketplace catalog while the production
+// cloud execution runtime is disabled, so workflow-worker and restate hold no
+// production resources. Staging is the on-demand qualification reference.
+const expectedCostPosture = {
+  production: {
+    availability: 'control-api-online-runtime-on-demand',
+    runningReplicas: { 'control-api': 1, 'workflow-worker': 0, restate: 0 },
+  },
+  staging: {
+    availability: 'configured-on-demand-reference',
+    runningReplicas: { 'control-api': 0, 'workflow-worker': 0, restate: 0 },
+  },
+}
+for (const [environmentName, posture] of Object.entries(expectedCostPosture)) {
   const configured = costPolicy.environments?.[environmentName]
   if (
+    configured?.availability !== posture.availability ||
     configured?.sourceConnected !== false ||
     configured?.standbyAction !== 'remove-active-deployment' ||
     configured?.activationBranch !== 'main'
   ) {
     throw new Error(`Railway standby policy is incomplete: ${environmentName}.`)
   }
-  for (const serviceName of ['control-api', 'workflow-worker', 'restate']) {
+  for (const [serviceName, runningReplicas] of Object.entries(posture.runningReplicas)) {
     const service = configured.services?.[serviceName]
     if (
       service?.configuredReplicas !== 1 ||
-      service?.runningReplicas !== 0 ||
+      service?.runningReplicas !== runningReplicas ||
       service?.serverless !== false
     ) {
       throw new Error(

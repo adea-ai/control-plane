@@ -4,26 +4,30 @@
   "profile": "cloud-prelaunch",
   "environments": {
     "production": {
-      "availability": "configured-not-running",
+      "availability": "control-api-online-runtime-on-demand",
       "sourceConnected": false,
       "activationBranch": "main",
       "standbyAction": "remove-active-deployment",
       "services": {
         "control-api": {
           "configuredReplicas": 1,
-          "runningReplicas": 0,
-          "serverless": false
+          "runningReplicas": 1,
+          "serverless": false,
+          "cpuLimit": 0.5,
+          "memoryLimitBytes": 1073741824,
+          "reason": "The only production cloud dependency of the local-first MVP (web/mobile marketplace catalog proxy). Liveness is polled on /health so the Neon production compute autosuspends between catalog traffic; /ready is verified once per promotion. 1 GiB suffices because the registry refresh skips the immutable download while the latest pointer names the held catalog."
         },
         "workflow-worker": {
           "configuredReplicas": 1,
           "runningReplicas": 0,
-          "serverless": false
+          "serverless": false,
+          "reason": "Removed from production IaC resources while the production cloud execution runtime is disabled; the definition stays for staging qualification. Reactivation is a reviewed IaC change plus fresh Restate identity provisioning (the production restate-data volume is deleted with the service)."
         },
         "restate": {
           "configuredReplicas": 1,
           "runningReplicas": 0,
           "serverless": false,
-          "preserveVolume": true
+          "reason": "Removed from production IaC resources together with workflow-worker; production never ran durable executions (runtime disabled). Reactivation re-provisions the request identity keypair via scripts/provision-restate-identity.mjs."
         }
       }
     },

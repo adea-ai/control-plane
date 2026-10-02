@@ -56,7 +56,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [control-api, workflow-worker]
+        # Production runs control-api only while the cloud execution runtime
+        # is disabled (the MVP is local workflow + web/mobile remote control).
+        # Restoring workflow-worker promotion is part of reviewed cloud
+        # runtime reactivation work alongside the IaC resources.
+        target: [control-api]
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}
       REF: ghcr.io/${{ github.repository_owner }}/control-plane-${{ matrix.target }}:${{ github.sha }}
@@ -181,3 +185,20 @@ jobs:
           RAILWAY_PRODUCTION_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
           RAILWAY_WORKSPACE_TOKEN: ${{ secrets.RAILWAY_WORKSPACE_TOKEN }}
         run: bun scripts/promote-railway-images.mjs promotion-*.json
+
+      # The production platform healthcheck is `/health` (liveness only), so
+      # deployment SUCCESS no longer proves database readiness. `/ready` runs
+      # the bounded PostgreSQL probe; promotion must not report success while
+      # the runtime database binding is broken.
+      - name: Verify production readiness after deploy
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error \
+              https://control-planecontrol-api-production.up.railway.app/ready; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::production /ready did not report ready after promotion"
+          exit 1

@@ -208,15 +208,12 @@ export class MarketplaceRegistryService {
   /**
    * A full refresh downloads every immutable artifact (~50 MB for the current
    * catalog), so once a verified snapshot exists it is served immediately and
-   * the registry refreshes in the background. Without a snapshot — cold start,
-   * or after a verification failure — the refresh blocks the caller.
-   */
-  /**
-   * A full refresh downloads every immutable artifact (~50 MB for the current
-   * catalog), so a verified snapshot is always served immediately: the first
-   * caller blocks on the download, later callers get the cached snapshot and
-   * a single background refresh per interval keeps it current. After a failed
-   * refresh the snapshot is reported as `stale` until a refresh succeeds.
+   * the registry refreshes in the background. Each refresh first reads the
+   * small mutable pointer; while it still names the catalog already held,
+   * the immutable download is skipped entirely — content-addressed artifacts
+   * cannot have changed — so steady-state polling costs one small request
+   * instead of a full re-download per interval. Without a snapshot — cold
+   * start, or after a verification failure — the refresh blocks the caller.
    */
   async getCatalog(): Promise<MarketplaceCatalogSnapshot> {
     const cached = this.#cache
@@ -237,6 +234,15 @@ export class MarketplaceRegistryService {
     try {
       const latestText = await this.#fetchArtifact(this.#latestUrl)
       const latest = parseCatalog(parseJson(latestText, 'catalog-latest.v1.json'))
+      const cached = this.#cache
+      if (cached !== undefined && cached.catalogId === latest.catalogId) {
+        // The held snapshot passed full verification for exactly this catalog
+        // identity, and identity-addressed artifacts are immutable, so there
+        // is nothing new to download or re-verify. A previously failing
+        // refresh is also over: the registry serves the held catalog.
+        this.#lastRefreshFailed = false
+        return cached
+      }
       const artifacts = await this.#fetchImmutableArtifacts(latest.catalogId, latestText)
       const snapshot = verifyArtifacts(artifacts)
       if (snapshot.catalogId !== latest.catalogId)

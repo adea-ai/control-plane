@@ -8,8 +8,10 @@ const API_URL = 'https://backboard.railway.com/graphql/v2'
 const PROJECT_ID = '18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f'
 const ENVIRONMENT_ID = '52f5b0ac-2af0-4792-aa56-30d80e5db31e'
 const SERVICES = Object.freeze([
+  // Production runs control-api only while the cloud execution runtime is
+  // disabled; workflow-worker's runtime binding returns with cloud runtime
+  // reactivation.
   { name: 'control-api', id: '9167a33b-af0f-4780-8614-a5a161697c9c' },
-  { name: 'workflow-worker', id: 'd733ec0d-bda5-4be5-86b9-637154d282eb' },
 ])
 const MIGRATION_TARGET = Object.freeze({
   hostname: 'ep-crimson-bird-ay77m275.c-5.us-east-2.aws.neon.tech',
