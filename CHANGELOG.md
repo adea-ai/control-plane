@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.6...workspace-v1.64.7) (2026-10-02)
+
+
+### Bug Fixes
+
+* silence shellcheck SC2034 in the production readiness retry loop ([#841](https://github.com/adea-ai/control-plane/issues/841)) ([3d27837](https://github.com/adea-ai/control-plane/commit/3d278371a2574d11c726e9b7fd824db222da587c))
+
 ## [1.64.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.5...workspace-v1.64.6) (2026-10-02)
 
 
