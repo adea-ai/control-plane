@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.1...workspace-v1.64.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#830](https://github.com/adea-ai/control-plane/issues/830)) ([4af601e](https://github.com/adea-ai/control-plane/commit/4af601ec859d8ca9d0b66dccb15a8d84618dd4be))
+
 ## [1.64.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.0...workspace-v1.64.1) (2026-10-02)
 
 
