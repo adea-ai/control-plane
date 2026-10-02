@@ -13,12 +13,12 @@ before the selected service.
 
 ## Milestone ownership
 
-- **M9.7 #215 — Railway service builds:** replaced the AWS/ECS-first build/deploy baseline with reproducible Railway service configuration.
-- **M9.8 #216 — Restate managed-cloud migration:** replaced Temporal in the active Railway cloud path and defined the Restate service/runtime topology.
-- **M9.9 #217 — managed dependencies/configuration:** wired Neon, the existing Control Plane R2 bucket, service authentication, Railway private networking, secrets/configuration, health/readiness, and explicit database migration.
-- **M9.10–M9.13 #210–#213 — canonical behavior:** froze public contracts, Profile/Skill behavior, ContextProvider behavior, and operational defaults before portability work.
-- **M9.6 #73 — cloud activation gate:** completed the live Railway staging deployment and verification after the implementation/configuration work.
-- **M10 — Local & Hosted Portability:** substitutes persistence, storage, secrets, process supervision, topology, and runtime transport adapters while preserving the accepted M9 semantics.
+- **M9.7 #215, Railway service builds:** replaced the AWS/ECS-first build/deploy baseline with reproducible Railway service configuration.
+- **M9.8 #216, Restate managed-cloud migration:** replaced Temporal in the active Railway cloud path and defined the Restate service/runtime topology.
+- **M9.9 #217, managed dependencies/configuration:** wired Neon, the existing Control Plane R2 bucket, service authentication, Railway private networking, secrets/configuration, health/readiness, and explicit database migration.
+- **M9.10–M9.13 #210–#213, canonical behavior:** froze public contracts, Profile/Skill behavior, ContextProvider behavior, and operational defaults before portability work.
+- **M9.6 #73, cloud activation gate:** completed the live Railway staging deployment and verification after the implementation/configuration work.
+- **M10, Local & Hosted Portability:** substitutes persistence, storage, secrets, process supervision, topology, and runtime transport adapters while preserving the accepted M9 semantics.
 
 ## Managed-cloud provider map
 
@@ -51,8 +51,8 @@ Configuration shape or resource existence is not deployment evidence. M9.6 requi
 
 The active Cloud application services are:
 
-- `control-api` — public authenticated API plus health/readiness;
-- `workflow-worker` — private Restate service endpoint.
+- `control-api`: public authenticated API plus health/readiness;
+- `workflow-worker`: private Restate service endpoint.
 
 The private `restate` server is a separately pinned infrastructure runtime, not a Control Plane
 application build target.
@@ -132,6 +132,14 @@ Requirements:
 6. Keep provider/database identifiers out of public/domain contracts.
 7. Treat any unrelated `neon_auth` schema as non-authoritative; leave inert or remove safely only through an explicit M9 decision.
 
+The design requires incompatible schema/configuration to fail closed. In Cloud, `/ready` checks
+process readiness and runs a bounded PostgreSQL `SELECT 1`; it does not inspect table or index
+definitions. The production promotion gate provides a separate targeted predeploy control: it checks
+the tagged migration-history prefix, applies migrations, then checks the complete history, runtime
+grants/role restrictions, and selected retention-clock columns before changing Railway image sources.
+That gate does not perform a general physical-schema comparison, so the broader schema-readiness
+requirement is not implemented by PostgreSQL `/ready`.
+
 The repository's local PostgreSQL Compose fixtures remain useful for integration tests and server-profile development. They are **not** the M10 product Local persistence profile, which uses embedded SQLite behind `PersistenceProvider`.
 
 ## Cloudflare R2
@@ -204,7 +212,12 @@ M10 introduces:
 - **Hosted `simple`:** containerized all-in-one, SQLite, Restate, filesystem storage, optional co-located runtimes/Cortana.
 - **Hosted `server`:** PostgreSQL-backed server composition, Restate, filesystem or S3-compatible storage, split services/Runtime Gateway only where topology requires them.
 
-The supported Compose source is `infrastructure/compose/compose.yaml`. The `simple` profile has one long-lived container and zero external service dependencies. The `server` profile has three long-lived services—Control Plane, PostgreSQL, and Restate—plus an idempotent one-shot migration container. PostgreSQL and Restate remain private on the Compose network; the Control API publishes to host loopback by default. The adjacent runbook owns initial setup, persistent paths, backup/restore, TLS proxying, upgrades, and rollback guidance.
+The supported Compose source is `infrastructure/compose/compose.yaml`. The `simple` profile runs
+one long-lived container with no external service dependencies. The `server` profile runs three
+long-lived services (Control Plane, PostgreSQL, and Restate) plus an idempotent one-shot migration
+container. PostgreSQL and Restate stay private on the Compose network. By default, the Control API
+publishes to host loopback. The adjacent runbook covers initial setup, persistent paths,
+backup/restore, TLS proxying, upgrades, and rollback.
 
 The M9 Railway profile remains the semantic reference while M10 substitutes infrastructure adapters. M10 must keep the M9 cloud smoke/conformance baseline green throughout the extraction.
 

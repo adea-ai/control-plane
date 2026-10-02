@@ -25,9 +25,11 @@ only when the registry requires authenticated access. The optional
 `MARKETPLACE_REGISTRY_IMMUTABLE_BASE_URL` variables are for controlled registry
 endpoints and test environments; production endpoints must use HTTPS. The
 immutable base URL is a template containing `{catalogId}` and must serve the
-seven required artifacts: `catalog.v1.json`, `catalog-latest.v1.json`,
+six required snapshot artifacts: `catalog.v1.json`,
 `catalog-summary.v1.json`, `categories.v1.json`, `compatibility.v1.json`,
 `integrity.json`, and `sources.lock.json`.
+Control Plane reuses `catalog-latest.v1.json` from the publication root; it
+does not request another copy from the immutable snapshot directory.
 
 Note that the immutable base URL is configured independently of the pointer
 URL. It used to be derived by string-slicing the pointer's
@@ -38,9 +40,9 @@ deployment serving the pointer from anywhere else produced a base that 404'd.
 It may additionally serve `catalog-index.v1.json`, the consumer browsing index
 (added in #709). That one artifact is optional, because a snapshot published
 before #709 predates it: Control Plane omits it from the response and clients
-fall back to rendering from the full catalog. Only a genuine 404 is read as
-absence — a 5xx, a timeout, or a transport failure fails the refresh, so a
-registry outage can never masquerade as an older snapshot. When the index _is_
+fall back to rendering from the full catalog. Only a genuine 404 means the
+index is absent. A 5xx, timeout, or transport failure fails the refresh, so a
+registry outage cannot masquerade as an older snapshot. When the index is
 published it is verified in full and its digest must be declared in
 `integrity.json` alongside the other artifacts.
 
@@ -65,13 +67,21 @@ source digest, canonical package digest, selected strategy, component
 selection, `packageKey`, and stable `dataKey`. Materialization must preserve
 source modes and activation must recheck provenance, policy, realpath
 containment, connector/credential authority, and the live profile.
+The current install endpoint verifies the request and records state and exact
+pins. It does not copy plugin files into a filesystem or start a harness. An
+`installed` record therefore is not evidence of materialization or activation.
 
 The envelope's top-level `workspaceId` is the Control Plane service scope used
 by authentication. The nested `workspaceIdentity.workspaceId` is Adea's
 external workspace identity and is the scope used for installation records.
 These identifiers may use different namespaces and must not be compared for
-equality by a proxy; the service principal's authority remains the gate for
-the top-level Control Plane scope.
+equality by the advisory plan contract; service authentication gates the
+top-level Control Plane scope. The current catalog and install controller
+instead requires the top-level and nested workspace IDs to be equal and rejects
+a mismatch as `MARKETPLACE_REQUEST_INVALID`. Plan tests accepting separate
+namespaces do not establish that catalog and install requests support them.
+Consumers must account for this current route difference rather than infer
+namespace compatibility from the plan response.
 
 The catalog response contains artifact JSON strings because Adea performs
 the same independent verification before rendering. It never contains plugin
@@ -101,9 +111,9 @@ metadata-only or quarantined release is never executable. Revocation,
 supersession, workspace policy, harness compatibility, connector availability,
 and credential availability are checked before an installed state is recorded.
 
-Execution records also persist the exact marketplace plugin references. Agent
-HQ is never given upstream plugin content and never executes it; runtime
-execution remains a Control Plane responsibility.
+Execution records also persist the exact marketplace plugin references. Adea
+is never given upstream plugin source and does not execute it. Runtime
+execution remains a separate Control Plane responsibility.
 
 If the registry becomes private, keep GitHub access in this server-side path
 using a scoped GitHub App/token. Do not expose a GitHub token or direct release

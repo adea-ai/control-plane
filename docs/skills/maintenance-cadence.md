@@ -14,8 +14,8 @@ procedures are documented."
   `tests/skill-library.test.mjs` lane green, independent review for substantive
   rewrites, squash merge to main.
 - **Validation:** `bun scripts/validate-skills.mjs` plus the smoke-lane skill
-  tests must pass — frontmatter name/description/version present, directory
-  match, no machine-specific absolute paths, inventory in sync, and every
+  tests must pass. Checks include frontmatter name/description/version,
+  directory match, no machine-specific absolute paths, inventory in sync, and every
   inline `bun run <script>` reference in bundled Markdown must name a script
   in the repository's `package.json`. This checks declared command names; it
   does not execute the referenced commands or prove their described results.
@@ -48,13 +48,12 @@ procedures are documented."
 
 - Skills adapted from external sources keep their attribution note
   (e.g. code-simplification credits its upstream origin).
-- New skills must not embed secrets, credentials, or machine-specific paths —
-  the validator rejects absolute paths, and the repository credential scan
+- New skills must not embed secrets, credentials, or machine-specific paths.
+  The validator rejects absolute paths, and the repository credential scan
   covers the directory.
 - Skills must never instruct an agent to treat issue closure, sampled checks,
-  stale memory, fake adapters, or skipped tests as completion proof — that
-  rule is the library's core safety invariant and is enforced by review, not
-  just tooling.
+  stale memory, fake adapters, or skipped tests as completion proof. This is
+  the library's core safety invariant and review enforces it alongside tooling.
 
 ## Update process (summary)
 
