@@ -80,6 +80,16 @@ describe('Neon preview cleanup lookup', () => {
     expect(workflow).toContain('SHARD: ${{ matrix.shard }}')
   })
 
+  test('retries the integration slice once inside the verify step for transient Neon drops', () => {
+    const step = workflow.split("      - name: Verify migrations and this shard's integration slice")[1]
+      ?.split('\n      - name:')[0]
+    expect(step).toContain('if bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}; then')
+    expect(step).toContain('retrying once for a transient Neon connection drop')
+    expect((step.match(/bun scripts\/run-integration-tests\.mjs --shard=\$\{\{ matrix\.shard \}\}/g) ?? []).length).toBe(2)
+    // Migrations stay outside the retry: only the test slice re-runs.
+    expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
+  })
+
   test('keeps database credentials out of dependency installation, builds, and cleanup', () => {
     const urlSetupIndex = workflow.indexOf('      - name: Build restricted database URLs')
     expect(workflow.indexOf('run: bun install --frozen-lockfile')).toBeLessThan(urlSetupIndex)
