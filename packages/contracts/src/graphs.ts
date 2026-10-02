@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { IdentifierSchemas } from './identifiers.js'
 
 const ReferenceSchema = z
   .string()
@@ -27,6 +28,39 @@ const NodeNameSchema = z
   .min(1)
   .max(128)
   .regex(/^[a-z][a-z0-9._-]*$/)
+const CanonicalToolOperationNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-z][a-z0-9.-]*$/)
+
+export const GraphToolPinSchema = z
+  .object({
+    toolDefinitionId: IdentifierSchemas.toolDefinitionId,
+    toolVersionId: IdentifierSchemas.toolVersionId,
+    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    operation: CanonicalToolOperationNameSchema,
+  })
+  .strict()
+export type GraphToolPin = z.output<typeof GraphToolPinSchema>
+
+export const GRAPH_TOOL_PINS_CAPABILITY = 'graph.tool-pins.v1' as const
+
+const GraphNodeOperationSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.enum(['runtime', 'model', 'delegation']),
+      name: ReferenceSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('tool'),
+      name: ReferenceSchema,
+      toolPin: GraphToolPinSchema.optional(),
+    })
+    .strict(),
+])
 
 export const GraphDefinitionContentSchema = z
   .object({
@@ -39,12 +73,7 @@ export const GraphDefinitionContentSchema = z
           .object({
             node: NodeNameSchema,
             join: z.enum(['all', 'any']).optional(),
-            operation: z
-              .object({
-                kind: z.enum(['runtime', 'model', 'tool', 'delegation']),
-                name: ReferenceSchema,
-              })
-              .strict(),
+            operation: GraphNodeOperationSchema,
           })
           .strict()
       )
@@ -93,6 +122,16 @@ export const GraphDefinitionContentSchema = z
   .strict()
   .superRefine((definition, context) => {
     const nodes = new Set(definition.nodes.map(({ node }) => node))
+    const hasToolPin = definition.nodes.some(
+      ({ operation }) => operation.kind === 'tool' && operation.toolPin !== undefined
+    )
+    if (hasToolPin && !definition.requiredCapabilities.includes(GRAPH_TOOL_PINS_CAPABILITY)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requiredCapabilities'],
+        message: `Pinned tool operations require ${GRAPH_TOOL_PINS_CAPABILITY}`,
+      })
+    }
     for (const edge of definition.edges) {
       if (edge.from === '__start__' && edge.when !== undefined) {
         context.addIssue({ code: 'custom', message: 'Start edges cannot depend on node results' })

@@ -382,7 +382,7 @@ export class LocalControlPlaneComposition {
     const graphRuntime =
       options.graphRuntime === undefined
         ? undefined
-        : new ManagedLocalGraphRuntime(this.persistence, options.graphRuntime)
+        : new ManagedLocalGraphRuntime(this.persistence, options.graphRuntime, this.objectStore)
     const controlApi = new LocalControlApiComposition(
       this.persistence,
       restateIngressUrl,

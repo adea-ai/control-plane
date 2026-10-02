@@ -499,7 +499,7 @@ function activities({ lifecycle, plans, runtime, runtimeRouter, budgetAdmission,
         failureCode: 'GRAPH_DISABLED',
         retryable: false,
       }),
-      cancelGraphSegment: async () => {},
+      cancelGraphSegment: async () => true,
     },
     commands: {
       transitionExecutionCommand: async (input) => runtime.commandTransitions.push(input),
@@ -555,6 +555,7 @@ function graphPort(calls) {
     },
     async cancelGraphSegment(input) {
       calls.push(input)
+      return true
     },
   }
 }
@@ -619,3 +620,35 @@ function graphExecutionPlan() {
     },
   })
 }
+
+test('unconfirmed graph cancellation persists reconciliation and prevents terminal cancellation', async () => {
+  const fixture = await lifecycleFixture(graphExecutionPlan())
+  const runtime = runtimePort()
+  const graph = { ...graphPort([]), cancelGraphSegment: async () => false }
+  const activity = activities({ ...fixture, runtime, graph })
+  await activity.persistStatus(status('queued'))
+  await activity.ensureAttempt(attemptInput())
+  await activity.persistStatus(status('running', true))
+  await expect(
+    activity.cancelActive({
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      workflowId: ids.workflowId,
+      effectKey: 'unconfirmed-graph-cancel',
+      reason: 'user_request',
+      graph: {
+        workspaceId: fixture.plan.correlation.workspaceId,
+        reference: fixture.plan.graph.reference,
+        threadId: `graph:${ids.executionId}`,
+        input: fixture.plan.graph.input,
+      },
+    })
+  ).rejects.toThrow('GRAPH_CANCELLATION_UNCONFIRMED')
+  expect((await fixture.lifecycle.getExecution(ids.executionId)).state).toBe(
+    'reconciliation_required'
+  )
+  expect(runtime.cleanups).toHaveLength(0)
+  expect(runtime.commandTransitions.some((transition) => transition.state === 'settled')).toBe(
+    false
+  )
+})

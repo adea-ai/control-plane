@@ -21,6 +21,7 @@ export type GraphActivityOutcome =
       readonly checkpointId?: string
     }
   | { readonly outcome: 'cancelled'; readonly checkpointId?: string }
+  | { readonly outcome: 'reconciliation_required'; readonly checkpointId?: string }
   | {
       readonly outcome: 'awaiting_input'
       readonly interactionId: string
@@ -32,7 +33,7 @@ export interface GraphSegmentActivityPort {
   runGraphSegment(input: RunGraphSegmentActivityInput): Promise<GraphActivityOutcome>
   resumeGraphSegment(input: ResumeGraphSegmentActivityInput): Promise<GraphActivityOutcome>
   continueGraphSegment(input: ContinueGraphSegmentActivityInput): Promise<GraphActivityOutcome>
-  cancelGraphSegment(input: CancelGraphSegmentActivityInput): Promise<void>
+  cancelGraphSegment(input: CancelGraphSegmentActivityInput): Promise<boolean>
 }
 
 export interface RunGraphSegmentActivityInput {
@@ -89,8 +90,8 @@ export class OrchestrationGraphSegmentActivities implements GraphSegmentActivity
     return normalize(await this.orchestration.continue(GraphContinueRequestSchema.parse(input)))
   }
 
-  async cancelGraphSegment(input: CancelGraphSegmentActivityInput): Promise<void> {
-    await this.orchestration.cancel(
+  async cancelGraphSegment(input: CancelGraphSegmentActivityInput): Promise<boolean> {
+    return this.orchestration.cancel(
       GraphCancellationRequestSchema.parse({
         executionId: input.executionId,
         attemptId: input.attemptId,
@@ -123,8 +124,9 @@ function normalize(result: GraphSegmentResult): GraphActivityOutcome {
         ...(result.checkpointId ? { checkpointId: result.checkpointId } : {}),
       }
     case 'cancelled':
+    case 'reconciliation_required':
       return {
-        outcome: 'cancelled',
+        outcome: result.status,
         ...(result.checkpointId ? { checkpointId: result.checkpointId } : {}),
       }
     case 'awaiting_input':
