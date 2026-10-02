@@ -157,7 +157,8 @@ for (const lostReceipt of [false, true])
           ? {
               putIfAbsent: async (input) => {
                 await store.putIfAbsent(input)
-                throw Error('lost receipt')
+                if (!accounting) throw Error('lost receipt')
+                return result
               },
             }
           : store
@@ -272,70 +273,137 @@ test('cancelled pending tool approvals stay revoked after reconstructing the Loc
   }
 })
 
-test('a lost object-write receipt retains its reservation and refuses confirmed cancellation or a second write', async () => {
-  const fixture = await createLocalGraphToolFixture()
-  const store = new FilesystemObjectStore({
-    rootDirectory: join(fixture.directory, 'objects'),
-    maxObjectBytes: 4096,
-  })
-  let writes = 0
-  try {
-    const options = {
-      api: fixture.api,
-      persistence: fixture.persistence,
-      objectStore: {
-        putIfAbsent: async (input) => {
-          writes++
-          await store.putIfAbsent(input)
-          throw Error('lost receipt')
-        },
-      },
-      prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
-      now: () => fixture.at,
-    }
-    const port = new LocalGraphToolOperations(options)
-    let approval
-    try {
-      await port.invoke(fixture.operation)
-    } catch (error) {
-      if (!error.interaction) throw error
-      approval = error.interaction
-    }
-    const interaction = await fixture.api.interactions.get(approval.interactionKey)
-    await new InteractionService(fixture.api.interactions).respond({
-      interactionId: interaction.interactionId,
-      executionId: fixture.operation.executionId,
-      attemptId: fixture.operation.attemptId,
-      expectedVersion: interaction.version,
-      responseId: 'cmd_01JABCDEF0123456789ABCDEFP',
-      respondingPrincipalId: 'svc_graph-tool-test',
-      action: 'approve',
-      respondedAt: fixture.at,
+for (const fault of [
+  'none',
+  'receipt lookup',
+  'receipt persistence',
+  'unavailable receipt lookup',
+  'charge',
+  'settlement',
+])
+  test(`a lost object-write receipt remains unconfirmed with ${fault} failure`, async () => {
+    const fixture = await createLocalGraphToolFixture()
+    const store = new FilesystemObjectStore({
+      rootDirectory: join(fixture.directory, 'objects'),
+      maxObjectBytes: 4096,
     })
-    await expect(port.invoke(fixture.operation)).rejects.toThrow(
-      'GRAPH_TOOL_RECONCILIATION_REQUIRED'
-    )
-    await expect(
-      new LocalGraphToolOperations({ ...options, objectStore: store }).invoke(fixture.operation)
-    ).rejects.toThrow('GRAPH_TOOL_RECONCILIATION_REQUIRED')
-    expect(writes).toBe(1)
-    expect(
-      await port.cancel(
-        fixture.operation.executionId,
-        fixture.operation.threadId,
-        'graph-cancel-0002'
+    let writes = 0
+    let failLookup = false
+    let usageFault = ['charge', 'settlement'].includes(fault)
+    const accounting = usageFault
+    const persistence = new Proxy(fixture.persistence, {
+      get(target, property) {
+        if (property === 'transaction')
+          return (callback) =>
+            target.transaction((transaction) =>
+              callback(
+                new Proxy(transaction, {
+                  get(inner, key) {
+                    if (key === 'get')
+                      return (...args) => {
+                        if (failLookup && args[0].startsWith('tool-call-idempotency'))
+                          throw Error('receipt lookup unavailable')
+                        return inner.get(...args)
+                      }
+                    if (key === 'put')
+                      return async (input) => {
+                        if (input.value?.call?.status === 'reconciliation_required') {
+                          if (fault === 'unavailable receipt lookup') failLookup = true
+                          if (
+                            fault === 'receipt persistence' ||
+                            fault === 'unavailable receipt lookup'
+                          )
+                            throw Error('receipt transition unavailable')
+                          const result = await inner.put(input)
+                          if (fault === 'receipt lookup') failLookup = true
+                          return result
+                        }
+                        if (
+                          usageFault &&
+                          input.namespace === 'usage-ledger-entries' &&
+                          input.value.kind === (fault === 'charge' ? 'tool_charge' : 'settlement')
+                        )
+                          throw Error('usage receipt unavailable')
+                        return inner.put(input)
+                      }
+                    const value = inner[key]
+                    return typeof value === 'function' ? value.bind(inner) : value
+                  },
+                })
+              )
+            )
+        const value = target[property]
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    try {
+      const options = {
+        api: fixture.api,
+        persistence,
+        objectStore: {
+          putIfAbsent: async (input) => {
+            writes++
+            const result = await store.putIfAbsent(input)
+            if (!accounting) throw Error('lost receipt')
+            return result
+          },
+        },
+        prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
+        now: () => fixture.at,
+      }
+      const port = new LocalGraphToolOperations(options)
+      let approval
+      try {
+        await port.invoke(fixture.operation)
+      } catch (error) {
+        if (!error.interaction) throw error
+        approval = error.interaction
+      }
+      const interaction = await fixture.api.interactions.get(approval.interactionKey)
+      await new InteractionService(fixture.api.interactions).respond({
+        interactionId: interaction.interactionId,
+        executionId: fixture.operation.executionId,
+        attemptId: fixture.operation.attemptId,
+        expectedVersion: interaction.version,
+        responseId: 'cmd_01JABCDEF0123456789ABCDEFP',
+        respondingPrincipalId: 'svc_graph-tool-test',
+        action: 'approve',
+        respondedAt: fixture.at,
+      })
+      await expect(port.invoke(fixture.operation)).rejects.toThrow(
+        'GRAPH_TOOL_RECONCILIATION_REQUIRED'
       )
-    ).toBe(false)
-    const summary = await new DurableUsageLedger({
-      store: new SqliteDurableUsageStore(fixture.persistence),
-    }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
-    expect(summary.spentMicrounits).toBe(0)
-    expect(summary.reservedMicrounits).toBe(25)
-  } finally {
-    store.close()
-    await fixture.cleanup()
-  }
-})
+      failLookup = false
+      if (accounting) {
+        expect(
+          await port.cancel(
+            fixture.operation.executionId,
+            fixture.operation.threadId,
+            'graph-cancel-usage'
+          )
+        ).toBe(false)
+      } else
+        await expect(
+          new LocalGraphToolOperations({ ...options, objectStore: store }).invoke(fixture.operation)
+        ).rejects.toThrow('GRAPH_TOOL_RECONCILIATION_REQUIRED')
+      expect(writes).toBe(1)
+      expect(
+        await port.cancel(
+          fixture.operation.executionId,
+          fixture.operation.threadId,
+          'graph-cancel-0002'
+        )
+      ).toBe(false)
+      const summary = await new DurableUsageLedger({
+        store: new SqliteDurableUsageStore(fixture.persistence),
+      }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+      expect(summary.spentMicrounits).toBe(fault === 'settlement' ? 25 : 0)
+      expect(summary.reservedMicrounits).toBe(fault === 'settlement' ? 0 : 25)
+    } finally {
+      store.close()
+      await fixture.cleanup()
+    }
+  })
 
 for (const value of [null, false, 0, ''])
   test(`malformed persisted rate state ${JSON.stringify(value)} denies the tool effect`, async () => {

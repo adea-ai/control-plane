@@ -274,11 +274,17 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
           throw new GraphNodeEffectUnconfirmedError()
         throw new Error(`GRAPH_TOOL_${outcome.state.toUpperCase()}`)
       } catch (error) {
+        if (error instanceof GraphNodeEffectUnconfirmedError) throw error
         // Only persisted terminal no-effect states can release the reservation.
-        const call = await calls.getByIdempotencyKey(
-          operation.workspaceId,
-          operation.idempotencyKey
-        )
+        let call: ToolCall | undefined
+        try {
+          call = await calls.getByIdempotencyKey(operation.workspaceId, operation.idempotencyKey)
+        } catch {
+          // Receipt storage is unavailable: absence of an effect cannot be established.
+          throw new GraphNodeEffectUnconfirmedError()
+        }
+        if (call && ['executing', 'reconciliation_required', 'succeeded'].includes(call.status))
+          throw new GraphNodeEffectUnconfirmedError()
         if (call && ['failed', 'denied'].includes(call.status))
           await this.#ledger.settle({
             workspaceId: operation.workspaceId,
@@ -316,6 +322,16 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       if (!call.idempotencyKey.startsWith('graph-op-v1:')) continue
       if (call.status === 'executing' || call.status === 'reconciliation_required') {
         confirmed = false
+        continue
+      }
+      if (call.status === 'succeeded') {
+        const accounted = await new SqliteDurableUsageStore(persistence).transaction(
+          call.workspaceId,
+          async (transaction) =>
+            (await transaction.getEffect(`${call.idempotencyKey}:charge`)) !== undefined &&
+            (await transaction.getEffect(`${call.idempotencyKey}:settle`)) !== undefined
+        )
+        if (!accounted) confirmed = false
         continue
       }
       if (['requested', 'awaiting_approval', 'authorized'].includes(call.status)) {
