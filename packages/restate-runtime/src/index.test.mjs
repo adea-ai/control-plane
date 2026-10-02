@@ -87,7 +87,7 @@ describe('LocalRestateRuntime', () => {
     }
   })
 
-  test('pins 1.7.12, loopback listeners, bounded memory, and durable data', async () => {
+  test('pins 1.7.13, loopback listeners, bounded memory, and durable data', async () => {
     const process = processProvider()
     const runtime = new LocalRestateRuntime({
       executablePath: '/opt/control-plane/restate-server',
@@ -108,7 +108,7 @@ describe('LocalRestateRuntime', () => {
         RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE: '256 MiB',
       },
     })
-    expect(await runtime.health()).toMatchObject({ ready: true, version: '1.7.12' })
+    expect(await runtime.health()).toMatchObject({ ready: true, version: '1.7.13' })
     await runtime.stop()
     expect(process.stops).toEqual(['SIGTERM'])
   })
