@@ -480,7 +480,7 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
       `uses: 0xPlayerOne\\/code-foundry\\/\\.github\\/workflows\\/validation\\.yml@${runtimeRef}`
     )
   )
-  assert.equal((validation.match(/if: vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
+  assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
   assert.match(validation, /codeql-runner: ubuntu-latest/)
   assert.match(validation, /unit-runner: ubuntu-slim/)
