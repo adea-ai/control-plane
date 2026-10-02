@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.3...object-store-v1.5.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#838](https://github.com/adea-ai/control-plane/issues/838)) ([15677e3](https://github.com/adea-ai/control-plane/commit/15677e380137a7d564ca78d3ddc647d2d559260e))
+
 ## [1.5.3](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.2...object-store-v1.5.3) (2026-10-02)
 
 
