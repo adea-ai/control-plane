@@ -637,6 +637,10 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /database system is accepting SQL connections/)
   assert.match(runner, /'test:integration', '--concurrency=1'/)
   assert.match(runner, /'stop', '--timeout', '60', 'postgres'/)
+  // The sharded remote lane survives Neon pooler connection drops: a raised
+  // per-test ceiling plus one fresh-process retry per file.
+  assert.match(runner, /remoteDatabase \? '120000' : '30000'/)
+  assert.match(runner, /retrying once before failing the shard/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
   assert.match(testing.scripts['test:integration'], /--timeout 30000/)
   assert.match(sharedPostgresSuite, /30_000/)
