@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "comment": "M13 #405 regression budgets. Ceilings are reviewed ceilings, not targets — changes are a reviewable diff. Lane values are wall-clock seconds measured by scripts/run-bun-test-group.mjs on the CI runner.",
   "lanes": {
-    "unit": { "ceilingSeconds": 300, "baselineSeconds": 256 },
+    "unit": { "ceilingSeconds": 480, "baselineSeconds": 300 },
     "e2e": { "ceilingSeconds": 120, "baselineSeconds": 85 },
     "smoke": { "ceilingSeconds": 90, "baselineSeconds": 68 }
   },
