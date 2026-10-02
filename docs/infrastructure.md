@@ -57,6 +57,24 @@ The active Cloud application services are:
 The private `restate` server is a separately pinned infrastructure runtime, not a Control Plane
 application build target.
 
+**Production activation shape (2026-10-02 cost posture):** production runs **`control-api`
+only** — it is the one cloud dependency the local-first MVP has (the web/mobile marketplace
+catalog proxy), and the production execution runtime is `disabled`, so `workflow-worker` and
+`restate` previously ran as health-passing placeholders. Their definitions remain in
+`.railway/railway.ts` for staging qualification runs, but they are excluded from the production
+`resources` list, and promotion builds and deploys control-api alone
+(`scripts/promote-railway-images.mjs` and the migration gate validate the control-api target
+only). Reactivating the cloud runtime in production is a reviewed change that restores the
+production resources, the promotion targets, and a **fresh Restate identity**: the production
+`restate-data` volume is deleted with the service, and
+`scripts/provision-restate-identity.mjs` re-issues the keypair that must match the worker's
+`RESTATE_REQUEST_IDENTITY_PUBLIC_KEY`.
+
+Production polls `/health` (liveness and build metadata) as its platform healthcheck; `/ready`
+additionally runs the bounded PostgreSQL probe and is verified once per promotion by the
+"Verify production readiness after deploy" step. This keeps the Neon production compute on
+autosuspend between catalog requests instead of awake around the clock.
+
 `runtime-worker`, `runtime-gateway`, and `tool-gateway` are not Cloud services. Their former process
 topology is not a compatibility target: runtime execution and tool capabilities must be composed
 through the accepted Cloud, Hosted, or Local profile instead of restoring placeholder Railway
@@ -99,12 +117,13 @@ must never use the CLI option that reveals variable values. The deprecated per-s
 The definition represents the explicit one-replica **activation** shape because Railway's
 Infrastructure as Code schema does not accept zero replicas. Staging is on-demand: use the guarded
 command versioned in `scripts/railway-standby.mjs` to remove active and reactivatable deployment
-revisions between qualification runs while retaining the Restate volume. The 2026-09-29 readback
-found no successful active staging deployment. Production had successful application deployment
-statuses and one successful Restate replica, so the earlier zero-compute standby description is not
-its current observed state. Production availability still requires the reviewed release, secrets,
-migrations, dependency readiness, direct health/readiness, smoke, recovery, and rollback gates; the
-readback does not establish those gates.
+revisions between qualification runs while retaining the Restate volume. Production is
+reconciled to the control-api-only `resources` list by the same plan/apply flow; the 2026-10-02
+apply removed the production `workflow-worker`/`restate` instances and their volume
+(`--confirm-destructive`), so any future production IaC apply stays consistent with the standby
+posture instead of reactivating them. Production availability still requires the reviewed
+release, secrets, migrations, dependency readiness, direct health/readiness, smoke, recovery,
+and rollback gates.
 
 M9.7 established dependency-aware, reproducible monorepo builds for Railway. The existing
 `infrastructure/containers` build pipeline remains available for Hosted/server composition. AWS/ECS-

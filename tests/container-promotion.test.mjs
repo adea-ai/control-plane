@@ -34,10 +34,7 @@ function appliedHistory(entries) {
 }
 
 function productionRuntimeVariables() {
-  return new Map([
-    ['9167a33b-af0f-4780-8614-a5a161697c9c', { DATABASE_URL: runtimeUrl }],
-    ['d733ec0d-bda5-4be5-86b9-637154d282eb', { DATABASE_URL: runtimeUrl }],
-  ])
+  return new Map([['9167a33b-af0f-4780-8614-a5a161697c9c', { DATABASE_URL: runtimeUrl }]])
 }
 
 function runtimeCapabilities(overrides = {}) {
@@ -193,12 +190,6 @@ const manifests = [
     digest: `sha256:${'a'.repeat(64)}`,
     sourceSha: 'source-sha',
   },
-  {
-    target: 'workflow-worker',
-    image: 'ghcr.io/adea-ai/control-plane-workflow-worker',
-    digest: `sha256:${'b'.repeat(64)}`,
-    sourceSha: 'source-sha',
-  },
 ]
 
 function deployment(overrides = {}) {
@@ -314,22 +305,14 @@ describe('container promotion', () => {
     })
 
     assert.equal(sourceReads.get('control-api'), 3)
-    assert.equal(sourceReads.get('workflow-worker'), 3)
   })
 
-  test('restores every intended service when a later mutation is ambiguous', async () => {
-    const sources = new Map([
-      ['control-api', { image: 'control-api@sha256:prior', repo: null }],
-      ['workflow-worker', { image: 'workflow-worker@sha256:prior', repo: null }],
-    ])
+  test('restores the prior service state when a mutation response is ambiguous', async () => {
+    const sources = new Map([['control-api', { image: 'control-api@sha256:prior', repo: null }]])
     const deployments = new Map([
       [
         'control-api',
         [deployment({ id: 'control-prior', meta: { imageDigest: 'sha256:control-prior' } })],
-      ],
-      [
-        'workflow-worker',
-        [deployment({ id: 'worker-prior', meta: { imageDigest: 'sha256:worker-prior' } })],
       ],
     ])
     const calls = []
@@ -368,7 +351,7 @@ describe('container promotion', () => {
         sources.set(target, source)
         if (source.image?.includes('sha256:')) promoted.add(target)
         updateCount += 1
-        if (updateCount === 2) {
+        if (updateCount === 1) {
           failNextRead = true
           throw new Error('response lost after commit')
         }
@@ -399,24 +382,14 @@ describe('container promotion', () => {
 
     assert.deepEqual(
       calls.filter(([operation]) => operation === 'rollback'),
-      [
-        ['rollback', 'workflow-worker', 'worker-prior'],
-        ['rollback', 'control-api', 'control-prior'],
-      ]
+      [['rollback', 'control-api', 'control-prior']]
     )
     assert(calls.some(([operation, target]) => operation === 'update' && target === 'control-api'))
-    assert(calls.some(([operation, target]) => operation === 'deploy' && target === 'control-api'))
-    assert(
-      calls.some(([operation, target]) => operation === 'update' && target === 'workflow-worker')
-    )
   })
 
-  test('returns a first activation to verified standby when no prior deployment exists', async () => {
+  test('returns a first activation to verified standby when the deployment never starts', async () => {
     const calls = []
-    const sources = new Map([
-      ['control-api', { image: null, repo: null }],
-      ['workflow-worker', { image: null, repo: null }],
-    ])
+    const sources = new Map([['control-api', { image: null, repo: null }]])
     const activeDeployments = new Set()
     const removed = new Set()
     const railway = {
@@ -443,12 +416,10 @@ describe('container promotion', () => {
         calls.push(['update', target, source])
         sources.set(target, source)
         if (source.image !== null) activeDeployments.add(target)
-        if (target === 'workflow-worker' && source.image !== null) {
-          throw new Error('second service failed')
-        }
       },
       async deploySource(target) {
         calls.push(['deploy', target])
+        throw new Error('activation deployment failed')
       },
       async rollbackDeployment(target, id) {
         calls.push(['rollback', target, id])
@@ -468,13 +439,19 @@ describe('container promotion', () => {
         sleep: async () => {},
         verifyRetries: 3,
       }),
-      /second service failed/
+      /activation deployment failed/
     )
 
     assert(
       calls.some(
         ([operation, target, id]) =>
           operation === 'remove' && target === 'control-api' && id === 'new-control-api'
+      )
+    )
+    assert(
+      calls.some(
+        ([operation, target, source]) =>
+          operation === 'update' && target === 'control-api' && source.image === null
       )
     )
     assert(!calls.some(([operation]) => operation === 'rollback'))
@@ -535,10 +512,10 @@ describe('production schema migration gate', () => {
     )
   })
 
-  test('validates both pooled runtime bindings before opening the migration connection', async () => {
+  test('validates the pooled runtime binding before opening the migration connection', async () => {
     const session = createFakeSession()
     const variables = productionRuntimeVariables()
-    variables.set('d733ec0d-bda5-4be5-86b9-637154d282eb', {
+    variables.set('9167a33b-af0f-4780-8614-a5a161697c9c', {
       DATABASE_URL: runtimeUrl.replace('control_plane_app', 'control_plane_migrator'),
     })
     let opened = false
@@ -593,10 +570,8 @@ describe('production schema migration gate', () => {
 
     assert.deepEqual(calls, [
       'variables:9167a33b-af0f-4780-8614-a5a161697c9c',
-      'variables:d733ec0d-bda5-4be5-86b9-637154d282eb',
       'open-migrator',
       'migrate',
-      'open-runtime',
       'open-runtime',
     ])
     assert.deepEqual(session.calls, [
@@ -605,11 +580,6 @@ describe('production schema migration gate', () => {
       'lock',
       'history',
       'history',
-      'identity',
-      'role-capabilities',
-      'table-privileges',
-      'reference-columns',
-      'close',
       'identity',
       'role-capabilities',
       'table-privileges',
@@ -948,5 +918,12 @@ describe('production schema migration gate', () => {
       workflow,
       /NEON_PRODUCTION_MIGRATION_URL: \$\{\{ secrets\.NEON_PRODUCTION_MIGRATION_URL \}\}/
     )
+    // Production promotes control-api only while the cloud execution runtime
+    // is disabled, and because the platform healthcheck is liveness-only the
+    // deploy must still prove database readiness once.
+    assert.match(workflow, /target: \[control-api\]/)
+    const readyProbe = workflow.split('- name: Verify production readiness after deploy')[1]
+    assert.match(readyProbe, /control-planecontrol-api-production\.up\.railway\.app\/ready/)
+    assert.ok(deployIndex < workflow.indexOf('- name: Verify production readiness after deploy'))
   })
 })
