@@ -349,6 +349,7 @@ if (enabled) {
       },
       async cancelGraphSegment(input) {
         currentFixture.callbacks.graph.push(input)
+        return true
       },
     }
 

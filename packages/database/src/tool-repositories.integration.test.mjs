@@ -450,11 +450,14 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
     expect(
       await versionedRegistry.insertDefinition(definition(workspaceId, ids.serviceDefinition))
     ).toBe(true)
-    expect(
-      await versionedRegistry.insertVersion(
-        version(ids.serviceVersion, '1.0.0', ids.serviceDefinition)
-      )
-    ).toBe(true)
+    // Gateway effects require a genuinely published version, including its content digest.
+    const draft = version(ids.serviceVersion, '1.0.0', ids.serviceDefinition)
+    delete draft.revision
+    delete draft.lifecycle
+    delete draft.contentDigest
+    const registry = new ToolRegistry(versionedRegistry)
+    const published = await registry.publishVersion(draft)
+    expect(await registry.readVersion(ids.serviceVersion, workspaceId)).toEqual(published)
 
     const started = deferred()
     const release = deferred()

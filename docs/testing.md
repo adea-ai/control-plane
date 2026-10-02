@@ -121,7 +121,8 @@ process; the local lane keeps the 30-second fast-fail ceiling with no per-file r
 explicit bun `test()` timeout argument always overrides the CLI `--timeout` default, the
 PostgreSQL integration suites author their explicit budgets through
 `integrationTestTimeout()` (`@control-plane/database/testing`), which the runner scales through
-`INTEGRATION_TEST_TIMEOUT_MS` — 120 seconds remotely, the authored local values otherwise.
+`INTEGRATION_TEST_TIMEOUT_MS` — at least 120 seconds remotely, while preserving any longer
+authored budget. The Local runner preserves the authored local values.
 
 ## M11 test architecture
 

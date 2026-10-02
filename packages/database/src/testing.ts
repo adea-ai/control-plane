@@ -160,5 +160,5 @@ function replaceDatabaseName(value: string, name: string): string {
 export function integrationTestTimeout(fallbackMs = 30_000): number {
   const raw = process.env['INTEGRATION_TEST_TIMEOUT_MS']
   const parsed = raw === undefined ? Number.NaN : Number(raw)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs
+  return Number.isFinite(parsed) && parsed > 0 ? Math.max(parsed, fallbackMs) : fallbackMs
 }

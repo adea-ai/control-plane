@@ -94,6 +94,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
         },
         async cancelGraphSegment(input) {
           graphCalls.push({ operation: 'cancelGraphSegment', input })
+          return true
         },
       },
     })
