@@ -114,7 +114,10 @@ The trusted-main Neon verification partitions `test:integration` into three shar
 (`scripts/integration-shards.mjs`), each provisioning its own disposable branch so shards never
 share a Neon compute instance. Files still run one at a time inside a shard, preserving the
 per-case database isolation; new integration files must be assigned to a shard explicitly, which
-`tests/integration-shards.test.mjs` enforces.
+`tests/integration-shards.test.mjs` enforces. A remote branch stretches tests that finish in
+seconds locally to tens of seconds and its pooler occasionally severs pooled connections, so the
+remote lane raises the per-test ceiling to 120 seconds and retries each file once in a fresh
+process; the local lane keeps the 30-second fast-fail ceiling with no per-file retry.
 
 ## M11 test architecture
 

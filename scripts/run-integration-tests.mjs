@@ -125,11 +125,30 @@ try {
       environment: integrationEnvironment,
     })
   } else {
+    // A remote branch stretches tests that finish in seconds locally to
+    // 30-70 seconds each, and its pooler occasionally severs a pooled
+    // connection mid-run (CONNECTION_CLOSED / CONNECTION_ENDED), leaving
+    // later queries blocked long enough to trip the per-test timeout. The
+    // remote lane therefore raises the ceiling and runs every file in its
+    // own process with one retry, so a transient drop costs one file
+    // instead of poisoning the rest of the shard. The local lane keeps the
+    // fast-fail ceiling and the package-level sweep.
+    const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
     for (const group of selectIntegrationShard(integrationShard)) {
-      run('bun', ['test', '--timeout', '30000', ...group.files], {
-        cwd: group.package,
-        environment: integrationEnvironment,
-      })
+      for (const file of group.files) {
+        try {
+          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+            cwd: group.package,
+            environment: integrationEnvironment,
+          })
+        } catch {
+          console.log(`Integration file ${file} failed; retrying once before failing the shard.`)
+          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+            cwd: group.package,
+            environment: integrationEnvironment,
+          })
+        }
+      }
     }
   }
   // One drill execution per verification: shard 1 owns it in sharded runs.
