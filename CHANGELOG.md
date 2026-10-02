@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.2...workspace-v1.64.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** retry the Neon integration slice once inside the verify step ([#832](https://github.com/adea-ai/control-plane/issues/832)) ([6d5aea4](https://github.com/adea-ai/control-plane/commit/6d5aea45d4c6c829e62dd4eb6e1322b45aacb6b7))
+
 ## [1.64.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.1...workspace-v1.64.2) (2026-10-02)
 
 
