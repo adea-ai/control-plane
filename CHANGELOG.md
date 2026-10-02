@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.3...workspace-v1.64.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** survive Neon pooler drops in the sharded integration lane ([#834](https://github.com/adea-ai/control-plane/issues/834)) ([0e0e2f5](https://github.com/adea-ai/control-plane/commit/0e0e2f52873220a60fc5d58b5238b911f55e8505))
+
 ## [1.64.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.2...workspace-v1.64.3) (2026-10-02)
 
 
