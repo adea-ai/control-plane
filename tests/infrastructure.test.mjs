@@ -393,7 +393,7 @@ test('packages the hosted simple profile as one hardened user-owned composition'
   assert.match(compose, /^\s+POSTGRES_PASSWORD: \$\{POSTGRES_PASSWORD:-\}$/m)
   assert.match(compose, /profiles:\s*\[server\]/)
   assert.match(compose, /postgres:18\.6-alpine@sha256:[a-f0-9]{64}/)
-  assert.match(compose, /restatedev\/restate:1\.7\.12@sha256:[a-f0-9]{64}/)
+  assert.match(compose, /restatedev\/restate:1\.7\.13@sha256:[a-f0-9]{64}/)
   assert.match(compose, /condition:\s*service_completed_successfully/)
   assert.match(compose, /DATABASE_MIGRATION_URL:/)
   assert.match(compose, /postgresql:\/\/control_plane_migrator:/)
