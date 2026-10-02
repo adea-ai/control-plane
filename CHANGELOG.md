@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.5...workspace-v1.64.6) (2026-10-02)
+
+
+### Maintenance
+
+* **infra:** align production with the local-first MVP cost posture ([#839](https://github.com/adea-ai/control-plane/issues/839)) ([e8af976](https://github.com/adea-ai/control-plane/commit/e8af97608f103d1312cb907ba5819f4398e9c414))
+
 ## [1.64.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.4...workspace-v1.64.5) (2026-10-02)
 
 
