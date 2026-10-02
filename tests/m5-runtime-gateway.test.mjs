@@ -98,7 +98,8 @@ describe('M5 runtime gateway acceptance manifest', () => {
       'bun run build && bun test tests/m5-runtime-gateway.test.mjs'
     )
     expect(groups).toContain("'tests/m5-runtime-gateway.test.mjs'")
-    expect(codeFoundry).toContain('features: all')
+    expect(codeFoundry).toContain('features: validation,release,draft-pr')
+    expect(codeFoundry).toContain('dependency_updater: renovate')
     expect(codeFoundry).toContain('coverage_minimum: 80')
     expect(testingDocumentation).toContain('`bun run test:m5-acceptance`')
     expect(testingDocumentation).toContain('M2-M6 acceptance flows')

@@ -401,7 +401,8 @@ end_of_record
 test('configures the Code Foundry CI baseline for the public direct-workflow repository', async () => {
   const config = await readFile(new URL('../.github/code-foundry.yml', import.meta.url), 'utf8')
 
-  assert.match(config, /^features: all$/m)
+  assert.match(config, /^features: validation,release,draft-pr$/m)
+  assert.match(config, /^dependency_updater: renovate$/m)
   assert.match(config, /^license: apache-2\.0$/m)
   assert.match(config, /^git_workflow: direct$/m)
   assert.match(config, /^release_merge_strategy: squash$/m)
@@ -874,31 +875,38 @@ test('rejects concrete vendor imports from core packages', async () => {
   }
 }, 60_000)
 
-test('uses the managed Dependabot updater with grouped batches and sync-managed holds', async () => {
+test('uses Renovate with grouped draft batches and sync-managed holds', async () => {
   assert(
-    !existsSync(new URL('../renovate.json', import.meta.url)),
-    'Renovate must not race the managed Dependabot updater'
+    !existsSync(new URL('../.github/dependabot.yml', import.meta.url)),
+    'Dependabot must not race the managed Renovate updater'
   )
-  const dependabot = Bun.YAML.parse(
-    await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8')
-  )
-  const ignoredNames = (update) => (update.ignore ?? []).map((rule) => rule['dependency-name'])
-  const actions = dependabot.updates.find(
-    (update) => update['package-ecosystem'] === 'github-actions'
-  )
-  const bun = dependabot.updates.find((update) => update['package-ecosystem'] === 'bun')
-  assert(actions, 'github-actions ecosystem must stay covered')
-  assert(bun, 'bun ecosystem must stay covered')
+  const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8'))
   assert(
-    ignoredNames(actions).some((name) => name.startsWith('0xPlayerOne/code-foundry')),
+    (renovate.extends ?? []).includes('config:recommended'),
+    'every ecosystem stays covered by the recommended preset'
+  )
+  assert.equal(renovate.draftPR, true, 'every dependency PR must open as a draft')
+  const nonMajor = renovate.packageRules.find(
+    (rule) => rule.groupName === 'external non-major dependencies'
+  )
+  const major = renovate.packageRules.find(
+    (rule) => rule.groupName === 'external major dependencies'
+  )
+  assert(nonMajor, 'non-major updates must ride one grouped PR')
+  assert.deepEqual(nonMajor.matchUpdateTypes, ['patch', 'minor', 'pin', 'digest'])
+  assert(major, 'major bumps must share one grouped PR')
+  assert.deepEqual(major.matchUpdateTypes, ['major'])
+  const pinHold = renovate.packageRules.find((rule) =>
+    (rule.matchPackageNames ?? []).some((name) => name.startsWith('/^0xPlayerOne\\/code-foundry/'))
+  )
+  assert.equal(
+    pinHold?.enabled,
+    false,
     'Sync-managed Code Foundry pins must be excluded from dependency updates'
   )
-  assert.equal(actions.groups['github-actions'].patterns[0], '*')
-  assert.equal(bun.groups['bun-dependencies'].patterns[0], '*')
-  const holds = Object.fromEntries(
-    (bun.ignore ?? []).map((rule) => [rule['dependency-name'], rule.versions?.[0]])
+  assert.equal('automerge' in renovate, false, 'dependency PRs must never automerge')
+  assert(
+    renovate.packageRules.every((rule) => !('automerge' in rule)),
+    'dependency PRs must never automerge'
   )
-  assert.equal(holds['typescript'], '>=7.0.0')
-  assert.equal(holds['@types/node'], '>=23')
-  assert.equal(JSON.stringify(dependabot).includes('auto-merge'), false)
 })
