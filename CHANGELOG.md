@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.64.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.0...workspace-v1.64.1) (2026-10-02)
+
+
+### Documentation
+
+* clarify migrations readiness and active guidance ([#817](https://github.com/adea-ai/control-plane/issues/817)) ([fe8cd5f](https://github.com/adea-ai/control-plane/commit/fe8cd5fdcc7100369b2bc7f2089cab1106213c45))
+
+
+### Maintenance
+
+* **deps:** update dependency @aws-sdk/client-s3 to v3.1145.0 ([#827](https://github.com/adea-ai/control-plane/issues/827)) ([ed382ab](https://github.com/adea-ai/control-plane/commit/ed382ab45cd4b3b4aa122f7a63d5adb465d10e0f))
+* **deps:** update dependency @sentry/node to v11.2.0 ([#828](https://github.com/adea-ai/control-plane/issues/828)) ([4c1341d](https://github.com/adea-ai/control-plane/commit/4c1341d678c6133133501fd33603f8f54dc539af))
+* make dependency updates Renovate-only and drop Dependabot ([#826](https://github.com/adea-ai/control-plane/issues/826)) ([86f0447](https://github.com/adea-ai/control-plane/commit/86f04473c481c4850c6c8a8209bb686b2373c0ac))
+
 ## [1.64.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.63.0...workspace-v1.64.0) (2026-10-01)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/adea-ai/control-plane/compare/telemetry-v1.5.3...telemetry-v1.5.4) (2026-10-02)
+
+
+### Maintenance
+
+* **deps:** update dependency @sentry/node to v11.2.0 ([#828](https://github.com/adea-ai/control-plane/issues/828)) ([4c1341d](https://github.com/adea-ai/control-plane/commit/4c1341d678c6133133501fd33603f8f54dc539af))
+
 ## [1.5.3](https://github.com/adea-ai/control-plane/compare/telemetry-v1.5.2...telemetry-v1.5.3) (2026-10-01)
 
 
