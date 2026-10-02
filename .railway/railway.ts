@@ -31,16 +31,26 @@ export default defineRailway((context) => {
       startCommand: 'bun run --filter=@control-plane/control-api start',
       numReplicas: desiredReplicas,
       sleepApplication: false,
-      healthcheckPath: '/ready',
+      // Production gates continuous liveness on `/health` (build metadata
+      // only). `/ready` additionally probes PostgreSQL with a bounded
+      // `SELECT 1`; polling it as the platform healthcheck kept the Neon
+      // production compute awake around the clock for a database with almost
+      // no traffic. `/ready` is still verified once per promotion after the
+      // deploy. Staging keeps `/ready` so an activated reference environment
+      // fails its deployment when the database binding is broken.
+      healthcheckPath: production ? '/health' : '/ready',
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 5,
-      // The marketplace registry refresh downloads and verifies every immutable
-      // catalog artifact (~50-128 MB transient per refresh, every 60s) and the
-      // live Agent HQ poller keeps GC pressure continuous; 1 GiB at 0.25 CPU
-      // OOM-killed the container in ~8-minute cycles.
+      // The registry refresh reads the small latest-pointer every interval
+      // and downloads the ~50 MB immutable artifact set only when the pointer
+      // names a catalog identity the service does not already hold, so the
+      // steady-state heap no longer churns. 1 GiB covers the cold-start full
+      // download plus the API; the earlier 2 GiB limit existed for the
+      // per-minute full-catalog polling that the skip-on-unchanged refresh
+      // removed.
       limitOverride: {
-        containers: { cpu: 0.5, memoryBytes: 2_147_483_648 },
+        containers: { cpu: 0.5, memoryBytes: 1_073_741_824 },
       },
     },
     networking: { privateNetworkEndpoint: 'control-planecontrol-api' },
@@ -149,7 +159,16 @@ export default defineRailway((context) => {
     volumeMounts: { '/restate-data': restateData },
   })
 
+  // Production activation shape: control-api only. The product MVP is the
+  // local workflow plus web/mobile remote control, whose only cloud
+  // dependency is this API (marketplace catalog) — and the production cloud
+  // execution runtime is `disabled` anyway, so workflow-worker and restate
+  // ran as health-passing placeholders. They stay defined for staging
+  // qualification runs; restoring them to production is a reviewed IaC change
+  // plus a fresh Restate identity provisioning (the production restate-data
+  // volume is deleted with the service, and scripts/provision-restate-identity.mjs
+  // re-issues the keypair).
   return project('control-plane', {
-    resources: [controlApi, workflowWorker, restate, restateData],
+    resources: production ? [controlApi] : [controlApi, workflowWorker, restate, restateData],
   })
 })

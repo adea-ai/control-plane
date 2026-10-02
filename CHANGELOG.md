@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.64.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.7...workspace-v1.64.8) (2026-10-02)
+
+
+### Maintenance
+
+* **code-foundry:** upgrade runtime to v1.42.0 ([365918b](https://github.com/adea-ai/control-plane/commit/365918b1e82a7872f0b4367f9bffaba52e016844))
+* **code-foundry:** upgrade to v1.42.0 ([#842](https://github.com/adea-ai/control-plane/issues/842)) ([365918b](https://github.com/adea-ai/control-plane/commit/365918b1e82a7872f0b4367f9bffaba52e016844))
+
+## [1.64.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.6...workspace-v1.64.7) (2026-10-02)
+
+
+### Bug Fixes
+
+* silence shellcheck SC2034 in the production readiness retry loop ([#841](https://github.com/adea-ai/control-plane/issues/841)) ([3d27837](https://github.com/adea-ai/control-plane/commit/3d278371a2574d11c726e9b7fd824db222da587c))
+
+## [1.64.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.5...workspace-v1.64.6) (2026-10-02)
+
+
+### Maintenance
+
+* **infra:** align production with the local-first MVP cost posture ([#839](https://github.com/adea-ai/control-plane/issues/839)) ([e8af976](https://github.com/adea-ai/control-plane/commit/e8af97608f103d1312cb907ba5819f4398e9c414))
+
 ## [1.64.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.4...workspace-v1.64.5) (2026-10-02)
 
 
