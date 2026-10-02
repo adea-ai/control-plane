@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.2...object-store-v1.5.3) (2026-10-02)
+
+
+### Maintenance
+
+* **deps:** update dependency @aws-sdk/client-s3 to v3.1145.0 ([#827](https://github.com/adea-ai/control-plane/issues/827)) ([ed382ab](https://github.com/adea-ai/control-plane/commit/ed382ab45cd4b3b4aa122f7a63d5adb465d10e0f))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.1...object-store-v1.5.2) (2026-10-01)
 
 
