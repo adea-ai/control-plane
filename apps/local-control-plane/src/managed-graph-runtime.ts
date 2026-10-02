@@ -17,14 +17,23 @@ import {
   type SqlitePersistenceProvider,
 } from '@control-plane/sqlite-persistence'
 import { OrchestrationGraphSegmentActivities } from '@control-plane/workflow-runtime'
+import type { ObjectStore } from '@control-plane/deployment'
 import type { LocalControlApiComposition } from './local-api-composition.js'
+
+export interface LocalGraphOperationResources {
+  readonly api: LocalControlApiComposition
+  readonly persistence: SqlitePersistenceProvider
+  readonly objectStore: ObjectStore
+}
 
 /** Server-owned configuration; graph input cannot register operations or schemas. */
 export interface ManagedLocalGraphRuntimeOptions {
   readonly capabilities: readonly string[]
   readonly compiler: DeclarativeGraphCompilerOptions
   /** Must enforce the accepted plan's policy, approval, budget and durable effect receipts. */
-  readonly operations: GraphNodeOperationPort
+  readonly operations:
+    | GraphNodeOperationPort
+    | ((resources: LocalGraphOperationResources) => GraphNodeOperationPort)
 }
 
 /** Shares the catalog and compiler between admission and execution. Owns no database connection. */
@@ -33,9 +42,17 @@ export class ManagedLocalGraphRuntime {
   readonly #compiler: DeclarativeGraphCompiler
   readonly #resolver: CatalogBackedGraphDefinitionResolver
   readonly #persistence: SqlitePersistenceProvider
-  readonly #operations: GraphNodeOperationPort
+  readonly #operations: ManagedLocalGraphRuntimeOptions['operations']
+  readonly #objectStore: ObjectStore | undefined
 
-  constructor(persistence: SqlitePersistenceProvider, options: ManagedLocalGraphRuntimeOptions) {
+  constructor(
+    persistence: SqlitePersistenceProvider,
+    options: ManagedLocalGraphRuntimeOptions,
+    objectStore?: ObjectStore
+  ) {
+    if (typeof options.operations === 'function' && objectStore === undefined)
+      throw new Error('LOCAL_GRAPH_OBJECT_STORE_REQUIRED')
+    this.#objectStore = objectStore
     this.#persistence = persistence
     this.#operations = options.operations
     this.#compiler = new DeclarativeGraphCompiler(options.compiler)
@@ -70,7 +87,14 @@ export class ManagedLocalGraphRuntime {
       new LangGraphOrchestrationAdapter({
         graphDefinitionResolver: this.#resolver,
         declarativeCompiler: this.#compiler,
-        operations: this.#operations,
+        operations:
+          typeof this.#operations === 'function'
+            ? this.#operations({
+                api: controlApi,
+                persistence: this.#persistence,
+                objectStore: this.#objectStore!,
+              })
+            : this.#operations,
         checkpointer: new LangGraphSqliteCheckpointSaver(this.#persistence, 'managed-graphs'),
         events: new DurableGraphEventPublisher({
           commands: controlApi.commandRepository,

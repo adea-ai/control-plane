@@ -2866,21 +2866,63 @@
                                         "type": "string"
                                       },
                                       "operation": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "kind": {
-                                            "enum": ["runtime", "model", "tool", "delegation"],
-                                            "type": "string"
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": ["runtime", "model", "delegation"],
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           },
-                                          "name": {
-                                            "maxLength": 256,
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-                                            "type": "string"
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": { "const": "tool", "type": "string" },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              },
+                                              "toolPin": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "contentDigest": {
+                                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                                    "type": "string"
+                                                  },
+                                                  "operation": {
+                                                    "maxLength": 128,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "toolDefinitionId": {},
+                                                  "toolVersionId": {}
+                                                },
+                                                "required": [
+                                                  "toolDefinitionId",
+                                                  "toolVersionId",
+                                                  "contentDigest",
+                                                  "operation"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           }
-                                        },
-                                        "required": ["kind", "name"],
-                                        "type": "object"
+                                        ]
                                       }
                                     },
                                     "required": ["node", "operation"],
@@ -3273,21 +3315,69 @@
                                   "type": "string"
                                 },
                                 "operation": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "kind": {
-                                      "enum": ["runtime", "model", "tool", "delegation"],
-                                      "type": "string"
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "enum": ["runtime", "model", "delegation"],
+                                          "type": "string"
+                                        },
+                                        "name": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["kind", "name"],
+                                      "type": "object"
                                     },
-                                    "name": {
-                                      "maxLength": 256,
-                                      "minLength": 1,
-                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-                                      "type": "string"
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": { "const": "tool", "type": "string" },
+                                        "name": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                          "type": "string"
+                                        },
+                                        "toolPin": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "contentDigest": {
+                                              "pattern": "^sha256:[a-f0-9]{64}$",
+                                              "type": "string"
+                                            },
+                                            "operation": {
+                                              "maxLength": 128,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z][a-z0-9.-]*$",
+                                              "type": "string"
+                                            },
+                                            "toolDefinitionId": {
+                                              "pattern": "^tld_[0-9A-HJKMNP-TV-Z]{26}$",
+                                              "type": "string"
+                                            },
+                                            "toolVersionId": {
+                                              "pattern": "^tlv_[0-9A-HJKMNP-TV-Z]{26}$",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "toolDefinitionId",
+                                            "toolVersionId",
+                                            "contentDigest",
+                                            "operation"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      },
+                                      "required": ["kind", "name"],
+                                      "type": "object"
                                     }
-                                  },
-                                  "required": ["kind", "name"],
-                                  "type": "object"
+                                  ]
                                 }
                               },
                               "required": ["node", "operation"],
@@ -3534,21 +3624,63 @@
                                         "type": "string"
                                       },
                                       "operation": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "kind": {
-                                            "enum": ["runtime", "model", "tool", "delegation"],
-                                            "type": "string"
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": ["runtime", "model", "delegation"],
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           },
-                                          "name": {
-                                            "maxLength": 256,
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-                                            "type": "string"
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": { "const": "tool", "type": "string" },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              },
+                                              "toolPin": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "contentDigest": {
+                                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                                    "type": "string"
+                                                  },
+                                                  "operation": {
+                                                    "maxLength": 128,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "toolDefinitionId": {},
+                                                  "toolVersionId": {}
+                                                },
+                                                "required": [
+                                                  "toolDefinitionId",
+                                                  "toolVersionId",
+                                                  "contentDigest",
+                                                  "operation"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           }
-                                        },
-                                        "required": ["kind", "name"],
-                                        "type": "object"
+                                        ]
                                       }
                                     },
                                     "required": ["node", "operation"],
@@ -4016,21 +4148,63 @@
                                         "type": "string"
                                       },
                                       "operation": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "kind": {
-                                            "enum": ["runtime", "model", "tool", "delegation"],
-                                            "type": "string"
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": ["runtime", "model", "delegation"],
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           },
-                                          "name": {
-                                            "maxLength": 256,
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-                                            "type": "string"
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": { "const": "tool", "type": "string" },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              },
+                                              "toolPin": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "contentDigest": {
+                                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                                    "type": "string"
+                                                  },
+                                                  "operation": {
+                                                    "maxLength": 128,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "toolDefinitionId": {},
+                                                  "toolVersionId": {}
+                                                },
+                                                "required": [
+                                                  "toolDefinitionId",
+                                                  "toolVersionId",
+                                                  "contentDigest",
+                                                  "operation"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           }
-                                        },
-                                        "required": ["kind", "name"],
-                                        "type": "object"
+                                        ]
                                       }
                                     },
                                     "required": ["node", "operation"],
@@ -4515,21 +4689,63 @@
                                         "type": "string"
                                       },
                                       "operation": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "kind": {
-                                            "enum": ["runtime", "model", "tool", "delegation"],
-                                            "type": "string"
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": ["runtime", "model", "delegation"],
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           },
-                                          "name": {
-                                            "maxLength": 256,
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-                                            "type": "string"
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": { "const": "tool", "type": "string" },
+                                              "name": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                                                "type": "string"
+                                              },
+                                              "toolPin": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "contentDigest": {
+                                                    "pattern": "^sha256:[a-f0-9]{64}$",
+                                                    "type": "string"
+                                                  },
+                                                  "operation": {
+                                                    "maxLength": 128,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z][a-z0-9.-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "toolDefinitionId": {},
+                                                  "toolVersionId": {}
+                                                },
+                                                "required": [
+                                                  "toolDefinitionId",
+                                                  "toolVersionId",
+                                                  "contentDigest",
+                                                  "operation"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            },
+                                            "required": ["kind", "name"],
+                                            "type": "object"
                                           }
-                                        },
-                                        "required": ["kind", "name"],
-                                        "type": "object"
+                                        ]
                                       }
                                     },
                                     "required": ["node", "operation"],

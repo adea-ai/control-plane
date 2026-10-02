@@ -53,8 +53,29 @@ execution identity. The configured execution-event retention duration is used by
 This configuration requires a direct runtime transport and cannot be combined with `activities`,
 `graphActivities`, or `graphActivitiesFactory`. The latter remain explicit injection seams without
 implicit graph admission. Without `graphRuntime`, default graph admission remains closed. This
-assembly does not itself implement tool/model/runtime/delegation providers, authorize operations,
-or establish deployed profile acceptance; those provider bindings must be supplied and verified.
+assembly requires explicit provider bindings and does not establish deployed profile acceptance.
+
+For the built-in immutable JSON tool, `operations` can be a server-owned factory receiving
+`{ api, persistence, objectStore }` from the Local composition. Return `LocalGraphToolOperations`
+(exported from the Local package) with those resources and an operator-owned `prices` array. Each
+price contains an exact `GraphToolPin`, currency, and integer `costMicrounits`; graph input cannot
+select a price, object key, or filesystem path. Publish the tool definition/version in that
+workspace's `ToolRegistry` before admitting its graph. The supported binding is operation
+`store-json`, executor `{ type: 'internal', reference: 'local.object-store-json.v1' }`, with no
+capabilities beyond optional `object-store.write`. Advertise `graph.tool-pins.v1` only when the
+configured operation port supports it.
+
+This port reloads the accepted execution, current attempt, immutable plan, graph node and tool
+version. Every matching logical tool grant must permit the operation's version, capabilities,
+risk and approval requirements. Approved effects require an authorized persisted Interaction; a
+graph resume value merely wakes the checkpoint. The port reserves the configured tariff before
+delivery, records one durable charge after a confirmed write, and releases the reservation after
+a known no-effect denial/failure. Unknown writes retain their reservation and are not redelivered.
+Cancellation intent and rate-limit windows survive SQLite reconstruction. An unconfirmed graph
+cancellation moves the execution/attempt to `reconciliation_required` and cannot complete terminal
+cancellation or cleanup. The tool returns the content digest and byte count; it does not manufacture
+an Artifact reference. This binding is one Local tool path; other tools, MCP, model/runtime and
+delegation bindings and the complete deployed profile matrix require separate delivery evidence.
 
 The standalone launcher packages managed Pi with:
 

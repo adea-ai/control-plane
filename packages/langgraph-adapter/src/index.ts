@@ -14,6 +14,9 @@ import {
   GraphCancellationRequestSchema,
   GraphContinueRequestSchema,
   GraphExecutionRequestSchema,
+  GraphNodeApprovalRequiredError,
+  GraphNodeEffectUnconfirmedError,
+  GraphNodeOperationSchema,
   GraphResumeRequestSchema,
   GraphSegmentResultSchema,
   GraphDefinitionCatalog,
@@ -39,6 +42,7 @@ import {
   type TelemetrySpan,
 } from '@control-plane/telemetry'
 import { z } from 'zod'
+import type { GraphToolPin } from '@control-plane/contracts'
 
 const JsonRecordSchema = z.record(z.string(), z.json())
 type JsonRecord = z.output<typeof JsonRecordSchema>
@@ -67,7 +71,8 @@ interface GraphBuildContext {
     kind: 'runtime' | 'model' | 'tool' | 'delegation',
     name: string,
     state: JsonRecord,
-    visitOrdinal?: number
+    visitOrdinal?: number,
+    toolPin?: GraphToolPin
   ) => Promise<Readonly<Record<string, unknown>>>
 }
 
@@ -194,12 +199,13 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
         'pinned'
       )
     }
-    this.#active.get(activeKey(parsed.data.executionId, parsed.data.threadId))?.abort()
     const cancelled = await this.#operations.cancel(
       parsed.data.executionId,
       parsed.data.threadId,
       parsed.data.idempotencyKey
     )
+    if (!cancelled) return false
+    this.#active.get(activeKey(parsed.data.executionId, parsed.data.threadId))?.abort()
     await this.#events.publish(
       createGraphEvent({
         ...correlation(parsed.data),
@@ -211,7 +217,7 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
       }),
       parsed.data.idempotencyKey
     )
-    return cancelled
+    return true
   }
 
   async #invoke(
@@ -262,35 +268,54 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
       const graph = registration.build({
         operations: this.#operations,
         checkpointer: this.#checkpointer,
-        invokeOperation: async (node, kind, name, state, visitOrdinal = 0) => {
+        invokeOperation: async (node, kind, name, state, visitOrdinal = 0, toolPin) => {
           if (controller.signal.aborted) throw new OrchestrationError('GRAPH_CANCELLED', false)
           if (!Number.isSafeInteger(visitOrdinal) || visitOrdinal < 0) {
             throw new OrchestrationError('GRAPH_FAILED', false)
           }
           await emit('graph.node.started', node, { kind, operation: name })
-          const spans = this.#operationSpans(request, node, kind, name)
-          try {
-            const result = JsonRecordSchema.parse(
-              await this.#operations.invoke({
-                executionId: request.executionId,
-                attemptId: request.attemptId,
-                workspaceId: request.workspaceId,
-                workflowId: request.workflowId,
-                threadId: request.threadId,
-                node,
-                kind,
-                name,
-                input: state,
-                idempotencyKey: graphOperationIdempotencyKey(request, node, visitOrdinal),
-              })
-            )
-            assertCheckpointSafe(result)
-            for (const span of spans) span.end({ status: 'ok' })
-            await emit('graph.node.completed', node, { kind, operation: name })
-            return result
-          } catch (error) {
-            for (const span of spans) span.end({ status: 'error', error })
-            throw error
+          const operation = GraphNodeOperationSchema.parse({
+            executionId: request.executionId,
+            attemptId: request.attemptId,
+            workspaceId: request.workspaceId,
+            workflowId: request.workflowId,
+            threadId: request.threadId,
+            node,
+            kind,
+            name,
+            input: state,
+            idempotencyKey: graphOperationIdempotencyKey(request, node, visitOrdinal),
+            ...(toolPin === undefined ? {} : { toolPin }),
+          })
+          let spans = this.#operationSpans(request, node, kind, name)
+          while (true) {
+            let returned: Readonly<Record<string, unknown>>
+            try {
+              returned = await this.#operations.invoke(operation)
+            } catch (error) {
+              if (!(error instanceof GraphNodeApprovalRequiredError) || kind !== 'tool') {
+                for (const span of spans) span.end({ status: 'error', error })
+                throw error
+              }
+              for (const span of spans) span.end({ status: 'error' })
+              assertCheckpointSafe(error.interaction)
+              // The resume value only wakes this checkpoint. The operation port
+              // rechecks its durable interaction before any effect can proceed.
+              interrupt(error.interaction)
+              spans = this.#operationSpans(request, node, kind, name)
+              continue
+            }
+
+            try {
+              const result = JsonRecordSchema.parse(returned)
+              assertCheckpointSafe(result)
+              for (const span of spans) span.end({ status: 'ok' })
+              await emit('graph.node.completed', node, { kind, operation: name })
+              return result
+            } catch (error) {
+              for (const span of spans) span.end({ status: 'error', error })
+              throw error
+            }
           }
         },
       })
@@ -354,6 +379,13 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
         events: emitted,
       })
     } catch (error) {
+      if (error instanceof GraphNodeEffectUnconfirmedError) {
+        return GraphSegmentResultSchema.parse({
+          status: 'reconciliation_required',
+          state: {},
+          events: emitted,
+        })
+      }
       if (error instanceof OrchestrationError && error.code === 'GRAPH_CANCELLED') {
         graphOutcome = { status: 'ok' }
         return GraphSegmentResultSchema.parse({ status: 'cancelled', state: {}, events: emitted })
@@ -575,7 +607,8 @@ export class DeclarativeGraphCompiler {
                 node.operation.kind,
                 node.operation.name,
                 operationInput,
-                visitOrdinal
+                visitOrdinal,
+                node.operation.kind === 'tool' ? node.operation.toolPin : undefined
               )
             )
             const nextValues = { ...state.values, [node.node]: result }

@@ -263,6 +263,47 @@ describe('EmbeddedExecutionWorkflowDispatcher', () => {
 })
 
 describe('EmbeddedWorkflowRuntime', () => {
+  test('persists an unconfirmed graph outcome without cleanup or queue retries after restart', async () => {
+    await withRuntime(async ({ provider }) => {
+      const { activities } = fakeActivities()
+      let graphCalls = 0
+      activities.runGraphSegment = async () => {
+        graphCalls++
+        return { outcome: 'reconciliation_required' }
+      }
+      const input = {
+        ...workflowInput,
+        graph: {
+          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+          threadId: `graph:${executionId}`,
+          reference: {
+            graphDefinitionId: 'uncertain-tool',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'b'.repeat(64)}`,
+          },
+          input: {},
+        },
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submit(input)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      await runtime.stop()
+      const restarted = startedRuntime(provider, activities)
+      await restarted.runtime.start()
+      await restarted.dispatcher.submit(input)
+      await restarted.runtime.stop()
+      expect((await restarted.store.get(executionId)).outcome.status).toBe(
+        'reconciliation_required'
+      )
+      expect(graphCalls).toBe(1)
+      expect(activities.calls.some(([name]) => name === 'cleanup')).toBe(false)
+      expect(activities.calls.filter(([name]) => name === 'persistStatus').at(-1)[1].state).toBe(
+        'reconciliation_required'
+      )
+    })
+  })
+
   test('cleans up started runtimes and providers when a fixture callback fails', async () => {
     let provider
     let runtime
