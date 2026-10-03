@@ -79,7 +79,9 @@ let server,
   healthDeliveryWorker
 try {
   const now = new Date().toISOString()
-  const deadlineAt = new Date(Date.now() + 15000).toISOString()
+  // Remote setup can exceed the former 15-second fixture window. This bounded
+  // window is fixture validity, not a product timeout or an acceptance SLO.
+  const deadlineAt = new Date(Date.now() + 5 * 60_000).toISOString()
   const context = composeProviderContextPackage(contextPackageSerializationFixtures.futurePi, {
     callerContextRefs: [],
     localProjectGrantRefs: ['grant:runtime-node:drill'],
