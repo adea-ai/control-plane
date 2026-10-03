@@ -1687,3 +1687,162 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
 function firstRecoveryEffectKey(job) {
   return `${job.input.workflowId}:execution-lifecycle-v1:graph:recovery:${job.recovery.recoveryId}:${job.recovery.checkpointId}`
 }
+
+for (const terminalState of ['completed', 'failed', 'timed_out', 'cancelled']) {
+  test(`terminal ${terminalState} execution durably holds Local operator cancellation without adding cancellation intent`, async () => {
+    const fixture = await createLocalGraphToolFixture({ approvalMode: 'never' })
+    const storedObjects = new FilesystemObjectStore({
+      rootDirectory: join(fixture.directory, 'terminal-cancel-objects'),
+      maxObjectBytes: 4_096,
+    })
+    const operations = new LocalGraphToolOperations({
+      api: fixture.api,
+      persistence: fixture.persistence,
+      objectStore: storedObjects,
+      prices: [
+        {
+          pin: fixture.operation.toolPin,
+          currency: fixture.plan.constraints.limits.budget.currency,
+          costMicrounits: 25,
+        },
+      ],
+      now: () => fixture.at,
+    })
+    const graphRuntime = new ManagedLocalGraphRuntime(
+      fixture.persistence,
+      {
+        capabilities: ['graph.tool-pins.v1'],
+        compiler: {
+          operationAllowlist: [{ kind: 'tool', name: 'store' }],
+          schemaRegistry: {
+            getValidator: () => (value) =>
+              value !== null && typeof value === 'object' && !Array.isArray(value),
+          },
+        },
+        operations,
+      },
+      storedObjects
+    )
+    const principal = {
+      principalId: 'svc_graph-tool-test',
+      workspaceIds: [fixture.operation.workspaceId],
+      projectIds: [fixture.plan.correlation.projectId],
+      scopes: ['execution:reconcile'],
+      kind: 'internal_service',
+    }
+    let recoveryApplication
+    try {
+      const result = await graphRuntime.activities(fixture.api).runGraphSegment({
+        executionId: fixture.operation.executionId,
+        attemptId: fixture.operation.attemptId,
+        workspaceId: fixture.operation.workspaceId,
+        workflowId: fixture.operation.workflowId,
+        graph: fixture.graph.reference,
+        threadId: fixture.operation.threadId,
+        input: fixture.plan.graph.input,
+        idempotencyKey: 'terminal-cancel:original-run',
+      })
+      expect(result.outcome).toBe('completed')
+      const calls = new SqliteToolCallRepository(fixture.persistence, fixture.operation.workspaceId)
+      const call = (await calls.listByExecution(fixture.operation.executionId))[0]
+      expect(call).toMatchObject({ status: 'succeeded' })
+      const usage = new DurableUsageLedger({
+        store: new SqliteDurableUsageStore(fixture.persistence),
+      })
+      const accountingBefore = await usage.summary(fixture.operation.workspaceId, call.executionId)
+      expect(accountingBefore).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 25 })
+
+      const lifecycle = new ExecutionLifecycleService(fixture.api.executions)
+      const execution = await fixture.api.executions.getExecution(fixture.operation.executionId)
+      const attempt = await fixture.api.executions.getAttempt(fixture.operation.attemptId)
+      const terminalAt = new Date(Date.parse(fixture.at) + 1_000).toISOString()
+      const terminalMetadata =
+        terminalState === 'completed'
+          ? { terminalResultRef: call.result.output.artifactRef }
+          : terminalState === 'failed'
+            ? { failure: { classification: 'runtime_error', code: 'TEST_TERMINAL' } }
+            : terminalState === 'timed_out'
+              ? { failure: { classification: 'timeout', code: 'TEST_TERMINAL' } }
+              : {}
+      await lifecycle.transitionExecution({
+        executionId: execution.executionId,
+        expectedVersion: execution.version,
+        to: terminalState,
+        transitionedAt: terminalAt,
+        ...terminalMetadata,
+      })
+      await lifecycle.transitionAttempt({
+        attemptId: attempt.attemptId,
+        expectedVersion: attempt.version,
+        to: terminalState,
+        transitionedAt: terminalAt,
+        ...terminalMetadata,
+      })
+
+      const workflowJobs = new WorkflowJobStore(fixture.persistence, {
+        beforeEnqueue: assertSqliteWorkflowExecutionReference,
+      })
+      const workflowDispatcher = new EmbeddedExecutionWorkflowDispatcher({
+        store: workflowJobs,
+        now: () => fixture.at,
+      })
+      operations.bindRecoveryRuntime({
+        workflowJobs,
+        workflowDispatcher,
+        durableExecution: 'embedded-sqlite',
+        executionLifecycleActivities: { persistStatus: async () => undefined },
+      })
+      recoveryApplication = await createRecoveryHttpApplication(operations, {
+        at: fixture.at,
+        principal,
+        projectId: fixture.plan.correlation.projectId,
+      })
+      const command = recoveryHttpCommand(
+        fixture,
+        principal,
+        call,
+        `terminal-cancel-${terminalState}`,
+        'cancel'
+      )
+      const response = await postRecoveryCommand(recoveryApplication, command)
+      expect(response.statusCode).toBe(202)
+      expect(response.body).toMatchObject({ outcome: 'held', reason: 'execution_terminal' })
+      const replay = {
+        ...command,
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFT',
+        requestId: 'req_01JABCDEF0123456789ABCDEFT',
+        issuedAt: new Date(Date.parse(command.issuedAt) + 1_000).toISOString(),
+      }
+      const replayResponse = await postRecoveryCommand(recoveryApplication, replay)
+      expect(replayResponse.statusCode).toBe(202)
+      expect(replayResponse.body).toEqual(response.body)
+      expect(
+        await fixture.persistence.transaction((transaction) =>
+          transaction.get('graph-tool-cancellations', fixture.operation.executionId)
+        )
+      ).toBeUndefined()
+      expect(
+        await workflowJobs.getExecutionGraphJobsSnapshot(fixture.operation.executionId)
+      ).toEqual([])
+      expect(await usage.summary(fixture.operation.workspaceId, call.executionId)).toEqual(
+        accountingBefore
+      )
+      const cancellationReceipts = await fixture.persistence.transaction((transaction) =>
+        transaction.list('execution-cancellation-receipts')
+      )
+      expect(cancellationReceipts).toHaveLength(0)
+      const receipts = await fixture.persistence.transaction((transaction) =>
+        transaction.list(LOCAL_GRAPH_TOOL_RECONCILIATION_RECEIPTS)
+      )
+      const receipt = receipts.find(
+        (row) => row.value?.command?.idempotencyKey === command.idempotencyKey
+      )
+      expect(receipt).toMatchObject({ value: { status: 'completed', response: response.body } })
+      expect(receipt.value.intent).toBeUndefined()
+    } finally {
+      await recoveryApplication?.close()
+      storedObjects.close()
+      await fixture.cleanup()
+    }
+  })
+}

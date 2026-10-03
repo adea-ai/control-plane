@@ -592,6 +592,18 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         throw new Error('TOOL_EFFECT_STALE_REVISION')
     }
     if (command.action === 'cancel') {
+      const execution = await this.#options.api.executions.getExecution(command.executionId)
+      if (!execution) throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+      if (['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)) {
+        if (entry.artifact.state === 'verified' && entry.evidence !== undefined) {
+          const recovered = await this.#commitKnownSuccess(call, entry.evidence, call.revision)
+          if (recovered === undefined) return { outcome: 'held', reason: 'accounting_unconfirmed' }
+          const accounting = await this.#repairAccounting(recovered)
+          if (!accounting.charged || !accounting.settled)
+            return { outcome: 'held', reason: 'accounting_unconfirmed' }
+        }
+        return { outcome: 'held', reason: 'execution_terminal' }
+      }
       const cancelIntent = {
         schemaVersion: 1,
         kind: 'cancel',
