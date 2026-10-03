@@ -56,6 +56,7 @@ const repositoryGroups = {
     'tests/m11-retention-class-registry.test.mjs',
     'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
+    'tests/railway-production-plan.test.mjs',
     'tests/repository.test.mjs',
     'tests/restate-identity.test.mjs',
   ],
