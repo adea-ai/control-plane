@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.3...workspace-v1.70.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** bound remote drill validity without repeating database slices ([#871](https://github.com/adea-ai/control-plane/issues/871)) ([bb0a152](https://github.com/adea-ai/control-plane/commit/bb0a15269147a9e0fe64132cfcbb904d60c72f3a))
+
 ## [1.70.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.2...workspace-v1.70.3) (2026-10-03)
 
 
