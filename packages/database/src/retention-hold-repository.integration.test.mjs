@@ -4,7 +4,7 @@ import process from 'node:process'
 import postgres from 'postgres'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { sql } from 'drizzle-orm'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import {
   PostgresRetentionHoldRepository,
   acquirePostgresRetentionHoldClassMutex,
@@ -51,7 +51,7 @@ describe.skipIf(!enabled)('PostgreSQL durable retention holds', () => {
     await isolated.migrate()
     await installTestOnlyTargetTable(isolated.name)
     repository = new PostgresRetentionHoldRepository(isolated.application, policy)
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     await isolated?.dispose()

@@ -23,6 +23,7 @@ import {
 } from '@control-plane/domain'
 import { createConsistencyMetricEmitter } from '@control-plane/telemetry'
 import { ReconciliationScheduler } from '@control-plane/deployment'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const checkedAt = '2026-08-24T15:00:00.000Z'
@@ -135,7 +136,7 @@ describe.skipIf(!integrationEnabled)('reconciliation metrics against PostgreSQL 
       migration: loadDatabaseCredentials(process.env, 'migration'),
     })
     await isolated.migrate()
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     await isolated?.dispose()

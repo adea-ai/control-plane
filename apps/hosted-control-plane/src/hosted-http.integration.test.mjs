@@ -30,6 +30,7 @@ import {
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import { HostedServerControlPlaneComposition } from './composition.ts'
 import { hostedDependencyReadiness } from './dependency-readiness.js'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 
@@ -118,7 +119,7 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       logger: { write: () => undefined },
       metadata,
     })
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     const cleanupErrors = []
@@ -186,212 +187,216 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
     expect(echo.json().data.message).toBe('hosted-e2e')
   })
 
-  test('hosted-server graph activities require a durable PostgreSQL allowance before forwarding', async () => {
-    const acceptedAt = '2026-09-27T00:00:00.000Z'
-    const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
-    const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
-    const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
-    const inputs = createExecutionPlanTestFixtureInputs()
-    inputs.profile.definition.skills = []
-    inputs.skills = []
-    // This server-owned registration authorizes only the injected graph fixture.
-    // It does not establish default production graph-catalog composition.
-    const registeredSelection = {
-      reference: {
-        graphDefinitionId: 'hosted-pg-graph',
-        graphVersion: '1.0.0',
-        contentDigest: `sha256:${'a'.repeat(64)}`,
-      },
-      input: { objective: 'forward graph operation' },
-    }
-    const registeredWorkspaceId = inputs.correlation.workspaceId
-    inputs.graph = structuredClone(registeredSelection)
-
-    const database = isolated.application
-    const catalogRepository = new PostgresCatalogRepository(database)
-    const catalog = new VersionedCatalog(catalogRepository, catalogRepository)
-    await catalog.createAgentProfile({
-      profileId: inputs.profile.profileId,
-      displayName: 'Hosted graph admission fixture',
-      ownership: { scope: 'system' },
-      createdAt: inputs.profile.createdAt,
-    })
-    const draft = await catalog.createAgentProfileDraft({
-      profileId: inputs.profile.profileId,
-      profileVersionId: inputs.profile.profileVersionId,
-      version: inputs.profile.version,
-      definition: inputs.profile.definition,
-      createdAt: inputs.profile.createdAt,
-    })
-    inputs.profile = await catalog.publishAgentProfileVersion({
-      profileVersionId: draft.profileVersionId,
-      expectedRevision: draft.revision,
-      publishedAt: acceptedAt,
-    })
-    await new PostgresContextPackageRepository(database).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-    const plans = new PostgresExecutionPlanRepository(database)
-    const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
-    await plans.put(plan)
-
-    const acceptance = new CommandInboxService({
-      repository: new PostgresCommandAcceptanceRepository(database, { budgetAdmission: true }),
-      executionIdFactory: () => executionId,
-      executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
-        catalog: { profiles: catalogRepository, skills: catalogRepository },
-        graphs: {
-          validate: async (workspaceId, selection) =>
-            workspaceId === registeredWorkspaceId &&
-            isDeepStrictEqual(selection, registeredSelection),
-          authorize: async (workspaceId, reference) =>
-            workspaceId === registeredWorkspaceId &&
-            isDeepStrictEqual(reference, registeredSelection.reference),
+  test(
+    'hosted-server graph activities require a durable PostgreSQL allowance before forwarding',
+    async () => {
+      const acceptedAt = '2026-09-27T00:00:00.000Z'
+      const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
+      const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
+      const workflowId = 'wfl_01JABCDEF0123456789ABCDEFG'
+      const inputs = createExecutionPlanTestFixtureInputs()
+      inputs.profile.definition.skills = []
+      inputs.skills = []
+      // This server-owned registration authorizes only the injected graph fixture.
+      // It does not establish default production graph-catalog composition.
+      const registeredSelection = {
+        reference: {
+          graphDefinitionId: 'hosted-pg-graph',
+          graphVersion: '1.0.0',
+          contentDigest: `sha256:${'a'.repeat(64)}`,
         },
-      }),
-      now: () => acceptedAt,
-    })
-    const { execution } = await acceptance.acceptExecution({
-      callerPrincipalId: 'svc_hosted-graph-admission-test',
-      operation: 'execution.accept',
-      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-      requestId: plan.correlation.requestId,
-      idempotencyKey: 'hosted-graph-admission-0001',
-      payloadHash: 'a'.repeat(64),
-      correlation: {
-        workspaceId: plan.correlation.workspaceId,
-        projectId: plan.correlation.projectId,
-        taskId: plan.correlation.taskId,
-        agentId: plan.correlation.agentId,
-      },
-      executionPlan: {
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-        schemaVersion: plan.schemaVersion,
-      },
-      receivedAt: acceptedAt,
-      retentionExpiresAt: '2026-10-27T00:00:00.000Z',
-    })
-    // This graph-only proof creates a real durable attempt without claiming hosted runtime
-    // discovery, routing, or provider transport acceptance.
-    const attempt = await new ExecutionLifecycleService(
-      new PostgresExecutionRepository(database)
-    ).createAttempt({
-      executionId,
-      attemptId,
-      expectedExecutionVersion: execution.version,
-      queuedAt: '2026-09-27T00:00:01.000Z',
-      deadlineAt: execution.deadlineAt,
-    })
-    const graph = plan.graph.reference
-    const threadId = `graph:${executionId}`
-    const runInput = {
-      executionId,
-      attemptId: attempt.attemptId,
-      workspaceId: plan.correlation.workspaceId,
-      workflowId,
-      graph,
-      threadId,
-      input: plan.graph.input,
-      idempotencyKey: 'hosted-pg-graph-run',
-    }
-    const resumeInput = {
-      executionId,
-      attemptId: attempt.attemptId,
-      workspaceId: plan.correlation.workspaceId,
-      workflowId,
-      graph,
-      threadId,
-      checkpointId: 'hosted-pg-checkpoint',
-      response: { action: 'approve' },
-      idempotencyKey: 'hosted-pg-graph-resume',
-    }
-    const continueInput = {
-      executionId,
-      attemptId: attempt.attemptId,
-      workspaceId: plan.correlation.workspaceId,
-      workflowId,
-      graph,
-      threadId,
-      checkpointId: 'hosted-pg-checkpoint',
-      idempotencyKey: 'hosted-pg-graph-continue',
-    }
+        input: { objective: 'forward graph operation' },
+      }
+      const registeredWorkspaceId = inputs.correlation.workspaceId
+      inputs.graph = structuredClone(registeredSelection)
 
-    for (const [operation, operationInput] of [
-      ['runGraphSegment', runInput],
-      ['resumeGraphSegment', resumeInput],
-      ['continueGraphSegment', continueInput],
-    ]) {
-      expect(await composition.executionLifecycleActivities[operation](operationInput)).toEqual({
-        outcome: 'continue',
-        checkpointId: 'hosted-pg-checkpoint',
+      const database = isolated.application
+      const catalogRepository = new PostgresCatalogRepository(database)
+      const catalog = new VersionedCatalog(catalogRepository, catalogRepository)
+      await catalog.createAgentProfile({
+        profileId: inputs.profile.profileId,
+        displayName: 'Hosted graph admission fixture',
+        ownership: { scope: 'system' },
+        createdAt: inputs.profile.createdAt,
       })
-    }
-    expect(graphCalls.map(({ operation, input }) => ({ operation, input }))).toEqual([
-      { operation: 'runGraphSegment', input: runInput },
-      { operation: 'resumeGraphSegment', input: resumeInput },
-      { operation: 'continueGraphSegment', input: continueInput },
-    ])
+      const draft = await catalog.createAgentProfileDraft({
+        profileId: inputs.profile.profileId,
+        profileVersionId: inputs.profile.profileVersionId,
+        version: inputs.profile.version,
+        definition: inputs.profile.definition,
+        createdAt: inputs.profile.createdAt,
+      })
+      inputs.profile = await catalog.publishAgentProfileVersion({
+        profileVersionId: draft.profileVersionId,
+        expectedRevision: draft.revision,
+        publishedAt: acceptedAt,
+      })
+      await new PostgresContextPackageRepository(database).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      const plans = new PostgresExecutionPlanRepository(database)
+      const plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
+      await plans.put(plan)
 
-    await database.$client.unsafe('delete from usage_budget_states where execution_id = $1', [
-      executionId,
-    ])
-    const snapshot = async () => {
-      const [budgets, entries, receipts] = await Promise.all([
-        database.$client.unsafe(
-          'select * from usage_budget_states where execution_id = $1 order by workspace_id',
-          [executionId]
-        ),
-        database.$client.unsafe(
-          'select * from usage_ledger_entries where execution_id = $1 order by sequence',
-          [executionId]
-        ),
-        database.$client.unsafe(
-          'select * from usage_operation_receipts where execution_id = $1 order by idempotency_key',
-          [executionId]
-        ),
-      ])
-      return { budgets, entries, receipts }
-    }
-    const beforeDeniedGraphOperations = await snapshot()
-    const callsBeforeDenial = graphCalls.length
-    for (const [operation, operationInput] of [
-      ['runGraphSegment', runInput],
-      ['resumeGraphSegment', resumeInput],
-      ['continueGraphSegment', continueInput],
-    ]) {
-      await expect(
-        composition.executionLifecycleActivities[operation](operationInput)
-      ).rejects.toMatchObject({ code: 'RUNTIME_BUDGET_ADMISSION_DENIED' })
-      expect(graphCalls).toHaveLength(callsBeforeDenial)
-    }
-    expect(await snapshot()).toEqual(beforeDeniedGraphOperations)
-
-    await composition.executionLifecycleActivities.cancelActive({
-      executionId,
-      attemptId: attempt.attemptId,
-      workflowId,
-      effectKey: 'hosted-pg-graph-cancel-after-denial',
-      reason: 'deadline',
-      graph: {
-        workspaceId: plan.correlation.workspaceId,
-        reference: graph,
-        threadId,
-      },
-    })
-    expect(graphCalls.at(-1)).toEqual({
-      operation: 'cancelGraphSegment',
-      input: {
+      const acceptance = new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(database, { budgetAdmission: true }),
+        executionIdFactory: () => executionId,
+        executionPlanValidator: new ExecutionPlanAcceptanceValidator(plans, {
+          catalog: { profiles: catalogRepository, skills: catalogRepository },
+          graphs: {
+            validate: async (workspaceId, selection) =>
+              workspaceId === registeredWorkspaceId &&
+              isDeepStrictEqual(selection, registeredSelection),
+            authorize: async (workspaceId, reference) =>
+              workspaceId === registeredWorkspaceId &&
+              isDeepStrictEqual(reference, registeredSelection.reference),
+          },
+        }),
+        now: () => acceptedAt,
+      })
+      const { execution } = await acceptance.acceptExecution({
+        callerPrincipalId: 'svc_hosted-graph-admission-test',
+        operation: 'execution.accept',
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        requestId: plan.correlation.requestId,
+        idempotencyKey: 'hosted-graph-admission-0001',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          taskId: plan.correlation.taskId,
+          agentId: plan.correlation.agentId,
+        },
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
+        receivedAt: acceptedAt,
+        retentionExpiresAt: '2026-10-27T00:00:00.000Z',
+      })
+      // This graph-only proof creates a real durable attempt without claiming hosted runtime
+      // discovery, routing, or provider transport acceptance.
+      const attempt = await new ExecutionLifecycleService(
+        new PostgresExecutionRepository(database)
+      ).createAttempt({
+        executionId,
+        attemptId,
+        expectedExecutionVersion: execution.version,
+        queuedAt: '2026-09-27T00:00:01.000Z',
+        deadlineAt: execution.deadlineAt,
+      })
+      const graph = plan.graph.reference
+      const threadId = `graph:${executionId}`
+      const runInput = {
         executionId,
         attemptId: attempt.attemptId,
         workspaceId: plan.correlation.workspaceId,
         workflowId,
         graph,
         threadId,
+        input: plan.graph.input,
+        idempotencyKey: 'hosted-pg-graph-run',
+      }
+      const resumeInput = {
+        executionId,
+        attemptId: attempt.attemptId,
+        workspaceId: plan.correlation.workspaceId,
+        workflowId,
+        graph,
+        threadId,
+        checkpointId: 'hosted-pg-checkpoint',
+        response: { action: 'approve' },
+        idempotencyKey: 'hosted-pg-graph-resume',
+      }
+      const continueInput = {
+        executionId,
+        attemptId: attempt.attemptId,
+        workspaceId: plan.correlation.workspaceId,
+        workflowId,
+        graph,
+        threadId,
+        checkpointId: 'hosted-pg-checkpoint',
+        idempotencyKey: 'hosted-pg-graph-continue',
+      }
+
+      for (const [operation, operationInput] of [
+        ['runGraphSegment', runInput],
+        ['resumeGraphSegment', resumeInput],
+        ['continueGraphSegment', continueInput],
+      ]) {
+        expect(await composition.executionLifecycleActivities[operation](operationInput)).toEqual({
+          outcome: 'continue',
+          checkpointId: 'hosted-pg-checkpoint',
+        })
+      }
+      expect(graphCalls.map(({ operation, input }) => ({ operation, input }))).toEqual([
+        { operation: 'runGraphSegment', input: runInput },
+        { operation: 'resumeGraphSegment', input: resumeInput },
+        { operation: 'continueGraphSegment', input: continueInput },
+      ])
+
+      await database.$client.unsafe('delete from usage_budget_states where execution_id = $1', [
+        executionId,
+      ])
+      const snapshot = async () => {
+        const [budgets, entries, receipts] = await Promise.all([
+          database.$client.unsafe(
+            'select * from usage_budget_states where execution_id = $1 order by workspace_id',
+            [executionId]
+          ),
+          database.$client.unsafe(
+            'select * from usage_ledger_entries where execution_id = $1 order by sequence',
+            [executionId]
+          ),
+          database.$client.unsafe(
+            'select * from usage_operation_receipts where execution_id = $1 order by idempotency_key',
+            [executionId]
+          ),
+        ])
+        return { budgets, entries, receipts }
+      }
+      const beforeDeniedGraphOperations = await snapshot()
+      const callsBeforeDenial = graphCalls.length
+      for (const [operation, operationInput] of [
+        ['runGraphSegment', runInput],
+        ['resumeGraphSegment', resumeInput],
+        ['continueGraphSegment', continueInput],
+      ]) {
+        await expect(
+          composition.executionLifecycleActivities[operation](operationInput)
+        ).rejects.toMatchObject({ code: 'RUNTIME_BUDGET_ADMISSION_DENIED' })
+        expect(graphCalls).toHaveLength(callsBeforeDenial)
+      }
+      expect(await snapshot()).toEqual(beforeDeniedGraphOperations)
+
+      await composition.executionLifecycleActivities.cancelActive({
+        executionId,
+        attemptId: attempt.attemptId,
+        workflowId,
+        effectKey: 'hosted-pg-graph-cancel-after-denial',
         reason: 'deadline',
-        idempotencyKey: 'hosted-pg-graph-cancel-after-denial',
-      },
-    })
-    expect(await snapshot()).toEqual(beforeDeniedGraphOperations)
-  }, 30_000)
+        graph: {
+          workspaceId: plan.correlation.workspaceId,
+          reference: graph,
+          threadId,
+        },
+      })
+      expect(graphCalls.at(-1)).toEqual({
+        operation: 'cancelGraphSegment',
+        input: {
+          executionId,
+          attemptId: attempt.attemptId,
+          workspaceId: plan.correlation.workspaceId,
+          workflowId,
+          graph,
+          threadId,
+          reason: 'deadline',
+          idempotencyKey: 'hosted-pg-graph-cancel-after-denial',
+        },
+      })
+      expect(await snapshot()).toEqual(beforeDeniedGraphOperations)
+    },
+    integrationTestTimeout()
+  )
 })

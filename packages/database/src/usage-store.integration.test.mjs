@@ -15,7 +15,7 @@ import { PostgresContextPackageRepository } from './context-package-repository.t
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
 import { createPostgresConnection } from './connection.ts'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
 import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.ts'
 import { usageLedgerEntries } from './schema/usage-ledger.ts'
@@ -36,7 +36,7 @@ async function timedPhase(phase, operation) {
   }
 }
 
-const test = (name, operation, timeoutMs = 30_000) =>
+const test = (name, operation, timeoutMs = integrationTestTimeout()) =>
   runTest(name, () => timedPhase('body', operation), timeoutMs)
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -185,7 +185,7 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
       }
       throw error
     }
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterEach(async () => {
     preparedDatabase = undefined
@@ -198,89 +198,93 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
     )
     if (errors.length > 0)
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
-  }, 30_000)
+  }, integrationTestTimeout())
 
-  test('opens, reserves, charges, settles, finalizes, reconnects, and replays receipts', async () => {
-    const { isolated, credentials } = await createDatabase()
-    const owner = await createOwner(isolated.application)
-    const service = ledger(isolated.application)
-    const openInput = {
-      workspaceId: owner.execution.correlation.workspaceId,
-      executionId: owner.execution.executionId,
-      currency: 'USD',
-      maximumMicrounits: 10_000,
-      maximumTokens: 100,
-      source: source('lifecycle-open'),
-    }
-    const opened = await service.openBudget(openInput)
-    const reserveInput = {
-      workspaceId: openInput.workspaceId,
-      executionId: openInput.executionId,
-      attemptId: owner.attempt.attemptId,
-      reservationKey: 'model-call',
-      maximumMicrounits: 5_000,
-      maximumTokens: 50,
-      source: source('lifecycle-reserve'),
-    }
-    const reserved = await service.reserve(reserveInput)
-    const chargeInput = {
-      workspaceId: openInput.workspaceId,
-      executionId: openInput.executionId,
-      attemptId: owner.attempt.attemptId,
-      reservationKey: 'model-call',
-      kind: 'model_usage',
-      quantity: { unit: 'tokens', value: 22 },
-      costMicrounits: 1_800,
-      fundingSource: 'hq_managed',
-      source: source('lifecycle-charge'),
-    }
-    const charged = await service.charge(chargeInput)
-    const settleInput = {
-      workspaceId: openInput.workspaceId,
-      executionId: openInput.executionId,
-      reservationKey: 'model-call',
-      source: source('lifecycle-settle'),
-    }
-    const settled = await service.settle(settleInput)
-    const finalizeInput = {
-      workspaceId: openInput.workspaceId,
-      executionId: openInput.executionId,
-      source: source('lifecycle-finalize'),
-    }
-    const finalized = await service.finalizeBudget(finalizeInput)
-
-    const databaseUrl = new URL(credentials.application.url)
-    databaseUrl.pathname = `/${isolated.name}`
-    const reconnected = createPostgresConnection({
-      ...credentials.application,
-      url: databaseUrl.toString(),
-    })
-    try {
-      const reopened = ledger(reconnected.database)
-      await expect(reopened.openBudget(openInput)).resolves.toEqual(opened)
-      await expect(reopened.reserve(reserveInput)).resolves.toEqual(reserved)
-      await expect(reopened.charge(chargeInput)).resolves.toEqual(charged)
-      await expect(reopened.settle(settleInput)).resolves.toEqual(settled)
-      await expect(reopened.finalizeBudget(finalizeInput)).resolves.toEqual(finalized)
-      await expect(
-        reopened.entries(openInput.workspaceId, openInput.executionId)
-      ).resolves.toHaveLength(6)
-      await expect(
-        reopened.publicSummary(openInput.workspaceId, openInput.executionId)
-      ).resolves.toEqual({
-        executionId: openInput.executionId,
+  test(
+    'opens, reserves, charges, settles, finalizes, reconnects, and replays receipts',
+    async () => {
+      const { isolated, credentials } = await createDatabase()
+      const owner = await createOwner(isolated.application)
+      const service = ledger(isolated.application)
+      const openInput = {
+        workspaceId: owner.execution.correlation.workspaceId,
+        executionId: owner.execution.executionId,
         currency: 'USD',
-        funding: { hqManagedMicrounits: 1_800, externalSubscriptionEffects: 0 },
-        usage: { tokens: 22 },
-        settled: true,
+        maximumMicrounits: 10_000,
+        maximumTokens: 100,
+        source: source('lifecycle-open'),
+      }
+      const opened = await service.openBudget(openInput)
+      const reserveInput = {
+        workspaceId: openInput.workspaceId,
+        executionId: openInput.executionId,
+        attemptId: owner.attempt.attemptId,
+        reservationKey: 'model-call',
+        maximumMicrounits: 5_000,
+        maximumTokens: 50,
+        source: source('lifecycle-reserve'),
+      }
+      const reserved = await service.reserve(reserveInput)
+      const chargeInput = {
+        workspaceId: openInput.workspaceId,
+        executionId: openInput.executionId,
+        attemptId: owner.attempt.attemptId,
+        reservationKey: 'model-call',
+        kind: 'model_usage',
+        quantity: { unit: 'tokens', value: 22 },
+        costMicrounits: 1_800,
+        fundingSource: 'hq_managed',
+        source: source('lifecycle-charge'),
+      }
+      const charged = await service.charge(chargeInput)
+      const settleInput = {
+        workspaceId: openInput.workspaceId,
+        executionId: openInput.executionId,
+        reservationKey: 'model-call',
+        source: source('lifecycle-settle'),
+      }
+      const settled = await service.settle(settleInput)
+      const finalizeInput = {
+        workspaceId: openInput.workspaceId,
+        executionId: openInput.executionId,
+        source: source('lifecycle-finalize'),
+      }
+      const finalized = await service.finalizeBudget(finalizeInput)
+
+      const databaseUrl = new URL(credentials.application.url)
+      databaseUrl.pathname = `/${isolated.name}`
+      const reconnected = createPostgresConnection({
+        ...credentials.application,
+        url: databaseUrl.toString(),
       })
-    } finally {
-      await reconnected.close()
-    }
-    // The lifecycle and a fresh-client replay completed in 51s on the real
-    // Neon probe. This compound fixture has a bounded 60s body; individual
-    // lock/operation bounds and the other case deadlines remain unchanged.
-  }, 60_000)
+      try {
+        const reopened = ledger(reconnected.database)
+        await expect(reopened.openBudget(openInput)).resolves.toEqual(opened)
+        await expect(reopened.reserve(reserveInput)).resolves.toEqual(reserved)
+        await expect(reopened.charge(chargeInput)).resolves.toEqual(charged)
+        await expect(reopened.settle(settleInput)).resolves.toEqual(settled)
+        await expect(reopened.finalizeBudget(finalizeInput)).resolves.toEqual(finalized)
+        await expect(
+          reopened.entries(openInput.workspaceId, openInput.executionId)
+        ).resolves.toHaveLength(6)
+        await expect(
+          reopened.publicSummary(openInput.workspaceId, openInput.executionId)
+        ).resolves.toEqual({
+          executionId: openInput.executionId,
+          currency: 'USD',
+          funding: { hqManagedMicrounits: 1_800, externalSubscriptionEffects: 0 },
+          usage: { tokens: 22 },
+          settled: true,
+        })
+      } finally {
+        await reconnected.close()
+      }
+      // The lifecycle and a fresh-client replay completed in 51s on the real
+      // Neon probe. This compound fixture has a bounded 60s body; individual
+      // lock/operation bounds and the other case deadlines remain unchanged.
+    },
+    integrationTestTimeout(60_000)
+  )
 
   test('binds durable usage to an existing transaction, including rollback and lease scope', async () => {
     const { isolated } = await createDatabase()
