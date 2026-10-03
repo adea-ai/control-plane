@@ -4,6 +4,7 @@ import { basename, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
+import { validateAtomicClauseRegister } from './atomic-clause-ledger.mjs'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -210,6 +211,8 @@ export async function validateRequirementsLedger(ledger, options = {}) {
     if (sourceIds.has(source.id)) errors.push(`duplicate source ID: ${source.id}`)
     sourceIds.add(source.id)
   }
+
+  errors.push(...(await validateAtomicClauseRegister(ledger.sources ?? [], root)))
 
   const expectedProfiles = ['cloud', 'hosted-server', 'hosted-simple', 'local']
   const actualProfiles = (ledger.deploymentProfiles ?? []).map(({ id }) => id).toSorted()
@@ -459,7 +462,8 @@ export async function renderRequirementsReport(ledger) {
     '',
     '## Summary',
     '',
-    `- ${ledger.requirements.length} atomic normative requirements: ${formatCounts(counts)}.`,
+    `- ${ledger.requirements.length} bounded normative requirement rows: ${formatCounts(counts)}.`,
+    `- ${ledger.sources.reduce((count, source) => count + (source.atomicInventory?.atoms ?? 0), 0)} captured source clauses in the [machine-readable atomic clause register](./control-plane-atomic-clauses.v1.json). These include obligations, definitions, fields, and explicit source dispositions; full atom-to-requirement mapping and candidate acceptance remain incomplete.`,
     `- ${ledger.priorMilestoneAudits.length} M1–M10 issue audits: ${formatCounts(auditCounts)}.`,
     `- ${ledger.contradictions.length} explicit contradictions or supersessions.`,
     '',
