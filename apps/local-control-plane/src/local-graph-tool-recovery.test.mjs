@@ -127,8 +127,10 @@ async function postRecoveryCommand(application, command) {
   return { statusCode: response.statusCode, body: response.json() }
 }
 
-test('inspects a lost immutable write response from its persisted checkpoint without exposing input', async () => {
-  const fixture = await createLocalGraphToolFixture()
+test('inspects a lost immutable write response with mixed-case Unicode input without exposing it', async () => {
+  const fixture = await createLocalGraphToolFixture({
+    graphInput: { é: 'accent', Z: 'upper', a: 'lower' },
+  })
   const directory = await mkdtemp(join(tmpdir(), 'local-graph-tool-recovery-'))
   const storedObjects = new FilesystemObjectStore({
     rootDirectory: join(directory, 'objects'),
@@ -453,7 +455,10 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
         },
       ],
     })
-    expect(JSON.stringify(inspection)).not.toContain('execute')
+    const serializedInspection = JSON.stringify(inspection)
+    expect(serializedInspection).not.toContain('accent')
+    expect(serializedInspection).not.toContain('upper')
+    expect(serializedInspection).not.toContain('lower')
     expect(physicalCreates).toBe(1)
 
     const scheduledCommand = command

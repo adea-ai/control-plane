@@ -23,6 +23,7 @@ export async function createLocalGraphToolFixture({
   sharedPinNodes = false,
   approvalMode = 'always',
   toolNodeCount = 1,
+  graphInput = { message: 'execute' },
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-graph-tool-authority-'))
   const persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
@@ -116,7 +117,7 @@ export async function createLocalGraphToolFixture({
     })
     const plan = new ExecutionPlanCompiler('1.0.0').compile({
       ...inputs,
-      graph: { reference: graph.reference, input: { message: 'execute' } },
+      graph: { reference: graph.reference, input: graphInput },
     })
     await api.contextPackages.put(inputs.contextPackage)
     const reference = { ...(await api.executionPlans.put(plan)), schemaVersion: 1 }
@@ -181,7 +182,7 @@ export async function createLocalGraphToolFixture({
       node: 'store',
       kind: 'tool',
       name: 'store',
-      input: { message: 'execute' },
+      input: graphInput,
       idempotencyKey: 'graph-op-v1:' + 'b'.repeat(64),
       toolPin,
     }
