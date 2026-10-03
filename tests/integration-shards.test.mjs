@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import ts from 'typescript'
+import { parse } from 'acorn'
 import {
   INTEGRATION_SHARDS,
   integrationFileArguments,
@@ -22,47 +22,56 @@ function integrationFilesUnder(directory) {
     .toSorted()
 }
 
+function foundationCaseInventory(text) {
+  const source = parse(text, { ecmaVersion: 'latest', sourceType: 'module' })
+  const names = []
+  const suites = []
+  function visit(node) {
+    let callee = node.type === 'CallExpression' ? node.callee : undefined
+    while (callee && (callee.type === 'CallExpression' || callee.type === 'MemberExpression')) {
+      callee = callee.type === 'CallExpression' ? callee.callee : callee.object
+    }
+    if (
+      node.type === 'CallExpression' &&
+      callee?.type === 'Identifier' &&
+      callee.name === 'describe' &&
+      node.arguments[0]?.type === 'Literal' &&
+      typeof node.arguments[0].value === 'string'
+    ) {
+      suites.push(node.arguments[0].value)
+    }
+    if (
+      node.type === 'CallExpression' &&
+      ((node.callee.type === 'Identifier' && node.callee.name === 'test') ||
+        (node.callee.type === 'MemberExpression' &&
+          node.callee.object.type === 'Identifier' &&
+          node.callee.object.name === 'test'))
+    ) {
+      if (node.callee.type !== 'Identifier') {
+        throw new Error('Foundation cases must use plain test declarations')
+      }
+      if (node.arguments[0]?.type !== 'Literal' || typeof node.arguments[0].value !== 'string') {
+        throw new Error('Foundation case names must be string literals')
+      }
+      names.push(node.arguments[0].value)
+    }
+    for (const value of Object.values(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child && typeof child === 'object' && typeof child.type === 'string') visit(child)
+      }
+    }
+  }
+  visit(source)
+  return { names, suites }
+}
+
 let cachedFoundationNames
 
 function foundationCaseNames() {
   if (cachedFoundationNames) return cachedFoundationNames
-  const source = ts.createSourceFile(
-    'integration.test.mjs',
-    readFileSync(new URL('../packages/database/src/integration.test.mjs', import.meta.url), 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS
+  const { names, suites } = foundationCaseInventory(
+    readFileSync(new URL('../packages/database/src/integration.test.mjs', import.meta.url), 'utf8')
   )
-  const names = []
-  const suites = []
-  function visit(node) {
-    let callee = ts.isCallExpression(node) ? node.expression : undefined
-    while (callee && (ts.isCallExpression(callee) || ts.isPropertyAccessExpression(callee))) {
-      callee = callee.expression
-    }
-    if (
-      ts.isCallExpression(node) &&
-      callee &&
-      ts.isIdentifier(callee) &&
-      callee.text === 'describe' &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      suites.push(node.arguments[0].text)
-    }
-    if (
-      ts.isCallExpression(node) &&
-      ((ts.isIdentifier(node.expression) && node.expression.text === 'test') ||
-        (ts.isPropertyAccessExpression(node.expression) &&
-          ts.isIdentifier(node.expression.expression) &&
-          node.expression.expression.text === 'test'))
-    ) {
-      expect(ts.isIdentifier(node.expression)).toBe(true)
-      expect(ts.isStringLiteral(node.arguments[0])).toBe(true)
-      names.push(node.arguments[0].text)
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(source)
   expect(suites).toEqual(['PostgreSQL persistence foundation'])
   expect(new Set(names).size).toBe(names.length)
   expect(names).toHaveLength(65)
@@ -75,6 +84,26 @@ function foundationCaseNames() {
 }
 
 describe('integration shard partition', () => {
+  test('inventory parses JavaScript and rejects disabled or dynamic case declarations', () => {
+    expect(
+      foundationCaseInventory(`
+        // test('commented case', () => {})
+        describe.skipIf(false)('foundation', () => {
+          test('real case', () => { const text = "test('string content')" })
+        })
+      `)
+    ).toEqual({ names: ['real case'], suites: ['foundation'] })
+    for (const declaration of ['test.only', 'test.skip', 'test.each([])', "test['skip']"]) {
+      expect(() => foundationCaseInventory(`${declaration}('case', () => {})`)).toThrow(
+        'Foundation cases must use plain test declarations'
+      )
+    }
+    expect(() => foundationCaseInventory('test(name, () => {})')).toThrow(
+      'Foundation case names must be string literals'
+    )
+    expect(() => foundationCaseInventory('test(')).toThrow()
+  })
+
   test('every integration file has one owner or explicitly partitioned case owners', () => {
     const packages = [
       'packages/database/src',

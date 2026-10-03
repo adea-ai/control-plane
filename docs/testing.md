@@ -115,7 +115,8 @@ The trusted-main Neon verification partitions `test:integration` into three shar
 share a Neon compute instance. Files still run one at a time inside a shard, preserving the
 per-case database isolation; new integration files must be assigned to a shard explicitly, which
 `tests/integration-shards.test.mjs` enforces. The expanded database foundation file has complementary
-case filters on shards 1 and 2. The partition check inventories its literal test names, bounds each
+case filters on shards 1 and 2. The partition check uses the development-only Acorn JavaScript
+parser (independent of the TypeScript compiler API) to inventory its literal test names, bounds each
 slice, and executes those names through Bun using the runner's actual arguments to reject missing
 or duplicate selection. Unsharded local runs still execute the full file without filters.
 A remote branch stretches tests that finish in
