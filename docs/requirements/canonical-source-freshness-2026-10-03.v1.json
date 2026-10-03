@@ -33,7 +33,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "4245f2903b42e423042590bfb3a6c6f8616196dc5f908a42fa75db520903b5fa"
     },
     {
       "sourceId": "agent-hq-prd",
@@ -58,7 +59,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "6bdda251a6890d28bdb044ccb9061ef92ab19569c3e91d9927f547187ff6992b"
     },
     {
       "sourceId": "control-plane-prd",
@@ -83,7 +85,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "cbcf5dac0b18a7d2f647f1663f802caced5552d0f591d527c161bfa0a2c6c864"
     },
     {
       "sourceId": "cortana-prd",
@@ -108,7 +111,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "45c5e5160093e3b06c62598d6ef439a6d8a20c2cd48e52f73cc5a32429b47098"
     },
     {
       "sourceId": "system-architecture",
@@ -133,7 +137,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "1f99605b3277c098ee281d2d449ea73efc2d5aef3d9f1c7cb56c01a7b8484ab2"
     },
     {
       "sourceId": "control-plane-tdd",
@@ -158,7 +163,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "ed683f7d6d95fc3d7ffb5b7efab1c9dcbb1d654596d42ec59a3e001b1f35138b"
     },
     {
       "sourceId": "agent-skill-spec",
@@ -183,7 +189,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "f67fd57695682e8b906d8104224d125aa899ccd83af78312ea915fa0e44276c2"
     },
     {
       "sourceId": "data-api-spec",
@@ -208,7 +215,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "fc5a7a5b58149d18a4188f5e1b4e4f4dec790c48e1bd23fb0e18a0aeb6655702"
     },
     {
       "sourceId": "runtime-node-spec",
@@ -233,7 +241,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "9f5286f1f2c0a56f98ddd5eaff3ee46321ea89301821bff3b866a5480925b613"
     },
     {
       "sourceId": "execution-consistency-spec",
@@ -258,7 +267,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "77601bae1f9fd09a1eb97f02af852826209422c7fbb893984ec388b931cf464d"
     },
     {
       "sourceId": "artifact-storage-spec",
@@ -283,7 +293,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "858a52915e46a1a6c16ea6dd75b2e1ecd50a185546157529fca89de340731b86"
     },
     {
       "sourceId": "security-trust-model",
@@ -313,7 +324,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "aba7a4b6c49edf42bc2015f22381edffeacb4aa770f8fa8dd3b574498eb0a739"
     },
     {
       "sourceId": "evaluation-plan",
@@ -338,7 +350,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "3e0b9407f0730842b298cad7fdf5649def16940cf58030eb4a997922b9dede2c"
     },
     {
       "sourceId": "runtime-compatibility",
@@ -363,7 +376,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "d26c8d8ff5bb67787a69512df5e9abfdcf835bbcee75723302190c5800e43ac7"
     },
     {
       "sourceId": "architecture-decisions",
@@ -388,7 +402,8 @@
           "positionedObjectIds": []
         }
       ],
-      "figureBytesRefreshed": false
+      "figureBytesRefreshed": false,
+      "lineageRegisterSourceSha256": "0af50d4c36f5c42baa8fe3bc9ffd0e6ed0dea499fb9ed5f907dc769c24ae0088"
     }
   ]
 }
