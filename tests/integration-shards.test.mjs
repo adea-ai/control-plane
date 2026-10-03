@@ -8,7 +8,11 @@ import {
 
 function integrationFilesUnder(directory) {
   return readdirSync(new URL(`../${directory}`, import.meta.url), { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.integration.test.mjs'))
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        (entry.name === 'integration.test.mjs' || entry.name.endsWith('.integration.test.mjs'))
+    )
     .map((entry) => entry.name)
     .toSorted()
 }
@@ -34,17 +38,13 @@ describe('integration shard partition', () => {
         }
       }
     }
+    const discovered = []
     for (const directory of packages) {
       for (const file of integrationFilesUnder(directory)) {
-        // packages/database also owns src/integration.test.mjs, which is not
-        // matched by the *.integration.test.mjs glob of this directory scan.
-        if (directory === 'packages/database/src' && file === 'integration.test.mjs') {
-          expect(assigned.get(`packages/database/src/${file}`)).toBe(1)
-          continue
-        }
-        expect(assigned.get(`${directory}/${file}`)).toBeInteger()
+        discovered.push(`${directory}/${file}`)
       }
     }
+    expect([...assigned.keys()].toSorted()).toEqual(discovered.toSorted())
     expect(assigned.size).toBeGreaterThan(20)
   })
 
