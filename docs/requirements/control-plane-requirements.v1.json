@@ -2260,7 +2260,7 @@
       "heading": "Provider proposal reconciliation (section 8)",
       "requirement": "Reconcile non-terminal MemoryWriteProposals against authoritative provider status where supported; do not promote proposals to canonical memory or reconstruct missing provider evidence without authority.",
       "normativeState": "accepted",
-      "classification": "verified",
+      "classification": "partially_verified",
       "owner": "context-provider",
       "lane": "integration",
       "issueRefs": [186, 188, 194, 195],
@@ -2272,14 +2272,20 @@
         {
           "kind": "test",
           "path": "packages/memory-writeback/src/index.test.mjs",
-          "scope": "'reconciles an ambiguous idempotent write through status without replaying the effect' (providerMemoryRef adopted only when provider status confirms); 'fails a status-rejected reconciliation without replaying the write'; 'keeps unknown and unavailable status reconciliation parked without replay'; 'keeps proposals non-canonical and deduplicates duplicate delivery' (never promoted to canonical memory)."
+          "scope": "Library fixtures: 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'reconciles a persisted committing proposal after expiry using provider status only'; 'parks unknown, unavailable, and unsupported status for persisted commits without replay'; 'concurrent committing recovery uses status and rejects a stale compare-and-set'; 'commit does not expire unapproved or terminal proposals'; 'fails a status-rejected reconciliation without replaying the write'; 'keeps proposals non-canonical and deduplicates duplicate delivery'. These cases do not establish composed deployment-profile recovery."
         },
         {
           "kind": "test",
           "path": "packages/production-readiness/src/failure-injection.test.mjs",
           "scope": "'routes an ambiguous committed provider outcome to reconciliation'."
         }
-      ]
+      ],
+      "gap": {
+        "issue": 194,
+        "severity": "high",
+        "owner": "context-provider",
+        "disposition": "Adjudicated 2026-10-03: partially verified. The memory-writeback library now covers persisted committing and ambiguous-outcome status reconciliation without replaying writes, including expiry and concurrent compare-and-set races. MemoryWriteService has no non-test composition consumer in apps or packages. Remaining: exercise the authoritative provider reconciliation through a durable application composition and crash/restart recovery in each required deployment profile. Library fixtures do not establish that acceptance."
+      }
     },
     {
       "id": "CP-CONS-027",
