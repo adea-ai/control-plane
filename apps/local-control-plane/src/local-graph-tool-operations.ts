@@ -382,13 +382,15 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       this.#options.persistence,
       execution.correlation.workspaceId
     )
-    const all = (await calls.listByExecution(execution.executionId)).slice(0, 64)
     const selected =
       identity.toolCallId === undefined
-        ? all
-        : all.filter((call) => call.toolCallId === identity.toolCallId)
-    if (identity.toolCallId !== undefined && selected.length === 0)
-      throw new Error('TOOL_EFFECT_CALL_MISSING')
+        ? (await calls.listByExecution(execution.executionId)).slice(0, 64)
+        : await this.#getExecutionCall(
+            calls,
+            identity.toolCallId,
+            execution.executionId,
+            execution.correlation.workspaceId
+          )
     const inspections = await Promise.all(selected.map((call) => this.#inspectCall(call)))
     return {
       executionId: execution.executionId,
@@ -551,6 +553,18 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       throw new Error('TOOL_EFFECT_SCOPE_REJECTED')
   }
 
+  async #getExecutionCall(
+    calls: SqliteToolCallRepository,
+    toolCallId: string,
+    executionId: string,
+    workspaceId: string
+  ): Promise<readonly ToolCall[]> {
+    const call = await calls.get(toolCallId)
+    if (!call || call.executionId !== executionId || call.workspaceId !== workspaceId)
+      throw new Error('TOOL_EFFECT_CALL_MISSING')
+    return [call]
+  }
+
   async #inspectCall(call: ToolCall): Promise<RecoveryCallInspection> {
     const accounting = await this.#accountingState(call)
     const evidence = await this.#resolveEvidence(call).catch(() => {
@@ -595,20 +609,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     ).getPinned(plan.graph.reference)
     if (!isDeepStrictEqual(graph.reference, plan.graph.reference))
       throw new Error('TOOL_EFFECT_PIN_MISMATCH')
-    const graphNodes = graph.content.nodes.filter(
-      (node) => node.operation.kind === 'tool' && node.operation.toolPin !== undefined
-    )
-    const node = graphNodes.find(({ operation }) => {
-      const pin = operation.kind === 'tool' ? operation.toolPin : undefined
-      return (
-        pin?.toolDefinitionId === call.toolDefinitionId && pin.toolVersionId === call.toolVersionId
-      )
-    })
-    if (!node || node.operation.kind !== 'tool' || !node.operation.toolPin)
-      throw new Error('TOOL_EFFECT_PIN_MISMATCH')
-    const pin = node.operation.toolPin
     if (
-      call.operation !== pin.operation ||
       !isDeepStrictEqual(call.executor, {
         type: 'internal',
         reference: 'local.object-store-json.v1',
@@ -618,14 +619,52 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     const registry = new ToolRegistry(
       new SqliteToolRegistryRepository(persistence, call.workspaceId)
     )
-    const version = await registry.readVersion(pin.toolVersionId, call.workspaceId)
+    const version = await registry.readVersion(call.toolVersionId, call.workspaceId)
     if (
-      version.toolDefinitionId !== pin.toolDefinitionId ||
-      version.contentDigest !== pin.contentDigest ||
+      version.toolDefinitionId !== call.toolDefinitionId ||
       version.executor.type !== 'internal' ||
       version.executor.reference !== 'local.object-store-json.v1'
     )
       throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const pinnedNodes: {
+      node: (typeof graph.content.nodes)[number]
+      pin: GraphToolPin
+    }[] = []
+    for (const node of graph.content.nodes) {
+      const operation = node.operation
+      if (operation.kind !== 'tool' || operation.toolPin === undefined) continue
+      const pin = operation.toolPin
+      if (
+        pin.toolDefinitionId === call.toolDefinitionId &&
+        pin.toolVersionId === call.toolVersionId &&
+        pin.contentDigest === version.contentDigest &&
+        pin.operation === call.operation
+      )
+        pinnedNodes.push({ node, pin })
+    }
+    if (pinnedNodes.length === 0) throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const candidates: {
+      node: (typeof graph.content.nodes)[number]
+      pin: GraphToolPin
+      visitOrdinal: number
+    }[] = []
+    for (const { node, pin } of pinnedNodes) {
+      for (let visitOrdinal = 0; visitOrdinal < 9; visitOrdinal += 1) {
+        const idempotencyKey = graphOperationIdempotencyKeyFor({
+          workspaceId: call.workspaceId,
+          executionId: execution.executionId,
+          threadId: `graph:${execution.executionId}`,
+          graph: graph.reference,
+          node: node.node,
+          visitOrdinal,
+        })
+        if (idempotencyKey === call.idempotencyKey) candidates.push({ node, pin, visitOrdinal })
+      }
+    }
+    const selectedCandidate = candidates[0]
+    if (candidates.length !== 1 || !selectedCandidate)
+      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const { node, pin } = selectedCandidate
     const threadId = `graph:${execution.executionId}`
     const checkpointSaver = new LangGraphSqliteCheckpointSaver(persistence, 'managed-graphs')
     const storedJob = await this.#recoveryRuntime?.workflowJobs?.get(execution.executionId)
@@ -655,17 +694,6 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     )
     if (distinctInputs.size !== 1) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
     const input = [...distinctInputs.values()][0]!
-    const operationIdentity = Array.from({ length: 9 }, (_, visitOrdinal) =>
-      graphOperationIdempotencyKeyFor({
-        workspaceId: call.workspaceId,
-        executionId: execution.executionId,
-        threadId,
-        graph: graph.reference,
-        node: node.node,
-        visitOrdinal,
-      })
-    ).find((key) => key === call.idempotencyKey)
-    if (!operationIdentity) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
     const suffix = createHash('sha256')
       .update(call.idempotencyKey)
       .digest('hex')
