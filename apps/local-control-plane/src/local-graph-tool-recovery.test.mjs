@@ -19,6 +19,7 @@ import {
   EmbeddedExecutionWorkflowDispatcher,
   WorkflowJobStore,
 } from '@control-plane/workflow-runtime'
+import { LangGraphSqliteCheckpointSaver } from '@control-plane/langgraph-adapter'
 import { LocalGraphToolOperations } from './local-graph-tool-operations.ts'
 import { ManagedLocalGraphRuntime } from './managed-graph-runtime.ts'
 import { createLocalGraphToolFixture } from './local-graph-tool-fixture.mjs'
@@ -643,6 +644,214 @@ test('recovers a lost receipt at the later of two graph nodes sharing one tool p
       }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
     ).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 50 })
     expect(physicalCreates).toBe(2)
+  } finally {
+    storedObjects.close()
+    await fixture.cleanup()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('recovers a lost receipt after approved resumes advance beyond the per-run step limit', async () => {
+  const toolNodeCount = 10
+  const fixture = await createLocalGraphToolFixture({ toolNodeCount })
+  const directory = await mkdtemp(join(tmpdir(), 'local-graph-tool-late-step-recovery-'))
+  const storedObjects = new FilesystemObjectStore({
+    rootDirectory: join(directory, 'objects'),
+    maxObjectBytes: 4_096,
+  })
+  let physicalCreates = 0
+  let lostReceipt = false
+  const objectStore = new Proxy(storedObjects, {
+    get(target, property) {
+      if (property === 'putIfAbsent')
+        return async (input) => {
+          const result = await target.putIfAbsent(input)
+          if (result.outcome === 'created') physicalCreates += 1
+          if (physicalCreates === toolNodeCount && !lostReceipt) {
+            lostReceipt = true
+            throw new Error('lost late-step write response')
+          }
+          return result
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const operations = new LocalGraphToolOperations({
+    api: fixture.api,
+    persistence: fixture.persistence,
+    objectStore,
+    prices: [
+      {
+        pin: fixture.operation.toolPin,
+        currency: fixture.plan.constraints.limits.budget.currency,
+        costMicrounits: 25,
+      },
+    ],
+    now: () => fixture.at,
+  })
+  const graphRuntime = new ManagedLocalGraphRuntime(
+    fixture.persistence,
+    {
+      capabilities: ['graph.tool-pins.v1'],
+      compiler: {
+        operationAllowlist: [{ kind: 'tool', name: 'store' }],
+        schemaRegistry: {
+          getValidator(reference) {
+            if (reference === 'schema:json' || reference === 'local.graph-json-object.v1')
+              return (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+            if (reference === 'local.graph-state.v1')
+              return (value) => value !== null && typeof value === 'object'
+            return undefined
+          },
+        },
+        maximumSteps: 8,
+      },
+      operations,
+    },
+    objectStore
+  )
+  const calls = new SqliteToolCallRepository(fixture.persistence, fixture.operation.workspaceId)
+  try {
+    const activity = graphRuntime.activities(fixture.api)
+    const request = {
+      executionId: fixture.operation.executionId,
+      attemptId: fixture.operation.attemptId,
+      workspaceId: fixture.operation.workspaceId,
+      workflowId: fixture.operation.workflowId,
+      graph: fixture.graph.reference,
+      threadId: fixture.operation.threadId,
+      input: fixture.plan.graph.input,
+      idempotencyKey: 'late-step-recovery:original-run',
+    }
+    let outcome = await activity.runGraphSegment(request)
+    let approvalCount = 0
+    while (outcome.outcome === 'awaiting_input' && approvalCount < toolNodeCount) {
+      const interaction = await fixture.api.interactions.get(outcome.interactionId)
+      expect(interaction?.state).toBe('pending')
+      const responseSuffix = 'ABCDEFGHJKMNPRTVWXYZ'[approvalCount]
+      const responseId = `cmd_01JABCDEF0123456789ABCDEF${responseSuffix}`
+      await new InteractionService(fixture.api.interactions).respond({
+        interactionId: interaction.interactionId,
+        executionId: fixture.operation.executionId,
+        attemptId: fixture.operation.attemptId,
+        expectedVersion: interaction.version,
+        responseId,
+        respondingPrincipalId: 'svc_graph-tool-test',
+        action: 'approve',
+        respondedAt: fixture.at,
+      })
+      const resume = {
+        ...request,
+        checkpointId: outcome.checkpointId,
+        response: { action: 'approve', responseId },
+        idempotencyKey: `late-step-recovery:approved:${approvalCount}`,
+      }
+      delete resume.input
+      outcome = await activity.resumeGraphSegment(resume)
+      approvalCount += 1
+    }
+    expect(approvalCount).toBe(toolNodeCount)
+    expect(outcome.outcome).toBe('reconciliation_required')
+    expect(physicalCreates).toBe(toolNodeCount)
+    const callList = await calls.listByExecution(fixture.operation.executionId)
+    expect(callList).toHaveLength(toolNodeCount)
+    expect(callList.filter((call) => call.status === 'succeeded')).toHaveLength(toolNodeCount - 1)
+    const uncertainCall = callList.find((call) => call.status === 'reconciliation_required')
+    expect(uncertainCall).toMatchObject({ operation: 'store-json' })
+
+    const checkpoint = await new LangGraphSqliteCheckpointSaver(
+      fixture.persistence,
+      'managed-graphs'
+    ).getTuple({
+      configurable: {
+        thread_id: `${fixture.operation.workspaceId}:${fixture.operation.executionId}:${fixture.operation.threadId}`,
+        checkpoint_id: outcome.checkpointId,
+      },
+    })
+    expect(checkpoint?.metadata?.step).toBeGreaterThan(8)
+
+    const lifecycle = new ExecutionLifecycleService(fixture.api.executions)
+    const execution = await fixture.api.executions.getExecution(fixture.operation.executionId)
+    const attempt = await fixture.api.executions.getAttempt(fixture.operation.attemptId)
+    await lifecycle.transitionExecution({
+      executionId: execution.executionId,
+      expectedVersion: execution.version,
+      to: 'reconciliation_required',
+      transitionedAt: fixture.at,
+    })
+    await lifecycle.transitionAttempt({
+      attemptId: attempt.attemptId,
+      expectedVersion: attempt.version,
+      to: 'reconciliation_required',
+      transitionedAt: fixture.at,
+    })
+    const workflowJobs = new WorkflowJobStore(fixture.persistence, {
+      beforeEnqueue: assertSqliteWorkflowExecutionReference,
+    })
+    const workflowDispatcher = new EmbeddedExecutionWorkflowDispatcher({
+      store: workflowJobs,
+      now: () => fixture.at,
+    })
+    operations.bindRecoveryRuntime({
+      workflowJobs,
+      workflowDispatcher,
+      durableExecution: 'embedded-sqlite',
+      executionLifecycleActivities: { persistStatus: async () => undefined },
+    })
+    const principal = {
+      principalId: 'svc_graph-tool-test',
+      workspaceIds: [fixture.operation.workspaceId],
+      projectIds: [fixture.plan.correlation.projectId],
+      scopes: ['execution:reconcile'],
+      kind: 'internal_service',
+    }
+    const inspectionEnvelope = {
+      caller: { servicePrincipalId: principal.principalId },
+      operation: 'execution.tool-effect.inspect',
+      workspaceId: fixture.operation.workspaceId,
+      projectId: fixture.plan.correlation.projectId,
+      parameters: {
+        executionId: fixture.operation.executionId,
+        toolCallId: uncertainCall.toolCallId,
+      },
+    }
+    expect(await operations.inspect(inspectionEnvelope, principal)).toMatchObject({
+      calls: [
+        {
+          toolCallId: uncertainCall.toolCallId,
+          artifact: { state: 'verified' },
+          accounting: { charged: false, settled: false },
+        },
+      ],
+    })
+    const payload = {
+      executionId: fixture.operation.executionId,
+      toolCallId: uncertainCall.toolCallId,
+      expectedRevision: uncertainCall.revision,
+      action: 'resume',
+    }
+    const scheduled = await operations.reconcile(
+      {
+        operation: 'execution.tool-effect.reconcile',
+        workspaceId: fixture.operation.workspaceId,
+        projectId: fixture.plan.correlation.projectId,
+        caller: { servicePrincipalId: principal.principalId },
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFZ',
+        idempotencyKey: 'late-step-recovery:operator-resume',
+        payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
+        payload,
+      },
+      principal
+    )
+    expect(scheduled).toMatchObject({ outcome: 'recovery_scheduled' })
+    expect((await calls.get(uncertainCall.toolCallId)).status).toBe('succeeded')
+    expect(
+      await new DurableUsageLedger({
+        store: new SqliteDurableUsageStore(fixture.persistence),
+      }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+    ).toMatchObject({ reservedMicrounits: 0, spentMicrounits: toolNodeCount * 25 })
+    expect(physicalCreates).toBe(toolNodeCount)
   } finally {
     storedObjects.close()
     await fixture.cleanup()

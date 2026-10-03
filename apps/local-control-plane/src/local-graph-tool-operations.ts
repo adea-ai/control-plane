@@ -643,28 +643,6 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         pinnedNodes.push({ node, pin })
     }
     if (pinnedNodes.length === 0) throw new Error('TOOL_EFFECT_PIN_MISMATCH')
-    const candidates: {
-      node: (typeof graph.content.nodes)[number]
-      pin: GraphToolPin
-      visitOrdinal: number
-    }[] = []
-    for (const { node, pin } of pinnedNodes) {
-      for (let visitOrdinal = 0; visitOrdinal < 9; visitOrdinal += 1) {
-        const idempotencyKey = graphOperationIdempotencyKeyFor({
-          workspaceId: call.workspaceId,
-          executionId: execution.executionId,
-          threadId: `graph:${execution.executionId}`,
-          graph: graph.reference,
-          node: node.node,
-          visitOrdinal,
-        })
-        if (idempotencyKey === call.idempotencyKey) candidates.push({ node, pin, visitOrdinal })
-      }
-    }
-    const selectedCandidate = candidates[0]
-    if (candidates.length !== 1 || !selectedCandidate)
-      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const { node, pin } = selectedCandidate
     const threadId = `graph:${execution.executionId}`
     const checkpointSaver = new LangGraphSqliteCheckpointSaver(persistence, 'managed-graphs')
     const storedJob = await this.#recoveryRuntime?.workflowJobs?.get(execution.executionId)
@@ -683,6 +661,35 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       tuple.config.configurable?.['checkpoint_id'] !== tuple.checkpoint.id
     )
       throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const checkpointStep = tuple.metadata?.step
+    if (
+      typeof checkpointStep !== 'number' ||
+      !Number.isSafeInteger(checkpointStep) ||
+      checkpointStep < -1
+    )
+      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const visitOrdinal = checkpointStep + 1
+    if (!Number.isSafeInteger(visitOrdinal) || visitOrdinal < 0)
+      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const candidates: {
+      node: (typeof graph.content.nodes)[number]
+      pin: GraphToolPin
+    }[] = []
+    for (const { node, pin } of pinnedNodes) {
+      const idempotencyKey = graphOperationIdempotencyKeyFor({
+        workspaceId: call.workspaceId,
+        executionId: execution.executionId,
+        threadId,
+        graph: graph.reference,
+        node: node.node,
+        visitOrdinal,
+      })
+      if (idempotencyKey === call.idempotencyKey) candidates.push({ node, pin })
+    }
+    const selectedCandidate = candidates[0]
+    if (candidates.length !== 1 || !selectedCandidate)
+      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const { node, pin } = selectedCandidate
     const channels = tuple.checkpoint.channel_values as Record<string, unknown>
     const values = isJsonObject(channels['values']) ? channels['values'] : {}
     const matchingInputs = [values, channels['input']].filter(

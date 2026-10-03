@@ -22,6 +22,7 @@ export async function createLocalGraphToolFixture({
   activate = true,
   sharedPinNodes = false,
   approvalMode = 'always',
+  toolNodeCount = 1,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-graph-tool-authority-'))
   const persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
@@ -78,6 +79,12 @@ export async function createLocalGraphToolFixture({
       contentDigest: version.contentDigest,
       operation: 'store-json',
     }
+    const graphNodeCount = sharedPinNodes ? Math.max(2, toolNodeCount) : toolNodeCount
+    const toolNodeNames = Array.from({ length: graphNodeCount }, (_, index) => {
+      if (index === 0) return 'store'
+      if (sharedPinNodes && index === 1) return 'store_later'
+      return `store_${index + 1}`
+    })
     const graph = await new GraphDefinitionCatalog(
       new SqliteGraphDefinitionRepository(persistence, workspaceId)
     ).publish({
@@ -85,22 +92,18 @@ export async function createLocalGraphToolFixture({
         graphDefinitionId: 'graph:tool-authority',
         graphVersion: '1.0.0',
         schemaVersion: 1,
-        nodes: [
-          { node: 'store', operation: { kind: 'tool', name: 'store', toolPin } },
-          ...(sharedPinNodes
-            ? [{ node: 'store_later', operation: { kind: 'tool', name: 'store', toolPin } }]
-            : []),
+        nodes: toolNodeNames.map((node) => ({
+          node,
+          operation: { kind: 'tool', name: 'store', toolPin },
+        })),
+        edges: [
+          { from: '__start__', to: toolNodeNames[0] },
+          ...toolNodeNames.slice(0, -1).map((node, index) => ({
+            from: node,
+            to: toolNodeNames[index + 1],
+          })),
+          { from: toolNodeNames.at(-1), to: '__end__' },
         ],
-        edges: sharedPinNodes
-          ? [
-              { from: '__start__', to: 'store' },
-              { from: 'store', to: 'store_later' },
-              { from: 'store_later', to: '__end__' },
-            ]
-          : [
-              { from: '__start__', to: 'store' },
-              { from: 'store', to: '__end__' },
-            ],
         schemas: { input: 'schema:json', state: 'schema:json', output: 'schema:json' },
         requiredCapabilities: ['graph.tool-pins.v1'],
         compatibility: {
