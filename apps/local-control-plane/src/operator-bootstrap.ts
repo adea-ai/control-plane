@@ -84,6 +84,7 @@ export async function bootstrapLocalOperator(persistence: PersistenceProvider, i
         displayName: item['displayName'],
         ownership,
         createdAt: at,
+        provenance: { source: 'workspace-authorized', ownerRef: workspaceId, trust: 'authorized' },
       })
     )
     const draft = await catalog.createSkillDraft({

@@ -3,7 +3,8 @@
 The normal launcher exposes graph publication and execution validation/acceptance, but those
 operations require an existing published profile, skills and ProjectState. The packaged operator
 command creates those initial records through the existing domain publication rules. It accepts one
-profile and up to 32 skills, computes content digests, assigns workspace ownership, and initializes
+profile and up to 32 skills, computes content digests, assigns workspace ownership and workspace-authorized skill provenance (the workspace ID is the
+attributable owner reference, with authorized trust), and initializes
 an empty ProjectState at revision zero. Publication and initial state commit in one SQLite
 transaction. Exact replay returns the same references; conflicting ownership, content, version
 numbers or initial state fails without partial writes. Existing state revisions are preserved.

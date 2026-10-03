@@ -206,6 +206,14 @@ test('operator bootstrap publishes scoped immutable inputs and persists initial 
     expect(await catalog.getAgentProfile(input.profile.profileId)).toMatchObject({
       ownership: { scope: 'workspace', workspaceId: input.workspaceId },
     })
+    expect(await catalog.getSkill(input.skills[0].skillId)).toMatchObject({
+      ownership: { scope: 'workspace', workspaceId: input.workspaceId },
+      provenance: {
+        source: 'workspace-authorized',
+        ownerRef: input.workspaceId,
+        trust: 'authorized',
+      },
+    })
     expect(await catalog.getAgentProfileVersion(input.profile.profileVersionId)).toMatchObject({
       lifecycle: 'published',
       revision: 2,
