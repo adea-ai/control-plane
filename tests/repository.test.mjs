@@ -161,6 +161,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
+    'apps/hosted-control-plane/src/hosted-graph-cancellation.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
@@ -170,7 +171,6 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/budget-admission.integration.test.mjs',
     'packages/database/src/delegation-reference.integration.test.mjs',
     'packages/database/src/graph-definition-repository.integration.test.mjs',
-    'packages/database/src/hosted-graph-cancellation.integration.test.mjs',
     'packages/database/src/hosted-graph-operations.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',

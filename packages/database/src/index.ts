@@ -160,6 +160,7 @@ export {
   marketplaceInstallations,
   toolCalls,
   toolDefinitions,
+  toolRateLimitEvents,
   toolVersions,
 } from './schema/index.js'
 export { PostgresToolCallRepository, PostgresToolRegistryRepository } from './tool-repositories.js'

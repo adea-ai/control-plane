@@ -13,18 +13,18 @@ import {
   PostgresToolCallRepository,
   PostgresToolRateLimiter,
   PostgresDurableUsageStore,
-} from './index.ts'
-import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
+  toolRateLimitEvents,
+} from '@control-plane/database'
+import { createIsolatedTestDatabase, integrationTestTimeout } from '@control-plane/database/testing'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { toolRateLimitEvents } from './schema/tool-rate-limit-events.ts'
 import {
   createHostedGraphToolAdmissionRateLimiter,
   createHostedGraphToolBinding,
   HostedGraphToolOperations,
-} from '../../../apps/hosted-control-plane/src/hosted-graph-tool-operations.ts'
+} from './hosted-graph-tool-operations.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'

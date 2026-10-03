@@ -101,6 +101,9 @@
         "@control-plane/workflow-worker": "workspace:*",
         "semver": "7.8.5",
       },
+      "devDependencies": {
+        "drizzle-orm": "0.45.3",
+      },
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
