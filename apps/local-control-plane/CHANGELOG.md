@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.22.0...local-control-plane-v1.23.0) (2026-10-03)
+
+
+### Features
+
+* **local:** support configured graph tools through the launcher ([#851](https://github.com/adea-ai/control-plane/issues/851)) ([25ae017](https://github.com/adea-ai/control-plane/commit/25ae017edafd509d799a6a7a0acf58e89452c72b))
+
 ## [1.22.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.21.1...local-control-plane-v1.22.0) (2026-10-02)
 
 

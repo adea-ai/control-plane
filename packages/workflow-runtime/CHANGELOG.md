@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.7.0...workflow-runtime-v1.8.0) (2026-10-03)
+
+
+### Features
+
+* **local:** support configured graph tools through the launcher ([#851](https://github.com/adea-ai/control-plane/issues/851)) ([25ae017](https://github.com/adea-ai/control-plane/commit/25ae017edafd509d799a6a7a0acf58e89452c72b))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.6.0...workflow-runtime-v1.7.0) (2026-10-02)
 
 
