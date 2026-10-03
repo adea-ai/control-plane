@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.71.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.0...workspace-v1.71.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** run full unit coverage on a standard runner ([#877](https://github.com/adea-ai/control-plane/issues/877)) ([743f520](https://github.com/adea-ai/control-plane/commit/743f520e4471ee4ee882e60dd553f191ad2fd2a9))
+
+
+### Documentation
+
+* **requirements:** record current source drift ([#875](https://github.com/adea-ai/control-plane/issues/875)) ([0f46a75](https://github.com/adea-ai/control-plane/commit/0f46a7532363fea49d6ceb39ea290dbb8dcd34b0))
+
 ## [1.71.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.4...workspace-v1.71.0) (2026-10-03)
 
 
