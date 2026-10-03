@@ -52,6 +52,7 @@ import {
 } from '@control-plane/langgraph-adapter'
 import { assertExecutionPlanIntegrity, type ExecutionPlan } from '@control-plane/execution-plan'
 import { ExecutionWorkflowInputSchema, GraphDefinitionCatalog } from '@control-plane/orchestration'
+import type { WorkflowJobRecord } from '@control-plane/workflow-runtime'
 import type { LocalControlPlaneComposition } from './composition.js'
 import type { LocalControlApiComposition } from './local-api-composition.js'
 import { authorizeLocalGraphTool } from './local-graph-tool-authority.js'
@@ -90,6 +91,8 @@ type RecoveryEvidence = {
   readonly result: ToolExecutionResult
   readonly deadline: number
   readonly checkpointId: string
+  readonly workflowKey?: string
+  readonly isCurrentLeaf?: boolean
   readonly artifactState: 'verified' | 'missing' | 'conflict'
 }
 
@@ -474,6 +477,8 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     )
     if (cancellation !== undefined)
       return { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId }
+    if (entry.evidence.workflowKey !== undefined && entry.evidence.isCurrentLeaf !== true)
+      return { outcome: 'held', reason: 'recovery_checkpoint_advanced' }
     if (
       recovered.execution.state !== 'reconciliation_required' ||
       recovered.attempt.state !== 'reconciliation_required' ||
@@ -506,6 +511,9 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     await runtime.workflowDispatcher.submitRecovery(input, {
       recoveryId: suffix,
       checkpointId: entry.evidence.checkpointId,
+      ...(entry.evidence.workflowKey === undefined
+        ? {}
+        : { parentWorkflowKey: entry.evidence.workflowKey }),
     })
     return {
       outcome: 'recovery_scheduled',
@@ -645,62 +653,114 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     if (pinnedNodes.length === 0) throw new Error('TOOL_EFFECT_PIN_MISMATCH')
     const threadId = `graph:${execution.executionId}`
     const checkpointSaver = new LangGraphSqliteCheckpointSaver(persistence, 'managed-graphs')
-    const storedJob = await this.#recoveryRuntime?.workflowJobs?.get(execution.executionId)
-    const requestedCheckpoint = storedJob?.outcome?.graphCheckpointId
-    const config = {
-      configurable: {
-        thread_id: `${call.workspaceId}:${execution.executionId}:${threadId}`,
-        ...(requestedCheckpoint ? { checkpoint_id: requestedCheckpoint } : {}),
-      },
+    const jobSnapshot = await this.#recoveryRuntime?.workflowJobs?.getExecutionGraphJobsSnapshot(
+      execution.executionId
+    )
+    const hasRootJob = jobSnapshot?.some(({ job }) => job.workflowKey === execution.executionId)
+    let lineage: RecoveryJobLineage | undefined
+    if (jobSnapshot !== undefined && jobSnapshot.length > 0) {
+      if (!hasRootJob) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+      lineage = validateRecoveryJobLineage(jobSnapshot, {
+        execution,
+        attempt,
+        plan,
+        workspaceId: call.workspaceId,
+      })
     }
-    const tuple = await checkpointSaver.getTuple(config)
-    if (!tuple) throw new Error('TOOL_EFFECT_CHECKPOINT_MISSING')
-    if (
-      tuple.config.configurable?.['thread_id'] !==
-        `${call.workspaceId}:${execution.executionId}:${threadId}` ||
-      tuple.config.configurable?.['checkpoint_id'] !== tuple.checkpoint.id
-    )
-      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const checkpointStep = tuple.metadata?.step
-    if (
-      typeof checkpointStep !== 'number' ||
-      !Number.isSafeInteger(checkpointStep) ||
-      checkpointStep < -1
-    )
-      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const visitOrdinal = checkpointStep + 1
-    if (!Number.isSafeInteger(visitOrdinal) || visitOrdinal < 0)
-      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const candidates: {
+    const checkpointSources = new Map<
+      string | undefined,
+      { readonly workflowKey?: string; readonly isCurrentLeaf?: boolean }
+    >()
+    if (lineage !== undefined) {
+      for (const job of lineage.jobs) {
+        const checkpointId = job.outcome?.graphCheckpointId
+        if (checkpointId === undefined) continue
+        checkpointSources.set(checkpointId, {
+          workflowKey: job.workflowKey,
+          isCurrentLeaf:
+            job.workflowKey === lineage.leaf.workflowKey &&
+            checkpointId === lineage.leaf.outcome?.graphCheckpointId,
+        })
+      }
+      if (checkpointSources.size === 0) throw new Error('TOOL_EFFECT_CHECKPOINT_MISSING')
+    } else {
+      // Compatibility is limited to invocations with no exact-execution journal rows.
+      checkpointSources.set(undefined, {})
+    }
+    const threadKey = `${call.workspaceId}:${execution.executionId}:${threadId}`
+    const matchingCandidates: {
       node: (typeof graph.content.nodes)[number]
       pin: GraphToolPin
+      checkpointId: string
+      workflowKey?: string
+      isCurrentLeaf?: boolean
+      input: Record<string, unknown>
     }[] = []
-    for (const { node, pin } of pinnedNodes) {
-      const idempotencyKey = graphOperationIdempotencyKeyFor({
-        workspaceId: call.workspaceId,
-        executionId: execution.executionId,
-        threadId,
-        graph: graph.reference,
-        node: node.node,
-        visitOrdinal,
+    for (const [checkpointId, source] of checkpointSources) {
+      const tuple = await checkpointSaver.getTuple({
+        configurable: {
+          thread_id: threadKey,
+          ...(checkpointId === undefined ? {} : { checkpoint_id: checkpointId }),
+        },
       })
-      if (idempotencyKey === call.idempotencyKey) candidates.push({ node, pin })
+      if (!tuple) throw new Error('TOOL_EFFECT_CHECKPOINT_MISSING')
+      if (
+        tuple.config.configurable?.['thread_id'] !== threadKey ||
+        tuple.config.configurable?.['checkpoint_id'] !== tuple.checkpoint.id ||
+        (checkpointId !== undefined && tuple.checkpoint.id !== checkpointId)
+      )
+        throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+      const checkpointStep = tuple.metadata?.step
+      if (
+        typeof checkpointStep !== 'number' ||
+        !Number.isSafeInteger(checkpointStep) ||
+        checkpointStep < -1
+      )
+        throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+      const visitOrdinal = checkpointStep + 1
+      if (!Number.isSafeInteger(visitOrdinal) || visitOrdinal < 0)
+        throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+      const channels = tuple.checkpoint.channel_values as Record<string, unknown>
+      const values = isJsonObject(channels['values']) ? channels['values'] : {}
+      for (const { node, pin } of pinnedNodes) {
+        const idempotencyKey = graphOperationIdempotencyKeyFor({
+          workspaceId: call.workspaceId,
+          executionId: execution.executionId,
+          threadId,
+          graph: graph.reference,
+          node: node.node,
+          visitOrdinal,
+        })
+        if (idempotencyKey !== call.idempotencyKey) continue
+        const matchingInputs = [values, channels['input']].filter(
+          (candidate): candidate is Record<string, unknown> =>
+            isJsonObject(candidate) && digest(candidate) === call.inputDigest
+        )
+        const distinctInputs = new Map(
+          matchingInputs.map((candidate) => [canonicalJsonStringify(candidate), candidate])
+        )
+        if (distinctInputs.size !== 1) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+        matchingCandidates.push({
+          node,
+          pin,
+          checkpointId: tuple.checkpoint.id,
+          ...(source.workflowKey === undefined ? {} : { workflowKey: source.workflowKey }),
+          ...(source.isCurrentLeaf === undefined ? {} : { isCurrentLeaf: source.isCurrentLeaf }),
+          input: [...distinctInputs.values()][0]!,
+        })
+      }
     }
-    const selectedCandidate = candidates[0]
-    if (candidates.length !== 1 || !selectedCandidate)
-      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const { node, pin } = selectedCandidate
-    const channels = tuple.checkpoint.channel_values as Record<string, unknown>
-    const values = isJsonObject(channels['values']) ? channels['values'] : {}
-    const matchingInputs = [values, channels['input']].filter(
-      (candidate): candidate is Record<string, unknown> =>
-        isJsonObject(candidate) && digest(candidate) === call.inputDigest
-    )
-    const distinctInputs = new Map(
-      matchingInputs.map((candidate) => [canonicalJsonStringify(candidate), candidate])
-    )
-    if (distinctInputs.size !== 1) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
-    const input = [...distinctInputs.values()][0]!
+    const candidates =
+      lineage !== undefined &&
+      (call.status === 'executing' || call.status === 'reconciliation_required')
+        ? matchingCandidates.filter(
+            (candidate) =>
+              candidate.isCurrentLeaf === true && candidate.workflowKey === lineage.leaf.workflowKey
+          )
+        : matchingCandidates
+    if (candidates.length !== 1) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const selectedCandidate = candidates[0]!
+    const { node, pin, input } = selectedCandidate
     const suffix = createHash('sha256')
       .update(call.idempotencyKey)
       .digest('hex')
@@ -843,7 +903,13 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         ),
         Date.parse(command.retentionExpiresAt)
       ),
-      checkpointId: tuple.checkpoint.id,
+      checkpointId: selectedCandidate.checkpointId,
+      ...(selectedCandidate.workflowKey === undefined
+        ? {}
+        : { workflowKey: selectedCandidate.workflowKey }),
+      ...(selectedCandidate.isCurrentLeaf === undefined
+        ? {}
+        : { isCurrentLeaf: selectedCandidate.isCurrentLeaf }),
       artifactState,
     }
   }
@@ -1037,6 +1103,115 @@ function sha256Bytes(value: Uint8Array): `sha256:${string}` {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+type RecoveryJobLineage = {
+  readonly jobs: readonly WorkflowJobRecord[]
+  readonly leaf: WorkflowJobRecord
+}
+
+function validateRecoveryJobLineage(
+  snapshot: readonly { readonly revision: number; readonly job: WorkflowJobRecord }[],
+  authority: {
+    readonly execution: Execution
+    readonly attempt: ExecutionAttempt
+    readonly plan: ExecutionPlan
+    readonly workspaceId: string
+  }
+): RecoveryJobLineage {
+  const { execution, attempt, plan, workspaceId } = authority
+  const rootKey = execution.executionId
+  const recoveryPrefix = `${rootKey}:graph-recovery:`
+  const jobsByKey = new Map<string, WorkflowJobRecord>()
+  const inputsByKey = new Map<string, ReturnType<typeof ExecutionWorkflowInputSchema.parse>>()
+  const roots = snapshot.filter(({ job }) => job.workflowKey === rootKey)
+  if (roots.length !== 1) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+  const root = roots[0]!.job
+
+  for (const { job } of snapshot) {
+    if (jobsByKey.has(job.workflowKey)) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    if (job.workflowKey === rootKey) {
+      if (job.recovery !== undefined) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    } else if (
+      !job.workflowKey.startsWith(recoveryPrefix) ||
+      job.recovery === undefined ||
+      job.workflowKey !== `${recoveryPrefix}${job.recovery.recoveryId}`
+    ) {
+      throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    }
+    if (
+      job.status !== 'succeeded' ||
+      job.outcome === undefined ||
+      job.outcome.executionId !== execution.executionId ||
+      job.outcome.attemptId !== attempt.attemptId ||
+      !['reconciliation_required', 'completed'].includes(job.outcome.status) ||
+      (job.outcome.status === 'reconciliation_required' &&
+        job.outcome.graphCheckpointId === undefined)
+    ) {
+      // A queued/running child is not yet evidence. HTTP reconciliation holds until it completes;
+      // exact-key enqueue deduplication remains a separate store-level guarantee.
+      throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    }
+
+    let input: ReturnType<typeof ExecutionWorkflowInputSchema.parse>
+    try {
+      input = ExecutionWorkflowInputSchema.parse(job.input)
+    } catch {
+      throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    }
+    if (
+      input.executionId !== execution.executionId ||
+      input.workflowId !== `wfl_${execution.executionId.slice(4)}` ||
+      !isDeepStrictEqual(input.executionPlan, execution.executionPlan) ||
+      input.graph === undefined ||
+      input.graph.workspaceId !== workspaceId ||
+      input.graph.threadId !== `graph:${execution.executionId}` ||
+      !isDeepStrictEqual(input.graph.reference, plan.graph?.reference) ||
+      !isDeepStrictEqual(input.graph.input, plan.graph?.input)
+    )
+      throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    jobsByKey.set(job.workflowKey, job)
+    inputsByKey.set(job.workflowKey, input)
+  }
+
+  const childrenByParent = new Map<string, WorkflowJobRecord>()
+  for (const { job } of snapshot) {
+    if (job.workflowKey === rootKey) continue
+    const recovery = job.recovery!
+    let parent: WorkflowJobRecord | undefined
+    if (recovery.parentWorkflowKey !== undefined) {
+      parent = jobsByKey.get(recovery.parentWorkflowKey)
+    } else {
+      const candidates = [...jobsByKey.values()].filter(
+        (candidate) =>
+          candidate.workflowKey !== job.workflowKey &&
+          candidate.outcome?.graphCheckpointId === recovery.checkpointId
+      )
+      if (candidates.length !== 1) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_AMBIGUOUS')
+      parent = candidates[0]
+    }
+    if (
+      parent === undefined ||
+      parent.outcome?.status !== 'reconciliation_required' ||
+      parent.outcome.graphCheckpointId !== recovery.checkpointId ||
+      !isDeepStrictEqual(inputsByKey.get(parent.workflowKey), inputsByKey.get(job.workflowKey)) ||
+      childrenByParent.has(parent.workflowKey)
+    )
+      throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    childrenByParent.set(parent.workflowKey, job)
+  }
+
+  const chain: WorkflowJobRecord[] = []
+  const visited = new Set<string>()
+  let current: WorkflowJobRecord | undefined = root
+  while (current !== undefined) {
+    if (visited.has(current.workflowKey)) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+    visited.add(current.workflowKey)
+    chain.push(current)
+    current = childrenByParent.get(current.workflowKey)
+  }
+  if (chain.length !== jobsByKey.size) throw new Error('TOOL_EFFECT_RECOVERY_CHAIN_INVALID')
+  return { jobs: chain, leaf: chain.at(-1)! }
 }
 
 function parseRecoveryIdentity(value: unknown): RecoveryIdentity {
