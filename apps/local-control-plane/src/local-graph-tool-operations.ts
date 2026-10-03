@@ -9,7 +9,12 @@ import {
   type StateChangingCommandEnvelope,
   type GraphToolPin,
 } from '@control-plane/contracts'
-import { InteractionService, type Execution, type ExecutionAttempt } from '@control-plane/domain'
+import {
+  ExecutionSchema,
+  InteractionService,
+  type Execution,
+  type ExecutionAttempt,
+} from '@control-plane/domain'
 import type { ObjectStore } from '@control-plane/deployment'
 import {
   GraphNodeApprovalRequiredError,
@@ -594,16 +599,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     if (command.action === 'cancel') {
       const execution = await this.#options.api.executions.getExecution(command.executionId)
       if (!execution) throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
-      if (['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)) {
-        if (entry.artifact.state === 'verified' && entry.evidence !== undefined) {
-          const recovered = await this.#commitKnownSuccess(call, entry.evidence, call.revision)
-          if (recovered === undefined) return { outcome: 'held', reason: 'accounting_unconfirmed' }
-          const accounting = await this.#repairAccounting(recovered)
-          if (!accounting.charged || !accounting.settled)
-            return { outcome: 'held', reason: 'accounting_unconfirmed' }
-        }
-        return { outcome: 'held', reason: 'execution_terminal' }
-      }
+      if (isTerminalExecution(execution)) return await this.#holdTerminalCancellation(call, entry)
       const cancelIntent = {
         schemaVersion: 1,
         kind: 'cancel',
@@ -626,10 +622,27 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         `graph:${command.executionId}`,
         `operator-cancel:${envelope.commandId}`
       )
-      if (!confirmed) return { outcome: 'held', reason: 'effect_or_accounting_unconfirmed' }
+      if (!confirmed) {
+        const latest = await this.#options.api.executions.getExecution(command.executionId)
+        if (latest && isTerminalExecution(latest))
+          return await this.#holdTerminalCancellation(call, entry)
+        return { outcome: 'held', reason: 'effect_or_accounting_unconfirmed' }
+      }
       const runtime = this.#recoveryRuntime
       if (!runtime) throw new Error('TOOL_EFFECT_RECOVERY_NOT_CONFIGURED')
-      await this.#signalWorkflowCancellation(envelope, command.executionId)
+      try {
+        await this.#signalWorkflowCancellation(envelope, command.executionId)
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'EXECUTION_CANCELLATION_EXECUTION_INACTIVE'
+        ) {
+          const latest = await this.#options.api.executions.getExecution(command.executionId)
+          if (latest && isTerminalExecution(latest))
+            return await this.#holdTerminalCancellation(call, entry)
+        }
+        throw error
+      }
       await runtime.executionLifecycleActivities.persistStatus({
         executionId: command.executionId,
         attemptId: call.attemptId,
@@ -700,6 +713,17 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     if (plan === undefined) throw new Error('TOOL_EFFECT_RECOVERY_PLAN_MISSING')
     await runtime.workflowDispatcher.submitRecovery(plan.input, plan.recovery)
     return plan.intent.response
+  }
+
+  async #holdTerminalCancellation(call: ToolCall, entry: RecoveryCallInspection): Promise<unknown> {
+    if (entry.artifact.state === 'verified' && entry.evidence !== undefined) {
+      const recovered = await this.#commitKnownSuccess(call, entry.evidence, call.revision)
+      if (recovered === undefined) return { outcome: 'held', reason: 'accounting_unconfirmed' }
+      const accounting = await this.#repairAccounting(recovered)
+      if (!accounting.charged || !accounting.settled)
+        return { outcome: 'held', reason: 'accounting_unconfirmed' }
+    }
+    return { outcome: 'held', reason: 'execution_terminal' }
   }
 
   async #signalWorkflowCancellation(
@@ -1197,19 +1221,26 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     IdentifierSchemas.executionId.parse(executionId)
     if (threadId !== `graph:${executionId}`) throw new Error('GRAPH_TOOL_THREAD_MISMATCH')
     const { api, persistence } = this.#options
-    // Intent survives crashes and precedes every future delivery.
-    await persistence.transaction(async (transaction) => {
+    // Order the persisted execution state check with the cancellation fence so
+    // a terminal transition that wins first cannot leave a new marker behind.
+    const execution = await persistence.transaction(async (transaction) => {
+      const stored = await transaction.get('executions', persistedRecordId(executionId))
+      if (stored === undefined) return undefined
+      const parsed = ExecutionSchema.safeParse(stored.value)
+      if (!parsed.success || parsed.data.executionId !== executionId)
+        throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+      if (isTerminalExecution(parsed.data)) return undefined
       if (!(await transaction.get('graph-tool-cancellations', executionId)))
         await transaction.put({
           namespace: 'graph-tool-cancellations',
           id: executionId,
           value: { threadId, idempotencyKey },
         })
+      return parsed.data
     })
+    if (execution === undefined) return false
     for (const [controller, activeExecutionId] of this.#active)
       if (activeExecutionId === executionId) controller.abort()
-    const execution = await api.executions.getExecution(executionId)
-    if (!execution) return false
     const calls = new SqliteToolCallRepository(persistence, execution.correlation.workspaceId)
     let confirmed = true
     for (const call of await calls.listByExecution(executionId)) {
@@ -1270,6 +1301,14 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function persistedRecordId(value: string): string {
+  return `r-${sha256(value)}`
+}
+
+function isTerminalExecution(execution: Execution): boolean {
+  return ['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state)
 }
 
 function sha256Bytes(value: Uint8Array): `sha256:${string}` {
