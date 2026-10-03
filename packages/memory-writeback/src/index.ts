@@ -6,7 +6,12 @@ import {
   type MemoryWritePolicy,
   type MemoryWriteProposal,
 } from '@control-plane/contracts'
-import { InteractionService, type InteractionRepository } from '@control-plane/domain'
+import {
+  InteractionRequestSchema,
+  type InMemoryInteractionRepository,
+  type InteractionRequest,
+  type InteractionRepository,
+} from '@control-plane/domain'
 import { z } from 'zod'
 
 const ProposalInputSchema = z.object(MemoryWriteProposalSchema.shape).omit({
@@ -25,6 +30,11 @@ const ApprovalInputSchema = z.object({
 
 export interface MemoryWriteProposalRepository {
   insert(proposal: MemoryWriteProposal): Promise<boolean>
+  /** Atomically inserts both records or neither; duplicate proposals create no interaction. */
+  insertWithApproval?(
+    proposal: MemoryWriteProposal,
+    interaction: InteractionRequest
+  ): Promise<boolean>
   get(proposalId: string): Promise<MemoryWriteProposal | undefined>
   getByDedupe(workspaceId: string, dedupeHint: string): Promise<MemoryWriteProposal | undefined>
   compareAndSet(expectedVersion: number, proposal: MemoryWriteProposal): Promise<boolean>
@@ -33,18 +43,38 @@ export interface MemoryWriteProposalRepository {
 
 export class InMemoryMemoryWriteProposalRepository implements MemoryWriteProposalRepository {
   readonly #proposals = new Map<string, MemoryWriteProposal>()
-  async insert(proposal: MemoryWriteProposal): Promise<boolean> {
-    const parsed = MemoryWriteProposalSchema.parse(proposal)
-    if (
-      this.#proposals.has(parsed.proposalId) ||
-      [...this.#proposals.values()].some(
-        (entry) =>
-          entry.workspaceId === parsed.workspaceId && entry.dedupeHint === parsed.dedupeHint
+  #insertTail: Promise<void> = Promise.resolve()
+  constructor(readonly interactions?: InMemoryInteractionRepository) {}
+
+  insert(proposal: MemoryWriteProposal): Promise<boolean> {
+    return this.#insert(proposal)
+  }
+  insertWithApproval(proposal: MemoryWriteProposal, interaction: InteractionRequest) {
+    return this.#insert(proposal, parseMemoryWriteApproval(proposal, interaction))
+  }
+  #insert(proposal: MemoryWriteProposal, interaction?: InteractionRequest): Promise<boolean> {
+    const parsed = structuredClone(MemoryWriteProposalSchema.parse(proposal))
+    const operation = this.#insertTail.then(async () => {
+      if (
+        this.#proposals.has(parsed.proposalId) ||
+        [...this.#proposals.values()].some(
+          (entry) =>
+            entry.workspaceId === parsed.workspaceId && entry.dedupeHint === parsed.dedupeHint
+        )
       )
+        return false
+      if (interaction) {
+        if (!this.interactions) fail('MEMORY_APPROVAL_ATOMICITY_UNAVAILABLE')
+        if (!this.interactions.insertSynchronously(interaction)) fail('MEMORY_PROPOSAL_CONFLICT')
+      }
+      this.#proposals.set(parsed.proposalId, parsed)
+      return true
+    })
+    this.#insertTail = operation.then(
+      () => undefined,
+      () => undefined
     )
-      return false
-    this.#proposals.set(parsed.proposalId, structuredClone(parsed))
-    return true
+    return operation
   }
   async get(proposalId: string): Promise<MemoryWriteProposal | undefined> {
     const proposal = this.#proposals.get(proposalId)
@@ -112,6 +142,7 @@ export type MemoryWriteErrorCode =
   | 'MEMORY_PROPOSAL_CONFLICT'
   | 'MEMORY_PROPOSAL_MISSING'
   | 'MEMORY_APPROVAL_REQUIRED'
+  | 'MEMORY_APPROVAL_ATOMICITY_UNAVAILABLE'
   | 'MEMORY_APPROVAL_PENDING'
   | 'MEMORY_APPROVAL_STALE'
   | 'MEMORY_PROPOSAL_TERMINAL'
@@ -145,7 +176,6 @@ export interface MemoryWriteServiceOptions {
 export class MemoryWriteService {
   readonly #repository: MemoryWriteProposalRepository
   readonly #provider: MemoryProviderWriter | undefined
-  readonly #interactions: InteractionService
   readonly #interactionRepository: InteractionRepository
   readonly #now: () => string
   readonly #metrics: MemoryWriteDecisionMetrics | undefined
@@ -153,7 +183,6 @@ export class MemoryWriteService {
   constructor(options: MemoryWriteServiceOptions) {
     this.#repository = options.repository
     this.#provider = options.provider
-    this.#interactions = new InteractionService(options.interactionRepository)
     this.#interactionRepository = options.interactionRepository
     this.#now = options.now ?? (() => new Date().toISOString())
     this.#metrics = options.metrics
@@ -193,10 +222,14 @@ export class MemoryWriteService {
       createdAt,
       updatedAt: createdAt,
     })
+    let interaction: InteractionRequest | undefined
     if (policy.mode === 'approval_required') {
+      if (!this.#repository.insertWithApproval) fail('MEMORY_APPROVAL_ATOMICITY_UNAVAILABLE')
       const approval = ApprovalInputSchema.parse(approvalInput)
       if (policy.approvalPrincipalIds.length === 0) fail('MEMORY_APPROVAL_REQUIRED')
-      await this.#interactions.request({
+      interaction = InteractionRequestSchema.parse({
+        state: 'pending',
+        version: 1,
         interactionId: approval.interactionId,
         executionId: parsed.provenance.sourceExecutionId,
         attemptId: parsed.provenance.sourceAttemptId,
@@ -215,7 +248,10 @@ export class MemoryWriteService {
         approvalInteractionId: approval.interactionId,
       })
     }
-    if (!(await this.#repository.insert(proposal))) {
+    const inserted = interaction
+      ? await this.#repository.insertWithApproval!(proposal, interaction)
+      : await this.#repository.insert(proposal)
+    if (!inserted) {
       const winner = await this.#repository.getByDedupe(parsed.workspaceId, parsed.dedupeHint)
       if (winner && sameProposalInput(winner, parsed)) return winner
       fail('MEMORY_PROPOSAL_CONFLICT')
@@ -441,6 +477,29 @@ export class FakeMemoryProviderWriter implements MemoryProviderWriter {
       ? { status: 'committed' as const, providerMemoryRef }
       : { status: 'unknown' as const }
   }
+}
+
+/** Validate the immutable link before a persistence adapter changes either record. */
+export function parseMemoryWriteApproval(
+  proposalInput: MemoryWriteProposal,
+  interactionInput: InteractionRequest
+): InteractionRequest {
+  const proposal = MemoryWriteProposalSchema.parse(proposalInput)
+  const interaction = InteractionRequestSchema.parse(interactionInput)
+  if (
+    proposal.state !== 'awaiting_approval' ||
+    proposal.version !== 1 ||
+    proposal.approvalInteractionId !== interaction.interactionId ||
+    proposal.provenance.sourceExecutionId !== interaction.executionId ||
+    proposal.provenance.sourceAttemptId !== interaction.attemptId ||
+    interaction.kind !== 'approval' ||
+    interaction.state !== 'pending' ||
+    interaction.version !== 1 ||
+    interaction.prompt.detailsReference !== `memory-write://proposal/${proposal.proposalId}` ||
+    !isDeepStrictEqual(interaction.allowedActions, ['approve', 'deny'])
+  )
+    fail('MEMORY_PROPOSAL_CONFLICT')
+  return interaction
 }
 
 function toWriteRequest(proposal: MemoryWriteProposal): MemoryProviderWriteRequest {

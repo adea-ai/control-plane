@@ -2278,13 +2278,27 @@
           "kind": "test",
           "path": "packages/production-readiness/src/failure-injection.test.mjs",
           "scope": "'routes an ambiguous committed provider outcome to reconciliation'."
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-memory-approval-atomicity-2026-10-03.md"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/memory-write-proposal-repository.test.mjs",
+          "scope": "Actual SQLite transaction and reopen fixtures: concurrent linked-pair persistence, interaction-conflict rollback, failure before commit, workspace ownership, and status-only interrupted-write recovery with zero replay writes. Provider status is a fixture; not application/profile acceptance."
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/integration.test.mjs",
+          "scope": "'atomically persists one proposal approval under concurrent dedupe and rolls back conflicts': actual PostgreSQL transaction, concurrent winner, scope denial, injected rollback, and a fresh connection readback. The focused Docker case is not the complete PostgreSQL integration suite."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Adjudicated 2026-10-03: partially verified. Library tests cover persisted status reconciliation without write replay, including expiry, concurrency, and read-only status access. MemoryWriteService has no non-test composition consumer. Approval-required proposal creation persists an Interaction before the proposal insert, so an insert-losing dedupe race can leave an unreferenced pending Interaction. The repositories expose no cross-store transaction or delete/compensation operation; #194 must choose composition-level atomic persistence or authorized lifecycle cleanup. Remaining: prove durable crash/restart status reconciliation across required deployment profiles. Library fixtures do not establish acceptance."
+        "disposition": "Adjudicated 2026-10-03: partially verified. Library and actual SQLite/PostgreSQL fixtures cover atomic approval/proposal creation, dedupe, rollback and reopen/readback; status recovery remains bounded fixture evidence. MemoryWriteService has no non-test application-composition consumer. Remaining: integrate the durable service and provider authority into supported application compositions; prove process-loss recovery across required deployment profiles; audit complete proposal/interaction retention. No canonical memory promotion or profile acceptance is inferred."
       }
     },
     {

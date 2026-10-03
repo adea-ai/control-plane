@@ -11,8 +11,13 @@ evidence/Artifact references, and a workspace-scoped dedupe hint. Full transcrip
 logs, source documents, unsupported sensitivity, over-limit content, and cross-scope material are
 rejected before persistence. Proposals contain no reusable provider credentials.
 
-When policy requires approval, the service creates the existing durable `InteractionRequest` and
-accepts only an unexpired response from an allowlisted principal. Approval, denial, expiry,
+When policy requires approval, the service creates the proposal and its durable `InteractionRequest`
+in one repository operation. PostgreSQL and SQLite adapters commit both records in the same database
+transaction; a conflicting proposal creates no interaction, and an interaction conflict or transaction
+failure rolls back the proposal. The in-memory test adapter publishes the pair without yielding.
+An adapter without `insertWithApproval` fails with `MEMORY_APPROVAL_ATOMICITY_UNAVAILABLE` before
+creating either record. Supply an interaction repository backed by the same database when constructing
+the service. Approval accepts only an unexpired response from an allowlisted principal. Approval, denial, expiry,
 revocation, failure, commit, and reconciliation are persisted as versioned proposal outcomes.
 ProjectState promotion is an independent effect.
 
@@ -22,3 +27,9 @@ ambiguous status are normalized; a provider with idempotent status can reconcile
 while unresolved or non-idempotent ambiguity remains `reconciliation_required` for operator review.
 The package supplies absent, read-only, idempotent, and ambiguous fake profiles and requires no
 Cortana or Adea service.
+
+`SqliteMemoryWriteProposalRepository` persists workspace dedupe, proposal versions and approval links
+across database reopen for Local and Hosted Simple persistence. Durable source-execution ownership is
+checked during atomic approval creation. These adapters do not automatically enable memory writes in
+application compositions or supply a provider transport. Profile crash/restart acceptance and complete
+proposal/interaction retention remain tracked in M11; the new adapter does not authorize deletion.

@@ -15,6 +15,70 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const scopeDigest = `sha256:${'a'.repeat(64)}`
 
 describe('provider-neutral memory write proposals', () => {
+  test('concurrent readers never observe an approval without its proposal', async () => {
+    const context = harness(provider())
+    const creation = context.service.propose(
+      proposal(),
+      policy({ mode: 'approval_required' }),
+      approval()
+    )
+    const observations = []
+    for (let index = 0; index < 32; index++) {
+      const [request, stored] = await Promise.all([
+        context.interactions.get(approval().interactionId),
+        context.repository.get(proposal().proposalId),
+      ])
+      observations.push({ request: Boolean(request), proposal: Boolean(stored) })
+    }
+    await creation
+    expect(observations).not.toContainEqual({ request: true, proposal: false })
+    expect(observations).toContainEqual({ request: true, proposal: true })
+  })
+
+  test('concurrent approval proposals create exactly one linked interaction', async () => {
+    const context = harness(provider())
+    let arrivals = 0
+    let release
+    const bothRead = new Promise((resolve) => {
+      release = resolve
+    })
+    context.repository.getByDedupe = async () => {
+      arrivals += 1
+      if (arrivals <= 2) {
+        if (arrivals === 2) release()
+        await bothRead
+        return undefined
+      }
+      return (await context.repository.list())[0]
+    }
+    const results = await Promise.all([
+      context.service.propose(proposal(), policy({ mode: 'approval_required' }), approval()),
+      context.service.propose(
+        proposal({ proposalId: 'mwp_01JBBCDEF0123456789ABCDEFG' }),
+        policy({ mode: 'approval_required' }),
+        approval({ interactionId: 'int_01JBBCDEF0123456789ABCDEFG' })
+      ),
+    ])
+    expect(results[0]).toEqual(results[1])
+    expect(await context.repository.list()).toHaveLength(1)
+    const requests = await context.interactions.listForAttempt(
+      results[0].provenance.sourceExecutionId,
+      results[0].provenance.sourceAttemptId
+    )
+    expect(requests).toHaveLength(1)
+    expect(requests[0].interactionId).toBe(results[0].approvalInteractionId)
+  })
+
+  test('approval creation fails closed without atomic persistence', async () => {
+    const context = harness(provider())
+    context.repository.insertWithApproval = undefined
+    await expect(
+      context.service.propose(proposal(), policy({ mode: 'approval_required' }), approval())
+    ).rejects.toMatchObject({ code: 'MEMORY_APPROVAL_ATOMICITY_UNAVAILABLE' })
+    expect(await context.repository.list()).toEqual([])
+    expect(await context.interactions.get(approval().interactionId)).toBeUndefined()
+  })
+
   test('rejects absent and read-only providers while ordinary execution remains independent', async () => {
     await expect(harness(undefined).service.propose(proposal(), policy())).rejects.toMatchObject({
       code: 'MEMORY_PROVIDER_ABSENT',
@@ -670,8 +734,8 @@ describe('provider-neutral memory write proposals', () => {
 })
 
 function harness(writer) {
-  const repository = new InMemoryMemoryWriteProposalRepository()
   const interactions = new InMemoryInteractionRepository()
+  const repository = new InMemoryMemoryWriteProposalRepository(interactions)
   return {
     repository,
     interactions,

@@ -29,24 +29,34 @@ export class SqliteInteractionRepository implements InteractionRepository {
 
   async insert(input: InteractionRequest): Promise<boolean> {
     const request = InteractionRequestSchema.parse(input)
-    return this.provider.transaction(async (transaction) => {
-      const id = recordId(request.interactionId)
-      if (await transaction.get(namespace, id)) return false
-      const executionRecord = await transaction.get('executions', recordId(request.executionId))
-      if (executionRecord === undefined) throw new Error('SQLITE_INTERACTION_EXECUTION_MISSING')
-      const execution = ExecutionSchema.parse(executionRecord.value)
-      if (execution.executionId !== request.executionId)
-        throw new Error('SQLITE_INTERACTION_EXECUTION_MISMATCH')
-      const attemptRecord = await transaction.get('execution-attempts', recordId(request.attemptId))
-      if (attemptRecord === undefined) throw new Error('SQLITE_INTERACTION_ATTEMPT_MISSING')
-      const attempt = ExecutionAttemptSchema.parse(attemptRecord.value)
-      if (attempt.attemptId !== request.attemptId || attempt.executionId !== request.executionId)
-        throw new Error('SQLITE_INTERACTION_ATTEMPT_EXECUTION_MISMATCH')
-      await this.#ensureAttemptIndex(transaction)
-      await transaction.put({ namespace, id, value: json(request) })
-      await this.#index(transaction, request)
-      return true
-    })
+    return this.provider.transaction((transaction) =>
+      this.insertInTransaction(transaction, request)
+    )
+  }
+
+  /** Call only inside the same provider's write transaction. */
+  async insertInTransaction(
+    transaction: PersistenceTransaction,
+    input: InteractionRequest
+  ): Promise<boolean> {
+    const request = InteractionRequestSchema.parse(input)
+
+    const id = recordId(request.interactionId)
+    if (await transaction.get(namespace, id)) return false
+    const executionRecord = await transaction.get('executions', recordId(request.executionId))
+    if (executionRecord === undefined) throw new Error('SQLITE_INTERACTION_EXECUTION_MISSING')
+    const execution = ExecutionSchema.parse(executionRecord.value)
+    if (execution.executionId !== request.executionId)
+      throw new Error('SQLITE_INTERACTION_EXECUTION_MISMATCH')
+    const attemptRecord = await transaction.get('execution-attempts', recordId(request.attemptId))
+    if (attemptRecord === undefined) throw new Error('SQLITE_INTERACTION_ATTEMPT_MISSING')
+    const attempt = ExecutionAttemptSchema.parse(attemptRecord.value)
+    if (attempt.attemptId !== request.attemptId || attempt.executionId !== request.executionId)
+      throw new Error('SQLITE_INTERACTION_ATTEMPT_EXECUTION_MISMATCH')
+    await this.#ensureAttemptIndex(transaction)
+    await transaction.put({ namespace, id, value: json(request) })
+    await this.#index(transaction, request)
+    return true
   }
 
   /** Includes resolved history; callers must recheck state when resolving a request. */

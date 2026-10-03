@@ -20,3 +20,4 @@ export { REFERENCE_RETENTION_NAMESPACES } from './retention-reference-metadata.j
 export { assertSqliteWorkflowExecutionReference } from './workflow-reference-guard.js'
 export * from './graph-definition-repository.js'
 export * from './tool-repositories.js'
+export * from './memory-write-proposal-repository.js'
