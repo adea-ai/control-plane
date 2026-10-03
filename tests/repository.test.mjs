@@ -418,17 +418,11 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.doesNotMatch(config, /^opencode_security:/m)
   assert.doesNotMatch(config, /^staging_validation_mode:/m)
   assert.match(config, /^runtime_ref: v\d+\.\d+\.\d+$/m)
-  for (const runner of [
-    'runner',
-    'ci_runner',
-    'unit_runner',
-    'security_runner',
-    'pr_runner',
-    'release_runner',
-  ]) {
+  for (const runner of ['runner', 'ci_runner', 'security_runner', 'pr_runner', 'release_runner']) {
     assert.match(config, new RegExp(`^${runner}: ubuntu-slim$`, 'm'))
   }
   assert.match(config, /^test_runner: ubuntu-latest$/m)
+  assert.match(config, /^unit_runner: ubuntu-latest$/m)
   assert.match(config, /^codeql_runner: ubuntu-latest$/m)
 })
 
@@ -490,7 +484,12 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
   assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
   assert.match(validation, /cancel-in-progress: true/)
   assert.match(validation, /codeql-runner: ubuntu-latest/)
-  assert.match(validation, /unit-runner: ubuntu-slim/)
+  assert.match(validation, /unit-runner: ubuntu-latest/)
+  const audit = await readFile(
+    new URL('../.github/workflows/validation-audit.yml', import.meta.url),
+    'utf8'
+  )
+  assert.match(audit, /unit-runner: ubuntu-latest/)
   assert.match(validation, /branches: \[main\]/)
   assert.match(validation, /ready_for_review/)
   assert.doesNotMatch(validation, /(?:opened|reopened)/)

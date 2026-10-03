@@ -27,6 +27,18 @@ The gate covers:
 - dependency auditing that does not require production or vendor credentials.
 - repository credential-pattern scanning through `bun run security:scan` without echoing matches.
 
+The complete unit coverage lane runs on `ubuntu-latest` in both pull-request
+validation and default-branch audits. It includes real SQLite transactions,
+filesystem durability barriers, and repeated graph approval/resume cycles.
+The single-CPU `ubuntu-slim` runner produced repeated thirty-second recovery-test
+timeouts; moving this heavy lane to a VM keeps the existing test deadlines,
+assertions, and coverage threshold. Lightweight CI and automation jobs retain
+`ubuntu-slim`. GitHub documents the single-CPU runner as intended for lightweight
+work rather than typical heavy CI builds in its
+[runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#single-cpu-runners).
+Standard GitHub-hosted runners are free for this public repository; runtime and
+reliability still require measurement on the actual runner.
+
 Repository settings allow squash merges and disable rebase and merge commits.
 Feature branches and Release Please version pull requests must squash into
 `main`; Code Foundry fails closed for any other configured merge strategy.
