@@ -420,6 +420,91 @@ describe('Control Plane marketplace contract', () => {
     expect(requested).toEqual(['catalog-latest.v1.json'])
   })
 
+  test('revalidates the verified latest catalog with ETag without downloading a 304 body', async () => {
+    const fixture = snapshotFixture()
+    const requests = []
+    let latestReads = 0
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input, options) => {
+        const name = String(input).split('/').at(-1)
+        const conditional = new Headers(options?.headers).get('If-None-Match')
+        requests.push({ name, conditional })
+        if (name === 'catalog-latest.v1.json' && ++latestReads > 1) {
+          expect(conditional).toBe('"verified-catalog"')
+          return new Response(null, { status: 304 })
+        }
+        return new Response(fixture.artifacts[name], {
+          headers: { ETag: '"verified-catalog"' },
+        })
+      },
+      latestUrl: 'https://registry.example/catalog-latest.v1.json',
+      refreshIntervalMs: 0,
+    })
+    expect((await registry.getCatalog()).state).toBe('ready')
+    requests.length = 0
+    await registry.getCatalog()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(requests).toEqual([
+      { name: 'catalog-latest.v1.json', conditional: '"verified-catalog"' },
+    ])
+    expect((await registry.getCatalog()).state).toBe('ready')
+  })
+
+  test('does not accept an unsolicited 304 before a catalog is verified', async () => {
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async () => new Response(null, { status: 304 }),
+    })
+    await expect(registry.getCatalog()).rejects.toThrow()
+  })
+
+  test('never binds an ETag to mutated latest bytes claiming the held catalog identity', async () => {
+    const fixture = snapshotFixture()
+    const requests = []
+    let mutate = false
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input, options) => {
+        const name = String(input).split('/').at(-1)
+        requests.push(new Headers(options?.headers).get('If-None-Match'))
+        return new Response(
+          mutate && name === 'catalog-latest.v1.json'
+            ? JSON.stringify({ ...fixture.catalog, generatedAt: '2026-10-03T00:00:00.000Z' })
+            : fixture.artifacts[name],
+          { headers: { ETag: mutate ? '"unverified"' : '"verified"' } }
+        )
+      },
+      refreshIntervalMs: 0,
+    })
+    await registry.getCatalog()
+    mutate = true
+    requests.length = 0
+    await registry.getCatalog()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await registry.getCatalog()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(requests).toEqual(['"verified"', '"verified"'])
+    expect((await registry.getCatalog()).state).toBe('stale')
+  })
+
+  test('does not send a validator from a catalog that failed full verification', async () => {
+    const fixture = snapshotFixture()
+    let corrupt = true
+    const validators = []
+    const registry = new MarketplaceRegistryService({
+      fetchImpl: async (input, options) => {
+        const name = String(input).split('/').at(-1)
+        if (name === 'catalog-latest.v1.json')
+          validators.push(new Headers(options?.headers).get('If-None-Match'))
+        return new Response(corrupt && name === 'integrity.json' ? '{}' : fixture.artifacts[name], {
+          headers: { ETag: '"candidate"' },
+        })
+      },
+    })
+    await expect(registry.getCatalog()).rejects.toThrow()
+    corrupt = false
+    expect((await registry.getCatalog()).state).toBe('ready')
+    expect(validators).toEqual([null, null])
+  })
+
   test('downloads the full catalog again once the pointer names a new one', async () => {
     const fixture = snapshotFixture()
     const next = snapshotFixture({ generatedAt: '2026-09-30T00:00:00.000Z' })

@@ -188,6 +188,7 @@ export class MarketplaceRegistryService {
   #refreshing: Promise<MarketplaceCatalogSnapshot> | undefined
   #nextRefreshAt = 0
   #lastRefreshFailed = false
+  #latestEtag: string | undefined
   readonly #refreshIntervalMs: number
 
   constructor(options: MarketplaceRegistryServiceOptions = {}) {
@@ -208,12 +209,12 @@ export class MarketplaceRegistryService {
   /**
    * A full refresh downloads every immutable artifact (~50 MB for the current
    * catalog), so once a verified snapshot exists it is served immediately and
-   * the registry refreshes in the background. Each refresh first reads the
-   * small mutable pointer; while it still names the catalog already held,
+   * the registry refreshes in the background. Each refresh conditionally reads
+   * the mutable latest catalog; while it still names the catalog already held,
    * the immutable download is skipped entirely — content-addressed artifacts
-   * cannot have changed — so steady-state polling costs one small request
-   * instead of a full re-download per interval. Without a snapshot — cold
-   * start, or after a verification failure — the refresh blocks the caller.
+   * cannot have changed — so an ETag revalidation can avoid downloading the
+   * latest catalog body. Registries without validators still require that
+   * body per interval. Without a snapshot, the refresh blocks the caller.
    */
   async getCatalog(): Promise<MarketplaceCatalogSnapshot> {
     const cached = this.#cache
@@ -232,14 +233,25 @@ export class MarketplaceRegistryService {
   async #refresh(): Promise<MarketplaceCatalogSnapshot> {
     this.#nextRefreshAt = Date.now() + this.#refreshIntervalMs
     try {
-      const latestText = await this.#fetchArtifact(this.#latestUrl)
-      const latest = parseCatalog(parseJson(latestText, 'catalog-latest.v1.json'))
       const cached = this.#cache
+      const latestResponse = await this.#fetchArtifactResponse(
+        this.#latestUrl,
+        cached === undefined ? undefined : this.#latestEtag
+      )
+      const latestText = latestResponse.text
+      if (latestText === undefined) {
+        if (cached === undefined) throw verificationError('No verified catalog to revalidate')
+        this.#lastRefreshFailed = false
+        return cached
+      }
+      const latest = parseCatalog(parseJson(latestText, 'catalog-latest.v1.json'))
       if (cached !== undefined && cached.catalogId === latest.catalogId) {
-        // The held snapshot passed full verification for exactly this catalog
-        // identity, and identity-addressed artifacts are immutable, so there
-        // is nothing new to download or re-verify. A previously failing
-        // refresh is also over: the registry serves the held catalog.
+        // A mutable response must still be byte-identical to its verified
+        // immutable catalog. Never bind a new validator to unverified bytes
+        // merely because they claim the same catalog identity.
+        if (latestText !== cached.artifacts['catalog.v1.json'])
+          throw verificationError('Latest catalog pointer differs from its immutable catalog')
+        this.#latestEtag = latestResponse.etag
         this.#lastRefreshFailed = false
         return cached
       }
@@ -248,9 +260,11 @@ export class MarketplaceRegistryService {
       if (snapshot.catalogId !== latest.catalogId)
         throw verificationError('Latest catalog pointer changed during refresh')
       this.#cache = snapshot
+      this.#latestEtag = latestResponse.etag
       this.#lastRefreshFailed = false
       return snapshot
     } catch (error) {
+      this.#lastRefreshFailed = true
       if (
         error instanceof MarketplaceRegistryError &&
         error.code === 'MARKETPLACE_CATALOG_VERIFICATION_FAILED'
@@ -348,6 +362,15 @@ export class MarketplaceRegistryService {
   }
 
   async #fetchArtifact(url: string): Promise<string> {
+    const response = await this.#fetchArtifactResponse(url)
+    if (response.text === undefined) throw verificationError('Artifact body is missing')
+    return response.text
+  }
+
+  async #fetchArtifactResponse(
+    url: string,
+    etag?: string
+  ): Promise<Readonly<{ text: string | undefined; etag?: string | undefined }>> {
     let parsed: URL
     try {
       parsed = new URL(url)
@@ -366,10 +389,12 @@ export class MarketplaceRegistryService {
       const response = await this.#fetchImpl(parsed, {
         headers: {
           Accept: 'application/json',
+          ...(etag === undefined ? {} : { 'If-None-Match': etag }),
           ...(this.#token ? { Authorization: `Bearer ${this.#token}` } : {}),
         },
         signal: AbortSignal.timeout(this.#requestTimeoutMs),
       })
+      if (response.status === 304 && etag !== undefined) return { text: undefined }
       if (response.status === 404)
         throw new MarketplaceArtifactAbsentError(
           parsed.pathname.slice(parsed.pathname.lastIndexOf('/') + 1)
@@ -393,7 +418,7 @@ export class MarketplaceRegistryService {
         chunks.push(value)
       }
       const body = Buffer.concat(chunks).toString('utf8')
-      return body
+      return { text: body, etag: response.headers.get('etag') ?? undefined }
     } catch (error) {
       if (error instanceof MarketplaceArtifactAbsentError) throw error
       throw new MarketplaceRegistryError(
