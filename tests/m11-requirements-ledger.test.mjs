@@ -35,6 +35,29 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('a retrieved source cannot silently lose its atomic inventory', async () => {
+    const changed = clone(ledger)
+    delete changed.sources[0].atomicInventory
+    const { errors } = await validateRequirementsLedger(changed)
+    expect(errors).toContain('project-index: atomicInventory is required')
+  })
+
+  test('atomic clause counts are checked beyond the bounded requirement rows', async () => {
+    const changed = clone(ledger)
+    changed.sources[0].atomicInventory.atoms -= 1
+    const { errors } = await validateRequirementsLedger(changed)
+    expect(errors).toContain('project-index: atomic inventory count differs from declared atoms')
+  })
+
+  test('atomic inventory provenance must match the captured source revision and bytes', async () => {
+    const changed = clone(ledger)
+    changed.sources[0].atomicInventory.sourceRevision -= 1
+    changed.sources[0].atomicInventory.contentSha256 = '0'.repeat(64)
+    const { errors } = await validateRequirementsLedger(changed)
+    expect(errors).toContain('project-index: atomic inventory revision differs from source')
+    expect(errors).toContain('project-index: atomic inventory content hash differs from source')
+  })
+
   test('retention evidence distinguishes fail-closed deletion from scheduler doubles', async () => {
     const row = ledger.requirements.find(({ id }) => id === 'CP-CONS-003')
     const evidence = row.evidence.map(({ scope = '' }) => scope).join('\n')
