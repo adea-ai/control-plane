@@ -112,7 +112,7 @@ test('maps Railway staging and production to isolated Neon branches', async () =
     },
   })
   assert.match(source, /const sourceBranch = 'main'/)
-  assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 1)
+  assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 2)
 })
 
 test('keeps production down to the MVP dependency set and staging on-demand', async () => {
@@ -164,7 +164,10 @@ test('keeps production down to the MVP dependency set and staging on-demand', as
   assert.match(source, /const desiredReplicas = 1/)
   assert.equal((source.match(/numReplicas: desiredReplicas/g) ?? []).length, 3)
   assert.equal((source.match(/sleepApplication: false/g) ?? []).length, 3)
-  assert.match(source, /const applicationSource = production \? undefined : github/)
+  assert.match(source, /const controlApiSource = resolveApplicationSource/)
+  assert.match(source, /productionImage: process.env.CONTROL_PLANE_PRODUCTION_IMAGE/)
+  assert.match(source, /source: controlApiSource/)
+  assert.doesNotMatch(source, /production \? undefined : github/)
   // Production activation shape: control-api only, so the disabled runtime
   // placeholders hold no compute. Staging keeps the full qualification set.
   assert.match(

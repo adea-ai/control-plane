@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workspace",
-  "version": "1.66.0",
+  "version": "1.66.2",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -60,6 +60,7 @@
     "containers:print": "docker buildx bake -f infrastructure/containers/docker-bake.hcl --print",
     "infra:typecheck": "tsc --ignoreConfig --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2024 --types node .railway/railway.ts",
     "infra:validate": "bun scripts/validate-railway.mjs",
+    "railway:production-plan": "bun scripts/railway-production-plan.mjs",
     "railway:standby": "bun scripts/railway-standby.mjs",
     "db:check": "bun --cwd=packages/database run db:check",
     "db:up": "docker compose up -d postgres",
