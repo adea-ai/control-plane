@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.66.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.66.0...workspace-v1.66.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **marketplace:** avoid unchanged full-catalog downloads ([#853](https://github.com/adea-ai/control-plane/issues/853)) ([db7e19e](https://github.com/adea-ai/control-plane/commit/db7e19ecf8c57c9a0ceef71e08b174856a8bfb83))
+* **marketplace:** revalidate unchanged catalogs without downloading the body ([db7e19e](https://github.com/adea-ai/control-plane/commit/db7e19ecf8c57c9a0ceef71e08b174856a8bfb83))
+
 ## [1.66.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.65.2...workspace-v1.66.0) (2026-10-03)
 
 
