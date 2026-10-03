@@ -25,3 +25,9 @@ No deployment, permission, production identity or external product changes are a
 ## Ledger traceability
 
 The machine ledger links this document through source ID `execution-consistency-spec`. Its currently extracted rows are `CP-CONS-001` through `CP-CONS-017` and `CP-CONS-018` through `CP-CONS-032` (32 rows). Coverage remains partial; this list is not a declaration that the external specification was exhaustively extracted. The ledger validator checks that these documented ranges and source rows stay aligned. This refresh records revision 27 and the profile distinction; it does not establish implementation acceptance.
+
+## Memory proposal evidence scope
+
+The 2026-10-03 memory-writeback correction adds library regressions for immutable proposal identity, terminal approval replay and persisted `committing` reconciliation. Authoritative provider status can settle an interrupted write after expiry; unknown or unavailable status remains parked and never triggers another write. Concurrent recovery retains the repository compare-and-set boundary.
+
+CP-CONS-026 is partially verified: these tests use repository/provider fixtures, while `MemoryWriteService` has no non-test consumer in the application composition. Durable crash/restart recovery through the provider authority across the required profiles remains tracked in #194. Approval-required proposal creation requests its Interaction before inserting the proposal; a losing dedupe insert can therefore leave a pending, unreferenced Interaction. The proposal and interaction repository contracts expose no cross-store transaction or deletion/compensation operation, so closing this race needs an explicitly designed composition-level persistence or cleanup policy. The correction supplies bounded library evidence and does not certify whole-profile or whole-milestone acceptance.

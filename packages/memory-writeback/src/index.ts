@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import {
   MemoryWritePolicySchema,
   MemoryWriteProposalSchema,
@@ -34,7 +35,14 @@ export class InMemoryMemoryWriteProposalRepository implements MemoryWriteProposa
   readonly #proposals = new Map<string, MemoryWriteProposal>()
   async insert(proposal: MemoryWriteProposal): Promise<boolean> {
     const parsed = MemoryWriteProposalSchema.parse(proposal)
-    if (this.#proposals.has(parsed.proposalId)) return false
+    if (
+      this.#proposals.has(parsed.proposalId) ||
+      [...this.#proposals.values()].some(
+        (entry) =>
+          entry.workspaceId === parsed.workspaceId && entry.dedupeHint === parsed.dedupeHint
+      )
+    )
+      return false
     this.#proposals.set(parsed.proposalId, structuredClone(parsed))
     return true
   }
@@ -174,7 +182,7 @@ export class MemoryWriteService {
     this.#assertContent(parsed, policy)
     const existing = await this.#repository.getByDedupe(parsed.workspaceId, parsed.dedupeHint)
     if (existing) {
-      if (existing.contentDigest === parsed.contentDigest) return existing
+      if (sameProposalInput(existing, parsed)) return existing
       fail('MEMORY_PROPOSAL_CONFLICT')
     }
     const createdAt = z.iso.datetime().parse(this.#now())
@@ -207,12 +215,23 @@ export class MemoryWriteService {
         approvalInteractionId: approval.interactionId,
       })
     }
-    if (!(await this.#repository.insert(proposal))) fail('MEMORY_PROPOSAL_CONFLICT')
+    if (!(await this.#repository.insert(proposal))) {
+      const winner = await this.#repository.getByDedupe(parsed.workspaceId, parsed.dedupeHint)
+      if (winner && sameProposalInput(winner, parsed)) return winner
+      fail('MEMORY_PROPOSAL_CONFLICT')
+    }
     return proposal
   }
 
   async applyApproval(proposalId: string, observedAt: string): Promise<MemoryWriteProposal> {
     const proposal = await this.#get(proposalId)
+    if (
+      (proposal.state === 'approved' && proposal.outcome?.code === 'approved') ||
+      (proposal.state === 'denied' && proposal.outcome?.code === 'denied') ||
+      (proposal.state === 'expired' && proposal.outcome?.code === 'expired')
+    )
+      return proposal
+    if (proposal.state !== 'awaiting_approval') fail('MEMORY_PROPOSAL_TERMINAL')
     if (!proposal.approvalInteractionId) fail('MEMORY_APPROVAL_REQUIRED')
     const interaction = await this.#interactionRepository.get(proposal.approvalInteractionId)
     if (!interaction || interaction.state === 'pending') fail('MEMORY_APPROVAL_PENDING')
@@ -243,26 +262,33 @@ export class MemoryWriteService {
   async commit(proposalId: string, observedAt: string): Promise<MemoryWriteProposal> {
     let proposal = await this.#get(proposalId)
     if (proposal.state === 'committed') return proposal
-    if (
-      proposal.provenance.expiresAt &&
-      Date.parse(observedAt) >= Date.parse(proposal.provenance.expiresAt)
-    )
-      return this.#transition(proposal, 'expired', observedAt, 'expired')
-    if (!['approved', 'reconciliation_required'].includes(proposal.state))
+    if (!['approved', 'committing', 'reconciliation_required'].includes(proposal.state))
       fail(
         ['proposed', 'awaiting_approval'].includes(proposal.state)
           ? 'MEMORY_APPROVAL_REQUIRED'
           : 'MEMORY_PROPOSAL_TERMINAL'
       )
-    const provider = this.#assertProvider()
+    if (
+      proposal.state === 'approved' &&
+      proposal.provenance.expiresAt &&
+      Date.parse(observedAt) >= Date.parse(proposal.provenance.expiresAt)
+    )
+      return this.#transition(proposal, 'expired', observedAt, 'expired')
+    const provider = this.#assertProvider(proposal.state === 'approved')
     this.#assertScope(proposal, provider)
     const request = toWriteRequest(proposal)
-    if (proposal.state === 'reconciliation_required') {
-      if (!provider.capabilities.idempotentStatus) fail('MEMORY_WRITE_AMBIGUOUS')
+    if (proposal.state === 'committing' || proposal.state === 'reconciliation_required') {
+      if (!provider.capabilities.idempotentStatus) {
+        if (proposal.state === 'committing')
+          await this.#transition(proposal, 'reconciliation_required', observedAt, 'ambiguous')
+        fail('MEMORY_WRITE_AMBIGUOUS')
+      }
       let status: Awaited<ReturnType<MemoryProviderWriter['status']>>
       try {
         status = await provider.status(request.idempotencyKey)
       } catch {
+        if (proposal.state === 'committing')
+          await this.#transition(proposal, 'reconciliation_required', observedAt, 'ambiguous')
         fail('MEMORY_WRITE_AMBIGUOUS')
       }
       if (status.status === 'committed')
@@ -277,6 +303,8 @@ export class MemoryWriteService {
         await this.#transition(proposal, 'failed', observedAt, 'failed')
         fail('MEMORY_WRITE_REJECTED')
       }
+      if (proposal.state === 'committing')
+        await this.#transition(proposal, 'reconciliation_required', observedAt, 'ambiguous')
       fail('MEMORY_WRITE_AMBIGUOUS')
     }
     proposal = await this.#transition(proposal, 'committing', observedAt)
@@ -344,9 +372,10 @@ export class MemoryWriteService {
     return proposal
   }
 
-  #assertProvider(): MemoryProviderWriter {
+  #assertProvider(requireWriteCommit = true): MemoryProviderWriter {
     if (!this.#provider) fail('MEMORY_PROVIDER_ABSENT')
-    if (!this.#provider.capabilities.writeCommit) fail('MEMORY_PROVIDER_READ_ONLY')
+    if (requireWriteCommit && !this.#provider.capabilities.writeCommit)
+      fail('MEMORY_PROVIDER_READ_ONLY')
     return this.#provider
   }
 
@@ -431,6 +460,14 @@ function toWriteRequest(proposal: MemoryWriteProposal): MemoryProviderWriteReque
 
 function digest(content: string): string {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`
+}
+
+function sameProposalInput(
+  existing: MemoryWriteProposal,
+  input: z.output<typeof ProposalInputSchema>
+): boolean {
+  const existingInput = ProposalInputSchema.parse(existing)
+  return isDeepStrictEqual(existingInput, { ...input, proposalId: existingInput.proposalId })
 }
 
 function fail(code: MemoryWriteErrorCode): never {
