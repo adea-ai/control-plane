@@ -345,7 +345,14 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
         attemptId: operation.attemptId,
       })
 
-      const calls = new PostgresToolCallRepository(this.#options.database, operation.workspaceId)
+      const calls = new PostgresToolCallRepository(this.#options.database, operation.workspaceId, {
+        admissionFence: (transaction, call) =>
+          this.#cancellations.assertNotCancelledInTransaction(
+            transaction,
+            call.executionId,
+            call.workspaceId
+          ),
+      })
       const existing = await calls.getByIdempotencyKey(
         operation.workspaceId,
         operation.idempotencyKey
@@ -514,6 +521,22 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
           call = await calls.getByIdempotencyKey(operation.workspaceId, operation.idempotencyKey)
         } catch {
           throw new GraphNodeEffectUnconfirmedError()
+        }
+        if (
+          call === undefined &&
+          error instanceof Error &&
+          error.message === 'HOSTED_GRAPH_TOOL_CANCELLED'
+        ) {
+          try {
+            await this.#ledger.settle({
+              workspaceId: operation.workspaceId,
+              executionId: operation.executionId,
+              reservationKey: operation.idempotencyKey,
+              source: source('settle'),
+            })
+          } catch {
+            throw new GraphNodeEffectUnconfirmedError()
+          }
         }
         if (call && ['executing', 'reconciliation_required', 'succeeded'].includes(call.status)) {
           throw new GraphNodeEffectUnconfirmedError()

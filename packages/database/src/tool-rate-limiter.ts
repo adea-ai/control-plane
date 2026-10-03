@@ -18,22 +18,30 @@ export class PostgresToolRateLimiter implements ToolRateLimiter {
     toolCallId: string
   ): Promise<boolean> {
     const parsedKey = parseRateLimitKey(key)
-    const at = Date.parse(atInput)
+    const requestedAt = Date.parse(atInput)
     if (
       parsedKey === undefined ||
       !Number.isSafeInteger(limit) ||
       limit < 1 ||
       !Number.isSafeInteger(windowMs) ||
       windowMs < 1 ||
-      !Number.isFinite(at) ||
+      !Number.isFinite(requestedAt) ||
       !toolCallId
     ) {
       throw new Error('POSTGRES_TOOL_RATE_LIMIT_INPUT_INVALID')
     }
     const { workspaceId, principalRef, toolDefinitionId, operation } = parsedKey
-    const windowStart = new Date(at - windowMs)
     return this.database.transaction(async (transaction) => {
       await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
+      const [databaseClock] = await transaction.execute(
+        sql`select extract(epoch from clock_timestamp()) * 1000 as at_ms`
+      )
+      const admittedAtMs = Number(databaseClock?.['at_ms'])
+      if (!Number.isFinite(admittedAtMs) || admittedAtMs <= 0) {
+        throw new Error('POSTGRES_TOOL_RATE_LIMIT_STATE_INVALID')
+      }
+      const admittedAt = new Date(admittedAtMs)
+      const windowStart = new Date(admittedAt.getTime() - windowMs)
       const [existing] = await transaction
         .select()
         .from(toolRateLimitEvents)
@@ -89,7 +97,7 @@ export class PostgresToolRateLimiter implements ToolRateLimiter {
         toolDefinitionId,
         operation,
         toolCallId,
-        consumedAt: new Date(atInput),
+        consumedAt: admittedAt,
       })
       return true
     })

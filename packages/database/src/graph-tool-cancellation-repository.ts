@@ -4,6 +4,10 @@ import type { ControlPlaneDatabase } from './connection.js'
 import { executions } from './schema/executions.js'
 import { graphToolCancellations } from './schema/graph-tool-cancellations.js'
 
+type ToolCallCancellationTransaction = Parameters<
+  Parameters<ControlPlaneDatabase['transaction']>[0]
+>[0]
+
 export interface GraphToolCancellation {
   readonly workspaceId: string
   readonly executionId: string
@@ -30,9 +34,7 @@ export class PostgresGraphToolCancellationRepository {
       throw new Error('GRAPH_TOOL_CANCELLATION_INVALID')
     }
     return this.database.transaction(async (transaction) => {
-      await transaction.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${executionId}, 0))`
-      )
+      await lockExecutionAdmission(transaction, executionId)
       const [owner] = await transaction
         .select({ workspaceId: executions.workspaceId })
         .from(executions)
@@ -68,6 +70,31 @@ export class PostgresGraphToolCancellationRepository {
     })
   }
 
+  /**
+   * Fences a new tool-call receipt against cancellation using the same
+   * execution lock held while the cancellation marker is persisted.
+   */
+  async assertNotCancelledInTransaction(
+    transaction: ToolCallCancellationTransaction,
+    executionIdInput: string,
+    workspaceIdInput: string
+  ): Promise<void> {
+    const executionId = IdentifierSchemas.executionId.parse(executionIdInput)
+    const workspaceId = IdentifierSchemas.workspaceId.parse(workspaceIdInput)
+    await lockExecutionAdmission(transaction, executionId)
+    const [cancellation] = await transaction
+      .select({ executionId: graphToolCancellations.executionId })
+      .from(graphToolCancellations)
+      .where(
+        and(
+          eq(graphToolCancellations.workspaceId, workspaceId),
+          eq(graphToolCancellations.executionId, executionId)
+        )
+      )
+      .limit(1)
+    if (cancellation !== undefined) throw new Error('HOSTED_GRAPH_TOOL_CANCELLED')
+  }
+
   async get(
     executionIdInput: string,
     workspaceIdInput: string
@@ -86,4 +113,8 @@ export class PostgresGraphToolCancellationRepository {
       .limit(1)
     return cancellation
   }
+}
+
+function lockExecutionAdmission(transaction: ToolCallCancellationTransaction, executionId: string) {
+  return transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${executionId}, 0))`)
 }
