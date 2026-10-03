@@ -21,7 +21,26 @@ assert(
   'Usage: bun scripts/certify-m11-managed-pi.mjs /absolute/path/to/pi'
 )
 assert.equal(resolve(executablePath), executablePath, 'Pi executable must be an absolute path')
+const durableExecution = process.env.M11_REAL_PI_DURABLE_EXECUTION ?? 'embedded-sqlite'
+assert(
+  durableExecution === 'embedded-sqlite' || durableExecution === 'restate',
+  'M11_REAL_PI_DURABLE_EXECUTION must be embedded-sqlite or restate'
+)
+const localTestPattern = `runs the packaged managed Pi RPC client through Local ${durableExecution}`
 const directory = await mkdtemp(join(tmpdir(), 'control-plane-real-pi-'))
+const externalAgentConfigDirectory = process.env.M11_REAL_PI_AGENT_CONFIG_DIRECTORY
+const externalAgentDirectory = process.env.M11_REAL_PI_AGENT_DIRECTORY
+assert.equal(
+  Boolean(externalAgentConfigDirectory),
+  Boolean(externalAgentDirectory),
+  'Both M11_REAL_PI_AGENT_CONFIG_DIRECTORY and M11_REAL_PI_AGENT_DIRECTORY must be set together'
+)
+if (externalAgentConfigDirectory) {
+  assert.equal(externalAgentConfigDirectory, '/run/control-plane/pi-agent-config')
+  assert.equal(externalAgentDirectory, '/var/lib/control-plane/pi-agent')
+}
+const agentSourceDirectory = externalAgentConfigDirectory ?? join(directory, 'agent-source')
+const agentDirectory = externalAgentDirectory ?? join(directory, 'agent')
 const requests = []
 const cancellationRequest = Promise.withResolvers()
 const localCancellationClosed = Promise.withResolvers()
@@ -112,8 +131,23 @@ try {
       )
     },
   })
-  const agentDirectory = join(directory, 'agent')
-  await mkdir(agentDirectory, { mode: 0o700 })
+  if (!externalAgentConfigDirectory) {
+    await mkdir(agentSourceDirectory, { mode: 0o700 })
+    await writeFile(
+      join(agentSourceDirectory, 'auth.json'),
+      JSON.stringify({ fixture: { type: 'api_key', key: 'fixture-only' } }),
+      { mode: 0o600 }
+    )
+  }
+  const configSync = spawnSync(
+    'node',
+    ['/usr/local/bin/sync-managed-pi-config.mjs', agentSourceDirectory, agentDirectory],
+    {
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      encoding: 'utf8',
+    }
+  )
+  assert.equal(configSync.status, 0, `MANAGED_PI_CONFIG_SYNC_FAILED: ${configSync.stderr}`)
   await writeFile(
     join(agentDirectory, 'models.json'),
     JSON.stringify({
@@ -121,7 +155,6 @@ try {
         fixture: {
           baseUrl: `http://127.0.0.1:${server.port}/v1`,
           api: 'openai-completions',
-          apiKey: 'fixture-only',
           models: [
             {
               id: 'fixture',
@@ -136,6 +169,20 @@ try {
     }),
     { mode: 0o600 }
   )
+  const startupPreflight = spawnSync(
+    'node',
+    ['/usr/local/lib/control-plane/managed-pi-version-preflight.mjs', executablePath],
+    {
+      env: {
+        PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+        PI_CODING_AGENT_DIR: agentDirectory,
+      },
+      encoding: 'utf8',
+      maxBuffer: 16_384,
+      timeout: 32_000,
+    }
+  )
+  assert.equal(startupPreflight.status, 0, 'PI_VERSION_PREFLIGHT_FAILED')
   const clientOptions = {
     executablePath,
     dataDirectory: join(directory, 'executions'),
@@ -226,7 +273,7 @@ try {
       'test',
       'tests/m11-standalone-e2e.test.mjs',
       '--test-name-pattern',
-      'runs the packaged managed Pi RPC client through Local embedded-sqlite',
+      localTestPattern,
     ],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
@@ -235,7 +282,7 @@ try {
         TMPDIR: process.env.TMPDIR ?? '/tmp',
         M11_REAL_PI_EXECUTABLE: executablePath,
         M11_REAL_PI_AGENT_DIRECTORY: agentDirectory,
-        M11_REAL_PI_DURABLE_EXECUTION: 'embedded-sqlite',
+        M11_REAL_PI_DURABLE_EXECUTION: durableExecution,
         M11_REAL_PI_CANCELLATION_READY_URL: `http://127.0.0.1:${server.port}/m11/local-cancellation-ready`,
       },
       stdout: 'pipe',
@@ -251,7 +298,7 @@ try {
   assert.equal(
     requests.length,
     4,
-    'Local completion and cancellation must each reach the real Pi model endpoint once'
+    'Local completion and cancellation must each reach the deterministic model fixture once'
   )
   await bounded(localCancellationClosed.promise)
   assert(JSON.stringify(requests[2].body.messages).includes('Complete the assigned task safely.'))
@@ -301,6 +348,7 @@ try {
     bunVersion: process.versions.bun,
     transport: 'direct-local',
     model: 'local-deterministic-http-fixture',
+    durableExecution,
     requests: requests.length,
     completed: true,
     cancellation: true,
@@ -313,9 +361,11 @@ try {
     eventRecoveryAfterCleanup: 'exact-history-and-cursor-filtering',
     localComposition: {
       persistence: 'sqlite',
-      workflow: 'embedded-sqlite-default',
+      workflow: durableExecution === 'restate' ? 'local-restate' : 'embedded-sqlite',
       externalServices: 0,
-      restateDiscovery: 'unavailable-and-unused-by-workflow',
+      ...(durableExecution === 'restate'
+        ? { restateIngressAttach: 'confirmed-completed-and-cancelled' }
+        : { restateDiscovery: 'unavailable-and-unused-by-workflow' }),
       execution: 'completed',
       cancellation: 'authenticated-sdk-lost-ack-replay-single-attempt',
       cancellationModelStream: 'closed-before-runtime-cleanup',
