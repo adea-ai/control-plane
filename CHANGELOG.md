@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.67.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.66.2...workspace-v1.67.0) (2026-10-03)
+
+
+### Features
+
+* **docker:** add opt-in native Pi runtime ([#857](https://github.com/adea-ai/control-plane/issues/857)) ([8d204cf](https://github.com/adea-ai/control-plane/commit/8d204cfa40ef7cdd1bd1d0e7e929e5fe98bad1d4))
+
 ## [1.66.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.66.1...workspace-v1.66.2) (2026-10-03)
 
 

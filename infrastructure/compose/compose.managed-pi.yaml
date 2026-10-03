@@ -1,0 +1,26 @@
+services:
+  control-plane-simple:
+    image: ${CONTROL_PLANE_PI_IMAGE:-control-plane/local-control-plane:managed-pi-0.84.2}
+    build:
+      context: ../..
+      dockerfile: infrastructure/containers/Dockerfile.hosted
+      target: runtime-managed-pi
+      args:
+        APP_NAME: local-control-plane
+        COMMIT_SHA: ${CONTROL_PLANE_COMMIT_SHA:-self-hosted}
+    environment:
+      CONTROL_PLANE_LOCAL_RUNTIME: managed-pi
+      CONTROL_PLANE_MANAGED_PI_EXECUTABLE: /usr/local/bin/pi
+      CONTROL_PLANE_MANAGED_PI_PROVIDER: ${CONTROL_PLANE_MANAGED_PI_PROVIDER:?Set the provider route before enabling managed Pi}
+      CONTROL_PLANE_MANAGED_PI_MODEL: ${CONTROL_PLANE_MANAGED_PI_MODEL:?Set the model before enabling managed Pi}
+      CONTROL_PLANE_MANAGED_PI_MODEL_ALIAS: ${CONTROL_PLANE_MANAGED_PI_MODEL_ALIAS:?Set the published model alias before enabling managed Pi}
+      CONTROL_PLANE_MANAGED_PI_MODEL_CAPABILITIES: ${CONTROL_PLANE_MANAGED_PI_MODEL_CAPABILITIES:?Set the model capabilities before enabling managed Pi}
+      CONTROL_PLANE_MANAGED_PI_PROVIDER_CLASS: ${CONTROL_PLANE_MANAGED_PI_PROVIDER_CLASS:?Set the provider class before enabling managed Pi}
+      CONTROL_PLANE_MANAGED_PI_DATA_RESIDENCY: ${CONTROL_PLANE_MANAGED_PI_DATA_RESIDENCY:?Set the data residency before enabling managed Pi}
+      CONTROL_PLANE_PI_AGENT_CONFIG_DIRECTORY: /run/control-plane/pi-agent-config
+      PI_CODING_AGENT_DIR: /var/lib/control-plane/pi-agent
+    volumes:
+      - type: bind
+        source: ${CONTROL_PLANE_PI_AGENT_DIRECTORY:?Set CONTROL_PLANE_PI_AGENT_DIRECTORY to the preconfigured host Pi agent directory}
+        target: /run/control-plane/pi-agent-config
+        read_only: true
