@@ -55,6 +55,21 @@ This configuration requires a direct runtime transport and cannot be combined wi
 implicit graph admission. Without `graphRuntime`, default graph admission remains closed. This
 assembly requires explicit provider bindings and does not establish deployed profile acceptance.
 
+The supported `start()` launcher can opt into one built-in graph tool with the operator-owned
+`CONTROL_PLANE_LOCAL_GRAPH_CONFIG` environment variable. It must name an absolute path to a regular,
+non-symlink JSON file no larger than 16 KiB. The file has exactly these fields: `schemaVersion` (1),
+`workspaceId`, `toolDefinitionId`, `toolVersionId`, `currency` (`USD`), `costMicrounits` (a
+non-negative safe integer), `createdAt`, and `publishedAt` (canonical UTC timestamps). The file is
+configuration, not a secret. The launcher creates or verifies the fixed tool definition and
+published immutable version before readiness, binds only its fixed `store-json` operation and
+server-owned tariff, and records the configuration digest in SQLite only after successful registry
+bootstrap. Restarting with changed configuration, conflicting injected graph activity, or no direct
+runtime fails before opening the HTTP listener. Callers cannot register the executor, pick prices, or
+select an object key through graph input. Bootstrap does not migrate earlier `tool-effects` records
+or rewrite previously published version schemas. Prior accepted graph pins and unknown effects from
+the earlier key convention require verified reconciliation before replay. The launcher acceptance
+uses a fresh test directory; it does not certify upgrades of existing installations.
+
 For the built-in immutable JSON tool, `operations` can be a server-owned factory receiving
 `{ api, persistence, objectStore }` from the Local composition. Return `LocalGraphToolOperations`
 (exported from the Local package) with those resources and an operator-owned `prices` array. Each
@@ -73,9 +88,21 @@ delivery, records one durable charge after a confirmed write, and releases the r
 a known no-effect denial/failure. Unknown writes retain their reservation and are not redelivered.
 Cancellation intent and rate-limit windows survive SQLite reconstruction. An unconfirmed graph
 cancellation moves the execution/attempt to `reconciliation_required` and cannot complete terminal
-cancellation or cleanup. The tool returns the content digest and byte count; it does not manufacture
-an Artifact reference. This binding is one Local tool path; other tools, MCP, model/runtime and
-delegation bindings and the complete deployed profile matrix require separate delivery evidence.
+cancellation or cleanup. The tool writes canonical JSON bytes to an immutable `art_<id>` ObjectStore
+key and returns that Artifact reference, SHA-256 digest, and byte count only after verifying the
+persisted receipt. The stable key is derived from accepted workspace/execution identity and the
+durable request ID; its metadata binds workspace, project, execution, and internal sensitivity. This
+deliberately replaces the earlier `tool-effects/<workspace>/<execution>/<request>` key shape so the
+terminal execution result is a real Artifact understood by the existing lifecycle. Existing objects
+are checked for matching bytes, digest, scope, media type, and available lifecycle metadata before
+cold replay.
+
+The `launcher-graph.test.mjs` supported-launcher acceptance uses a test-local `direct-local`
+transport fixture because the graph node itself is the executed work. It exercises the exported
+`start()` path, real API plan validation/acceptance, persisted approval, Artifact write, and SQLite
+restart/replay; it is not Pi/ACP provider certification or the complete deployed profile matrix.
+This binding is one Local tool path; other tools, MCP, model/runtime and delegation bindings require
+separate delivery evidence.
 
 The standalone launcher packages managed Pi with:
 

@@ -41,6 +41,33 @@ test('Local tool authority denies capabilities absent from every accepted grant'
   }
 })
 
+test('Local tool authority rejects an execution and accepted command from different projects', async () => {
+  const fixture = await createLocalGraphToolFixture()
+  try {
+    const command = await fixture.api.commandRepository.getByExecutionId(
+      fixture.operation.executionId
+    )
+    const api = new Proxy(fixture.api, {
+      get(target, property, receiver) {
+        if (property === 'commandRepository') {
+          return {
+            getByExecutionId: async () => ({
+              ...command,
+              projectId: 'prj_01JABCDEF0123456789ABCDEFH',
+            }),
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    await expect(
+      authorizeLocalGraphTool(fixture.operation, { ...fixture.options, api })
+    ).rejects.toThrow('GRAPH_TOOL_EXECUTION_AUTHORITY_MISMATCH')
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
 test('Local graph tools refuse execution before its workflow attempt is running', async () => {
   const fixture = await createLocalGraphToolFixture({ activate: false })
   try {

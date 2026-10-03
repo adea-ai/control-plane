@@ -34,6 +34,8 @@ export interface ManagedLocalGraphRuntimeOptions {
   readonly operations:
     | GraphNodeOperationPort
     | ((resources: LocalGraphOperationResources) => GraphNodeOperationPort)
+  /** Optional durable bootstrap that must finish before the Local service is ready. */
+  readonly initialize?: (resources: LocalGraphOperationResources) => Promise<void>
 }
 
 /** Shares the catalog and compiler between admission and execution. Owns no database connection. */
@@ -43,6 +45,7 @@ export class ManagedLocalGraphRuntime {
   readonly #resolver: CatalogBackedGraphDefinitionResolver
   readonly #persistence: SqlitePersistenceProvider
   readonly #operations: ManagedLocalGraphRuntimeOptions['operations']
+  readonly #initialize: ManagedLocalGraphRuntimeOptions['initialize']
   readonly #objectStore: ObjectStore | undefined
 
   constructor(
@@ -55,6 +58,7 @@ export class ManagedLocalGraphRuntime {
     this.#objectStore = objectStore
     this.#persistence = persistence
     this.#operations = options.operations
+    this.#initialize = options.initialize
     this.#compiler = new DeclarativeGraphCompiler(options.compiler)
     const environment = {
       capabilities: [...options.capabilities],
@@ -79,6 +83,16 @@ export class ManagedLocalGraphRuntime {
     this.#resolver = new CatalogBackedGraphDefinitionResolver({
       catalogForWorkspace: (workspaceId) => new GraphDefinitionCatalog(repository(workspaceId)),
       compatibility: environment,
+    })
+  }
+
+  async initialize(controlApi: LocalControlApiComposition): Promise<void> {
+    if (this.#initialize === undefined) return
+    if (this.#objectStore === undefined) throw new Error('LOCAL_GRAPH_OBJECT_STORE_REQUIRED')
+    await this.#initialize({
+      api: controlApi,
+      persistence: this.#persistence,
+      objectStore: this.#objectStore,
     })
   }
 

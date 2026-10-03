@@ -196,7 +196,10 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       gateway.registerExecutor(
         'internal',
         'local.object-store-json.v1',
-        new ObjectStoreJsonToolExecutor(objectStore)
+        new ObjectStoreJsonToolExecutor(objectStore, {
+          workspaceId: operation.workspaceId,
+          projectId: authority.execution.correlation.projectId,
+        })
       )
       const interactions = new InteractionService(api.interactions)
       const approvals = new InteractionToolApprovalCoordinator(interactions, api.interactions)
