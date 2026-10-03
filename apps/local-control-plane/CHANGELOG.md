@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.23.0...local-control-plane-v1.24.0) (2026-10-03)
+
+
+### Features
+
+* **local:** recover graph tool effects without duplicate work ([#858](https://github.com/adea-ai/control-plane/issues/858)) ([d1518fb](https://github.com/adea-ai/control-plane/commit/d1518fb061cce6af67a76f47a4796810cfa6fb35))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.22.0...local-control-plane-v1.23.0) (2026-10-03)
 
 
