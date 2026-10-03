@@ -1,0 +1,394 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-10-03",
+  "scope": "read-only source freshness observations; captured inventories retained; current clause and figure reconciliation pending",
+  "summary": {
+    "sourcesObserved": 15,
+    "changedTextSources": 15,
+    "historicalCaptureHashesVerified": 15,
+    "selectedRootTabInlineObjects": 12,
+    "currentCandidateAcceptance": "not-established"
+  },
+  "sources": [
+    {
+      "sourceId": "project-index",
+      "documentId": "1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI",
+      "uri": "https://docs.google.com/document/d/1SPpKBIPKZH6r01Imil0awuGVDisfQL3FdXhyCbjoJoI/edit?usp=drivesdk",
+      "capturedRevision": 131,
+      "capturedTextSha256": "73cdf31c07229da6e4630fb2caf0c410d10dc9292fd74d1675153f8c9f9033af",
+      "historicalRevisionTextSha256": "73cdf31c07229da6e4630fb2caf0c410d10dc9292fd74d1675153f8c9f9033af",
+      "capturedInventoryPath": "docs/requirements/project-index-atomic-inventory.md",
+      "observedCurrentRevision": 153,
+      "observedRevisionModifiedAt": "2026-10-01T23:49:59.760Z",
+      "observedFileModifiedAt": "2026-10-01T23:49:59.809Z",
+      "observedTextSha256": "ec1770e25e14e01bd9aa49fe416da6c8bf58f672b84d53d01eb55f8a7e8f5a32",
+      "observedTextLogicalLines": 87,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMRqHq-2-7Bqynrm3JfGRVBnlugWDki_bqKJdtrRnfMLm2dK_pIg1csjxrdyH-4PQjZw7tzN7U7JTJ-X8Jq8TPG4UbOwlwtaS5Xp_Pk",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "agent-hq-prd",
+      "documentId": "1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q",
+      "uri": "https://docs.google.com/document/d/1gv4WEkH2Fko1Vj2WXrkLye_CqrpTEUmMvNZsg1R5K0Q/edit?usp=drivesdk",
+      "capturedRevision": 2021,
+      "capturedTextSha256": "76780434fdf473b41d6441ca7ed39edc4417ebf5060df18c4dc56a27942ae143",
+      "historicalRevisionTextSha256": "76780434fdf473b41d6441ca7ed39edc4417ebf5060df18c4dc56a27942ae143",
+      "capturedInventoryPath": "docs/requirements/agent-hq-prd-atomic-inventory.md",
+      "observedCurrentRevision": 2040,
+      "observedRevisionModifiedAt": "2026-10-01T21:46:27.645Z",
+      "observedFileModifiedAt": "2026-10-01T21:46:27.706Z",
+      "observedTextSha256": "d5314bf48ec73bb5deabbf0e1408e0a7ca3205b9c05b5a481ddd35ba1b363afd",
+      "observedTextLogicalLines": 126,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMRKX_6DyoAO01bpdYUCbRSu7bR-kqXVH11ltc8hggxmSmdDM2MilbnPGY5fBLNDPlUIXjKbHDnXy9QlLQ4I88o-XA8X7nF2G-fTAco",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": ["kix.vzbv0wf940bf"],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "control-plane-prd",
+      "documentId": "1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0",
+      "uri": "https://docs.google.com/document/d/1o-gu4U3e-oJNMIms2eX86J9OaY-OxnXLdq8ggSjHmH0/edit",
+      "capturedRevision": 46,
+      "capturedTextSha256": "81f62402d4459e6aa7567e2490b543bf6f8fcf289aa341824fe585903324503d",
+      "historicalRevisionTextSha256": "81f62402d4459e6aa7567e2490b543bf6f8fcf289aa341824fe585903324503d",
+      "capturedInventoryPath": "docs/requirements/control-plane-prd-atomic-inventory.md",
+      "observedCurrentRevision": 58,
+      "observedRevisionModifiedAt": "2026-10-01T21:46:34.015Z",
+      "observedFileModifiedAt": "2026-10-01T21:46:34.106Z",
+      "observedTextSha256": "5b040c613b30f03310cc1b32151ad7a631147b0120ee4b6b21e4c519f5302898",
+      "observedTextLogicalLines": 231,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMR8KvMe6Fxrs7f6JzpHgu_T7ryOWBw74Tq0RzUv5pWfSbKJPglN0NbrVZkLh8tg7-_B8BoSWQXznhVJ46-idwDEktwD9vXfdBBXHgI",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "cortana-prd",
+      "documentId": "1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY",
+      "uri": "https://docs.google.com/document/d/1v8xKKPaKhF98ahqsfv8-PQ6CWz0Ld3eeJfpCmir__dY/edit",
+      "capturedRevision": 29,
+      "capturedTextSha256": "1876af87e8df64b9f6a6a388e3897fdef46fd2d96631003c9e669f9ed6c933d5",
+      "historicalRevisionTextSha256": "1876af87e8df64b9f6a6a388e3897fdef46fd2d96631003c9e669f9ed6c933d5",
+      "capturedInventoryPath": "docs/requirements/cortana-prd-atomic-inventory.md",
+      "observedCurrentRevision": 43,
+      "observedRevisionModifiedAt": "2026-10-01T20:24:46.550Z",
+      "observedFileModifiedAt": "2026-10-01T20:24:46.613Z",
+      "observedTextSha256": "7b4df5d9585fec6708d7eb73efd745c764328748be010437cf75b6e58e16bbfb",
+      "observedTextLogicalLines": 150,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQliMBfm-iXzzWtxZsByccirXTaNWxLmKkFiBReK8ogZZy7gDUXdFb3NTbk3UZ8se5CSxaDP9eTuzAtlaxH0J5VU-jPHlWnMTRbH2wc",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "system-architecture",
+      "documentId": "1Bdck8tMJQ_o9C1cPnxpEI9fe39csTmynllRgj-gbTxI",
+      "uri": "https://docs.google.com/document/d/1Bdck8tMJQ_o9C1cPnxpEI9fe39csTmynllRgj-gbTxI/edit?usp=drivesdk",
+      "capturedRevision": 99,
+      "capturedTextSha256": "fcc466b2233c8c8d6db4d844ce5920506562ac94bb1fbc6082d2c41ae0e63f11",
+      "historicalRevisionTextSha256": "fcc466b2233c8c8d6db4d844ce5920506562ac94bb1fbc6082d2c41ae0e63f11",
+      "capturedInventoryPath": "docs/requirements/system-architecture-atomic-inventory.md",
+      "observedCurrentRevision": 133,
+      "observedRevisionModifiedAt": "2026-10-01T23:49:54.782Z",
+      "observedFileModifiedAt": "2026-10-01T23:49:54.957Z",
+      "observedTextSha256": "a6fe570cbcadbc8d71f1ddf7379b07d73a4b38103d296d4ebed624d3e71e89a6",
+      "observedTextLogicalLines": 134,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQlf21XQUs_BfaxZoEpsx99UqGJo8pWbIHbF0-EHXnUUj8rzAN6Uf6DvWCulKBlb5N6RYlMgZGD-4G6QuQap0dCk3yufBC9JWYPYIiM",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": ["kix.72hdt2mmgd06", "kix.b9qi12f8udd1"],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "control-plane-tdd",
+      "documentId": "1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg",
+      "uri": "https://docs.google.com/document/d/1sEl6doINP1TpbzZQvpDzDgpMCycFu0PFX90If_UINeg/edit?usp=drivesdk",
+      "capturedRevision": 110,
+      "capturedTextSha256": "1f746a1e85da2fed9ead5805acaea6c71e656e5fcf7e917818564c51d91b9bed",
+      "historicalRevisionTextSha256": "1f746a1e85da2fed9ead5805acaea6c71e656e5fcf7e917818564c51d91b9bed",
+      "capturedInventoryPath": "docs/requirements/control-plane-tdd-atomic-inventory.md",
+      "observedCurrentRevision": 134,
+      "observedRevisionModifiedAt": "2026-10-01T23:52:54.454Z",
+      "observedFileModifiedAt": "2026-10-01T23:52:54.503Z",
+      "observedTextSha256": "c06e90130ef502c070c9a685ef68730d24ce471c158fb2b6e278f33f351f210a",
+      "observedTextLogicalLines": 338,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQmpmZvrApqXnDUiS-wuvhx-w8hv_AqKoHm7phN4UCcj9K7GHIudAwKiNFcO6souQJDmA-knPKUom1DVXx7sCHjz0WkQjBx5RCL8nAg",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": ["kix.obxnsrixkdh2", "kix.ro51mjyzqmi9", "kix.x35li8uk2135"],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "agent-skill-spec",
+      "documentId": "1YTNV1loWA34R-eZsYvEX5I_C6ecw3gWIfIWW0TvFnwg",
+      "uri": "https://docs.google.com/document/d/1YTNV1loWA34R-eZsYvEX5I_C6ecw3gWIfIWW0TvFnwg/edit?usp=drivesdk",
+      "capturedRevision": 45,
+      "capturedTextSha256": "a1d11f06e9f828d436c195d1d1b05abfa4e3070ca74380b1162896bd0902d6b5",
+      "historicalRevisionTextSha256": "a1d11f06e9f828d436c195d1d1b05abfa4e3070ca74380b1162896bd0902d6b5",
+      "capturedInventoryPath": "docs/requirements/agent-skill-atomic-inventory.md",
+      "observedCurrentRevision": 59,
+      "observedRevisionModifiedAt": "2026-10-01T20:22:53.010Z",
+      "observedFileModifiedAt": "2026-10-01T20:22:53.052Z",
+      "observedTextSha256": "f02cec273d434e8e85cc3f4df6ece0b2db2fe1f3c4796b2c9efe578a68762474",
+      "observedTextLogicalLines": 110,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQnkLR_Ot43JR0zkMhT-lNtUXnUxFLuFCv8LWBxEI80wQAZF4fettG10NN4IkaQMK1kiY6RYTMoQthqXkTDhTHDtqvQFFB5_7sngjiY",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "data-api-spec",
+      "documentId": "1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM",
+      "uri": "https://docs.google.com/document/d/1OZS6eARKKsAkaOUD9dpMxogts2Br2A_HUNVp61QIghM/edit?usp=drivesdk",
+      "capturedRevision": 73,
+      "capturedTextSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
+      "historicalRevisionTextSha256": "d98ea5e7331ef6691c4eb46414d0af39c48288879a2a2efcf90c4496df544f54",
+      "capturedInventoryPath": "docs/requirements/data-api-atomic-inventory.md",
+      "observedCurrentRevision": 95,
+      "observedRevisionModifiedAt": "2026-10-01T15:31:45.061Z",
+      "observedFileModifiedAt": "2026-10-01T15:31:45.106Z",
+      "observedTextSha256": "ef0eae69542adebb0462b896387d4a8e2dc85bce288939da01dd60518945df04",
+      "observedTextLogicalLines": 238,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMRMvcYLRjBKeC23n0mvSAla70zf8Z5wrZp4xIS4WjE7P3nUUvDUbKcthkU-tJF6TiybwiJaErFaWuYMPRt0dLk2Y3F016rWI8moqZ0",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": ["kix.3cdr0vj1ebkd", "kix.j8qqp2z5p3tm"],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "runtime-node-spec",
+      "documentId": "1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I",
+      "uri": "https://docs.google.com/document/d/1O25Genu8ChpXF1PZfcPP6rABeBpKt4fQZ6xu3rLrd8I/edit",
+      "capturedRevision": 25,
+      "capturedTextSha256": "5bdc4f456cb379c83c31189ea44942e44ed704c07d74fd42934afad437dc1731",
+      "historicalRevisionTextSha256": "5bdc4f456cb379c83c31189ea44942e44ed704c07d74fd42934afad437dc1731",
+      "capturedInventoryPath": "docs/requirements/runtime-node-atomic-inventory.md",
+      "observedCurrentRevision": 37,
+      "observedRevisionModifiedAt": "2026-10-01T21:27:51.269Z",
+      "observedFileModifiedAt": "2026-10-01T21:27:51.303Z",
+      "observedTextSha256": "d6abf4e2481d097ff3d829fa9d7a729dad4267bfed1319d6c3817097ffb27d0e",
+      "observedTextLogicalLines": 166,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMQWJlkZujHkKXJM45us59uRfSOnOc6_DtQriygOoCd4QtlqoKAJVJfx1WoHX6hUDBPRlwPwl_D0CQRHlT8VzPjROtsPDjkla8QvZ_c",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "execution-consistency-spec",
+      "documentId": "1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4",
+      "uri": "https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit",
+      "capturedRevision": 27,
+      "capturedTextSha256": "d1a98dafdda98a73e72f07377b44f067bb8a2b5deef77c9d2036d01d10f5ac35",
+      "historicalRevisionTextSha256": "d1a98dafdda98a73e72f07377b44f067bb8a2b5deef77c9d2036d01d10f5ac35",
+      "capturedInventoryPath": "docs/requirements/execution-consistency-atomic-inventory.md",
+      "observedCurrentRevision": 45,
+      "observedRevisionModifiedAt": "2026-10-01T15:24:49.556Z",
+      "observedFileModifiedAt": "2026-10-01T15:24:49.605Z",
+      "observedTextSha256": "9bb474a810a2ff0dcc105c2d1a71f59ee7ba1585d185c718767b30de761bf588",
+      "observedTextLogicalLines": 172,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQnzXSn-VJe9aRN55InZrr9bk808wLNVnJ23dDSV7GuK7B0t1945WbtMaZT03WQYr0gikbKD8irh4FOZWpzeoIdXskcNqQgayy1yE8M",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "artifact-storage-spec",
+      "documentId": "12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I",
+      "uri": "https://docs.google.com/document/d/12cxxFPv9ZI6vHyksczXGOGtuSTvN-MD10nuJTsick7I/edit",
+      "capturedRevision": 20,
+      "capturedTextSha256": "4054b9e061294a2a613840433a6d742da5599c648389b6f0fff7afd8f0020ac3",
+      "historicalRevisionTextSha256": "4054b9e061294a2a613840433a6d742da5599c648389b6f0fff7afd8f0020ac3",
+      "capturedInventoryPath": "docs/requirements/artifact-storage-atomic-inventory.md",
+      "observedCurrentRevision": 37,
+      "observedRevisionModifiedAt": "2026-10-01T20:23:26.707Z",
+      "observedFileModifiedAt": "2026-10-01T20:23:26.745Z",
+      "observedTextSha256": "37ac54802a5ef95862e4dd8c140dbf7979a7825e92aeb74f6acf5f3766cd63cd",
+      "observedTextLogicalLines": 150,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "AHj4eMQm9wW6TzEgnQ6zr1u0ehV5bqj5a9-Kx84JrCu8QRrACWlpxtqsPssGgrZuftElZgNl3dsumCArc2YnAoAHs-f812dc8wxPBg5HaIU",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "security-trust-model",
+      "documentId": "14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE",
+      "uri": "https://docs.google.com/document/d/14-6uCBJQDxJB0Cd8hpIiHx1AvNG7aJWnwBQIp4sWvlE/edit",
+      "capturedRevision": 78,
+      "capturedTextSha256": "74faa251402876c98d65b8abc3752099a3f77f5e625a13d6ba2587749d9e15c7",
+      "historicalRevisionTextSha256": "74faa251402876c98d65b8abc3752099a3f77f5e625a13d6ba2587749d9e15c7",
+      "capturedInventoryPath": "docs/requirements/security-trust-atomic-inventory.md",
+      "observedCurrentRevision": 103,
+      "observedRevisionModifiedAt": "2026-10-01T21:42:42.879Z",
+      "observedFileModifiedAt": "2026-10-01T21:42:42.928Z",
+      "observedTextSha256": "36940991eb4a76d3dbeb413addd973b4e1ba8bc80e528239d1c6b5e8f1be1d8e",
+      "observedTextLogicalLines": 121,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQmoqCOF188GrAkrDNcgCowRBoyF0F7oSCPnVFuCs3OMY-XuVLHdXtYKVOnVHNnRXq1To89Rf_dgpmXlbTeqxiVNUMDOCIC0e6qHBfU",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [
+            "kix.aemvetgxd2fc",
+            "kix.k9nbkupvshm1",
+            "kix.q7phlac8zah3",
+            "kix.vlyjrmx8itur"
+          ],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "evaluation-plan",
+      "documentId": "1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo",
+      "uri": "https://docs.google.com/document/d/1EDjY_r7suDDQnRnl6LswAxYXxPSpIeTcJWF_JAjrQxo/edit?usp=drivesdk",
+      "capturedRevision": 53,
+      "capturedTextSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
+      "historicalRevisionTextSha256": "97e39142af3fe1ddd81428fdcea498226f545085edb96a9fb35d854e1f824a52",
+      "capturedInventoryPath": "docs/requirements/evaluation-plan-atomic-inventory.md",
+      "observedCurrentRevision": 64,
+      "observedRevisionModifiedAt": "2026-10-01T20:34:45.582Z",
+      "observedFileModifiedAt": "2026-10-01T20:34:45.617Z",
+      "observedTextSha256": "bfb3e1a869d19e8b2ebae348415c43e72365c1c8b8392aba8e96bcb5c3835e78",
+      "observedTextLogicalLines": 117,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQmgcbaS_lwWQuWuoitEgvMjkhd7mwbZuhx78YaBzfbVltuJFvElR65Q3SqbsIzvDXacIJn1k_EK7hrr8lyPsyq3DPwU58UJdu7PqEk",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "runtime-compatibility",
+      "documentId": "16dBpODPdXIbwlxNlaxSlQopIXSTVbS5mdfUqLsafwjc",
+      "uri": "https://docs.google.com/document/d/16dBpODPdXIbwlxNlaxSlQopIXSTVbS5mdfUqLsafwjc/edit?usp=drivesdk",
+      "capturedRevision": 50,
+      "capturedTextSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
+      "historicalRevisionTextSha256": "37871be6b8aabe20b6f776da311976309553598cb7d09901ba5b21d003318cdf",
+      "capturedInventoryPath": "docs/requirements/runtime-compatibility-atomic-inventory.md",
+      "observedCurrentRevision": 63,
+      "observedRevisionModifiedAt": "2026-10-01T15:31:56.144Z",
+      "observedFileModifiedAt": "2026-10-01T15:31:56.224Z",
+      "observedTextSha256": "bc203febab2c30e080d4f3ef3615a2fdc52e9671f853ae8669d7d1ecc7955d71",
+      "observedTextLogicalLines": 174,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQk6ckjMWbMws8q2d_nclaIZbdAICFEADh33kf73ckaSC6dpqQQp-HIRzoOqTgzNZCy6RtD29J8cFz9RrPZLQHHr27f2TIr4bDVpgAE",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    },
+    {
+      "sourceId": "architecture-decisions",
+      "documentId": "1K6JwlbSQIRvxmvSeTb5oNEQYc5SfoIJ4QPVTGtXPCbo",
+      "uri": "https://docs.google.com/document/d/1K6JwlbSQIRvxmvSeTb5oNEQYc5SfoIJ4QPVTGtXPCbo/edit?usp=drivesdk",
+      "capturedRevision": 138,
+      "capturedTextSha256": "81af0e9eec9916223196172705ac965759cc8d7a0c1ef551fab22084ff61a1b4",
+      "historicalRevisionTextSha256": "81af0e9eec9916223196172705ac965759cc8d7a0c1ef551fab22084ff61a1b4",
+      "capturedInventoryPath": "docs/requirements/architecture-decisions-atomic-inventory.md",
+      "observedCurrentRevision": 153,
+      "observedRevisionModifiedAt": "2026-10-01T20:33:18.802Z",
+      "observedFileModifiedAt": "2026-10-01T20:33:18.986Z",
+      "observedTextSha256": "4df5e7349a1c602298144a812a94a52de4099aac144319d85f3b54beb25935e9",
+      "observedTextLogicalLines": 296,
+      "textChanged": true,
+      "inventoryReconciliation": "pending",
+      "nativeDocumentRevisionId": "ANLCKQnDBTLlYQqpvC4w29fUcXdxnAveho-pNIWdapeTJ0uAd-va4lrkBEWsx88I2KOMBJ-JWSTioLJI448btTV_wODYwWZ7kmFUTgMVU7M",
+      "selectedRootTabs": [
+        {
+          "tabId": "t.0",
+          "inlineObjectIds": [],
+          "positionedObjectIds": []
+        }
+      ],
+      "figureBytesRefreshed": false
+    }
+  ]
+}

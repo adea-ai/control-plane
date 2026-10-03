@@ -2,6 +2,12 @@
 
 As of 2026-09-30, this inventory pins the 15 normative Google Drive sources identified by #186. It is maintained with the machine-readable requirements ledger. The source set and metadata are current for this capture; review, extraction, and implementation-mapping states below are separate evidence gates.
 
+The [2026-10-03 freshness observation](canonical-source-freshness-2026-10-03.md)
+found newer revisions and changed text in every source. The table and inventories
+below remain the September 30 captures; current-source clause, figure and
+implementation reconciliation is pending. Historical revision retrievals
+reproduced all fifteen captured-text hashes exactly.
+
 ## Current provenance
 
 `revision` is the current numeric Google Drive revision. `revision modified` is the revision-history timestamp; `file modified` is Drive file metadata. `fetched` is the saved fetch time where available. `text SHA-256` is computed over the exact UTF-8 fetched text bytes saved from the Drive response, including the captured BOM/newline bytes. It is not a hash of a native Google Docs revision blob or normalized text. The JSON ledger `updatedAt` now records `file modified`; separate fields preserve revision and retrieval metadata.

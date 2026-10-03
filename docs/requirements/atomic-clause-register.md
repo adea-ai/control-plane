@@ -21,6 +21,12 @@ acceptance gate. Preserve the source inventory's explicit incomplete mapping and
 unestablished acceptance markers. An inventory path or evidence key is a location,
 not a passing test or production proof.
 
+The [October 3 source freshness observation](canonical-source-freshness-2026-10-03.md)
+found changed text and newer revisions for all fifteen sources. This register and
+its crosswalk remain bound to the earlier captured revisions until an explicit
+clause-by-clause reconciliation. The observation does not regenerate or approve
+changed source obligations.
+
 The [machine-readable requirement crosswalk](control-plane-atomic-crosswalk.v1.json)
 materializes the existing PRD and TDD crosswalks: 333 links from 70 bounded
 requirement rows to 291 distinct atoms. It preserves the original crosswalk

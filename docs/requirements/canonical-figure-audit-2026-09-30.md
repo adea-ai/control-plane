@@ -2,6 +2,12 @@
 
 Current native Google Docs reads on 2026-09-30 enumerated all 15 pinned source documents without API errors and exposed nine inline image objects across the five parents below; the other ten returned no inline image objects. This is a current API inventory, not proof of historical or other embedded-resource completeness. Visual reconciliation found source-internal inconsistencies in the System Architecture, Agent HQ PRD, Control Plane TDD, Security & Trust Model, and Data API figures. These are documentation-governance findings under #195; they do not establish runtime acceptance or close #186.
 
+The [October 3 freshness observation](canonical-source-freshness-2026-10-03.md)
+found newer parent revisions and twelve inline objects in selected root tabs,
+including changed System Architecture and Security object identities. This audit
+remains a September 30 interpretation; current image bytes and visual
+reconciliation have not been refreshed by the later metadata observation.
+
 ## Capture provenance
 
 The parent document metadata still matches the pinned text captures. Native Docs `revisionId` is an opaque API token, distinct from the numeric Drive revisions below. Images were read from current native inline-object references; no historical image-revision identity is inferred. SHA-256 covers the retrieved PNG bytes. No authenticated download URLs or credentials are retained here.
