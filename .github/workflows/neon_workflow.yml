@@ -16,13 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Migration-relevance gate. Measured over the 50 pushes before this change,
-  # 48% were Release Please version merges and 14% touched only docs,
-  # requirements, infrastructure, or unrelated workflows — none of which can
-  # change what this workflow verifies (migrations plus the sharded remote
-  # integration slice). A skipped run certifies that the relevant state of its
-  # head commit equals the state of the last real verification; the matrix
-  # job then re-verifies as soon as any relevant path changes again.
+  # Migration-relevance gate. A successful baseline is required before any
+  # skip. A baseline counts only if the actual migration and integration
+  # steps succeeded on all shards; version-only changes are checked directly.
   changes:
     name: Classify migration relevance
     runs-on: ubuntu-slim
@@ -38,77 +34,20 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Find the last completed verification
-        id: baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          sha="$(gh api "repos/$REPOSITORY/actions/workflows/neon_workflow.yml/runs?branch=main&status=success&per_page=1" --jq '.runs[0].head_sha // ""')"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Classify migration relevance
         id: classify
         env:
-          BASELINE: ${{ steps.baseline.outputs.sha }}
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          set -euo pipefail
-          # Release Please version merges change version metadata only, and the
-          # content tree they publish was already verified by this workflow on
-          # the merge that produced them (the same argument as the managed
-          # validation caller's default-branch CodeQL skip).
-          if [ "${HEAD_MESSAGE#chore(main): release }" != "$HEAD_MESSAGE" ]; then
-            echo "verify=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Neon verify skipped::Release Please version merge; the published content tree is already verified."
-            exit 0
-          fi
-          # Fail open: without a completed verification of this branch there
-          # is nothing to diff against.
-          if [ -z "$BASELINE" ]; then
-            echo "verify=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Neon verify forced::No prior successful verification exists for main."
-            exit 0
-          fi
-          # Fail open: a rewritten history cannot be diffed against the
-          # recorded baseline state.
-          if ! git merge-base --is-ancestor "$BASELINE" "$GITHUB_SHA" 2>/dev/null; then
-            echo "verify=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Neon verify forced::The last verified commit is no longer an ancestor of this push."
-            exit 0
-          fi
-          # The newest completed run certifies the migration-relevant state of
-          # its head commit: real verifications directly, and chain skips
-          # transitively, because a skip only happens when nothing relevant
-          # changed since the state it chains from. Diffing against it covers
-          # every change since the last real verification.
-          relevant="$(git diff --name-only "$BASELINE" "$GITHUB_SHA" \
-            | grep -E -x \
-              -e 'apps/.*' \
-              -e 'packages/.*' \
-              -e 'scripts/integration-shards\.mjs' \
-              -e 'scripts/run-integration-tests\.mjs' \
-              -e 'tests/cp1-embedded-durable-execution\.test\.mjs' \
-              -e 'bun\.lock' \
-              -e 'bun\.lockb' \
-              -e '\.bun-version' \
-              -e 'package\.json' \
-              -e 'tsconfig\.json' \
-              -e 'turbo\.json' \
-              -e '\.github/workflows/neon_workflow\.yml' \
-            | head -n 1 || true)"
-          if [ -n "$relevant" ]; then
-            echo "verify=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Neon verify running::Migration-relevant changes since the last verified commit (first: $relevant)."
-          else
-            echo "verify=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Neon verify skipped::No migration-relevant changes since the last verified commit."
-          fi
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: node .github/scripts/neon-migration-gate.mjs
 
   verify_neon_preview:
     name: Verify Neon shard ${{ matrix.shard }} (migrations and integration slice)
     needs: [changes]
-    if: needs.changes.outputs.verify == 'true'
+    if: >-
+      !cancelled() &&
+      (needs.changes.result != 'success' || needs.changes.outputs.verify != 'false')
     runs-on: ubuntu-latest
     # Each case keeps an independent database. Remote migration setup alone
     # takes about 30 seconds per database; preserve that isolation and allow

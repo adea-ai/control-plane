@@ -1,6 +1,19 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
+import { isMigrationRelevantPath } from '../.github/scripts/neon-migration-gate.mjs'
 
 const workflow = readFileSync(
   new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
@@ -12,6 +25,180 @@ const pullRequestWorkflow = readFileSync(
 )
 const script = workflow.split("node <<'NODE'\n")[1]?.split('\n          NODE')[0]
 const cleanupScript = workflow.split("node <<'CLEANUP'\n")[1]?.split('\n          CLEANUP')[0]
+const migrationGateScript = fileURLToPath(
+  new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url)
+)
+const migrationGateSource = readFileSync(migrationGateScript, 'utf8')
+const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+const realNode = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
+const migrationVerifyStep = "Verify migrations and this shard's integration slice"
+const conformanceStep = 'Verify cross-profile conformance matrix (Postgres)'
+
+function runGateGit(repository, args) {
+  const result = spawnSync(realGit, args, { cwd: repository, encoding: 'utf8' })
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`)
+  }
+  return result.stdout.trim()
+}
+
+function writeGateFile(repository, relativePath, value) {
+  const path = join(repository, ...relativePath.split('/'))
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, value)
+}
+
+function verifiedJobs() {
+  return {
+    jobs: [1, 2, 3].map((shard) => ({
+      name: `Verify Neon shard ${shard} (migrations and integration slice)`,
+      status: 'completed',
+      conclusion: 'success',
+      steps: [
+        ...(shard === 1
+          ? [{ name: conformanceStep, status: 'completed', conclusion: 'success' }]
+          : []),
+        { name: migrationVerifyStep, status: 'completed', conclusion: 'success' },
+      ],
+    })),
+  }
+}
+
+function successfulRun(headSha, overrides = {}) {
+  return {
+    id: 42,
+    run_attempt: 1,
+    status: 'completed',
+    conclusion: 'success',
+    head_branch: 'main',
+    event: 'push',
+    head_sha: headSha,
+    ...overrides,
+  }
+}
+
+function runMigrationGate({
+  changedPaths = ['docs/notes.md'],
+  renamePaths = [],
+  baseFiles = {},
+  changedFiles = {},
+  baselineMode = 'ancestor',
+  response = undefined,
+  jobsResponses = undefined,
+  failQuery = false,
+  failJobs = false,
+  failDiff = false,
+  headMessage = 'fix: update docs',
+} = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'neon-migration-gate-'))
+  const repository = join(directory, 'repository')
+  const fakeBin = join(directory, 'bin')
+  const outputPath = join(directory, 'github-output')
+  const ghCallLog = join(directory, 'gh-call')
+  mkdirSync(repository)
+  mkdirSync(fakeBin)
+  writeFileSync(outputPath, '')
+
+  try {
+    runGateGit(repository, ['init', '--quiet', '--initial-branch=main'])
+    runGateGit(repository, ['config', 'user.name', 'Neon Gate Test'])
+    runGateGit(repository, ['config', 'user.email', 'neon-gate-test@example.invalid'])
+    runGateGit(repository, ['config', 'commit.gpgsign', 'false'])
+    runGateGit(repository, ['config', 'core.hooksPath', '/dev/null'])
+    writeGateFile(repository, 'README.md', 'base\n')
+    for (const [relativePath, contents] of Object.entries(baseFiles)) {
+      writeGateFile(repository, relativePath, contents)
+    }
+    runGateGit(repository, ['add', '--all'])
+    runGateGit(repository, ['commit', '--quiet', '-m', 'base'])
+    const mainBase = runGateGit(repository, ['rev-parse', 'HEAD'])
+    let baseline = mainBase
+
+    if (baselineMode === 'non-ancestor') {
+      runGateGit(repository, ['checkout', '--quiet', '--orphan', 'baseline'])
+      runGateGit(repository, ['rm', '--quiet', '--force', '-r', '.'])
+      writeGateFile(repository, 'BASELINE.md', 'unrelated history\n')
+      runGateGit(repository, ['add', '--all'])
+      runGateGit(repository, ['commit', '--quiet', '-m', 'unrelated baseline'])
+      baseline = runGateGit(repository, ['rev-parse', 'HEAD'])
+      runGateGit(repository, ['checkout', '--quiet', 'main'])
+    }
+
+    for (const relativePath of changedPaths) {
+      writeGateFile(repository, relativePath, changedFiles[relativePath] ?? 'changed\n')
+    }
+    for (const { from, to } of renamePaths) {
+      runGateGit(repository, ['mv', from, to])
+    }
+    runGateGit(repository, ['add', '--all'])
+    runGateGit(repository, ['commit', '--quiet', '--allow-empty', '-m', headMessage])
+    const head = runGateGit(repository, ['rev-parse', 'HEAD'])
+
+    const fakeGh = join(fakeBin, 'gh')
+    writeFileSync(
+      fakeGh,
+      `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs')
+const args = process.argv.slice(2).join(' ')
+appendFileSync(process.env.GH_CALL_LOG, args + '\\n')
+const isJobsRequest = /\\/actions\\/runs\\/(\\d+)\\/jobs\\?/.exec(args)
+if (isJobsRequest) {
+  if (process.env.GH_FAIL_JOBS === '1') process.exit(18)
+  const response = JSON.parse(process.env.GH_JOBS_RESPONSES)[isJobsRequest[1]]
+  if (response === undefined || response === null) process.exit(19)
+  process.stdout.write(typeof response === 'string' ? response : JSON.stringify(response))
+} else {
+  if (process.env.GH_FAIL_QUERY === '1') process.exit(17)
+  process.stdout.write(process.env.GH_RESPONSE)
+}
+`
+    )
+    chmodSync(fakeGh, 0o755)
+
+    if (failDiff) {
+      const fakeGit = join(fakeBin, 'git')
+      writeFileSync(
+        fakeGit,
+        '#!/bin/sh\nif [ "$1" = "diff" ]; then exit 2; fi\nexec "$GIT_REAL" "$@"\n'
+      )
+      chmodSync(fakeGit, 0o755)
+    }
+
+    const responseBody =
+      typeof response === 'function'
+        ? response({ baseline, head })
+        : (response ?? { workflow_runs: [successfulRun(baseline)] })
+    const jobsResponseBody = jobsResponses ?? { 42: verifiedJobs() }
+    const result = spawnSync(realNode, [migrationGateScript], {
+      cwd: repository,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ''}`,
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_SHA: head,
+        GH_CALL_LOG: ghCallLog,
+        GH_FAIL_QUERY: failQuery ? '1' : '',
+        GH_FAIL_JOBS: failJobs ? '1' : '',
+        GH_RESPONSE: JSON.stringify(responseBody),
+        GH_JOBS_RESPONSES: JSON.stringify(jobsResponseBody),
+        GIT_REAL: realGit,
+        GH_TOKEN: 'synthetic-token',
+        REPOSITORY: 'adea-ai/control-plane',
+      },
+    })
+
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+      output: readFileSync(outputPath, 'utf8'),
+      ghCall: existsSync(ghCallLog) ? readFileSync(ghCallLog, 'utf8') : '',
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
 
 function workflowEvents(source) {
   return source.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
@@ -336,49 +523,218 @@ describe('Neon restricted connection workflow', () => {
 })
 
 describe('Neon trusted-main migration gating', () => {
-  const classifyStart = workflow.indexOf('        id: classify')
-  const classifyEnd = workflow.indexOf('  verify_neon_preview:')
-  const classify = workflow.slice(classifyStart, classifyEnd)
+  test('the shard matrix skips only an explicit successful classifier skip', () => {
+    const verifyJob = workflow.split('\n  verify_neon_preview:\n')[1]
+    const conditionBlock = verifyJob.match(/^    if:\s*>-\n((?:      .*\n?)+)/m)?.[1]
+    const condition = conditionBlock?.replace(/\s+/g, ' ').trim()
+    expect(condition).toBeDefined()
+    expect(workflow).toContain('node .github/scripts/neon-migration-gate.mjs')
 
-  test('the shard matrix only runs when the classifier demands verification', () => {
-    expect(workflow).toContain(
-      "    needs: [changes]\n    if: needs.changes.outputs.verify == 'true'"
-    )
-  })
-
-  test('the baseline is the newest completed successful run of this workflow', () => {
-    expect(workflow).toContain(
-      'repos/$REPOSITORY/actions/workflows/neon_workflow.yml/runs?branch=main&status=success&per_page=1'
-    )
-    expect(workflow).toContain('\'.runs[0].head_sha // ""\'')
-  })
-
-  test('the classifier reads the full history to diff against the baseline', () => {
-    expect(workflow).toContain('fetch-depth: 0')
-    expect(workflow).toContain('git merge-base --is-ancestor "$BASELINE" "$GITHUB_SHA"')
-  })
-
-  test('release version merges never allocate a Neon verification', () => {
-    expect(classify).toContain('[ "${HEAD_MESSAGE#chore(main): release }" != "$HEAD_MESSAGE" ]')
-    expect(classify).toContain('verify=false')
-  })
-
-  test('the classifier fails open when it cannot prove irrelevance', () => {
-    expect(classify).toContain('if [ -z "$BASELINE" ]')
-    expect(classify).toContain('verify=true')
-  })
-
-  test('the relevant-path guard covers everything the shard slice executes', () => {
-    for (const pattern of [
-      "-e 'apps/.*'",
-      "-e 'packages/.*'",
-      "-e 'scripts/integration-shards\\.mjs'",
-      "-e 'scripts/run-integration-tests\\.mjs'",
-      "-e 'tests/cp1-embedded-durable-execution\\.test\\.mjs'",
-      "-e 'bun\\.lock'",
-      "-e '\\.github/workflows/neon_workflow\\.yml'",
-    ]) {
-      expect(classify).toContain(pattern)
+    const scenarios = [
+      { result: 'success', verify: 'false', cancelled: false, expected: false },
+      { result: 'success', verify: 'true', cancelled: false, expected: true },
+      { result: 'success', verify: '', cancelled: false, expected: true },
+      { result: 'failure', verify: 'false', cancelled: false, expected: true },
+      { result: 'skipped', verify: 'false', cancelled: false, expected: true },
+      { result: 'success', verify: 'false', cancelled: true, expected: false },
+    ]
+    for (const { result, verify, cancelled, expected } of scenarios) {
+      expect(
+        runInNewContext(condition, {
+          cancelled: () => cancelled,
+          needs: { changes: { result, outputs: { verify } } },
+        })
+      ).toBe(expected)
     }
+  })
+
+  test('reads a successful workflow_runs baseline and skips only unrelated changes', () => {
+    const result = runMigrationGate({ changedPaths: ['docs/notes.md'] })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+    expect(result.ghCall).toContain(
+      'repos/adea-ai/control-plane/actions/workflows/neon_workflow.yml/runs?branch=main&event=push&status=success&per_page=25'
+    )
+    expect(result.ghCall).toContain('/actions/runs/42/jobs?filter=latest&per_page=100')
+  }, 30_000)
+
+  test('requires a recent completed successful main push as the baseline candidate', () => {
+    for (const response of [
+      { workflow_runs: [] },
+      ({ baseline }) => ({
+        workflow_runs: [successfulRun(baseline, { event: 'workflow_dispatch' })],
+      }),
+      ({ baseline }) => ({
+        workflow_runs: [successfulRun(baseline, { head_branch: 'topic' })],
+      }),
+      ({ baseline }) => ({
+        workflow_runs: [successfulRun(baseline, { run_attempt: undefined })],
+      }),
+    ]) {
+      const result = runMigrationGate({ response, jobsResponses: {} })
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+    }
+  }, 30_000)
+
+  test('fails open when baseline or job APIs fail or have unexpected response shapes', () => {
+    for (const options of [
+      { failQuery: true },
+      { response: { runs: [{ head_sha: '0'.repeat(40) }] } },
+      { failJobs: true },
+      { jobsResponses: { 42: { runs: [] } } },
+    ]) {
+      const result = runMigrationGate(options)
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+    }
+  }, 30_000)
+
+  test('rejects green workflow runs whose actual shard verification did not succeed', () => {
+    const skippedJobs = { jobs: [] }
+    const unavailableJobs = verifiedJobs()
+    unavailableJobs.jobs[0].steps.find((step) => step.name === migrationVerifyStep).conclusion =
+      'skipped'
+    const missingShardJobs = verifiedJobs()
+    missingShardJobs.jobs.pop()
+    const failedIntegrationJobs = verifiedJobs()
+    failedIntegrationJobs.jobs[2].steps.find(
+      (step) => step.name === migrationVerifyStep
+    ).conclusion = 'failure'
+    const failedConformanceJobs = verifiedJobs()
+    failedConformanceJobs.jobs[0].steps.find((step) => step.name === conformanceStep).conclusion =
+      'skipped'
+    const duplicateShardJobs = verifiedJobs()
+    duplicateShardJobs.jobs.push({ ...duplicateShardJobs.jobs[0] })
+
+    for (const jobs of [
+      skippedJobs,
+      unavailableJobs,
+      missingShardJobs,
+      failedIntegrationJobs,
+      failedConformanceJobs,
+      duplicateShardJobs,
+    ]) {
+      const result = runMigrationGate({ jobsResponses: { 42: jobs } })
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+    }
+  }, 60_000)
+
+  test('finds an actual verified baseline below recent successful runs that skipped shards', () => {
+    const result = runMigrationGate({
+      response: ({ baseline, head }) => ({
+        workflow_runs: [successfulRun(head, { id: 43 }), successfulRun(baseline, { id: 42 })],
+      }),
+      jobsResponses: {
+        43: { jobs: [] },
+        42: verifiedJobs(),
+      },
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+    expect(result.ghCall).toContain('/actions/runs/43/jobs?filter=latest&per_page=100')
+    expect(result.ghCall).toContain('/actions/runs/42/jobs?filter=latest&per_page=100')
+  }, 30_000)
+
+  test('bounds the verification-baseline scan to 25 recent successful runs', () => {
+    const result = runMigrationGate({
+      response: ({ baseline }) => ({
+        workflow_runs: Array.from({ length: 26 }, (_, index) =>
+          successfulRun(baseline, { id: 100 + index })
+        ),
+      }),
+      jobsResponses: Object.fromEntries(
+        Array.from({ length: 26 }, (_, index) => [
+          String(100 + index),
+          index === 25 ? verifiedJobs() : { jobs: [] },
+        ])
+      ),
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
+    expect(result.ghCall.match(/\/actions\/runs\/\d+\/jobs\?/g)).toHaveLength(25)
+  }, 30_000)
+
+  test('fails open when the baseline is not an ancestor or the diff cannot be read', () => {
+    for (const options of [{ baselineMode: 'non-ancestor' }, { failDiff: true }]) {
+      const result = runMigrationGate(options)
+      expect(result.status).toBe(0)
+      expect(result.output).toBe('verify=true\n')
+    }
+  }, 30_000)
+
+  test('treats a relevant file renamed outside the included trees as relevant', () => {
+    const result = runMigrationGate({
+      baseFiles: { 'packages/database/src/schema.ts': 'unchanged content\n' },
+      renamePaths: [{ from: 'packages/database/src/schema.ts', to: 'docs/schema-notes.md' }],
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
+  }, 30_000)
+
+  test('runs for migration, integration, conformance, and toolchain inputs', () => {
+    for (const changedPath of [
+      '.github/actions/checkout/action.yml',
+      'apps/control-api/src/server.ts',
+      'packages/database/src/schema.ts',
+      'scripts/integration-shards.mjs',
+      'scripts/run-cloud-remote-drill.mjs',
+      'scripts/run-integration-tests.mjs',
+      'tests/cp1-embedded-durable-execution.test.mjs',
+      'tests/integration-shards.test.mjs',
+      '.mise.toml',
+      '.github/code-foundry.yml',
+      '.github/workflows/neon_workflow.yml',
+      '.github/scripts/neon-migration-gate.mjs',
+      '.bun-version',
+      '.node-version',
+      '.npmrc',
+      '.release-please-manifest.json',
+      '.tool-versions',
+      'bun.lock',
+      'bunfig.toml',
+      'package.json',
+      'turbo.json',
+      'tsconfig.json',
+    ]) {
+      expect(isMigrationRelevantPath(changedPath)).toBe(true)
+    }
+    expect(isMigrationRelevantPath('docs/notes.md')).toBe(false)
+    expect(isMigrationRelevantPath('scripts/run-postgres-restore-drill.mjs')).toBe(false)
+  })
+
+  test('a Release Please commit with migration-relevant changes still runs verification', () => {
+    const result = runMigrationGate({
+      changedPaths: ['packages/database/src/schema.ts'],
+      headMessage: 'chore(main): release 1.71.2',
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=true\n')
+  }, 30_000)
+
+  test('skips a Release Please commit only when a successful baseline proves metadata-only changes', () => {
+    const result = runMigrationGate({
+      baseFiles: {
+        'package.json': JSON.stringify({ name: 'fixture', version: '1.0.0', private: true }),
+        '.release-please-manifest.json': JSON.stringify({ '.': '1.0.0' }),
+        'CHANGELOG.md': '# Changelog\n\nPrevious release.\n',
+      },
+      changedPaths: ['package.json', '.release-please-manifest.json', 'CHANGELOG.md'],
+      changedFiles: {
+        'package.json': JSON.stringify({ name: 'fixture', version: '1.0.1', private: true }),
+        '.release-please-manifest.json': JSON.stringify({ '.': '1.0.1' }),
+        'CHANGELOG.md': '# Changelog\n\nNew release.\n',
+      },
+      headMessage: 'chore(main): release 1.0.1 (#1)',
+    })
+    expect(result.status).toBe(0)
+    expect(result.output).toBe('verify=false\n')
+  }, 30_000)
+
+  test('the workflow checks out full history for baseline ancestry and diffing', () => {
+    expect(workflow).toContain('fetch-depth: 0')
+    expect(migrationGateSource).toContain('merge-base')
+    expect(migrationGateSource).toContain('.workflow_runs')
   })
 })
