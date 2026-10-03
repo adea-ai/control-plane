@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.2](https://github.com/adea-ai/control-plane/compare/database-v1.39.1...database-v1.39.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **testing:** preserve local budgets and forward remote timeouts ([#849](https://github.com/adea-ai/control-plane/issues/849)) ([8b564a9](https://github.com/adea-ai/control-plane/commit/8b564a9ee7535780a688f20789a34dac3573fd98))
+
 ## [1.39.1](https://github.com/adea-ai/control-plane/compare/database-v1.39.0...database-v1.39.1) (2026-10-03)
 
 
