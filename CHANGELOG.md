@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.66.1...workspace-v1.66.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **railway:** preserve promoted image in production plans ([#855](https://github.com/adea-ai/control-plane/issues/855)) ([f8573a2](https://github.com/adea-ai/control-plane/commit/f8573a2da193f510943c9965f4947878f830df18))
+
 ## [1.66.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.66.0...workspace-v1.66.1) (2026-10-03)
 
 

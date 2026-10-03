@@ -29,13 +29,14 @@ Keep runtime database credentials separate from migration/admin authority. Keep 
 
 The Railway project has isolated `staging` and `production` environments. The Cloud activation
 topology is the public `control-api`, private `workflow-worker`, and separately pinned `restate`
-runtime. The live-state readback from 2026-09-29 12:21 UTC is recorded in
-[`evidence/m11-railway-readback-2026-09-29.md`](evidence/m11-railway-readback-2026-09-29.md) and
-supersedes the previous current-state description below. Staging remains on-demand, with compute
-stopped between qualification runs and its Restate volume retained. Production's latest API and
-worker deployments reported `SUCCESS` at 08:39 UTC, and its Restate service reported `SUCCESS` with
-one replica and a retained volume. Their observed source revision predates current `main`. These
-deployment statuses do not establish production availability or M11 profile acceptance.
+runtime. The 2026-10-03 live-state readback is recorded in
+[`evidence/cost-followup-2026-10-03.md`](evidence/cost-followup-2026-10-03.md) and supersedes the
+older 2026-09-29 snapshot below. Production now contains only the public control-api service at
+0.5 CPU/1 GiB with `/health` liveness; worker, Restate, and its former production volume were
+removed. Staging still has the three configured services but no active deployment, and the latest
+inventory found no Restate volume or mount. Deployment status does not establish production
+availability or M11 profile acceptance. The staging definition and standby procedure preserve a
+volume when one exists; they do not prove that it exists or provision it when absent.
 
 Use these terms precisely:
 
@@ -68,7 +69,7 @@ production certification. Production promotion remains a separate reviewed relea
 configured replica count of zero in both the TypeScript Infrastructure as Code schema and the live
 service update API, so `.railway/railway.ts` describes the explicit one-replica activation shape.
 Standby disconnects application sources and removes the exact active deployment revisions while
-retaining services, settings, and volumes. The guarded command also inventories and removes
+retaining services, settings, and any volumes that exist. The guarded command also inventories and removes
 reactivatable nonterminal revisions so a delayed build cannot start compute after standby has been
 verified. Applying the Infrastructure as Code file can start compute; it must never be used as an
 ordinary standby reconciliation command.
@@ -86,10 +87,10 @@ the null-source configuration-patch route was observed to leave the source uncha
 
 The baseline is:
 
-| Environment | 2026-09-29 observed state                                                                                                                                                 | Operating intent                                           | Persistent state                                                |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
-| staging     | No successful active deployment; API/worker status failed 2026-09-16, Restate last success 2026-08-28; later attempts removed through 2026-09-28                          | On-demand qualification; stop compute between runs         | Retain Restate volume; Neon/R2 remain provider-managed          |
-| production  | API/worker deployments `SUCCESS` at 08:39 UTC on commit `61700f346663fbb9fb62d1fc27c859362ae2d4f1`; post-deploy API `/ready` returned 200; Restate `SUCCESS`, one replica | Availability remains gated; deployed commit is behind main | 500 MB Restate volume retained; Neon/R2 remain provider-managed |
+| Environment | 2026-10-03 observed state                                                                                 | Operating intent                                   | Persistent state                                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| staging     | Three configured services; no active serving deployment; current inventory has no Restate volume or mount | On-demand qualification; stop compute between runs | Provision the declared 500 MB volume and request identity if either is absent; Neon/R2 remain provider-managed         |
+| production  | control-api only, 0.5 CPU/1 GiB, `/health` liveness; worker, Restate, and former Restate volume removed   | Availability remains gated                         | No production Restate volume; future runtime reactivation requires fresh provisioning; Neon/R2 remain provider-managed |
 
 Production API logs also continue to report retention sweeps blocked on command-inbox and execution-event eligibility. Treat retention policy and its operational evidence as an open M11 gate; deployment health does not close it.
 
@@ -106,7 +107,8 @@ autoscaling target.
 To activate staging for a bounded Cloud test:
 
 1. Confirm the intended `main` commit for the Railway staging deployment, Railway variables, Neon
-   staging branch/schema, R2 mapping, and retained Restate volume.
+   staging branch/schema, and R2 mapping. Check the configured Restate volume and identity against
+   live state; provision the 500 MB volume and matching request identity keypair if either is absent.
 2. Run `railway config plan` while linked to staging and review every change. Run
    `railway config apply` to reconcile the activation profile, reconnect the staging sources, and
    deploy the one-replica topology. A source-only redeploy is acceptable when the project graph is
@@ -602,9 +604,11 @@ first event deletion on a PostgreSQL deployment.
 ## Restate operations
 
 - Restate is the only required durable workflow runtime for the accepted release path.
-- Railway staging runs the immutable Restate image recorded in `infrastructure/railway/restate.json`,
-  with a persistent `/restate-data` volume and stable node name. Never replace it with a floating
-  image tag or an ephemeral filesystem deployment.
+- Railway staging is configured to run the immutable Restate image recorded in
+  `infrastructure/railway/restate.json`, with a persistent `/restate-data` volume and stable node
+  name. The latest live inventory found no staging volume or mount, so provision and verify these
+  before activation when absent. Never replace the volume-backed design with a floating image tag or
+  an ephemeral filesystem deployment.
 - Keep ingress, Admin API, and fabric ports private. Register `workflow-worker` through its Railway
   private-network endpoint and verify that the registration survives a Restate service restart.
 - Treat the volume-backed Restate node as a singleton during replacement: remove its active Railway

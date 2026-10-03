@@ -1,4 +1,5 @@
 import { defineRailway, github, image, preserve, project, service, volume } from 'railway/iac'
+import { resolveApplicationSource } from './production-source.js'
 
 const repository = 'adea-ai/control-plane'
 const restateImage =
@@ -13,15 +14,21 @@ export default defineRailway((context) => {
   // branch; see infrastructure/railway/environment.json.
   const sourceBranch = 'main'
   const desiredReplicas = 1
-  // Production image sources are release outputs, not source builds. The
-  // container-promotion workflow sets each service to its scan-attested GHCR
-  // digest; leaving source absent here prevents IaC reconciliation from
-  // replacing that immutable digest with a repository build.
-  const applicationSource = production ? undefined : github(repository, { branch: sourceBranch })
+  // Production promotes control-api only. The planning helper supplies the
+  // exact image currently configured by the promotion workflow after checking
+  // that it matches the active successful deployment; direct production
+  // authoring fails closed when that verified image is unavailable.
+  const controlApiSource = resolveApplicationSource({
+    production,
+    repository,
+    branch: sourceBranch,
+    productionImage: process.env.CONTROL_PLANE_PRODUCTION_IMAGE,
+  })
+  const workflowWorkerSource = github(repository, { branch: sourceBranch })
   const restateData = volume('restate-data', { sizeMB: 500, region: 'ams' })
 
   const controlApi = service('@control-plane/control-api', {
-    ...(applicationSource === undefined ? {} : { source: applicationSource }),
+    source: controlApiSource,
     build: {
       builder: 'RAILPACK',
       buildCommand: 'bun run build --filter=@control-plane/control-api...',
@@ -42,13 +49,13 @@ export default defineRailway((context) => {
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 5,
-      // The registry refresh reads the small latest-pointer every interval
-      // and downloads the ~50 MB immutable artifact set only when the pointer
-      // names a catalog identity the service does not already hold, so the
-      // steady-state heap no longer churns. 1 GiB covers the cold-start full
-      // download plus the API; the earlier 2 GiB limit existed for the
-      // per-minute full-catalog polling that the skip-on-unchanged refresh
-      // removed.
+      // The latest registry object is itself the full catalog (27,242,051
+      // bytes in current GitHub metadata), not a small pointer. A separate
+      // conditional ETag refresh was implemented in PR #853 so unchanged
+      // polls can be bodyless (304); changed catalogs still require the full
+      // response. Production release verification is still pending.
+      // Keep the configured 1 GiB limit under measurement review; this comment
+      // does not claim the unchanged-poll optimization is in production.
       limitOverride: {
         containers: { cpu: 0.5, memoryBytes: 1_073_741_824 },
       },
@@ -94,7 +101,7 @@ export default defineRailway((context) => {
   })
 
   const workflowWorker = service('@control-plane/workflow-worker', {
-    ...(applicationSource === undefined ? {} : { source: applicationSource }),
+    source: workflowWorkerSource,
     build: {
       builder: 'RAILPACK',
       buildCommand: 'bun run build --filter=@control-plane/workflow-worker...',
