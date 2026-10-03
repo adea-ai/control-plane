@@ -38,6 +38,7 @@ import {
   ToolRegistryError,
   toolInputMatchesDigest,
 } from '@control-plane/tool-execution'
+import type { ToolRateLimiter } from '@control-plane/tool-execution/execution'
 import {
   DurableToolCallRequestSchema,
   type ToolCall,
@@ -403,14 +404,18 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
         sourceId: `${request.toolCallId}:${this.#binding.configurationDigest}`,
         idempotencyKey: `${operation.idempotencyKey}:${stage}`,
       })
-      await this.#ledger.reserve({
+      const admissionRateLimiter = createHostedGraphToolAdmissionRateLimiter({
+        database: this.#options.database,
+        cancellations: this.#cancellations,
+        rateLimiter: this.#rateLimiter,
+        now: this.#now,
         workspaceId: operation.workspaceId,
         executionId: operation.executionId,
         attemptId,
         reservationKey: operation.idempotencyKey,
         maximumMicrounits: this.#binding.configuration.costMicrounits,
-        maximumTokens: 0,
-        source: source('reserve'),
+        reserveSource: source('reserve'),
+        toolCallId: request.toolCallId,
       })
 
       const registry = new ToolRegistry(
@@ -438,7 +443,7 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
         gateway,
         calls,
         now: this.#now,
-        rateLimiter: this.#rateLimiter,
+        rateLimiter: admissionRateLimiter,
         authorizer: {
           authorize: async (candidate) => {
             if (
@@ -522,33 +527,12 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
         } catch {
           throw new GraphNodeEffectUnconfirmedError()
         }
-        if (
-          call === undefined &&
-          error instanceof Error &&
-          error.message === 'HOSTED_GRAPH_TOOL_CANCELLED'
-        ) {
-          try {
-            await this.#ledger.settle({
-              workspaceId: operation.workspaceId,
-              executionId: operation.executionId,
-              reservationKey: operation.idempotencyKey,
-              source: source('settle'),
-            })
-          } catch {
-            throw new GraphNodeEffectUnconfirmedError()
-          }
-        }
         if (call && ['executing', 'reconciliation_required', 'succeeded'].includes(call.status)) {
           throw new GraphNodeEffectUnconfirmedError()
         }
         if (call && ['failed', 'denied'].includes(call.status)) {
           try {
-            await this.#ledger.settle({
-              workspaceId: operation.workspaceId,
-              executionId: operation.executionId,
-              reservationKey: operation.idempotencyKey,
-              source: source('settle'),
-            })
+            await this.#settleIfReserved(call)
           } catch {
             throw new GraphNodeEffectUnconfirmedError()
           }
@@ -595,6 +579,8 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
         if (!accounted) confirmed = false
         continue
       }
+      let cancelledWithoutEffect =
+        call.status === 'denied' && call.errorCode === 'GRAPH_TOOL_CANCELLED'
       if (['requested', 'awaiting_approval', 'authorized'].includes(call.status)) {
         const at = this.#now()
         const next: ToolCall = {
@@ -609,32 +595,58 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
           confirmed = false
           continue
         }
+        cancelledWithoutEffect = true
       }
       if (
         ['requested', 'awaiting_approval', 'authorized', 'failed', 'denied'].includes(call.status)
       ) {
-        try {
-          if (call.approvalInteractionId) {
+        if (call.approvalInteractionId) {
+          try {
             await new InteractionService(this.#options.interactions).resolveTerminal(
               call.approvalInteractionId,
               this.#now()
             )
+          } catch {
+            confirmed = false
           }
-          await this.#ledger.settle({
-            workspaceId: call.workspaceId,
-            executionId,
-            reservationKey: call.idempotencyKey,
-            source: {
-              sourceId: call.toolCallId,
-              idempotencyKey: `${call.idempotencyKey}:settle`,
-            },
-          })
+        }
+        if (cancelledWithoutEffect) {
+          try {
+            await this.#rateLimiter.release(
+              [call.workspaceId, call.principalRef, call.toolDefinitionId, call.operation].join(
+                ':'
+              ),
+              call.toolCallId
+            )
+          } catch {
+            confirmed = false
+          }
+        }
+        try {
+          await this.#settleIfReserved(call)
         } catch {
           confirmed = false
         }
       }
     }
     return confirmed
+  }
+
+  async #settleIfReserved(call: ToolCall): Promise<void> {
+    const hasReservation = await this.#usageStore.transaction(
+      call.workspaceId,
+      async (transaction) => Boolean(await transaction.getEffect(`${call.idempotencyKey}:reserve`))
+    )
+    if (!hasReservation) return
+    await this.#ledger.settle({
+      workspaceId: call.workspaceId,
+      executionId: call.executionId,
+      reservationKey: call.idempotencyKey,
+      source: {
+        sourceId: `${call.toolCallId}:${this.#binding.configurationDigest}`,
+        idempotencyKey: `${call.idempotencyKey}:settle`,
+      },
+    })
   }
 }
 
@@ -752,6 +764,58 @@ export async function authorizeHostedGraphTool(
     version,
     toolOperation,
     requiresApproval,
+  }
+}
+
+/** Atomically admits quota and a budget reservation after a durable call exists. */
+export function createHostedGraphToolAdmissionRateLimiter(input: {
+  readonly database: ControlPlaneDatabase
+  readonly cancellations: PostgresGraphToolCancellationRepository
+  readonly rateLimiter: PostgresToolRateLimiter
+  readonly now: () => string
+  readonly workspaceId: string
+  readonly executionId: string
+  readonly attemptId: string
+  readonly reservationKey: string
+  readonly maximumMicrounits: number
+  readonly reserveSource: { readonly sourceId: string; readonly idempotencyKey: string }
+  readonly toolCallId: string
+}): ToolRateLimiter {
+  return {
+    consume: async (key, limit, windowMs, requestedAt, toolCallId) => {
+      if (toolCallId !== input.toolCallId) throw new Error('HOSTED_GRAPH_TOOL_CALL_MISMATCH')
+      return input.database.transaction(async (transaction) => {
+        await input.cancellations.assertNotCancelledInTransaction(
+          transaction,
+          input.executionId,
+          input.workspaceId
+        )
+        const admitted = await input.rateLimiter.consumeInTransaction(
+          transaction,
+          key,
+          limit,
+          windowMs,
+          requestedAt,
+          toolCallId
+        )
+        if (!admitted) return false
+        await PostgresDurableUsageStore.withTransaction(
+          transaction,
+          input.workspaceId,
+          async (store) =>
+            new DurableUsageLedger({ store, now: input.now }).reserve({
+              workspaceId: input.workspaceId,
+              executionId: input.executionId,
+              attemptId: input.attemptId,
+              reservationKey: input.reservationKey,
+              maximumMicrounits: input.maximumMicrounits,
+              maximumTokens: 0,
+              source: input.reserveSource,
+            })
+        )
+        return true
+      })
+    },
   }
 }
 

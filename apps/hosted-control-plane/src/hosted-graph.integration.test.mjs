@@ -351,6 +351,10 @@ describe.skipIf(!enabled)('Hosted Server graph over PostgreSQL and Restate', () 
       const ledger = new DurableUsageLedger({
         store: new PostgresDurableUsageStore(workspaceDatabase),
       })
+      expect(await ledger.summary(workspaceId, executionId)).toMatchObject({
+        spentMicrounits: 0,
+        reservedMicrounits: 0,
+      })
       expect(
         (await ledger.entries(workspaceId, executionId)).filter(
           ({ kind }) => kind === 'tool_charge'
