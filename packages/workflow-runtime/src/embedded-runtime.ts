@@ -251,17 +251,18 @@ export class EmbeddedWorkflowRuntime {
     const store = this.#store
     const now = () => this.#now()
     const poll = (signal?: AbortSignal) => sleep(this.#pollIntervalMs, signal)
+    const cancellationRequested = async () => {
+      if ((await store.getCancellation(workflowKey)) !== undefined) return true
+      return (
+        workflowKey !== input.executionId &&
+        (await store.getCancellation(input.executionId)) !== undefined
+      )
+    }
     const entryControl = (async (): Promise<
       { cancelled: true } | { deadlineReached: true } | Record<string, never>
     > => {
-      const cancellation = await store.getCancellation(workflowKey)
-      const executionCancellation =
-        workflowKey === input.executionId
-          ? undefined
-          : await store.getCancellation(input.executionId)
-      if (cancellation !== undefined || executionCancellation !== undefined)
-        return { cancelled: true }
-      if (Date.now() >= deadlineMs) return { deadlineReached: true }
+      if (await cancellationRequested()) return { cancelled: true }
+      if (Date.parse(now()) >= deadlineMs) return { deadlineReached: true }
       return {}
     })()
     return {
@@ -291,11 +292,10 @@ export class EmbeddedWorkflowRuntime {
         const terminalWatch = (async (): Promise<ActivityRaceResult<Value> | undefined> => {
           for (;;) {
             if (settled) return undefined
-            const cancellation = await store.getCancellation(workflowKey)
-            if (cancellation !== undefined) {
+            if (await cancellationRequested()) {
               return { type: 'terminal', control: { cancelled: true } satisfies TerminalControl }
             }
-            if (Date.now() >= deadlineMs) {
+            if (Date.parse(now()) >= deadlineMs) {
               return {
                 type: 'terminal',
                 control: { deadlineReached: true } satisfies TerminalControl,
@@ -314,9 +314,8 @@ export class EmbeddedWorkflowRuntime {
         }
       },
       checkTerminal: async (): Promise<TerminalControl | undefined> => {
-        const cancellation = await store.getCancellation(workflowKey)
-        if (cancellation !== undefined) return { cancelled: true }
-        if (Date.now() >= deadlineMs) return { deadlineReached: true }
+        if (await cancellationRequested()) return { cancelled: true }
+        if (Date.parse(now()) >= deadlineMs) return { deadlineReached: true }
         return undefined
       },
     }

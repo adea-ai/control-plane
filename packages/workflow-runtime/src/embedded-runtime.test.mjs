@@ -383,6 +383,50 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
+  test('cancellation of the original execution stops an in-flight recovery activity', async () => {
+    await withRuntime(async ({ provider }) => {
+      const { activities } = fakeActivities()
+      let signalContinuationStarted
+      const continuationStarted = new Promise((resolve) => {
+        signalContinuationStarted = resolve
+      })
+      activities.continueGraphSegment = async () => {
+        signalContinuationStarted()
+        return new Promise(() => {})
+      }
+      const input = {
+        ...workflowInput,
+        graph: {
+          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+          threadId: `graph:${executionId}`,
+          reference: {
+            graphDefinitionId: 'uncertain-tool',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'b'.repeat(64)}`,
+          },
+          input: { task: 'already-persisted-input' },
+        },
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submitRecovery(input, {
+        recoveryId: 'recovery-cancel-in-flight-01',
+        checkpointId: 'checkpoint-original',
+      })
+      const recoveryKey = `${executionId}:graph-recovery:recovery-cancel-in-flight-01`
+      await continuationStarted
+      await dispatcher.cancel(cancellationCommand)
+      await waitFor(async () => (await store.get(recoveryKey))?.status === 'succeeded')
+      expect((await store.get(recoveryKey)).outcome.status).toBe('cancelled')
+      expect(
+        activities.calls.some(
+          ([name, payload]) => name === 'cancelActive' && payload.reason === 'user_request'
+        )
+      ).toBe(true)
+      await runtime.stop()
+    })
+  })
+
   test('cleans up started runtimes and providers when a fixture callback fails', async () => {
     let provider
     let runtime
@@ -581,17 +625,21 @@ describe('EmbeddedWorkflowRuntime', () => {
 
   test('a passed deadline finishes a hung workflow as timed_out', async () => {
     await withRuntime(async ({ provider }) => {
+      // Advance the injected clock only after dispatch starts, so queue latency
+      // cannot turn this into the separate pre-start deadline case.
+      let clock = Date.now() + 24 * 60 * 60_000
       const { activities } = fakeActivities(() => new Promise(() => {}))
-      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities, {
+        now: () => new Date(clock).toISOString(),
+        leaseMs: 60_000,
+      })
       await runtime.start()
       await dispatcher.submit({
         ...workflowInput,
-        // Long enough that the runner claims the job and creates the attempt
-        // first (even on a loaded CI host); the deadline then interrupts the
-        // hung dispatch activity mid-flight.
-        deadlineAt: new Date(Date.now() + 750).toISOString(),
+        deadlineAt: new Date(clock + 1_000).toISOString(),
       })
       await waitFor(async () => activities.calls.some(([name]) => name === 'dispatch'), 5_000)
+      clock += 1_000
       await waitFor(async () => (await store.get(executionId))?.status === 'succeeded', 15_000)
       const job = await store.get(executionId)
       expect(job.outcome.status).toBe('timed_out')

@@ -45,6 +45,32 @@ reviewed head `85a9225`, covers PostgreSQL RED/GREEN with 6 tests and 70 asserti
 `bun run test:recovery-matrix` with 22 named scenarios, 168 database tests, and 40 workspace tasks.
 That recovery evidence is supplemental and is not part of this launcher test.
 
+### CI timing follow-up — 2026-10-03
+
+The first [PR #851 unit run](https://github.com/adea-ai/control-plane/actions/runs/37084018825/job/111090587555)
+failed three tests with seed `1104`. Two durable graph happy paths used a one-second
+tool budget around real filesystem writes; their ToolCalls reported `TIMEOUT` and
+correctly held the outcome for reconciliation. A bounded reproduction delayed a
+committed write receipt by 1.5 seconds and reproduced that classification. The
+durable-effect fixture now has a bounded 30-second tool budget, and the same
+delayed write returns its verified Artifact. The supported launcher's five-second
+tool budget is unchanged. Dedicated timeout-policy tests retain their short
+intentional deadlines.
+
+The embedded deadline test used a 750-millisecond wall-clock deadline and a
+500-millisecond lease, making its intended in-flight cancellation depend on host
+timing. Deadline checks now use the same injected runtime clock as queue and lease
+operations; the default remains the current wall-clock time. The test advances
+that clock only after observing dispatch and keeps the lease valid throughout.
+The injected-clock regression failed before the runtime change and passed after
+it. The two affected files passed 38 tests and 141 expectations with seed `1104`.
+
+The integrated `bun run test` then passed 2,101 unit tests, 185 E2E tests, and
+246 smoke tests with zero failures. Two PostgreSQL smoke cases were explicitly
+skipped because that command did not supply a PostgreSQL integration environment.
+Unit coverage was 85.51% lines and 78.47% functions. This rerun is repository
+regression evidence, not deployed or full-milestone acceptance.
+
 ## Limits
 
 The launcher does not migrate prior `tool-effects` records or rewrite an already published version

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.65.2...workspace-v1.66.0) (2026-10-03)
+
+
+### Features
+
+* **local:** support configured graph tools through the launcher ([#851](https://github.com/adea-ai/control-plane/issues/851)) ([25ae017](https://github.com/adea-ai/control-plane/commit/25ae017edafd509d799a6a7a0acf58e89452c72b))
+
 ## [1.65.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.65.1...workspace-v1.65.2) (2026-10-03)
 
 
