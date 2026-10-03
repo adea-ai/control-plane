@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { RuntimeUsageSchema } from '@control-plane/runtime-sdk'
 import type { JsonValue, PersistenceProvider, PersistenceRecord } from '@control-plane/deployment'
@@ -39,10 +40,26 @@ export const WorkflowJobLeaseSchema = z.strictObject({
   expiresAt: validTimestampSchema(),
 })
 
+export const WorkflowGraphRecoverySchema = z.strictObject({
+  recoveryId: z
+    .string()
+    .min(16)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/),
+  checkpointId: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
+  /** Server-derived causal parent; absent only on legacy recovery jobs. */
+  parentWorkflowKey: z.string().min(1).max(512).optional(),
+})
+
 export const WorkflowJobRecordSchema = z.strictObject({
   workflowKey: z.string().min(1).max(512),
   status: WorkflowJobStatusSchema,
   input: z.unknown(),
+  recovery: WorkflowGraphRecoverySchema.optional(),
   attempt: z.number().int().nonnegative(),
   maximumAttempts: z.number().int().positive().max(100),
   runAt: validTimestampSchema().optional(),
@@ -65,13 +82,20 @@ export const WorkflowInteractionResponseSchema = z.strictObject({
 export type WorkflowJobStatus = z.output<typeof WorkflowJobStatusSchema>
 export type WorkflowJobOutcome = z.output<typeof WorkflowJobOutcomeSchema>
 export type WorkflowJobLease = z.output<typeof WorkflowJobLeaseSchema>
+export type WorkflowGraphRecovery = z.output<typeof WorkflowGraphRecoverySchema>
 export type WorkflowJobRecord = z.output<typeof WorkflowJobRecordSchema>
 export type StoredWorkflowInteractionResponse = z.output<typeof WorkflowInteractionResponseSchema>
+
+export interface WorkflowJobSnapshotRow {
+  readonly revision: number
+  readonly job: WorkflowJobRecord
+}
 
 export interface WorkflowJobEnqueueInput {
   /** Durable identity of the workflow invocation; the execution id for the lifecycle workflow. */
   readonly workflowKey: string
   readonly input: unknown
+  readonly recovery?: WorkflowGraphRecovery
   readonly maximumAttempts?: number
   /** Earliest claim time; defaults to `at` so accepted work is immediately due. */
   readonly runAt?: string
@@ -165,6 +189,9 @@ export class WorkflowJobStore {
       workflowKey,
       status: 'queued',
       input: json(input.input),
+      ...(input.recovery === undefined
+        ? {}
+        : { recovery: WorkflowGraphRecoverySchema.parse(input.recovery) }),
       attempt: 0,
       maximumAttempts: input.maximumAttempts ?? 5,
       runAt: input.runAt === undefined ? at : validTimestamp(input.runAt),
@@ -178,6 +205,7 @@ export class WorkflowJobStore {
         return { outcome: 'duplicate' as const, record: decodeJob(existing.value) }
       }
       await this.options.beforeEnqueue?.(transaction, record)
+      await assertRecoveryParent(transaction, record)
       await transaction.put({ namespace: namespaces.jobs, id, value: json(record) })
       return { outcome: 'created' as const, record }
     })
@@ -188,6 +216,30 @@ export class WorkflowJobStore {
     return this.provider.transaction(async (transaction) => {
       const record = await transaction.get(namespaces.jobs, id)
       return record === undefined ? undefined : decodeJob(record.value)
+    })
+  }
+
+  /** Reads the root execution job and all of its recovery jobs in one snapshot. */
+  async getExecutionGraphJobsSnapshot(executionId: string): Promise<WorkflowJobSnapshotRow[]> {
+    const rootKey = validWorkflowKey(executionId)
+    const recoveryPrefix = `${rootKey}:graph-recovery:`
+    return this.provider.transaction(async (transaction) => {
+      const jobs: WorkflowJobSnapshotRow[] = []
+      for (const record of await transaction.list(namespaces.jobs)) {
+        const candidate = record.value as Record<string, unknown> | null
+        const workflowKey = candidate?.['workflowKey']
+        if (
+          workflowKey !== rootKey &&
+          !(typeof workflowKey === 'string' && workflowKey.startsWith(recoveryPrefix))
+        )
+          continue
+        const job = decodeJob(record.value)
+        if (record.id !== recordId(job.workflowKey))
+          throw new Error('WORKFLOW_JOB_IDENTITY_MISMATCH')
+        jobs.push({ revision: record.revision, job })
+      }
+      jobs.sort((left, right) => compareCodePointOrder(left.job.workflowKey, right.job.workflowKey))
+      return jobs
     })
   }
 
@@ -510,6 +562,61 @@ export class WorkflowJobStore {
     }
     if (job.status !== 'running' && job.status !== 'waiting') return undefined
     return [record, job]
+  }
+}
+
+async function assertRecoveryParent(
+  transaction: RecordTransaction,
+  child: WorkflowJobRecord
+): Promise<void> {
+  const recovery = child.recovery
+  const parentWorkflowKey = recovery?.parentWorkflowKey
+  if (recovery === undefined || parentWorkflowKey === undefined) return
+
+  const marker = ':graph-recovery:'
+  const markerIndex = child.workflowKey.indexOf(marker)
+  if (markerIndex <= 0 || child.workflowKey.indexOf(marker, markerIndex + 1) !== -1)
+    throw new Error('WORKFLOW_RECOVERY_PARENT_INVALID')
+  const executionId = child.workflowKey.slice(0, markerIndex)
+  const recoveryPrefix = `${executionId}${marker}`
+  if (
+    child.workflowKey !== `${recoveryPrefix}${recovery.recoveryId}` ||
+    (parentWorkflowKey !== executionId && !parentWorkflowKey.startsWith(recoveryPrefix))
+  )
+    throw new Error('WORKFLOW_RECOVERY_PARENT_INVALID')
+
+  const parentRecord = await transaction.get(namespaces.jobs, recordId(parentWorkflowKey))
+  if (parentRecord === undefined) throw new Error('WORKFLOW_RECOVERY_PARENT_MISSING')
+  if (parentRecord.id !== recordId(parentWorkflowKey))
+    throw new Error('WORKFLOW_JOB_IDENTITY_MISMATCH')
+  const parent = decodeJob(parentRecord.value)
+  if (
+    parent.workflowKey !== parentWorkflowKey ||
+    parent.status !== 'succeeded' ||
+    parent.outcome?.status !== 'reconciliation_required' ||
+    parent.outcome.graphCheckpointId !== recovery.checkpointId ||
+    !isDeepStrictEqual(parent.input, child.input)
+  )
+    throw new Error('WORKFLOW_RECOVERY_PARENT_MISMATCH')
+
+  for (const record of await transaction.list(namespaces.jobs)) {
+    const candidate = record.value as Record<string, unknown> | null
+    const existingWorkflowKey = candidate?.['workflowKey']
+    if (typeof existingWorkflowKey !== 'string' || !existingWorkflowKey.startsWith(recoveryPrefix))
+      continue
+    if (candidate?.['recovery'] === undefined || candidate?.['recovery'] === null)
+      throw new Error('WORKFLOW_RECOVERY_PARENT_INVALID')
+    const existing = decodeJob(record.value)
+    if (record.id !== recordId(existing.workflowKey))
+      throw new Error('WORKFLOW_JOB_IDENTITY_MISMATCH')
+    if (existing.workflowKey === child.workflowKey) continue
+    if (existing.recovery?.parentWorkflowKey === parentWorkflowKey)
+      throw new Error('WORKFLOW_RECOVERY_PARENT_ALREADY_CONTINUED')
+    if (
+      existing.recovery?.parentWorkflowKey === undefined &&
+      existing.recovery?.checkpointId === parent.outcome.graphCheckpointId
+    )
+      throw new Error('WORKFLOW_RECOVERY_PARENT_AMBIGUOUS')
   }
 }
 
