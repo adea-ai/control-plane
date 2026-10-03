@@ -95,7 +95,10 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
     ...(options.processAdapter === undefined ? {} : { processAdapter: options.processAdapter }),
     start: async ({ config, health, markReady, readiness, registerResource }) => {
       const environment = options.environment ?? process.env
-      const graphRuntime = await resolveLocalGraphRuntimeOptions(environment)
+      let graphToolOperations: LocalGraphToolOperations | undefined
+      const graphRuntime = await resolveLocalGraphRuntimeOptions(environment, (operations) => {
+        graphToolOperations = operations
+      })
       assertLocalGraphConfigurationCompatible(options, graphRuntime, environment)
       const composition =
         options.composition ??
@@ -115,6 +118,7 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
         })
       registerResource('local-control-plane-composition', () => composition.close())
       await composition.start()
+      graphToolOperations?.bindRecoveryRuntime(composition)
       const authentication = await createLocalApiAuthentication(composition.dataDirectory)
       // Marketplace registry: enabled with MARKETPLACE_REGISTRY_ENABLED=1 (or a
       // custom MARKETPLACE_REGISTRY_LATEST_URL), otherwise the local profile
@@ -134,6 +138,9 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
             })
           : undefined
       const application = await createControlApiApplication({
+        ...(graphToolOperations === undefined
+          ? {}
+          : { toolEffectRecoveryService: graphToolOperations }),
         ...(marketplaceRegistryService ? { marketplaceRegistryService } : {}),
         interactionCommandService: composition.interactionCommandService,
         executionCancellationService: composition.executionCancellationService,
@@ -284,7 +291,8 @@ function pickEnvironment(
 
 /** Resolve one bounded Local graph-tool binding from an operator-owned JSON file. */
 export async function resolveLocalGraphRuntimeOptions(
-  environment: Readonly<Record<string, string | undefined>>
+  environment: Readonly<Record<string, string | undefined>>,
+  onOperationsReady?: (operations: LocalGraphToolOperations) => void
 ): Promise<ManagedLocalGraphRuntimeOptions | undefined> {
   const path = environment[LOCAL_GRAPH_CONFIG_ENV]
   if (path === undefined) return undefined
@@ -309,7 +317,7 @@ export async function resolveLocalGraphRuntimeOptions(
     await file?.close()
   }
 
-  return createLocalGraphRuntimeOptions(config)
+  return createLocalGraphRuntimeOptions(config, onOperationsReady)
 }
 
 function parseLocalGraphToolConfiguration(input: unknown): LocalGraphToolConfiguration {
@@ -400,7 +408,8 @@ function assertLocalGraphConfigurationCompatible(
 }
 
 function createLocalGraphRuntimeOptions(
-  config: LocalGraphToolConfiguration
+  config: LocalGraphToolConfiguration,
+  onOperationsReady?: (operations: LocalGraphToolOperations) => void
 ): ManagedLocalGraphRuntimeOptions {
   let operations: LocalGraphToolOperations | undefined
   const requireOperations = () => {
@@ -457,6 +466,7 @@ function createLocalGraphRuntimeOptions(
           },
         ],
       })
+      onOperationsReady?.(operations)
     },
   }
 }

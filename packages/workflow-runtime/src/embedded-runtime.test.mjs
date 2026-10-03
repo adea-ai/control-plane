@@ -304,6 +304,229 @@ describe('EmbeddedWorkflowRuntime', () => {
     })
   })
 
+  test('continues a parked checkpoint in a distinct journal and replays safely after restart', async () => {
+    await withRuntime(async ({ provider }) => {
+      const { activities } = fakeActivities()
+      let graphCalls = 0
+      let continuationCalls = 0
+      activities.runGraphSegment = async () => {
+        graphCalls += 1
+        return { outcome: 'reconciliation_required', checkpointId: 'checkpoint-original' }
+      }
+      activities.continueGraphSegment = async (input) => {
+        continuationCalls += 1
+        expect(input.checkpointId).toBe('checkpoint-original')
+        return { outcome: 'completed', resultReference: 'art_recovered' }
+      }
+      const input = {
+        ...workflowInput,
+        graph: {
+          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+          threadId: `graph:${executionId}`,
+          reference: {
+            graphDefinitionId: 'uncertain-tool',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'b'.repeat(64)}`,
+          },
+          input: { task: 'already-persisted-input' },
+        },
+      }
+      const recovery = {
+        recoveryId: 'recovery-effect-checkpoint-01',
+        checkpointId: 'checkpoint-original',
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submit(input)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      const original = await store.get(executionId)
+      expect(original.outcome).toMatchObject({
+        status: 'reconciliation_required',
+        graphCheckpointId: 'checkpoint-original',
+      })
+      const originalRunKey = `${input.workflowId}:execution-lifecycle-v1:graph:run`
+      const originalRunJournal = await store.getEffect(executionId, originalRunKey)
+
+      await dispatcher.submitRecovery(input, recovery)
+      await dispatcher.submitRecovery(input, recovery)
+      const recoveryKey = `${executionId}:graph-recovery:${recovery.recoveryId}`
+      await waitFor(async () => (await store.get(recoveryKey))?.status === 'succeeded')
+      const recoveredJob = await store.get(recoveryKey)
+      const recoveryEffectKey = `${input.workflowId}:execution-lifecycle-v1:graph:recovery:${recovery.recoveryId}:checkpoint-original`
+      expect(await store.getEffect(recoveryKey, recoveryEffectKey)).toMatchObject({
+        outcome: 'completed',
+        resultReference: 'art_recovered',
+      })
+      expect(await store.getEffect(executionId, originalRunKey)).toEqual(originalRunJournal)
+      expect(recoveredJob.outcome).toMatchObject({
+        status: 'completed',
+        resultReference: 'art_recovered',
+      })
+      expect(graphCalls).toBe(1)
+      expect(continuationCalls).toBe(1)
+      await runtime.stop()
+
+      const restarted = startedRuntime(provider, activities)
+      await restarted.runtime.start()
+      await restarted.dispatcher.submit(input)
+      await restarted.dispatcher.submitRecovery(input, recovery)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect((await restarted.store.get(executionId)).outcome.status).toBe(
+        'reconciliation_required'
+      )
+      expect((await restarted.store.get(recoveryKey)).attempt).toBe(1)
+      expect(await restarted.store.getEffect(executionId, originalRunKey)).toEqual(
+        originalRunJournal
+      )
+      expect(graphCalls).toBe(1)
+      expect(continuationCalls).toBe(1)
+    })
+  })
+
+  test('recovery child resumes an approved interaction saved under its owning execution after restart', async () => {
+    await withRuntime(async ({ provider }) => {
+      const { activities } = fakeActivities()
+      let graphCalls = 0
+      let continuationCalls = 0
+      let resumeCalls = 0
+      activities.runGraphSegment = async () => {
+        graphCalls += 1
+        return { outcome: 'reconciliation_required', checkpointId: 'checkpoint-original' }
+      }
+      activities.continueGraphSegment = async () => {
+        continuationCalls += 1
+        return { outcome: 'awaiting_input', interactionId, checkpointId: 'checkpoint-original' }
+      }
+      activities.resumeGraphSegment = async (input) => {
+        resumeCalls += 1
+        expect(input.response).toMatchObject({
+          action: 'approve',
+          responseId: interactionRequest.response.responseId,
+        })
+        return { outcome: 'completed', resultReference: 'art_approved_recovery' }
+      }
+      const input = {
+        ...workflowInput,
+        graph: {
+          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+          threadId: `graph:${executionId}`,
+          reference: {
+            graphDefinitionId: 'approved-recovery',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'b'.repeat(64)}`,
+          },
+          input: { task: 'already-persisted-input' },
+        },
+      }
+      const recovery = {
+        recoveryId: 'recovery-approved-interaction-01',
+        checkpointId: 'checkpoint-original',
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submit(input)
+      await waitFor(async () => (await store.get(executionId))?.status === 'succeeded')
+      const original = await store.get(executionId)
+      const originalJournal = await store.getEffect(
+        executionId,
+        `${input.workflowId}:execution-lifecycle-v1:graph:run`
+      )
+      expect(original.outcome).toMatchObject({ status: 'reconciliation_required' })
+
+      await dispatcher.submitRecovery(input, recovery)
+      const recoveryKey = `${executionId}:graph-recovery:${recovery.recoveryId}`
+      await waitFor(async () => (await store.get(recoveryKey))?.status === 'waiting')
+      await runtime.stop()
+
+      // The authenticated interaction dispatcher stores approval against the accepted execution,
+      // while the resumed activity and its journal belong to this child recovery job.
+      await dispatcher.deliver(interactionRequest)
+      const restarted = startedRuntime(provider, activities)
+      await restarted.runtime.start()
+      await waitFor(
+        async () => (await restarted.store.get(recoveryKey))?.status === 'succeeded',
+        1_000
+      ).catch(async () => {
+        throw new Error(
+          `APPROVED_RECOVERY_DID_NOT_RESUME:${JSON.stringify(await restarted.store.get(recoveryKey))}`
+        )
+      })
+      expect((await restarted.store.get(recoveryKey)).outcome).toMatchObject({
+        status: 'completed',
+        resultReference: 'art_approved_recovery',
+      })
+      expect(
+        await restarted.store.getEffect(
+          executionId,
+          `${input.workflowId}:execution-lifecycle-v1:graph:run`
+        )
+      ).toEqual(originalJournal)
+      expect(graphCalls).toBe(1)
+      expect(continuationCalls).toBe(1)
+      expect(resumeCalls).toBe(1)
+      const completedAttempt = (await restarted.store.get(recoveryKey)).attempt
+
+      await restarted.runtime.stop()
+      const replayed = startedRuntime(provider, activities)
+      await replayed.runtime.start()
+      await replayed.dispatcher.submitRecovery(input, recovery)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect((await replayed.store.get(recoveryKey)).attempt).toBe(completedAttempt)
+      expect(resumeCalls).toBe(1)
+      expect(
+        await replayed.store.getEffect(
+          executionId,
+          `${input.workflowId}:execution-lifecycle-v1:graph:run`
+        )
+      ).toEqual(originalJournal)
+      await replayed.runtime.stop()
+    })
+  }, 15_000)
+
+  test('cancellation of the original execution stops an in-flight recovery activity', async () => {
+    await withRuntime(async ({ provider }) => {
+      const { activities } = fakeActivities()
+      let signalContinuationStarted
+      const continuationStarted = new Promise((resolve) => {
+        signalContinuationStarted = resolve
+      })
+      activities.continueGraphSegment = async () => {
+        signalContinuationStarted()
+        return new Promise(() => {})
+      }
+      const input = {
+        ...workflowInput,
+        graph: {
+          workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+          threadId: `graph:${executionId}`,
+          reference: {
+            graphDefinitionId: 'uncertain-tool',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'b'.repeat(64)}`,
+          },
+          input: { task: 'already-persisted-input' },
+        },
+      }
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      await runtime.start()
+      await dispatcher.submitRecovery(input, {
+        recoveryId: 'recovery-cancel-in-flight-01',
+        checkpointId: 'checkpoint-original',
+      })
+      const recoveryKey = `${executionId}:graph-recovery:recovery-cancel-in-flight-01`
+      await continuationStarted
+      await dispatcher.cancel(cancellationCommand)
+      await waitFor(async () => (await store.get(recoveryKey))?.status === 'succeeded')
+      expect((await store.get(recoveryKey)).outcome.status).toBe('cancelled')
+      expect(
+        activities.calls.some(
+          ([name, payload]) => name === 'cancelActive' && payload.reason === 'user_request'
+        )
+      ).toBe(true)
+      await runtime.stop()
+    })
+  })
+
   test('cleans up started runtimes and providers when a fixture callback fails', async () => {
     let provider
     let runtime

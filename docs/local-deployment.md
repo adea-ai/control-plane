@@ -97,6 +97,40 @@ terminal execution result is a real Artifact understood by the existing lifecycl
 are checked for matching bytes, digest, scope, media type, and available lifecycle metadata before
 cold replay.
 
+An operator with the `execution:reconcile` service scope can inspect and reconcile a parked Local
+tool effect through `POST /v1/executions/tool-effects/inspect` and
+`POST /v1/executions/tool-effects/reconcile`. Inspection is limited to 64 calls and returns only
+call identity/revision/state, artifact verification state, and charge/settlement flags. Reconcile
+accepts an execution ID, tool-call ID, inspected revision, and `resume` or `cancel` action. The
+service rebuilds input, request identity, checkpoint, and authority from persisted execution data;
+callers cannot supply artifact bytes, workspace/project scope, or checkpoint IDs. It marks a call
+succeeded only after verifying the canonical immutable object bytes, SHA-256 digest, and bound
+metadata, then repairs the existing reservation's charge and settlement idempotently. A `resume`
+queues one deterministic recovery job for that tool call/checkpoint in a distinct SQLite journal,
+preserving the original parked outcome; replaying with a different command ID does not queue a
+second continuation. Missing, conflicting, or unverifiable evidence stays held with its reservation
+unchanged. If execution deadline or current delivery authority has expired, verified historical
+accounting may finish, but continuation is refused and cancellation remains available.
+
+Each reconcile command is fenced by a durable Local receipt in
+`local-graph-tool-reconciliation-receipts`. Its identity is the authenticated caller, workspace,
+operation, and idempotency key; project and canonical payload are checked for conflicts. The receipt
+preserves the first command ID, request ID, and issue time, so a retry with new transport IDs returns
+the original acknowledgment. A pending intent is persisted before accounting or continuation work;
+if dispatch succeeds but receipt completion is lost, retry resolves the exact persisted recovery job
+before returning the planned acknowledgment. An active owner produces a bounded processing result,
+not a false held result. This namespace currently has no age-based deletion path and must remain
+protected. Issue #194 still needs an explicit retention policy, retired-key fence, hold/reference
+rules, and cleanup/restore evidence for this class; this receipt is not a completed retention
+implementation.
+
+This remediation path is supported only by Local `embedded-sqlite`; Restate is explicitly
+unsupported. It does not migrate old records. A historical effect is reconcilable only when its
+persisted accepted plan, graph pin, checkpoint/input identity, tool request, reservation, and object
+evidence can all be verified. Records missing one of those bindings remain `unverifiable` and must
+not be resumed automatically; operators can request cancellation, which remains non-terminal while
+an effect or accounting state is unresolved.
+
 The `launcher-graph.test.mjs` supported-launcher acceptance uses a test-local `direct-local`
 transport fixture because the graph node itself is the executed work. It exercises the exported
 `start()` path, real API plan validation/acceptance, persisted approval, Artifact write, and SQLite

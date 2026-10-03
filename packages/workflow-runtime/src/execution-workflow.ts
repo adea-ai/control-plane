@@ -114,7 +114,8 @@ export type WorkflowRuntimeOutcome = (
 export async function runExecutionLifecycle(
   input: ExecutionWorkflowInput,
   activities: ExecutionLifecycleActivities,
-  control: WorkflowControl = {}
+  control: WorkflowControl = {},
+  recovery?: { readonly recoveryId: string; readonly checkpointId: string }
 ): Promise<ExecutionWorkflowResult> {
   const key = (operation: string) => `${input.workflowId}:${workflowPolicies.version}:${operation}`
   if (control.cancelled) {
@@ -148,16 +149,27 @@ export async function runExecutionLifecycle(
   let runtimeOutcome: WorkflowRuntimeOutcome
   if (input.graph) {
     const raced = await raceActivity(
-      activities.runGraphSegment({
-        executionId: input.executionId,
-        attemptId,
-        workspaceId: input.graph.workspaceId,
-        workflowId: input.workflowId,
-        graph: input.graph.reference,
-        threadId: input.graph.threadId,
-        input: input.graph.input,
-        idempotencyKey: key('graph:run'),
-      }),
+      recovery === undefined
+        ? activities.runGraphSegment({
+            executionId: input.executionId,
+            attemptId,
+            workspaceId: input.graph.workspaceId,
+            workflowId: input.workflowId,
+            graph: input.graph.reference,
+            threadId: input.graph.threadId,
+            input: input.graph.input,
+            idempotencyKey: key('graph:run'),
+          })
+        : activities.continueGraphSegment({
+            executionId: input.executionId,
+            attemptId,
+            workspaceId: input.graph.workspaceId,
+            workflowId: input.workflowId,
+            graph: input.graph.reference,
+            threadId: input.graph.threadId,
+            checkpointId: recovery.checkpointId,
+            idempotencyKey: key(`graph:recovery:${recovery.recoveryId}:${recovery.checkpointId}`),
+          }),
       control
     )
     if (raced.type === 'terminal') {

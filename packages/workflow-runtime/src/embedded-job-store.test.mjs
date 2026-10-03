@@ -57,6 +57,94 @@ async function withStore(run) {
 }
 
 describe('WorkflowJobStore', () => {
+  test('snapshots causal recovery chains and prevents branching while allowing a repeated checkpoint', async () => {
+    await withStore(async ({ store }) => {
+      const queue = store()
+      await queue.enqueue({ workflowKey: input.executionId, input, at: now })
+      const [rootClaim] = await queue.claimDue({ owner, leaseMs: 60_000, now, limit: 1 })
+      await queue.complete({
+        workflowKey: input.executionId,
+        owner,
+        token: rootClaim.lease.token,
+        outcome: {
+          executionId: input.executionId,
+          attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          status: 'reconciliation_required',
+          graphCheckpointId: 'checkpoint-repeat',
+        },
+        at: later,
+      })
+
+      const firstKey = `${input.executionId}:graph-recovery:recovery-chain-first-01`
+      await queue.provider.transaction(async (transaction) => {
+        await transaction.put({
+          namespace: 'workflow-jobs',
+          id: 'unrelated-corrupt-recovery',
+          value: {
+            workflowKey: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW:graph-recovery:legacy-corrupt',
+            recovery: { checkpointId: 'malformed' },
+          },
+        })
+      })
+      await queue.enqueue({
+        workflowKey: firstKey,
+        input,
+        recovery: {
+          recoveryId: 'recovery-chain-first-01',
+          checkpointId: 'checkpoint-repeat',
+          parentWorkflowKey: input.executionId,
+        },
+        at: later,
+      })
+      await queue.provider.transaction(async (transaction) => {
+        await transaction.delete('workflow-jobs', 'unrelated-corrupt-recovery')
+      })
+      await expect(
+        queue.enqueue({
+          workflowKey: `${input.executionId}:graph-recovery:recovery-chain-branch-01`,
+          input,
+          recovery: {
+            recoveryId: 'recovery-chain-branch-01',
+            checkpointId: 'checkpoint-repeat',
+            parentWorkflowKey: input.executionId,
+          },
+          at: later,
+        })
+      ).rejects.toThrow('WORKFLOW_RECOVERY_PARENT_ALREADY_CONTINUED')
+
+      const [firstClaim] = await queue.claimDue({ owner, leaseMs: 60_000, now: later, limit: 1 })
+      await queue.complete({
+        workflowKey: firstKey,
+        owner,
+        token: firstClaim.lease.token,
+        outcome: {
+          executionId: input.executionId,
+          attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          status: 'reconciliation_required',
+          graphCheckpointId: 'checkpoint-repeat',
+        },
+        at: later,
+      })
+      const secondKey = `${input.executionId}:graph-recovery:recovery-chain-second-01`
+      await queue.enqueue({
+        workflowKey: secondKey,
+        input,
+        recovery: {
+          recoveryId: 'recovery-chain-second-01',
+          checkpointId: 'checkpoint-repeat',
+          parentWorkflowKey: firstKey,
+        },
+        at: later,
+      })
+
+      expect(await queue.getExecutionGraphJobsSnapshot(input.executionId)).toMatchObject([
+        { job: { workflowKey: input.executionId }, revision: expect.any(Number) },
+        { job: { workflowKey: firstKey, recovery: { parentWorkflowKey: input.executionId } } },
+        { job: { workflowKey: secondKey, recovery: { parentWorkflowKey: firstKey } } },
+      ])
+    })
+  })
+
   test('guards new references inside enqueue transaction and leaves duplicates exempt', async () => {
     await withStore(async ({ store }) => {
       let guardCalls = 0
