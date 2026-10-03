@@ -486,7 +486,7 @@ function authorizationRequest(
   })
 }
 
-function toolRequestDigest(request: DurableToolCallRequest): string {
+export function toolRequestDigest(request: DurableToolCallRequest): string {
   return digestV2({
     toolCallId: request.toolCallId,
     executionId: request.executionId,

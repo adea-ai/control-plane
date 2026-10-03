@@ -26,7 +26,12 @@ import {
   type WorkflowControl,
   type WorkflowInteractionResponse,
 } from './execution-workflow.js'
-import { WorkflowJobStore, type WorkflowJobRecord } from './embedded-job-store.js'
+import {
+  WorkflowJobStore,
+  WorkflowGraphRecoverySchema,
+  type WorkflowGraphRecovery,
+  type WorkflowJobRecord,
+} from './embedded-job-store.js'
 
 export class EmbeddedWorkflowSubmissionError extends Error {
   constructor() {
@@ -198,7 +203,8 @@ export class EmbeddedWorkflowRuntime {
       const result = await runExecutionLifecycle(
         input,
         journalActivities(this.#store, job.workflowKey, this.#activities),
-        control
+        control,
+        job.recovery
       )
       await this.#store.complete({
         workflowKey: job.workflowKey,
@@ -249,7 +255,12 @@ export class EmbeddedWorkflowRuntime {
       { cancelled: true } | { deadlineReached: true } | Record<string, never>
     > => {
       const cancellation = await store.getCancellation(workflowKey)
-      if (cancellation !== undefined) return { cancelled: true }
+      const executionCancellation =
+        workflowKey === input.executionId
+          ? undefined
+          : await store.getCancellation(input.executionId)
+      if (cancellation !== undefined || executionCancellation !== undefined)
+        return { cancelled: true }
       if (Date.now() >= deadlineMs) return { deadlineReached: true }
       return {}
     })()
@@ -410,6 +421,23 @@ export class EmbeddedExecutionWorkflowDispatcher {
     await this.#store.enqueue({
       workflowKey: input.executionId,
       input,
+      maximumAttempts: this.#maximumAttempts,
+      at: this.#now(),
+    })
+  }
+
+  /** Enqueue a distinct lifecycle journal that continues one verified graph checkpoint. */
+  async submitRecovery(
+    inputValue: ExecutionWorkflowInput,
+    recoveryValue: WorkflowGraphRecovery
+  ): Promise<void> {
+    const input = ExecutionWorkflowInputSchema.parse(inputValue)
+    const recovery = WorkflowGraphRecoverySchema.parse(recoveryValue)
+    if (!input.graph) throw new EmbeddedWorkflowSubmissionError()
+    await this.#store.enqueue({
+      workflowKey: `${input.executionId}:graph-recovery:${recovery.recoveryId}`,
+      input,
+      recovery,
       maximumAttempts: this.#maximumAttempts,
       at: this.#now(),
     })

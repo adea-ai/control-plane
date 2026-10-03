@@ -38,6 +38,12 @@ import {
 } from './executions/execution-acceptance.service.js'
 import { ExecutionValidationController } from './executions/execution-validation.controller.js'
 import {
+  ToolEffectRecoveryController,
+  TOOL_EFFECT_RECOVERY_SERVICE,
+  UnavailableToolEffectRecoveryService,
+  type ToolEffectRecoveryService,
+} from './executions/tool-effect-recovery.controller.js'
+import {
   EXECUTION_VALIDATION_SERVICE,
   UnavailableExecutionValidationService,
   type ExecutionValidationService,
@@ -97,6 +103,7 @@ export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly executionCancellationService?: ExecutionCancellationService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
   readonly executionValidationService?: ExecutionValidationService
+  readonly toolEffectRecoveryService?: ToolEffectRecoveryService
   readonly serviceAuthenticator?: ServiceAuthenticator
   readonly runtimeDiscoveryRepository?: RuntimeDiscoveryRepository
   readonly componentManifest?: () => Promise<unknown>
@@ -133,6 +140,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       InteractionCommandController,
       ExecutionCancellationController,
       ExecutionValidationController,
+      ToolEffectRecoveryController,
       HealthController,
       ProfileResolutionController,
       ProjectStateResolutionController,
@@ -176,6 +184,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: EXECUTION_VALIDATION_SERVICE,
         useValue: options.executionValidationService ?? new UnavailableExecutionValidationService(),
+      },
+      {
+        provide: TOOL_EFFECT_RECOVERY_SERVICE,
+        useValue: options.toolEffectRecoveryService ?? new UnavailableToolEffectRecoveryService(),
       },
       {
         provide: SERVICE_AUTHENTICATOR,

@@ -39,10 +39,24 @@ export const WorkflowJobLeaseSchema = z.strictObject({
   expiresAt: validTimestampSchema(),
 })
 
+export const WorkflowGraphRecoverySchema = z.strictObject({
+  recoveryId: z
+    .string()
+    .min(16)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/),
+  checkpointId: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
+})
+
 export const WorkflowJobRecordSchema = z.strictObject({
   workflowKey: z.string().min(1).max(512),
   status: WorkflowJobStatusSchema,
   input: z.unknown(),
+  recovery: WorkflowGraphRecoverySchema.optional(),
   attempt: z.number().int().nonnegative(),
   maximumAttempts: z.number().int().positive().max(100),
   runAt: validTimestampSchema().optional(),
@@ -65,6 +79,7 @@ export const WorkflowInteractionResponseSchema = z.strictObject({
 export type WorkflowJobStatus = z.output<typeof WorkflowJobStatusSchema>
 export type WorkflowJobOutcome = z.output<typeof WorkflowJobOutcomeSchema>
 export type WorkflowJobLease = z.output<typeof WorkflowJobLeaseSchema>
+export type WorkflowGraphRecovery = z.output<typeof WorkflowGraphRecoverySchema>
 export type WorkflowJobRecord = z.output<typeof WorkflowJobRecordSchema>
 export type StoredWorkflowInteractionResponse = z.output<typeof WorkflowInteractionResponseSchema>
 
@@ -72,6 +87,7 @@ export interface WorkflowJobEnqueueInput {
   /** Durable identity of the workflow invocation; the execution id for the lifecycle workflow. */
   readonly workflowKey: string
   readonly input: unknown
+  readonly recovery?: WorkflowGraphRecovery
   readonly maximumAttempts?: number
   /** Earliest claim time; defaults to `at` so accepted work is immediately due. */
   readonly runAt?: string
@@ -165,6 +181,9 @@ export class WorkflowJobStore {
       workflowKey,
       status: 'queued',
       input: json(input.input),
+      ...(input.recovery === undefined
+        ? {}
+        : { recovery: WorkflowGraphRecoverySchema.parse(input.recovery) }),
       attempt: 0,
       maximumAttempts: input.maximumAttempts ?? 5,
       runAt: input.runAt === undefined ? at : validTimestamp(input.runAt),

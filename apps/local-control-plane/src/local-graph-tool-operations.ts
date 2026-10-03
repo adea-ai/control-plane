@@ -2,14 +2,19 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import {
   canonicalJsonStringify,
+  ExecutionCancellationCommandSchema,
   IdentifierSchemas,
+  type ReadRequestEnvelope,
+  type ServicePrincipal,
+  type StateChangingCommandEnvelope,
   type GraphToolPin,
 } from '@control-plane/contracts'
-import { InteractionService } from '@control-plane/domain'
+import { InteractionService, type Execution, type ExecutionAttempt } from '@control-plane/domain'
 import type { ObjectStore } from '@control-plane/deployment'
 import {
   GraphNodeApprovalRequiredError,
   GraphNodeEffectUnconfirmedError,
+  GraphNodeOperationSchema,
   type GraphNodeOperation,
   type GraphNodeOperationPort,
 } from '@control-plane/orchestration'
@@ -17,6 +22,7 @@ import {
   SqliteDurableUsageStore,
   SqliteToolCallRepository,
   SqliteToolRegistryRepository,
+  SqliteGraphDefinitionRepository,
   type SqlitePersistenceProvider,
 } from '@control-plane/sqlite-persistence'
 import {
@@ -24,16 +30,32 @@ import {
   PolicyControlledToolExecutionService,
   ToolGateway,
   ToolRegistry,
+  toolExecutionContentDigest,
+  toolExecutionContentDigestLegacy,
+  toolRequestDigest,
+  toolRequestDigestLegacy,
   type ToolRateLimiter,
 } from '@control-plane/tool-execution'
-import { DurableToolCallRequestSchema, type ToolCall } from '@control-plane/tool-sdk'
+import {
+  DurableToolCallRequestSchema,
+  ToolExecutionResultSchema,
+  type DurableToolCallRequest,
+  type ToolCall,
+  type ToolExecutionResult,
+  type ToolVersion,
+} from '@control-plane/tool-sdk'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { DurableRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
+import {
+  graphOperationIdempotencyKeyFor,
+  LangGraphSqliteCheckpointSaver,
+} from '@control-plane/langgraph-adapter'
+import { assertExecutionPlanIntegrity, type ExecutionPlan } from '@control-plane/execution-plan'
+import { ExecutionWorkflowInputSchema, GraphDefinitionCatalog } from '@control-plane/orchestration'
+import type { LocalControlPlaneComposition } from './composition.js'
 import type { LocalControlApiComposition } from './local-api-composition.js'
 import { authorizeLocalGraphTool } from './local-graph-tool-authority.js'
 import { ObjectStoreJsonToolExecutor } from './object-store-tool.js'
-import { GraphDefinitionCatalog } from '@control-plane/orchestration'
-import { SqliteGraphDefinitionRepository } from '@control-plane/sqlite-persistence'
 
 export interface LocalGraphToolPrice {
   readonly pin: GraphToolPin
@@ -50,6 +72,36 @@ export interface LocalGraphToolOperationsOptions {
   readonly now?: () => string
 }
 
+type RecoveryIdentity = { readonly executionId: string; readonly toolCallId?: string }
+type RecoveryCommand = {
+  readonly executionId: string
+  readonly toolCallId: string
+  readonly expectedRevision: number
+  readonly action: 'resume' | 'cancel'
+}
+
+type RecoveryEvidence = {
+  readonly execution: Execution
+  readonly attempt: ExecutionAttempt
+  readonly command: { readonly callerPrincipalId: string; readonly retentionExpiresAt: string }
+  readonly plan: ExecutionPlan
+  readonly version: ToolVersion
+  readonly request: DurableToolCallRequest
+  readonly result: ToolExecutionResult
+  readonly deadline: number
+  readonly checkpointId: string
+  readonly artifactState: 'verified' | 'missing' | 'conflict'
+}
+
+type RecoveryCallInspection = {
+  readonly toolCallId: string
+  readonly revision: number
+  readonly status: ToolCall['status']
+  readonly artifact: { readonly state: RecoveryEvidence['artifactState'] | 'unverifiable' }
+  readonly accounting: { readonly charged: boolean; readonly settled: boolean }
+  readonly evidence?: RecoveryEvidence
+}
+
 /** Accepted-plan authority, persisted approvals and usage around a concrete immutable JSON effect. */
 export class LocalGraphToolOperations implements GraphNodeOperationPort {
   readonly #options: LocalGraphToolOperationsOptions
@@ -57,6 +109,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
   readonly #active = new Map<AbortController, string>()
   readonly #ledger: DurableUsageLedger
   readonly #rateLimiter: ToolRateLimiter
+  #recoveryRuntime: LocalControlPlaneComposition | undefined
 
   constructor(options: LocalGraphToolOperationsOptions) {
     for (const price of options.prices) {
@@ -73,6 +126,11 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       store: new SqliteDurableUsageStore(options.persistence),
     })
     this.#rateLimiter = new SqliteGraphToolRateLimiter(options.persistence, this.#now)
+  }
+
+  bindRecoveryRuntime(composition: LocalControlPlaneComposition): void {
+    if (this.#recoveryRuntime !== undefined) throw new Error('TOOL_EFFECT_RECOVERY_ALREADY_BOUND')
+    this.#recoveryRuntime = composition
   }
 
   async invoke(operation: GraphNodeOperation): Promise<Readonly<Record<string, unknown>>> {
@@ -307,6 +365,554 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     }
   }
 
+  async inspect(envelopeValue: unknown, principal: ServicePrincipal): Promise<unknown> {
+    const envelope = envelopeValue as ReadRequestEnvelope
+    if (envelope.operation !== 'execution.tool-effect.inspect')
+      throw new Error('TOOL_EFFECT_INSPECTION_INVALID')
+    const identity = parseRecoveryIdentity(envelope.parameters)
+    this.#assertInspectionScope(envelope, principal)
+    const execution = await this.#options.api.executions.getExecution(identity.executionId)
+    if (
+      !execution ||
+      execution.correlation.workspaceId !== envelope.workspaceId ||
+      execution.correlation.projectId !== envelope.projectId
+    )
+      throw new Error('TOOL_EFFECT_SCOPE_REJECTED')
+    const calls = new SqliteToolCallRepository(
+      this.#options.persistence,
+      execution.correlation.workspaceId
+    )
+    const all = (await calls.listByExecution(execution.executionId)).slice(0, 64)
+    const selected =
+      identity.toolCallId === undefined
+        ? all
+        : all.filter((call) => call.toolCallId === identity.toolCallId)
+    if (identity.toolCallId !== undefined && selected.length === 0)
+      throw new Error('TOOL_EFFECT_CALL_MISSING')
+    const inspections = await Promise.all(selected.map((call) => this.#inspectCall(call)))
+    return {
+      executionId: execution.executionId,
+      workspaceId: execution.correlation.workspaceId,
+      projectId: execution.correlation.projectId,
+      calls: inspections,
+    }
+  }
+
+  async reconcile(envelopeValue: unknown, principal: ServicePrincipal): Promise<unknown> {
+    const envelope = envelopeValue as StateChangingCommandEnvelope
+    if (envelope.operation !== 'execution.tool-effect.reconcile')
+      throw new Error('TOOL_EFFECT_RECONCILIATION_INVALID')
+    const command = parseRecoveryCommand(envelope.payload)
+    this.#assertInspectionScope(envelope, principal)
+    if (envelope.payloadHash !== sha256(canonicalJsonStringify(envelope.payload)))
+      throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+    const inspection = await this.inspect(
+      {
+        ...envelope,
+        operation: 'execution.tool-effect.inspect',
+        parameters: {
+          executionId: command.executionId,
+          toolCallId: command.toolCallId,
+        },
+      },
+      principal
+    )
+    const entry = (inspection as { calls: RecoveryCallInspection[] }).calls[0]
+    if (!entry || entry.toolCallId !== command.toolCallId)
+      throw new Error('TOOL_EFFECT_CALL_MISSING')
+    const call = await new SqliteToolCallRepository(
+      this.#options.persistence,
+      envelope.workspaceId
+    ).get(command.toolCallId)
+    if (!call) throw new Error('TOOL_EFFECT_CALL_MISSING')
+    if (call.revision !== command.expectedRevision) {
+      if (call.status !== 'succeeded' || entry.artifact.state !== 'verified')
+        throw new Error('TOOL_EFFECT_STALE_REVISION')
+    }
+    if (command.action === 'cancel') {
+      if (entry.artifact.state === 'verified' && entry.evidence !== undefined) {
+        const recovered = await this.#commitKnownSuccess(call, entry.evidence, call.revision)
+        if (recovered !== undefined) {
+          const accounting = await this.#repairAccounting(recovered)
+          if (!accounting.charged || !accounting.settled)
+            return { outcome: 'held', reason: 'accounting_unconfirmed' }
+        }
+      }
+      const confirmed = await this.cancel(
+        command.executionId,
+        `graph:${command.executionId}`,
+        `operator-cancel:${envelope.commandId}`
+      )
+      if (!confirmed) return { outcome: 'held', reason: 'effect_or_accounting_unconfirmed' }
+      const runtime = this.#recoveryRuntime
+      if (!runtime) throw new Error('TOOL_EFFECT_RECOVERY_NOT_CONFIGURED')
+      await this.#signalWorkflowCancellation(envelope, command.executionId)
+      await runtime.executionLifecycleActivities.persistStatus({
+        executionId: command.executionId,
+        attemptId: call.attemptId,
+        state: 'cancelled',
+        effectKey: `tool-effect-recovery:cancel:${envelope.commandId}`,
+      })
+      return { outcome: 'cancelled', executionId: command.executionId }
+    }
+    if (entry.artifact.state !== 'verified' || entry.evidence === undefined)
+      return { outcome: 'held', reason: entry.artifact.state }
+    const recovered = await this.#commitKnownSuccess(call, entry.evidence, command.expectedRevision)
+    if (!recovered) throw new Error('TOOL_EFFECT_STALE_REVISION')
+    const accounting = await this.#repairAccounting(recovered)
+    if (!accounting.charged || !accounting.settled)
+      return { outcome: 'held', reason: 'accounting_unconfirmed' }
+    const runtime = this.#recoveryRuntime
+    if (!runtime) throw new Error('TOOL_EFFECT_RECOVERY_NOT_CONFIGURED')
+    if (runtime.durableExecution !== 'embedded-sqlite' || !runtime.workflowDispatcher) {
+      throw new Error('TOOL_EFFECT_RECOVERY_UNSUPPORTED')
+    }
+    const cancellation = await this.#options.persistence.transaction((transaction) =>
+      transaction.get('graph-tool-cancellations', recovered.execution.executionId)
+    )
+    if (cancellation !== undefined)
+      return { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId }
+    if (
+      recovered.execution.state !== 'reconciliation_required' ||
+      recovered.attempt.state !== 'reconciliation_required' ||
+      (recovered.version.lifecycle !== 'published' &&
+        recovered.version.lifecycle !== 'deprecated') ||
+      Date.parse(this.#now()) >= recovered.deadline
+    )
+      return { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId }
+    // Recovery is a continuation of this server-resolved effect/checkpoint,
+    // not a distinct action per operator request. Different authorized
+    // commands that inspect the same evidence must enqueue one durable job.
+    const suffix = sha256(
+      `${recovered.execution.executionId}:${call.toolCallId}:${entry.evidence.checkpointId}`
+    ).slice(0, 48)
+    const input = ExecutionWorkflowInputSchema.parse({
+      executionId: recovered.execution.executionId,
+      workflowId: `wfl_${recovered.execution.executionId.slice(4)}`,
+      executionPlan: recovered.execution.executionPlan,
+      deadlineAt: new Date(recovered.deadline).toISOString(),
+      ...(recovered.execution.marketplacePluginReferences === undefined
+        ? {}
+        : { marketplacePluginReferences: recovered.execution.marketplacePluginReferences }),
+      graph: {
+        workspaceId: recovered.execution.correlation.workspaceId,
+        reference: recovered.plan.graph!.reference,
+        threadId: `graph:${recovered.execution.executionId}`,
+        input: recovered.plan.graph!.input,
+      },
+    })
+    await runtime.workflowDispatcher.submitRecovery(input, {
+      recoveryId: suffix,
+      checkpointId: entry.evidence.checkpointId,
+    })
+    return {
+      outcome: 'recovery_scheduled',
+      executionId: recovered.execution.executionId,
+      toolCallId: call.toolCallId,
+      workflowKey: `${recovered.execution.executionId}:graph-recovery:${suffix}`,
+    }
+  }
+
+  async #signalWorkflowCancellation(
+    envelope: StateChangingCommandEnvelope,
+    executionId: string
+  ): Promise<void> {
+    const accepted = await this.#options.api.commandRepository.getByExecutionId(executionId)
+    if (!accepted) throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+    const payload = { executionId }
+    const request = ExecutionCancellationCommandSchema.parse({
+      caller: { servicePrincipalId: accepted.callerPrincipalId },
+      contractVersion: envelope.contractVersion,
+      requestId: envelope.requestId,
+      workspaceId: accepted.workspaceId,
+      projectId: accepted.projectId,
+      correlation: envelope.correlation,
+      commandId: envelope.commandId,
+      idempotencyKey: envelope.idempotencyKey,
+      payloadHash: sha256(canonicalJsonStringify(payload)),
+      operation: 'execution.cancel',
+      issuedAt: this.#now(),
+      payload,
+    })
+    await this.#options.api.executionCancellationService.cancel(request, accepted.callerPrincipalId)
+  }
+
+  #assertInspectionScope(
+    envelope: Pick<ReadRequestEnvelope, 'workspaceId' | 'projectId' | 'caller'>,
+    principal: ServicePrincipal
+  ): void {
+    if (
+      !principal.workspaceIds.includes(envelope.workspaceId) ||
+      envelope.projectId === undefined ||
+      !principal.projectIds.includes(envelope.projectId) ||
+      (envelope.caller !== undefined &&
+        envelope.caller.servicePrincipalId !== principal.principalId)
+    )
+      throw new Error('TOOL_EFFECT_SCOPE_REJECTED')
+  }
+
+  async #inspectCall(call: ToolCall): Promise<RecoveryCallInspection> {
+    const accounting = await this.#accountingState(call)
+    const evidence = await this.#resolveEvidence(call).catch(() => {
+      return undefined
+    })
+    const artifact = evidence?.artifactState ?? 'unverifiable'
+    const inspection: RecoveryCallInspection = {
+      toolCallId: call.toolCallId,
+      revision: call.revision,
+      status: call.status,
+      artifact: { state: artifact },
+      accounting,
+    }
+    if (evidence?.artifactState === 'verified')
+      Object.defineProperty(inspection, 'evidence', { value: evidence, enumerable: false })
+    return inspection
+  }
+
+  async #resolveEvidence(call: ToolCall): Promise<RecoveryEvidence> {
+    if (!call.idempotencyKey.startsWith('graph-op-v1:'))
+      throw new Error('TOOL_EFFECT_NOT_LOCAL_GRAPH')
+    const { api, persistence, objectStore } = this.#options
+    const execution = await api.executions.getExecution(call.executionId)
+    const attempt = await api.executions.getAttempt(call.attemptId)
+    const command = await api.commandRepository.getByExecutionId(call.executionId)
+    if (
+      !execution ||
+      !attempt ||
+      !command ||
+      execution.latestAttemptId !== call.attemptId ||
+      command.workspaceId !== call.workspaceId ||
+      execution.correlation.workspaceId !== call.workspaceId
+    )
+      throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+    const storedPlan = await api.executionPlans.get(execution.executionPlan)
+    if (!storedPlan) throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+    const plan = assertExecutionPlanIntegrity(storedPlan)
+    if (!plan.graph || !isDeepStrictEqual(command.executionPlan, execution.executionPlan))
+      throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+    const graph = await new GraphDefinitionCatalog(
+      new SqliteGraphDefinitionRepository(persistence, call.workspaceId)
+    ).getPinned(plan.graph.reference)
+    if (!isDeepStrictEqual(graph.reference, plan.graph.reference))
+      throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const graphNodes = graph.content.nodes.filter(
+      (node) => node.operation.kind === 'tool' && node.operation.toolPin !== undefined
+    )
+    const node = graphNodes.find(({ operation }) => {
+      const pin = operation.kind === 'tool' ? operation.toolPin : undefined
+      return (
+        pin?.toolDefinitionId === call.toolDefinitionId && pin.toolVersionId === call.toolVersionId
+      )
+    })
+    if (!node || node.operation.kind !== 'tool' || !node.operation.toolPin)
+      throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const pin = node.operation.toolPin
+    if (
+      call.operation !== pin.operation ||
+      !isDeepStrictEqual(call.executor, {
+        type: 'internal',
+        reference: 'local.object-store-json.v1',
+      })
+    )
+      throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const registry = new ToolRegistry(
+      new SqliteToolRegistryRepository(persistence, call.workspaceId)
+    )
+    const version = await registry.readVersion(pin.toolVersionId, call.workspaceId)
+    if (
+      version.toolDefinitionId !== pin.toolDefinitionId ||
+      version.contentDigest !== pin.contentDigest ||
+      version.executor.type !== 'internal' ||
+      version.executor.reference !== 'local.object-store-json.v1'
+    )
+      throw new Error('TOOL_EFFECT_PIN_MISMATCH')
+    const threadId = `graph:${execution.executionId}`
+    const checkpointSaver = new LangGraphSqliteCheckpointSaver(persistence, 'managed-graphs')
+    const storedJob = await this.#recoveryRuntime?.workflowJobs?.get(execution.executionId)
+    const requestedCheckpoint = storedJob?.outcome?.graphCheckpointId
+    const config = {
+      configurable: {
+        thread_id: `${call.workspaceId}:${execution.executionId}:${threadId}`,
+        ...(requestedCheckpoint ? { checkpoint_id: requestedCheckpoint } : {}),
+      },
+    }
+    const tuple = await checkpointSaver.getTuple(config)
+    if (!tuple) throw new Error('TOOL_EFFECT_CHECKPOINT_MISSING')
+    if (
+      tuple.config.configurable?.['thread_id'] !==
+        `${call.workspaceId}:${execution.executionId}:${threadId}` ||
+      tuple.config.configurable?.['checkpoint_id'] !== tuple.checkpoint.id
+    )
+      throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const channels = tuple.checkpoint.channel_values as Record<string, unknown>
+    const values = isJsonObject(channels['values']) ? channels['values'] : {}
+    const matchingInputs = [values, channels['input']].filter(
+      (candidate): candidate is Record<string, unknown> =>
+        isJsonObject(candidate) && digest(candidate) === call.inputDigest
+    )
+    const distinctInputs = new Map(
+      matchingInputs.map((candidate) => [canonicalJsonStringify(candidate), candidate])
+    )
+    if (distinctInputs.size !== 1) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const input = [...distinctInputs.values()][0]!
+    const operationIdentity = Array.from({ length: 9 }, (_, visitOrdinal) =>
+      graphOperationIdempotencyKeyFor({
+        workspaceId: call.workspaceId,
+        executionId: execution.executionId,
+        threadId,
+        graph: graph.reference,
+        node: node.node,
+        visitOrdinal,
+      })
+    ).find((key) => key === call.idempotencyKey)
+    if (!operationIdentity) throw new Error('TOOL_EFFECT_CHECKPOINT_MISMATCH')
+    const suffix = createHash('sha256')
+      .update(call.idempotencyKey)
+      .digest('hex')
+      .slice(0, 26)
+      .toUpperCase()
+    const request = DurableToolCallRequestSchema.parse({
+      requestId: `req_${suffix}`,
+      toolCallId: `tlc_${suffix}`,
+      executionId: execution.executionId,
+      attemptId: call.attemptId,
+      workspaceId: call.workspaceId,
+      profileId: plan.profile.profileId,
+      toolDefinitionId: pin.toolDefinitionId,
+      toolVersionId: pin.toolVersionId,
+      operation: pin.operation,
+      input,
+      grant: {
+        workspaceId: call.workspaceId,
+        profileId: plan.profile.profileId,
+        toolDefinitionId: pin.toolDefinitionId,
+        toolVersionId: pin.toolVersionId,
+        operations: [pin.operation],
+      },
+      audit: { principalRef: command.callerPrincipalId, traceId: `trc_${suffix}` },
+      idempotencyKey: call.idempotencyKey,
+      requestedAt: call.requestedAt,
+      policySnapshotRef: call.policySnapshotRef,
+    })
+    if (
+      request.toolCallId !== call.toolCallId ||
+      request.requestId !== `req_${suffix}` ||
+      call.principalRef !== command.callerPrincipalId ||
+      ![toolRequestDigest(request), toolRequestDigestLegacy(request)].includes(call.requestDigest)
+    )
+      throw new Error('TOOL_EFFECT_REQUEST_MISMATCH')
+    const operation = GraphNodeOperationSchema.parse({
+      executionId: execution.executionId,
+      attemptId: call.attemptId,
+      workspaceId: call.workspaceId,
+      workflowId: `wfl_${execution.executionId.slice(4)}`,
+      threadId,
+      node: node.node,
+      kind: 'tool' as const,
+      name: node.operation.name,
+      input,
+      idempotencyKey: call.idempotencyKey,
+      toolPin: pin,
+    })
+    const authority = await authorizeLocalGraphTool(operation, {
+      api,
+      registry,
+      historicalVerification: true,
+      resolveGraph: (workspaceId, selection) =>
+        new GraphDefinitionCatalog(
+          new SqliteGraphDefinitionRepository(persistence, workspaceId)
+        ).getPinned(selection.reference),
+    })
+    if (authority.version.toolDefinitionId !== call.toolDefinitionId)
+      throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+    const body = new TextEncoder().encode(canonicalJsonStringify(input))
+    const contentDigest = sha256Bytes(body)
+    const artifactRef = `art_${createHash('sha256')
+      .update(canonicalJsonStringify([call.workspaceId, execution.executionId, request.requestId]))
+      .digest('hex')
+      .slice(0, 26)
+      .toUpperCase()}`
+    const expectedOutput = { artifactRef, contentDigest, size: body.byteLength }
+    let artifactState: RecoveryEvidence['artifactState'] = 'missing'
+    try {
+      const object = await objectStore.get(artifactRef)
+      const metadata = object.metadata
+      const matches =
+        object.key === artifactRef &&
+        object.size === body.byteLength &&
+        object.contentType === 'application/json' &&
+        object.sha256 === contentDigest &&
+        sha256Bytes(object.body) === contentDigest &&
+        Buffer.from(object.body).equals(Buffer.from(body)) &&
+        metadata['workspace'] === call.workspaceId &&
+        metadata['workspace-id'] === call.workspaceId &&
+        metadata['project-id'] === execution.correlation.projectId &&
+        metadata['execution'] === execution.executionId &&
+        metadata['execution-id'] === execution.executionId &&
+        metadata['sensitivity'] === 'internal' &&
+        metadata['artifact-state'] === undefined
+      artifactState = matches ? 'verified' : 'conflict'
+    } catch {
+      artifactState = 'missing'
+    }
+    const result = ToolExecutionResultSchema.parse({
+      toolDefinitionId: pin.toolDefinitionId,
+      toolVersionId: pin.toolVersionId,
+      operation: pin.operation,
+      output: expectedOutput,
+      artifactRefs: call.result?.artifactRefs ?? [],
+      executor: version.executor,
+      attempts: call.result?.attempts ?? 1,
+      audit: {
+        principalRef: command.callerPrincipalId,
+        traceId: `trc_${suffix}`,
+        contentDigest: toolExecutionContentDigest({
+          requestId: request.requestId,
+          toolVersionId: pin.toolVersionId,
+          operation: pin.operation,
+          input,
+          output: expectedOutput,
+        }),
+      },
+    })
+    if (call.result !== undefined && !isDeepStrictEqual(call.result, result)) {
+      const legacyResult = {
+        ...result,
+        audit: {
+          ...result.audit,
+          contentDigest: toolExecutionContentDigestLegacy({
+            requestId: request.requestId,
+            toolVersionId: pin.toolVersionId,
+            operation: pin.operation,
+            input,
+            output: expectedOutput,
+          }),
+        },
+      }
+      if (!isDeepStrictEqual(call.result, legacyResult)) artifactState = 'conflict'
+    }
+    return {
+      execution,
+      attempt,
+      command,
+      plan,
+      version,
+      request,
+      result,
+      deadline: Math.min(
+        Date.parse(
+          execution.deadlineAt ??
+            new Date(
+              Date.parse(execution.acceptedAt) + plan.constraints.limits.duration.maximumMs
+            ).toISOString()
+        ),
+        Date.parse(command.retentionExpiresAt)
+      ),
+      checkpointId: tuple.checkpoint.id,
+      artifactState,
+    }
+  }
+
+  async #commitKnownSuccess(
+    call: ToolCall,
+    evidence: RecoveryEvidence,
+    expectedRevision: number
+  ): Promise<(RecoveryEvidence & { call: ToolCall }) | undefined> {
+    if (evidence.artifactState !== 'verified') return undefined
+    if (call.status === 'succeeded') {
+      if (!call.result || !isDeepStrictEqual(call.result.output, evidence.result.output))
+        throw new Error('TOOL_EFFECT_RESULT_CONFLICT')
+      return { ...evidence, call }
+    }
+    if (!['executing', 'reconciliation_required'].includes(call.status))
+      throw new Error('TOOL_EFFECT_STATE_CONFLICT')
+    if (call.revision !== expectedRevision) return undefined
+    const at = this.#now()
+    const next: ToolCall = {
+      ...call,
+      revision: call.revision + 1,
+      status: 'succeeded',
+      result: evidence.result,
+      completedAt: at,
+      history: [...call.history, { status: 'succeeded', at }],
+    }
+    const repository = new SqliteToolCallRepository(this.#options.persistence, call.workspaceId)
+    if (!(await repository.compareAndSet(call.revision, next))) {
+      const latest = await repository.get(call.toolCallId)
+      if (
+        latest?.status === 'succeeded' &&
+        latest.result &&
+        isDeepStrictEqual(latest.result.output, evidence.result.output)
+      )
+        return { ...evidence, call: latest }
+      return undefined
+    }
+    return { ...evidence, call: next }
+  }
+
+  async #accountingState(call: ToolCall): Promise<{ charged: boolean; settled: boolean }> {
+    return new SqliteDurableUsageStore(this.#options.persistence).transaction(
+      call.workspaceId,
+      async (transaction) => ({
+        charged: (await transaction.getEffect(`${call.idempotencyKey}:charge`)) !== undefined,
+        settled: (await transaction.getEffect(`${call.idempotencyKey}:settle`)) !== undefined,
+      })
+    )
+  }
+
+  async #repairAccounting(
+    evidence: RecoveryEvidence & { call: ToolCall }
+  ): Promise<{ charged: boolean; settled: boolean }> {
+    const { call, execution, plan } = evidence
+    const prices = this.#options.prices.filter(
+      (price) =>
+        price.pin.toolDefinitionId === call.toolDefinitionId &&
+        price.pin.toolVersionId === call.toolVersionId &&
+        price.pin.contentDigest === evidence.version.contentDigest &&
+        price.pin.operation === call.operation
+    )
+    if (prices.length !== 1 || prices[0]!.currency !== plan.constraints.limits.budget.currency)
+      throw new Error('TOOL_EFFECT_PRICE_UNAVAILABLE')
+    const store = new SqliteDurableUsageStore(this.#options.persistence)
+    const budget = await store.transaction(call.workspaceId, (transaction) =>
+      transaction.getBudget(execution.executionId)
+    )
+    const reservation = budget?.reservations.find(
+      ({ reservationKey }) => reservationKey === call.idempotencyKey
+    )
+    if (
+      !reservation ||
+      (reservation.attemptId !== undefined && reservation.attemptId !== call.attemptId)
+    )
+      throw new Error('TOOL_EFFECT_RESERVATION_MISSING')
+    const ledger = new DurableUsageLedger({ store, now: this.#now })
+    const source = (stage: string) => ({
+      sourceId: call.toolCallId,
+      idempotencyKey: `${call.idempotencyKey}:${stage}`,
+    })
+    // Always replay both idempotent ledger operations. Their stored effect
+    // fingerprints validate that existing receipts represent this exact
+    // tariff and settlement instead of treating any matching key as proof.
+    await ledger.charge({
+      workspaceId: call.workspaceId,
+      executionId: call.executionId,
+      attemptId: call.attemptId,
+      reservationKey: call.idempotencyKey,
+      kind: 'tool_charge',
+      quantity: { unit: 'calls', value: 1 },
+      costMicrounits: prices[0]!.costMicrounits,
+      fundingSource: 'hq_managed',
+      source: source('charge'),
+    })
+    await ledger.settle({
+      workspaceId: call.workspaceId,
+      executionId: call.executionId,
+      reservationKey: call.idempotencyKey,
+      source: source('settle'),
+    })
+    return this.#accountingState(call)
+  }
+
   async cancel(executionId: string, threadId: string, idempotencyKey: string): Promise<boolean> {
     IdentifierSchemas.executionId.parse(executionId)
     if (threadId !== `graph:${executionId}`) throw new Error('GRAPH_TOOL_THREAD_MISMATCH')
@@ -384,6 +990,51 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
 
 function digest(value: unknown) {
   return 'sha256:' + createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function sha256Bytes(value: Uint8Array): `sha256:${string}` {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseRecoveryIdentity(value: unknown): RecoveryIdentity {
+  if (
+    !isJsonObject(value) ||
+    Object.keys(value).some((key) => !['executionId', 'toolCallId'].includes(key))
+  )
+    throw new Error('TOOL_EFFECT_INSPECTION_INVALID')
+  return {
+    executionId: IdentifierSchemas.executionId.parse(value['executionId']),
+    ...(value['toolCallId'] === undefined
+      ? {}
+      : { toolCallId: IdentifierSchemas.toolCallId.parse(value['toolCallId']) }),
+  }
+}
+
+function parseRecoveryCommand(value: unknown): RecoveryCommand {
+  if (
+    !isJsonObject(value) ||
+    Object.keys(value).some(
+      (key) => !['executionId', 'toolCallId', 'expectedRevision', 'action'].includes(key)
+    ) ||
+    !Number.isSafeInteger(value['expectedRevision']) ||
+    (value['expectedRevision'] as number) <= 0 ||
+    (value['action'] !== 'resume' && value['action'] !== 'cancel')
+  )
+    throw new Error('TOOL_EFFECT_RECONCILIATION_INVALID')
+  return {
+    executionId: IdentifierSchemas.executionId.parse(value['executionId']),
+    toolCallId: IdentifierSchemas.toolCallId.parse(value['toolCallId']),
+    expectedRevision: value['expectedRevision'] as number,
+    action: value['action'],
+  }
 }
 
 class SqliteGraphToolRateLimiter implements ToolRateLimiter {

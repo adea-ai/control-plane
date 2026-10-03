@@ -446,17 +446,25 @@ function executorKey(type: ToolExecutorType, reference: string): string {
 }
 
 // New content digests use the shared host-independent canonical form (#612).
-function digest(value: unknown): string {
+export function toolExecutionContentDigest(value: unknown): string {
   return `sha256:${createHash('sha256')
     .update(canonicalJsonStringify(value) ?? 'null')
     .digest('hex')}`
 }
 
+function digest(value: unknown): string {
+  return toolExecutionContentDigest(value)
+}
+
 // CANONICAL-JSON: Before #612 (d70581e5), persisted tool versions used this
 // private localeCompare-based canonicalizer. New versions use canonicalJsonStringify.
 // Keep it only to verify versions that were persisted before the digest cutover.
-function legacyDigest(value: unknown): string {
+export function toolExecutionContentDigestLegacy(value: unknown): string {
   return `sha256:${createHash('sha256').update(legacyCanonical(value)).digest('hex')}`
+}
+
+function legacyDigest(value: unknown): string {
+  return toolExecutionContentDigestLegacy(value)
 }
 
 function legacyCanonical(value: unknown): string {

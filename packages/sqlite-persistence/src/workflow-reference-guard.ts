@@ -7,16 +7,29 @@ import { assertSqliteStoredPlanReference } from './repositories.js'
 /** Local lifecycle-job admission; caller holds the same writer transaction as enqueue. */
 export async function assertSqliteWorkflowExecutionReference(
   transaction: PersistenceTransaction,
-  record: { readonly workflowKey: string; readonly input: unknown }
+  record: {
+    readonly workflowKey: string
+    readonly input: unknown
+    readonly recovery?: { readonly recoveryId: string; readonly checkpointId: string } | undefined
+  }
 ): Promise<void> {
   const input = record.input as {
     executionId?: unknown
     workflowId?: unknown
     executionPlan?: unknown
+    graph?: unknown
     marketplacePluginReferences?: unknown
   } | null
   const executionId = ExecutionSchema.shape.executionId.parse(input?.executionId)
-  if (record.workflowKey !== executionId || input?.workflowId !== `wfl_${executionId.slice(4)}`)
+  const expectedKey =
+    record.recovery === undefined
+      ? executionId
+      : `${executionId}:graph-recovery:${record.recovery.recoveryId}`
+  if (
+    record.workflowKey !== expectedKey ||
+    input?.workflowId !== `wfl_${executionId.slice(4)}` ||
+    (record.recovery !== undefined && input?.graph === undefined)
+  )
     throw new Error('WORKFLOW_EXECUTION_REFERENCE_INVALID')
   const reference = ExecutionSchema.shape.executionPlan.parse(input.executionPlan)
   const stored = await transaction.get(
