@@ -35,6 +35,67 @@ USER bun
 
 ENTRYPOINT ["/usr/local/bin/control-plane-entrypoint"]
 
+# Pi needs Node in addition to Bun. Keep both and Pi's pinned package out of the
+# default image; Compose selects this stage only for the explicit managed-Pi overlay.
+FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node-runtime
+
+# The slim Node base omits the trust store required by the packaged Restate
+# server's GitHub/update client. Reuse the CA bundle from the pinned Bun base.
+COPY --from=dependencies /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+FROM dependencies AS managed-pi-dependencies
+
+WORKDIR /opt/managed-pi
+
+COPY infrastructure/containers/managed-pi/package.json infrastructure/containers/managed-pi/bun.lock ./
+
+RUN bun install --cwd /opt/managed-pi --frozen-lockfile --production --ignore-scripts
+
+FROM node-runtime AS runtime-managed-pi
+
+ARG APP_NAME=local-control-plane
+ARG COMMIT_SHA
+ENV APP_NAME=${APP_NAME} \
+    COMMIT_SHA=${COMMIT_SHA} \
+    APP_ENV=production \
+    NODE_ENV=production \
+    HOME=/home/node
+
+WORKDIR /workspace
+
+COPY --from=build --chown=1000:1000 /workspace/package.json /workspace/bun.lock /workspace/bunfig.toml ./
+COPY --from=build --chown=1000:1000 /workspace/patches ./patches
+COPY --from=build --chown=1000:1000 /workspace/apps ./apps
+COPY --from=build --chown=1000:1000 /workspace/packages ./packages
+COPY --from=dependencies /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=managed-pi-dependencies --chown=1000:1000 /opt/managed-pi/node_modules /opt/managed-pi/node_modules
+COPY infrastructure/containers/managed-pi/LICENSE.pi /opt/managed-pi/node_modules/@earendil-works/pi-coding-agent/LICENSE
+COPY --chown=1000:1000 infrastructure/containers/entrypoint.sh /usr/local/bin/control-plane-entrypoint
+COPY infrastructure/containers/managed-pi-entrypoint.sh /usr/local/bin/managed-pi-entrypoint
+COPY infrastructure/containers/managed-pi/sync-agent-config.mjs /usr/local/bin/sync-managed-pi-config.mjs
+COPY infrastructure/containers/managed-pi/version-preflight.mjs /usr/local/lib/control-plane/managed-pi-version-preflight.mjs
+
+RUN bun install --frozen-lockfile --production --ignore-scripts \
+    && ln -s /opt/managed-pi/node_modules/.bin/pi /usr/local/bin/pi \
+    && chmod 0555 /usr/local/bin/control-plane-entrypoint /usr/local/bin/managed-pi-entrypoint /usr/local/bin/sync-managed-pi-config.mjs /usr/local/lib/control-plane/managed-pi-version-preflight.mjs
+
+USER 1000:1000
+
+ENTRYPOINT ["/usr/local/bin/managed-pi-entrypoint"]
+
+# This opt-in test image extends the exact managed-Pi runtime target with the
+# existing local acceptance harness; it is never a shipped Simple image.
+FROM runtime-managed-pi AS runtime-managed-pi-certification
+
+WORKDIR /workspace
+
+COPY --from=build --chown=1000:1000 /workspace/node_modules/@control-plane /workspace/node_modules/@control-plane
+COPY --chown=1000:1000 scripts/ /workspace/scripts/
+COPY --chown=1000:1000 tests/ /workspace/tests/
+
+ENTRYPOINT ["bun", "scripts/certify-m11-managed-pi.mjs"]
+CMD ["/usr/local/bin/pi"]
+
 FROM runtime AS migration
 
 ENTRYPOINT ["bun", "--cwd=packages/database", "run", "db:migrate"]
