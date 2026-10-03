@@ -15,7 +15,7 @@
           "serverless": false,
           "cpuLimit": 0.5,
           "memoryLimitBytes": 1073741824,
-          "reason": "The only production cloud dependency of the local-first MVP (web/mobile marketplace catalog proxy). Liveness is polled on /health so the Neon production compute autosuspends between catalog traffic; /ready is verified once per promotion. 1 GiB suffices because the registry refresh skips the immutable download while the latest pointer names the held catalog."
+          "reason": "The only production cloud dependency of the local-first MVP (web/mobile marketplace catalog proxy). Liveness is polled on /health so the Neon production compute autosuspends between catalog traffic; /ready is verified once per promotion. The latest registry object is a full catalog (27,242,051 bytes in current GitHub metadata), not a small pointer. PR #853 implements a conditional ETag refresh so unchanged polls can be bodyless (304); changed catalogs still require the full response. Production release verification is pending."
         },
         "workflow-worker": {
           "configuredReplicas": 1,
@@ -59,16 +59,16 @@
           "serverless": false,
           "cpuLimit": 0.25,
           "memoryLimitBytes": 1073741824,
-          "reason": "Local-first MVP baseline has no active deployment while the persistent volume is retained. Activate one replica for Cloud integration; sleeping during an active test would invalidate restart and registration semantics."
+          "reason": "Local-first MVP baseline has no active deployment. The IaC definition and standby procedure preserve a Restate volume when one exists, but the current live inventory has no staging volume or mount; provision the configured 500 MB volume and a matching request identity keypair before activation if either is absent. Activate one replica for Cloud integration; sleeping during an active test would invalidate restart and registration semantics."
         }
       }
     }
   },
   "usageControls": {
     "resourceLimitsOwnedAsCode": true,
-    "zeroComputeMechanism": "disconnect application sources and remove active and reactivatable nonterminal deployments while preserving service configuration and volumes",
-    "workspaceUsageAlert": "unavailable on the current trial plan; the live CLI reported that usage limits require an active subscription on 2026-08-28",
-    "paidPlanPolicy": "When a paid subscription is activated, set a 5 USD soft alert and 10 USD hard workspace limit after confirming the workspace still contains only the Control Plane project.",
+    "zeroComputeMechanism": "disconnect application sources and remove active and reactivatable nonterminal deployments while preserving service configuration and any volumes that exist; standby does not provision missing volumes",
+    "workspaceUsageAlert": "The 2026-10-03 readback confirmed the existing 5 USD soft alert and 10 USD hard limit are configured; preserve them unless the user requests a change.",
+    "paidPlanPolicy": "Keep the current 5 USD soft alert and 10 USD hard limit while the workspace contains only the Control Plane project; change thresholds only after an explicit user request.",
     "hardLimitBehavior": "Reaching a configured hard limit stops workloads and is an availability event."
   }
 }

@@ -2,24 +2,35 @@
 
 `.railway/railway.ts` is the single Railway project definition for the Cloud profile. It owns
 service sources, build/start commands, health checks, restart behavior, private endpoints, the
-pinned Restate image, and the Restate volume attachment. Secret values use `preserve()` and remain
-in Railway.
+pinned Restate image, and the Restate volume attachment in the configured topology. A declared
+volume attachment does not prove that a live volume exists. Secret values use `preserve()` and
+remain in Railway.
 
 The TypeScript definition is the **activation profile** and deliberately declares one replica per
 service. Railway's Infrastructure as Code schema rejects zero replicas, so the local-first MVP
 standby baseline is owned by `infrastructure/railway/cost-policy.json` and applied with
 `bun run railway:standby --environment <environment> --apply --confirm <environment>`. The command
-disconnects application sources and removes only active deployment revisions, preserving services,
-configuration, and volumes. It also removes queued, building, initializing, or otherwise
+disconnects application sources and removes active deployment revisions, preserving services,
+configuration, and any volumes that exist. It also removes queued, building, initializing, or otherwise
 reactivatable revisions so delayed provider work cannot restart compute after verification.
 `railway config apply` is therefore an activation operation, not a routine standby reconciliation
 command.
 
-Link the Railway CLI to the intended project and environment, then run `railway config plan`. Review
-the complete plan before applying it. Production and staging must be planned and applied separately;
-never apply a staging plan to production. Production application sources are disconnected by the
-definition so a push to `main` cannot silently enable compute. Destructive changes require explicit
-confirmation.
+Production promotion owns the control-api image. The definition requires
+`CONTROL_PLANE_PRODUCTION_IMAGE` to be an immutable control-api GHCR digest; it does not contain a
+release digest. Use `bun run railway:production-plan` for production previews. The helper discovers
+the linked project/environment/service, reads the configured source and active deployment through a
+narrow Railway API query, and requires their immutable image and digest to match an active successful
+deployment. It injects that freshly read image only for the read-only plan, rejects stale caller input,
+wrong targets, any source diff, and changes observed during planning. Link the CLI to
+`control-plane` production before running it. It prints a plan only after all guards pass; it never
+applies. A missing image, connected Git source, mutable tag, pending promotion, or concurrent change
+fails closed.
+
+Staging continues to use the `main` GitHub source without a production image input. Link the Railway
+CLI to staging and run `railway config plan` there. Review the complete plan before applying it.
+Production and staging must be planned and applied separately; never apply a staging plan to
+production. Destructive changes require explicit confirmation.
 
 ### Running the plan locally
 
@@ -29,7 +40,7 @@ an ordinary shell it points at whatever token came last — a directory, not the
 fails with a misleading `This version of railway/iac requires Railway CLI 5.42.1 or newer` even
 though the installed CLI is current.
 
-Point `_` at the binary for the invocation:
+For a direct read-only CLI invocation, point `_` at the binary:
 
 ```sh
 env _="$(command -v railway)" railway config plan
@@ -38,7 +49,7 @@ env _="$(command -v railway)" railway config plan
 A stale CLI is the only reason to see that message, so check `railway --version` before concluding
 anything else is wrong. `railway config plan` is read-only: it reconciles the authoring file against
 the linked project and environment without changing either, and `--detailed-exit-code` exits 2 when
-changes are pending for CI gating.
+changes are pending for CI gating. The production helper sets `_` for its own CLI invocation.
 
 **The engine treats an omitted field as a deletion** (the CLI documents this as "omit=delete"), which
 has two consequences this file must respect:
@@ -48,13 +59,19 @@ has two consequences this file must respect:
   retired `COMMIT_SHA` service variables reconcile away, and it is why the production
   `MARKETPLACE_REGISTRY_*` variables are declared as preserved: undeclared, a production apply would
   have deleted the marketplace registry URL and token.
-- Production image sources are owned by the container-promotion workflow, not by this file, so the
-  production branch declares no `source`. A `config apply` against production therefore always
-  reports `source.image → null` for the application services. Those entries are an artifact of the
-  omit=delete rule, not a desired change: applying them disconnects the promoted digests until the
-  next release reconnects them. Review production plans with `railway config plan` and apply only
-  when the diff is limited to fields this file owns; single-field corrections (for example a
-  `limitOverride` byte value) can go through the provider API without a full apply.
+- Production image sources are owned by the container-promotion workflow, and source omission is
+  destructive. The authoring file therefore requires the exact image read from the current Railway
+  source after its match to the active successful deployment is verified. The guarded production
+  helper refuses any `source` change in the plan, including type/image clearing. Other baseline drift
+  such as restart policy or sleep settings may remain for separate review; the helper does not apply
+  it. Apply only a separately reviewed and approved change.
+
+The current live staging inventory has no Restate volume or mount even though the activation
+definition declares one. Standby preserves volumes that exist; it never creates missing volumes.
+Before staging activation, verify the volume and request-identity keypair are present and provision
+the configured 500 MB volume plus matching identity if either is absent. Production's former Restate
+volume was removed with the service; any future production runtime reactivation needs fresh
+provisioning.
 
 The catalog approval gate (#188) is declared here for control-api: production enables it with a fixed
 cutover instant, staging keeps it disabled. Changing the cutover is a deliberate data-governance
