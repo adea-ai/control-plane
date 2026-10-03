@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.65.0...workspace-v1.65.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+
 ## [1.65.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.8...workspace-v1.65.0) (2026-10-02)
 
 
