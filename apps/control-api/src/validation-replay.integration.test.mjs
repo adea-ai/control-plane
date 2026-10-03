@@ -30,6 +30,7 @@ import {
   executionValidationCommands,
 } from '@control-plane/database'
 import { createIsolatedPostgres } from '@control-plane/testing/postgres'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 import { createManagedCloudControlApiComposition } from './cloud-composition.ts'
 import { createControlApiApplication } from './application.ts'
 
@@ -529,7 +530,7 @@ beforeAll(async () => {
   if (process.env.RUN_DATABASE_INTEGRATION !== 'true') return
   database = await createIsolatedPostgres({ migrate: false })
   await database.migrate()
-}, 60000)
+}, integrationTestTimeout(60_000))
 
 afterAll(async () => {
   try {
@@ -541,7 +542,7 @@ afterAll(async () => {
       await database?.dispose()
     }
   }
-}, 30000)
+}, integrationTestTimeout())
 
 test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
   'cloud HTTP validation replays after closing its application and PostgreSQL connection',

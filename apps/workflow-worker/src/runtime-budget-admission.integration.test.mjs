@@ -218,7 +218,7 @@ function registerAdmissionTest(name, body) {
         throw error
       }
     },
-    30_000
+    integrationTestTimeout()
   )
 }
 

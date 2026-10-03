@@ -22,6 +22,7 @@ import {
 } from '@control-plane/database'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { withIsolatedPostgres } from '@control-plane/testing/postgres'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 import { createManagedCloudControlApiComposition } from './cloud-composition.ts'
 import { createControlApiApplication } from './application.ts'
 
@@ -317,5 +318,5 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       { migrate: false }
     )
   },
-  60_000
+  integrationTestTimeout(60_000)
 )

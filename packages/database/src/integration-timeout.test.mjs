@@ -5,6 +5,7 @@ test('integration runner never reduces an authored test or setup budget', () => 
   const original = process.env.INTEGRATION_TEST_TIMEOUT_MS
   try {
     delete process.env.INTEGRATION_TEST_TIMEOUT_MS
+    expect(integrationTestTimeout(15_000)).toBe(15_000)
     expect(integrationTestTimeout(90_000)).toBe(90_000)
 
     process.env.INTEGRATION_TEST_TIMEOUT_MS = '30000'
@@ -13,6 +14,7 @@ test('integration runner never reduces an authored test or setup budget', () => 
     expect(integrationTestTimeout(90_000)).toBe(90_000)
 
     process.env.INTEGRATION_TEST_TIMEOUT_MS = '120000'
+    expect(integrationTestTimeout(15_000)).toBe(120_000)
     expect(integrationTestTimeout(30_000)).toBe(120_000)
     expect(integrationTestTimeout(90_000)).toBe(120_000)
     expect(integrationTestTimeout(180_000)).toBe(180_000)
