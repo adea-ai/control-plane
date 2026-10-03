@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as atomicLedger from '../scripts/atomic-clause-ledger.mjs'
 import {
   collectAtomicClauses,
   extractAtomicClauses,
@@ -40,6 +41,205 @@ const source = {
     candidateAcceptance: 'not-established',
   },
 }
+
+const crosswalkTable = `## Existing requirements crosswalk
+| Existing requirement | Existing classification | Atomic inventory mapping |
+| --- | --- | --- |
+| \`CP-TEST-001\` | partially_verified | TDD-A001-A002; A002 remains incomplete. |
+`
+
+describe('atomic requirement crosswalk', () => {
+  test('normalizes explicit ranges and shorthand while retaining qualifications', () => {
+    expect(atomicLedger.extractRequirementCrosswalk).toBeFunction()
+    const rows = atomicLedger.extractRequirementCrosswalk(crosswalkTable, 'TDD-A')
+    expect(rows).toEqual([
+      {
+        requirementId: 'CP-TEST-001',
+        atomIds: ['TDD-A001', 'TDD-A002'],
+        inventoryLine: 4,
+        heading: 'Existing requirements crosswalk',
+        columns: {
+          'Existing classification': 'partially_verified',
+          'Atomic inventory mapping': 'TDD-A001-A002; A002 remains incomplete.',
+        },
+      },
+    ])
+    expect(
+      atomicLedger.extractRequirementCrosswalk(
+        '| Existing row | Atomic inventory mapping |\n| --- | --- |\n| CP-TEST-002 | CPPRD-104-105 |',
+        'CPPRD-'
+      )[0].atomIds
+    ).toEqual(['CPPRD-104', 'CPPRD-105'])
+  })
+
+  test('rejects malformed, reversed, and foreign-source atom references', () => {
+    for (const mapping of ['TDD-A002-A001', 'TDD-A99', 'CPPRD-001', 'no explicit atoms']) {
+      expect(() =>
+        atomicLedger.extractRequirementCrosswalk(
+          crosswalkTable.replace('TDD-A001-A002; A002 remains incomplete.', mapping),
+          'TDD-A'
+        )
+      ).toThrow()
+    }
+    expect(() =>
+      atomicLedger.extractRequirementCrosswalk(
+        crosswalkTable.replace('| partially_verified |', '|'),
+        'TDD-A'
+      )
+    ).toThrow()
+  })
+
+  test('rejects unknown requirements, unknown atoms, duplicate rows and source mismatches', async () => {
+    await fixture(async (root) => {
+      const configured = structuredClone(source)
+      configured.atomicInventory.requirementCrosswalk = { atomIdPrefix: 'TDD-A' }
+      const ledger = {
+        sources: [configured],
+        requirements: [{ id: 'CP-TEST-001', sourceId: source.id, classification: 'tbd' }],
+      }
+      const document = table.replaceAll('A-L008-01', 'TDD-A001').replaceAll('A-L009-01', 'TDD-A002')
+      await writeFile(join(root, source.atomicInventory.path), document + crosswalkTable)
+      expect(atomicLedger.collectAtomicCrosswalk).toBeFunction()
+      const valid = await atomicLedger.collectAtomicCrosswalk(ledger, root)
+      expect(valid.errors).toEqual([])
+      expect(valid.register.sources[0]).toMatchObject({
+        requirementMapping: 'incomplete',
+        candidateAcceptance: 'not-established',
+        unmappedAtomIds: [],
+      })
+      expect(ledger.requirements[0].classification).toBe('tbd')
+      for (const [changed, expected] of [
+        [crosswalkTable.replace('CP-TEST-001', 'CP-TEST-999'), 'unknown requirement'],
+        [crosswalkTable.replaceAll('A002', 'A999'), 'unknown atom'],
+        [crosswalkTable + crosswalkTable, 'duplicate requirement'],
+        ['', 'missing crosswalk'],
+      ]) {
+        await writeFile(join(root, source.atomicInventory.path), document + changed)
+        expect(
+          (await atomicLedger.collectAtomicCrosswalk(ledger, root)).errors.join('\n')
+        ).toContain(expected)
+      }
+      await writeFile(join(root, source.atomicInventory.path), document + crosswalkTable)
+      ledger.requirements[0].sourceId = 'another-source'
+      expect((await atomicLedger.collectAtomicCrosswalk(ledger, root)).errors.join('\n')).toContain(
+        'source mismatch'
+      )
+    })
+  })
+
+  test('existing crosswalks cannot disappear by removing their configuration', async () => {
+    await fixture(async (root) => {
+      const document = table.replaceAll('A-L008-01', 'TDD-A001').replaceAll('A-L009-01', 'TDD-A002')
+      await writeFile(join(root, source.atomicInventory.path), document + crosswalkTable)
+      const result = await atomicLedger.collectAtomicCrosswalk(
+        {
+          sources: [source],
+          requirements: [{ id: 'CP-TEST-001', sourceId: source.id }],
+        },
+        root
+      )
+      expect(result.errors.join('\n')).toContain('crosswalk configuration required')
+    })
+  })
+
+  test('requirement identities are validated against the ledger rather than a CP-only prefix', () => {
+    expect(
+      atomicLedger.extractRequirementCrosswalk(
+        crosswalkTable.replace('CP-TEST-001', 'PROJECT-INDEX-RETRIEVAL-001'),
+        'TDD-A'
+      )[0].requirementId
+    ).toBe('PROJECT-INDEX-RETRIEVAL-001')
+  })
+
+  test('rejects a malformed atom beside a valid reference instead of truncating the binding', () => {
+    for (const mapping of [
+      'TDD-A001, TDD-A00O',
+      'TDD-A001, A00O',
+      'TDD-A001, TDD-A002-A00O',
+      'TDD-A001, CPPRD-00O',
+      'TDD-A001, TDD-A002_bad',
+      'TDD-A001; tdd-a002',
+      'TDD-A001; a002',
+      'TDD-A001; TDD-A002é',
+      'TDD-A001; éTDD-A002',
+      'TDD-A001; éA002',
+      'TDD-A001; TDD‐A002',
+      'TDD-A001; CPPRD‐001',
+      'TDD-A001; TDD-A002–A004',
+      'TDD-A001; TDD−A002',
+      'TDD-A001; TDD-A002\u200b',
+    ]) {
+      expect(() =>
+        atomicLedger.extractRequirementCrosswalk(
+          crosswalkTable.replace('TDD-A001-A002; A002 remains incomplete.', mapping),
+          'TDD-A'
+        )
+      ).toThrow('malformed atom reference')
+    }
+  })
+
+  test('crosswalk drift rejects lost links, duplicated bindings and altered qualification text', async () => {
+    await fixture(async (root) => {
+      const configured = structuredClone(source)
+      configured.atomicInventory.requirementCrosswalk = { atomIdPrefix: 'TDD-A' }
+      const ledger = {
+        sources: [configured],
+        requirements: [{ id: 'CP-TEST-001', sourceId: source.id }],
+      }
+      const document = table.replaceAll('A-L008-01', 'TDD-A001').replaceAll('A-L009-01', 'TDD-A002')
+      await writeFile(join(root, source.atomicInventory.path), document + crosswalkTable)
+      const captured = await atomicLedger.collectAtomicCrosswalk(ledger, root)
+      const path = join(root, 'docs/requirements/control-plane-atomic-crosswalk.v1.json')
+      expect(await atomicLedger.validateAtomicCrosswalk(ledger, root)).toEqual([
+        'Atomic crosswalk is missing or malformed',
+      ])
+      await writeFile(path, JSON.stringify(captured.register))
+      expect(await atomicLedger.validateAtomicCrosswalk(ledger, root)).toEqual([])
+      for (const mutate of [
+        (record) => record.sources[0].mappings[0].atomIds.pop(),
+        (record) => record.sources[0].mappings.push(record.sources[0].mappings[0]),
+        (record) => {
+          record.sources[0].mappings[0].columns['Atomic inventory mapping'] = 'All accepted.'
+        },
+        (record) => {
+          record.sources[0].candidateAcceptance = 'established'
+        },
+      ]) {
+        const changed = structuredClone(captured.register)
+        mutate(changed)
+        await writeFile(path, JSON.stringify(changed))
+        expect((await atomicLedger.validateAtomicCrosswalk(ledger, root))[0]).toContain('drifted')
+      }
+    })
+  })
+
+  test('checked-in crosswalk preserves the exact partial mapping and separate audit tables', async () => {
+    const ledger = JSON.parse(
+      await readFile(
+        new URL('../docs/requirements/control-plane-requirements.v1.json', import.meta.url),
+        'utf8'
+      )
+    )
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    expect(await atomicLedger.validateAtomicCrosswalk(ledger, root)).toEqual([])
+    const { register } = await atomicLedger.collectAtomicCrosswalk(ledger, root)
+    expect(register.summary).toEqual({
+      atomicClauseCount: 6093,
+      mappedAtomCount: 291,
+      unmappedAtomCount: 5802,
+      mappedRequirementCount: 70,
+      unlinkedRequirementCount: 130,
+      linkCount: 333,
+    })
+    expect(
+      register.sources.find(({ sourceId }) => sourceId === 'security-trust-model')
+        .unmaterializedCrosswalkTables
+    ).toHaveLength(1)
+    expect(register.sources.every((item) => item.candidateAcceptance === 'not-established')).toBe(
+      true
+    )
+  })
+})
 
 async function fixture(run, document = table) {
   const root = await mkdtemp(join(tmpdir(), 'cp-atomic-ledger-test-'))

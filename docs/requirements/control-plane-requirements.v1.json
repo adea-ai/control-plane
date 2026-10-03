@@ -104,7 +104,10 @@
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
-        "candidateAcceptance": "not-established"
+        "candidateAcceptance": "not-established",
+        "requirementCrosswalk": {
+          "atomIdPrefix": "CPPRD-"
+        }
       }
     },
     {
@@ -194,7 +197,10 @@
         "extractionScope": "captured-text",
         "requirementMapping": "incomplete",
         "implementationMapping": "bounded-path-inspection",
-        "candidateAcceptance": "not-established"
+        "candidateAcceptance": "not-established",
+        "requirementCrosswalk": {
+          "atomIdPrefix": "TDD-A"
+        }
       },
       "gap": {
         "issue": 195,

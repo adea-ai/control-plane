@@ -16,6 +16,7 @@ The candidate metadata and independent review below describe the recorded audit 
 
 - 200 bounded normative requirement rows: 83 partially_verified, 5 planned, 3 superseded, 42 tbd, 67 verified.
 - 6093 captured source clauses in the [machine-readable atomic clause register](./control-plane-atomic-clauses.v1.json). These include obligations, definitions, fields, and explicit source dispositions; full atom-to-requirement mapping and candidate acceptance remain incomplete.
+- 333 explicit existing requirement-to-atom links in the [machine-readable crosswalk](./control-plane-atomic-crosswalk.v1.json), covering 70 bounded requirement rows and 291 distinct atoms. 5802 atoms and 130 bounded rows have no explicit link. Links preserve recorded crosswalk qualifications and do not establish implementation, profile coverage, passing evidence or acceptance.
 - 103 M1–M10 issue audits: 14 partially_verified, 5 superseded, 84 verified.
 - 5 explicit contradictions or supersessions.
 
