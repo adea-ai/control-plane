@@ -124,6 +124,13 @@ PostgreSQL integration suites author their explicit budgets through
 `INTEGRATION_TEST_TIMEOUT_MS` — at least 120 seconds remotely, while preserving any longer
 authored budget. The Local runner preserves the authored local values.
 
+The workflow does not retry an entire slice after a later drill fails: the
+per-file retry already bounds remote connection recovery. A failed drill remains
+a failed check. The cloud remote drill uses a five-minute fixture validity window
+so remote setup does not consume its command deadline; its explicit post-deadline
+replay and new-command rejection checks still exercise expiration. This window is
+not a product timeout, resource budget or measured acceptance SLO.
+
 ## M11 test architecture
 
 M11 owns the final release validation layout. At minimum it must classify each suite as one primary lane:

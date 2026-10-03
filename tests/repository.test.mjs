@@ -666,6 +666,44 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /parallel/i)
 })
 
+test('Neon slice failure does not rerun successful database work', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
+    'utf8'
+  )
+  const slice = workflow
+    .split("- name: Verify migrations and this shard's integration slice")[1]
+    ?.split('- name: Find exact preview branch for cleanup')[0]
+  const body = slice?.split('run: |\n')[1]
+  assert.ok(body, 'Neon integration slice command is required')
+  const script = body
+    .split('\n')
+    .map((line) => line.slice(10))
+    .join('\n')
+    .replaceAll('${{ matrix.shard }}', '1')
+  const directory = await mkdtemp(join(tmpdir(), 'neon-slice-failure-'))
+  const log = join(directory, 'invocations')
+  try {
+    await writeFile(
+      join(directory, 'bun'),
+      '#!/bin/sh\ncase "$*" in\n  "scripts/run-integration-tests.mjs --shard=1") printf "slice\\n" >> "$NEON_SLICE_FIXTURE_LOG"; exit 1 ;;\n  *) exit 0 ;;\nesac\n',
+      { mode: 0o700 }
+    )
+    const result = spawnSync('/bin/bash', ['-e', '-c', script], {
+      encoding: 'utf8',
+      env: { PATH: `${directory}:/usr/bin:/bin`, NEON_SLICE_FIXTURE_LOG: log },
+    })
+    assert.equal(result.status, 1, 'The failed slice must remain a failed check')
+    assert.equal(
+      await readFile(log, 'utf8'),
+      'slice\n',
+      'Do not rerun the whole slice after its drill fails'
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('isolates credentialed Neon validation from pull-request source', async () => {
   const neonWorkflow = await readFile(
     new URL('../.github/workflows/neon_workflow.yml', import.meta.url),

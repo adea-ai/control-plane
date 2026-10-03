@@ -80,21 +80,19 @@ describe('Neon preview cleanup lookup', () => {
     expect(workflow).toContain('SHARD: ${{ matrix.shard }}')
   })
 
-  test('retries the integration slice once inside the verify step for transient Neon drops', () => {
+  test('runs the integration slice once while preserving a failed verify step', () => {
     const step = workflow
       .split("      - name: Verify migrations and this shard's integration slice")[1]
       ?.split('\n      - name:')[0]
-    expect(step).toContain(
-      'if bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}; then'
-    )
-    expect(step).toContain('retrying once for a transient Neon connection drop')
+    expect(step).not.toContain('if bun scripts/run-integration-tests.mjs')
+    expect(step).not.toContain('retrying once for a transient Neon connection drop')
     expect(
       (
         step.match(/bun scripts\/run-integration-tests\.mjs --shard=\$\{\{ matrix\.shard \}\}/g) ??
         []
       ).length
-    ).toBe(2)
-    // Migrations stay outside the retry: only the test slice re-runs.
+    ).toBe(1)
+    // The runner owns per-file retries; the workflow invokes each command once.
     expect((step.match(/db:migrate/g) ?? []).length).toBe(1)
   })
 

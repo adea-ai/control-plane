@@ -199,18 +199,11 @@ jobs:
 
       - name: Verify migrations and this shard's integration slice
         if: steps.credentials.outputs.available == 'true'
-        # Neon's pooler occasionally severs connections mid-shard
-        # (CONNECTION_ENDED / CONNECTION_DESTROYED stalls that time tests
-        # out at 30s). One in-step retry re-derives the whole slice on the
-        # same disposable branch instead of leaving main red for a
-        # transient drop; migrations are deliberately outside the retry.
+        # The runner already retries each remote file once in a fresh process.
+        # A later drill failure must not repeat a successful database slice.
         run: |
           bun --cwd=packages/database run db:check
           bun --cwd=packages/database run db:migrate
-          if bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}; then
-            exit 0
-          fi
-          echo '::warning::integration slice failed; retrying once for a transient Neon connection drop'
           bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}
 
       - name: Find exact preview branch for cleanup
