@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.17.2...control-api-v1.17.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **marketplace:** avoid unchanged full-catalog downloads ([#853](https://github.com/adea-ai/control-plane/issues/853)) ([db7e19e](https://github.com/adea-ai/control-plane/commit/db7e19ecf8c57c9a0ceef71e08b174856a8bfb83))
+* **marketplace:** revalidate unchanged catalogs without downloading the body ([db7e19e](https://github.com/adea-ai/control-plane/commit/db7e19ecf8c57c9a0ceef71e08b174856a8bfb83))
+
 ## [1.17.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.17.1...control-api-v1.17.2) (2026-10-03)
 
 

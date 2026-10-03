@@ -1,6 +1,6 @@
 {
-  ".": "1.66.0",
-  "apps/control-api": "1.17.2",
+  ".": "1.66.1",
+  "apps/control-api": "1.17.3",
   "apps/hosted-control-plane": "1.16.1",
   "apps/local-control-plane": "1.23.0",
   "apps/runtime-gateway": "1.7.3",
