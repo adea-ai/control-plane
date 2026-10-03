@@ -1,5 +1,5 @@
 {
-  ".": "1.70.1",
+  ".": "1.70.2",
   "apps/control-api": "1.18.0",
   "apps/hosted-control-plane": "1.17.0",
   "apps/local-control-plane": "1.25.0",
