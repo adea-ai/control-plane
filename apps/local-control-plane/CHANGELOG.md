@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.25.0...local-control-plane-v1.25.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** validate Pi 1.0 packaged runtime ([#868](https://github.com/adea-ai/control-plane/issues/868)) ([f1aead5](https://github.com/adea-ai/control-plane/commit/f1aead5e995c52142af587f5ae764c049565d29e))
+
 ## [1.25.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.24.0...local-control-plane-v1.25.0) (2026-10-03)
 
 
