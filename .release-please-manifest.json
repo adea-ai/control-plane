@@ -1,8 +1,8 @@
 {
-  ".": "1.68.0",
+  ".": "1.69.0",
   "apps/control-api": "1.18.0",
   "apps/hosted-control-plane": "1.16.1",
-  "apps/local-control-plane": "1.24.0",
+  "apps/local-control-plane": "1.25.0",
   "apps/runtime-gateway": "1.7.3",
   "apps/runtime-worker": "1.9.1",
   "apps/tool-gateway": "1.4.0",
