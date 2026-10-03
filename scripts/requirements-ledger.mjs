@@ -9,6 +9,7 @@ import {
   validateAtomicClauseRegister,
   validateAtomicCrosswalk,
 } from './atomic-clause-ledger.mjs'
+import { validateCanonicalSourceLineage } from './canonical-source-lineage.mjs'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -640,6 +641,7 @@ async function main() {
   const { errors, warnings } = await validateRequirementsLedger(ledger, {
     repositoryRoot: new URL('..', import.meta.url),
   })
+  errors.push(...(await validateCanonicalSourceLineage(repositoryRoot)))
   for (const warning of warnings) console.warn(`Requirements ledger warning: ${warning}`)
   if (errors.length > 0)
     throw new Error(`Requirements ledger is invalid:\n- ${errors.join('\n- ')}`)
