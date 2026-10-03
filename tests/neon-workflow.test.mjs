@@ -334,3 +334,51 @@ describe('Neon restricted connection workflow', () => {
     }
   })
 })
+
+describe('Neon trusted-main migration gating', () => {
+  const classifyStart = workflow.indexOf('        id: classify')
+  const classifyEnd = workflow.indexOf('  verify_neon_preview:')
+  const classify = workflow.slice(classifyStart, classifyEnd)
+
+  test('the shard matrix only runs when the classifier demands verification', () => {
+    expect(workflow).toContain(
+      "    needs: [changes]\n    if: needs.changes.outputs.verify == 'true'"
+    )
+  })
+
+  test('the baseline is the newest completed successful run of this workflow', () => {
+    expect(workflow).toContain(
+      'repos/$REPOSITORY/actions/workflows/neon_workflow.yml/runs?branch=main&status=success&per_page=1'
+    )
+    expect(workflow).toContain('\'.runs[0].head_sha // ""\'')
+  })
+
+  test('the classifier reads the full history to diff against the baseline', () => {
+    expect(workflow).toContain('fetch-depth: 0')
+    expect(workflow).toContain('git merge-base --is-ancestor "$BASELINE" "$GITHUB_SHA"')
+  })
+
+  test('release version merges never allocate a Neon verification', () => {
+    expect(classify).toContain('[ "${HEAD_MESSAGE#chore(main): release }" != "$HEAD_MESSAGE" ]')
+    expect(classify).toContain('verify=false')
+  })
+
+  test('the classifier fails open when it cannot prove irrelevance', () => {
+    expect(classify).toContain('if [ -z "$BASELINE" ]')
+    expect(classify).toContain('verify=true')
+  })
+
+  test('the relevant-path guard covers everything the shard slice executes', () => {
+    for (const pattern of [
+      "-e 'apps/.*'",
+      "-e 'packages/.*'",
+      "-e 'scripts/integration-shards\\.mjs'",
+      "-e 'scripts/run-integration-tests\\.mjs'",
+      "-e 'tests/cp1-embedded-durable-execution\\.test\\.mjs'",
+      "-e 'bun\\.lock'",
+      "-e '\\.github/workflows/neon_workflow\\.yml'",
+    ]) {
+      expect(classify).toContain(pattern)
+    }
+  })
+})
