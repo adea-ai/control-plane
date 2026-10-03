@@ -67,7 +67,13 @@ export class InMemoryToolCallRepository implements ToolCallRepository {
 }
 
 export interface ToolRateLimiter {
-  consume(key: string, limit: number, windowMs: number, at: string): Promise<boolean>
+  consume(
+    key: string,
+    limit: number,
+    windowMs: number,
+    at: string,
+    toolCallId?: string
+  ): Promise<boolean>
 }
 
 export class InMemoryToolRateLimiter implements ToolRateLimiter {
@@ -406,7 +412,8 @@ export class PolicyControlledToolExecutionService {
         rateKey,
         limit.maxCalls,
         limit.windowMs,
-        request.requestedAt
+        request.requestedAt,
+        call.toolCallId
       ))
     ) {
       await this.#transition(
@@ -569,6 +576,16 @@ function idempotencyIndex(workspaceId: string, idempotencyKey: string): string {
 function digest(value: unknown): string {
   // Legacy form, retained so calls persisted pre-cutover still replay.
   return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`
+}
+
+/** Canonical digest stored on a durable ToolCall for its exact input. */
+export function toolInputDigest(input: unknown): string {
+  return digest(input)
+}
+
+/** Accepts both persisted legacy and code-point-canonical input digests. */
+export function toolInputMatchesDigest(input: unknown, expected: string): boolean {
+  return expected === digest(input) || expected === digestV2(input)
 }
 
 function digestV2(value: unknown): string {

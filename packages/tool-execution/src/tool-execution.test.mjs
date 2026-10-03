@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { toolRequestDigestLegacy } from './tool-execution.ts'
+import {
+  toolInputDigest,
+  toolInputMatchesDigest,
+  toolRequestDigestLegacy,
+} from './tool-execution.ts'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
 import {
   FakeToolExecutor,
@@ -26,6 +30,25 @@ const ids = {
   trace: 'trc_01JABCDEF0123456789ABCDEFG',
   interaction: 'int_01JABCDEF0123456789ABCDEFG',
 }
+
+test('tool input digests expose the durable legacy canonical form for authority checks', () => {
+  const input = { z: 'artifact', a: 1 }
+  const expected = 'sha256:c903c8fedc8d79d9e651f7f42a541a4147ba6f1e3ec5a8c60ae74fe724665fdf'
+
+  expect(toolInputDigest(input)).toBe(expected)
+  expect(toolInputDigest({ a: 1, z: 'artifact' })).toBe(expected)
+})
+
+test('input digest matching accepts the persisted legacy and code-point forms only', () => {
+  const input = { é: 'accent', Z: 'upper', a: 'lower' }
+  const legacy = 'sha256:97b3d39635013bc582dab7b3677c2d28f4ee1cf5cc6b7c254344c68f983cf8e5'
+  const codePoint = 'sha256:a083c181dfab60dc6e5243f2728bc505815c3c98862ef9bc99a1e569b3de9c51'
+
+  expect(toolInputDigest(input)).toBe(legacy)
+  expect(toolInputMatchesDigest(input, legacy)).toBe(true)
+  expect(toolInputMatchesDigest(input, codePoint)).toBe(true)
+  expect(toolInputMatchesDigest(input, `sha256:${'0'.repeat(64)}`)).toBe(false)
+})
 
 const definition = {
   toolDefinitionId: ids.tool,
@@ -117,6 +140,7 @@ async function fixture({
   versionOverrides,
   authorizerOverride,
   calls: callsOverride,
+  rateLimiter,
 } = {}) {
   const registry = new ToolRegistry(new InMemoryToolRegistryRepository())
   await registry.createDefinition(definition)
@@ -145,12 +169,40 @@ async function fixture({
     calls,
     authorizer,
     approvals,
-    rateLimiter: new InMemoryToolRateLimiter(),
+    rateLimiter: rateLimiter ?? new InMemoryToolRateLimiter(),
   })
   return { service, calls, executor, interactions, authorizer }
 }
 
 describe('policy-controlled durable tool execution', () => {
+  test('remains compatible with rate limiters that implement the original four-argument contract', async () => {
+    const requested = []
+    const legacyRateLimiter = {
+      async consume(key, limit, windowMs, at) {
+        requested.push({ key, limit, windowMs, at })
+        return true
+      },
+    }
+    const { service } = await fixture({
+      rateLimiter: legacyRateLimiter,
+      versionOverrides: {
+        operations: [{ ...version().operations[0], approvalMode: 'never' }],
+      },
+    })
+
+    const outcome = await service.execute(request())
+
+    expect(outcome.state).toBe('succeeded')
+    expect(requested).toEqual([
+      {
+        key: `${ids.workspace}:service:runtime-worker:${ids.tool}:write`,
+        limit: 2,
+        windowMs: 60_000,
+        at: request().requestedAt,
+      },
+    ])
+  })
+
   test('adapts the replaceable PolicyDecisionPoint and audits its exact snapshot', async () => {
     const requests = []
     const snapshot = {
