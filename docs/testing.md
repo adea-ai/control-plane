@@ -117,7 +117,12 @@ per-case database isolation; new integration files must be assigned to a shard e
 `tests/integration-shards.test.mjs` enforces. A remote branch stretches tests that finish in
 seconds locally to tens of seconds and its pooler occasionally severs pooled connections, so the
 remote lane raises the per-test ceiling to 120 seconds and retries each file once in a fresh
-process; the local lane keeps the 30-second fast-fail ceiling with no per-file retry.
+process; the local lane keeps the 30-second fast-fail ceiling with no per-file retry. Because an
+explicit bun `test()` timeout argument always overrides the CLI `--timeout` default, the
+PostgreSQL integration suites author their explicit budgets through
+`integrationTestTimeout()` (`@control-plane/database/testing`), which the runner scales through
+`INTEGRATION_TEST_TIMEOUT_MS` — at least 120 seconds remotely, while preserving any longer
+authored budget. The Local runner preserves the authored local values.
 
 ## M11 test architecture
 

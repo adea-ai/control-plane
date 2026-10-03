@@ -24,6 +24,7 @@
         "DATABASE_MIGRATION_URL",
         "DATABASE_URL",
         "DATABASE_URL_UNPOOLED",
+        "INTEGRATION_TEST_TIMEOUT_MS",
         "RUN_DATABASE_INTEGRATION"
       ]
     }

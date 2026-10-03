@@ -7,7 +7,7 @@ import { contextPackageSerializationFixtures, deriveContextPackage } from '@cont
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity, deriveExecutionPlan } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresDelegationRepository } from './delegation-repository.ts'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
@@ -29,7 +29,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL delegation reference safety', (
       migration: loadDatabaseCredentials(process.env, 'migration'),
     })
     await isolated.migrate()
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterAll(async () => {
     await isolated?.dispose()

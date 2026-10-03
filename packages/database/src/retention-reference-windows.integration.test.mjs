@@ -16,7 +16,7 @@ import {
 import { PostgresContextAuthoringCommandRepository } from './context-authoring-command-repository.js'
 import { PostgresExecutionValidationCommandRepository } from './validation-command-repository.js'
 import { PostgresRetentionReapplication } from './retention-reapplication.js'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { contextPackages } from './schema/context-packages.js'
 import { executionPlans } from './schema/execution-plans.js'
 import { eq, sql } from 'drizzle-orm'
@@ -213,7 +213,7 @@ describe.skipIf(!enabled)('PostgreSQL reference retention windows', () => {
       }
       throw error
     }
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterEach(async () => {
     preparedDatabase = undefined
@@ -227,553 +227,591 @@ describe.skipIf(!enabled)('PostgreSQL reference retention windows', () => {
     if (errors.length > 0) {
       throw new AggregateError(errors, 'ISOLATED_TEST_DATABASE_DISPOSAL_FAILED')
     }
-  }, 30_000)
+  }, integrationTestTimeout())
 
-  test('starts the full window at the first unreferenced observation, not compiledAt', async () => {
-    const database = await createDatabase()
-    const package_ = contextPackageSerializationFixtures.futurePi
-    await new PostgresContextPackageRepository(database).put(package_)
-    const plan = planFor(package_)
-    const plans = new PostgresExecutionPlanRepository(database)
-    await plans.put(plan)
+  test(
+    'starts the full window at the first unreferenced observation, not compiledAt',
+    async () => {
+      const database = await createDatabase()
+      const package_ = contextPackageSerializationFixtures.futurePi
+      await new PostgresContextPackageRepository(database).put(package_)
+      const plan = planFor(package_)
+      const plans = new PostgresExecutionPlanRepository(database)
+      await plans.put(plan)
 
-    const observedAt = new Date('2026-09-26T12:00:00.000Z')
-    const retention = new PostgresExecutionPlanRetention(database)
-    const first = await retention.deleteEligibleExecutionPlans(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    expect(first.deleted).toBe(0)
-    expect(first.retainedByReason).toEqual({ not_expired: 1 })
-    const [observed] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(observed?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-
-    const exactBoundary = await retention.deleteEligibleExecutionPlans(
-      new Date(observedAt.getTime() + retentionMs),
-      { policyRetainMs: retentionMs, dryRun: false }
-    )
-    expect(exactBoundary.deleted).toBe(0)
-    expect(exactBoundary.retainedByReason).toEqual({ not_expired: 1 })
-
-    const afterBoundary = await retention.deleteEligibleExecutionPlans(
-      new Date(observedAt.getTime() + retentionMs + 1),
-      { policyRetainMs: retentionMs, dryRun: false }
-    )
-    expect(afterBoundary.deleted).toBe(1)
-    expect(
-      await plans.get({ executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest })
-    ).toBeUndefined()
-
-    const contextRetention = new PostgresContextPackageRetention(database)
-    const contextObservedAt = new Date(observedAt.getTime() + retentionMs + 2)
-    const contextFirst = await contextRetention.deleteEligibleContextPackages(contextObservedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    expect(contextFirst.deleted).toBe(0)
-    expect(contextFirst.retainedByReason).toEqual({ not_expired: 1 })
-    const [contextObserved] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-      .limit(1)
-    expect(contextObserved?.unreferencedSince?.toISOString()).toBe(contextObservedAt.toISOString())
-    expect(
-      (
-        await contextRetention.deleteEligibleContextPackages(
-          new Date(contextObservedAt.getTime() + retentionMs),
-          { policyRetainMs: retentionMs, dryRun: false }
-        )
-      ).deleted
-    ).toBe(0)
-    expect(
-      (
-        await contextRetention.deleteEligibleContextPackages(
-          new Date(contextObservedAt.getTime() + retentionMs + 1),
-          { policyRetainMs: retentionMs, dryRun: false }
-        )
-      ).deleted
-    ).toBe(1)
-  }, 30_000)
-
-  test('dry-run and zero-bound scans do not persist clocks; rollback and restart preserve observations', async () => {
-    const database = await createDatabase()
-    const package_ = contextPackageSerializationFixtures.futurePi
-    await new PostgresContextPackageRepository(database).put(package_)
-    const retention = new PostgresContextPackageRetention(database)
-    const observedAt = new Date('2026-12-22T00:00:00.000Z')
-
-    const dryRun = await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: true,
-    })
-    expect(dryRun.retainedByReason).toEqual({ not_expired: 1 })
-    const zeroBound = await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      bound: 0,
-      dryRun: false,
-    })
-    expect(zeroBound).toMatchObject({ scanned: 0, truncated: true, deleted: 0 })
-    expect(zeroBound.nextAfterId).toBeUndefined()
-    const [unobserved] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-      .limit(1)
-    expect(unobserved?.unreferencedSince).toBeNull()
-
-    await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    const rolledBack = await new PostgresContextPackageRetention(
-      database
-    ).deleteEligibleContextPackages(new Date(observedAt.getTime() - 24 * 60 * 60 * 1_000), {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    expect(rolledBack.retainedByReason).toEqual({ not_expired: 1 })
-    const [persisted] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-      .limit(1)
-    expect(persisted?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-
-    await new PostgresRetentionReapplication(database).resetReferenceRetentionWindows()
-    const [restored] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-      .limit(1)
-    expect(restored?.unreferencedSince).toBeNull()
-  }, 30_000)
-
-  test('cursor pages start at ID order and reach later unreferenced targets after a pinned first row', async () => {
-    const database = await createDatabase()
-    const packages = new PostgresContextPackageRepository(database)
-    const fixtures = [
-      contextPackageSerializationFixtures.futurePi,
-      contextPackageSerializationFixtures.futureAcp,
-      contextPackageSerializationFixtures.futureLangGraph,
-    ]
-    for (const package_ of fixtures) await packages.put(package_)
-    const ordered = await database
-      .select({ contextPackageId: contextPackages.contextPackageId })
-      .from(contextPackages)
-      .orderBy(contextPackages.contextPackageId)
-    expect(ordered).toHaveLength(3)
-    const firstPackage = await packages.getById(ordered[0].contextPackageId)
-    expect(firstPackage).toBeDefined()
-    const plan = planFor(firstPackage)
-    await new PostgresExecutionPlanRepository(database).put(plan)
-
-    const retention = new PostgresContextPackageRetention(database)
-    const observedAt = new Date('2026-12-22T00:00:00.000Z')
-    const first = await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      bound: 1,
-      dryRun: false,
-    })
-    expect(first).toMatchObject({
-      scanned: 1,
-      truncated: true,
-      nextAfterId: ordered[0].contextPackageId,
-    })
-    expect(first.retainedByReason).toEqual({ reference_pending: 1 })
-
-    const second = await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      bound: 1,
-      dryRun: false,
-      afterId: first.nextAfterId,
-    })
-    expect(second.scanned).toBe(1)
-    expect(second.truncated).toBe(true)
-    expect(second.nextAfterId).toBe(ordered[1].contextPackageId)
-    expect(second.retainedByReason).toEqual({ not_expired: 1 })
-
-    const finalPage = await retention.deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      bound: 1,
-      dryRun: false,
-      afterId: second.nextAfterId,
-    })
-    expect(finalPage).toMatchObject({ scanned: 1, truncated: false })
-    expect(finalPage.nextAfterId).toBeUndefined()
-    expect(finalPage.retainedByReason).toEqual({ not_expired: 1 })
-
-    const expired = await retention.deleteEligibleContextPackages(
-      new Date(observedAt.getTime() + retentionMs + 1),
-      { policyRetainMs: retentionMs, dryRun: false }
-    )
-    expect(expired.deleted).toBe(2)
-    expect(await packages.getById(firstPackage.contextPackageId)).toBeDefined()
-  }, 30_000)
-
-  test('combining constrained and unconstrained plan refs preserves schema validation', async () => {
-    const database = await createDatabase()
-    const package_ = contextPackageSerializationFixtures.futurePi
-    await new PostgresContextPackageRepository(database).put(package_)
-    const plan = planFor(package_)
-    const plans = new PostgresExecutionPlanRepository(database)
-    await plans.put(plan)
-    const observedAt = new Date('2026-12-22T00:00:00.000Z')
-    await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    const [before] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(before?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-
-    const result = await database.transaction((transaction) =>
-      lockAndResetReferenceRetentionWindows(transaction, {
-        executionPlans: [
-          {
-            executionPlanId: plan.executionPlanId,
-            contentDigest: plan.contentDigest,
-            schemaVersion: plan.schemaVersion + 1,
-          },
-          { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
-        ],
-      })
-    )
-    expect(result).toEqual({ ok: false, target: 'execution-plan', id: plan.executionPlanId })
-    const [after] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(after?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-  }, 30_000)
-
-  test('new authoring and validation receipts clear previously observed reference clocks', async () => {
-    const database = await createDatabase()
-    const packages = new PostgresContextPackageRepository(database)
-    const authoringPackage = contextPackageSerializationFixtures.futurePi
-    await packages.put(authoringPackage)
-    const observedAt = new Date('2026-12-22T00:00:00.000Z')
-    await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    const [authoringClockBefore] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, authoringPackage.contextPackageId))
-      .limit(1)
-    expect(authoringClockBefore?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-
-    const authoringScope = {
-      principalRef: 'service:retention-window-test',
-      workspaceId: authoringPackage.projectState.workspaceId,
-      projectId: authoringPackage.projectState.projectId,
-      operation: 'context.author',
-      idempotencyKey: 'retention-window-authoring-0001',
-    }
-    await new PostgresContextAuthoringCommandRepository(database).commit(
-      {
-        scope: authoringScope,
-        payloadHash: `sha256:${'d'.repeat(64)}`,
-        contextPackage: {
-          contextPackageId: authoringPackage.contextPackageId,
-          contentDigest: authoringPackage.contentDigest,
-        },
-      },
-      authoringPackage
-    )
-    const [authoringClockAfter] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, authoringPackage.contextPackageId))
-      .limit(1)
-    expect(authoringClockAfter?.unreferencedSince).toBeNull()
-
-    const planPackage = contextPackageSerializationFixtures.futureAcp
-    await packages.put(planPackage)
-    const plan = planFor(planPackage)
-    const plans = new PostgresExecutionPlanRepository(database)
-    await plans.put(plan)
-    await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(observedAt, {
-      policyRetainMs: retentionMs,
-      dryRun: false,
-    })
-    const [planClockBefore] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(planClockBefore?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
-
-    await new PostgresExecutionValidationCommandRepository(database).commit(
-      {
-        scope: {
-          callerPrincipalId: 'svc_agent-hq',
-          workspaceId: plan.correlation.workspaceId,
-          projectId: plan.correlation.projectId,
-          operation: 'execution.validate',
-          idempotencyKey: 'retention-window-validation-0001',
-        },
-        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-        requestId: plan.correlation.requestId,
-        payloadHash: `sha256:${'e'.repeat(64)}`,
-        executionPlan: {
-          executionPlanId: plan.executionPlanId,
-          contentDigest: plan.contentDigest,
-        },
-        recordedAt: plan.compiledAt,
-      },
-      plan
-    )
-    const [planClockAfter] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(planClockAfter?.unreferencedSince).toBeNull()
-  }, 30_000)
-
-  test('restarts a raced new plan reference after a retention scan observes it', async () => {
-    const database = await createDatabase()
-    const package_ = contextPackageSerializationFixtures.futurePi
-    await new PostgresContextPackageRepository(database).put(package_)
-    const plan = planFor(package_)
-    const insertReached = deferred()
-    const continueInsert = deferred()
-    const updaterAcquired = deferred()
-    const releaseUpdater = deferred()
-    const racedDatabase = withPlanInsertBarrier(database, {
-      onPlanInsert: () => {
-        insertReached.resolve()
-        return continueInsert.promise
-      },
-    })
-    const validationCommands = new PostgresExecutionValidationCommandRepository(racedDatabase)
-    const record = {
-      scope: {
-        callerPrincipalId: 'svc_agent-hq',
-        workspaceId: plan.correlation.workspaceId,
-        projectId: plan.correlation.projectId,
-        operation: 'execution.validate',
-        idempotencyKey: 'retention-window-validation-race-0001',
-      },
-      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-      requestId: plan.correlation.requestId,
-      payloadHash: `sha256:${'f'.repeat(64)}`,
-      executionPlan: {
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-      },
-      recordedAt: plan.compiledAt,
-    }
-    const commit = validationCommands.commit(record, plan)
-    const commitResult = commit.then(
-      () => ({ completed: true }),
-      (error) => ({ error })
-    )
-    const pending = [commit]
-
-    try {
-      const firstEvent = await Promise.race([
-        insertReached.promise.then(() => ({ insertReached: true })),
-        commitResult,
-      ])
-      if (!firstEvent.insertReached) {
-        if (firstEvent.error) throw firstEvent.error
-        throw new Error('PLAN_INSERT_COMPLETED_BEFORE_BARRIER')
-      }
-      await database.insert(executionPlans).values(planRow(plan))
-      const staleAt = new Date('2026-12-22T00:00:00.000Z')
-      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(staleAt, {
+      const observedAt = new Date('2026-09-26T12:00:00.000Z')
+      const retention = new PostgresExecutionPlanRetention(database)
+      const first = await retention.deleteEligibleExecutionPlans(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
+      expect(first.deleted).toBe(0)
+      expect(first.retainedByReason).toEqual({ not_expired: 1 })
       const [observed] = await database
         .select({ unreferencedSince: executionPlans.unreferencedSince })
         .from(executionPlans)
         .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
         .limit(1)
-      expect(observed?.unreferencedSince?.toISOString()).toBe(staleAt.toISOString())
+      expect(observed?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
 
-      const duplicateCommit = validationCommands.commit(record, plan)
-      pending.push(duplicateCommit)
-      await waitForLockWait(database, 'pg_advisory_xact_lock')
+      const exactBoundary = await retention.deleteEligibleExecutionPlans(
+        new Date(observedAt.getTime() + retentionMs),
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      expect(exactBoundary.deleted).toBe(0)
+      expect(exactBoundary.retainedByReason).toEqual({ not_expired: 1 })
 
-      const updater = database.transaction(async (transaction) => {
-        await transaction
-          .update(contextPackages)
-          .set({ unreferencedSince: new Date('2026-12-23T00:00:00.000Z') })
-          .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-        updaterAcquired.resolve()
-        await releaseUpdater.promise
-      })
-      pending.push(updater)
-      await waitForLockWait(database, 'context_packages')
-      continueInsert.resolve()
-      await updaterAcquired.promise
-      await waitForLockWait(database, 'context_packages')
-      releaseUpdater.resolve()
-      const [committed, duplicate] = await Promise.all([commit, duplicateCommit])
-      expect(committed).toEqual(record)
-      expect(duplicate).toEqual(record)
-    } finally {
-      continueInsert.resolve()
-      releaseUpdater.resolve()
-      await Promise.allSettled(pending)
-    }
+      const afterBoundary = await retention.deleteEligibleExecutionPlans(
+        new Date(observedAt.getTime() + retentionMs + 1),
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      expect(afterBoundary.deleted).toBe(1)
+      expect(
+        await plans.get({
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        })
+      ).toBeUndefined()
 
-    const [referenced] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(referenced?.unreferencedSince).toBeNull()
-    expect(await validationCommands.get(record.scope)).toEqual(record)
-  }, 30_000)
-
-  test('fails closed after a repeated plan reference race without a receipt or clock mutation', async () => {
-    const database = await createDatabase()
-    const package_ = contextPackageSerializationFixtures.futurePi
-    await new PostgresContextPackageRepository(database).put(package_)
-    const originalContextClock = new Date('2026-09-01T00:00:00.000Z')
-    await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
-      originalContextClock,
-      { policyRetainMs: retentionMs, dryRun: false }
-    )
-    const plan = planFor(package_)
-    const firstInsertReached = deferred()
-    const continueFirstInsert = deferred()
-    const firstConflictRead = deferred()
-    const continueFirstConflictRead = deferred()
-    const secondInsertReached = deferred()
-    const continueSecondInsert = deferred()
-    let insertAttempt = 0
-    let conflictRead = 0
-    const racedDatabase = withPlanInsertBarrier(database, {
-      onPlanInsert: () => {
-        insertAttempt += 1
-        if (insertAttempt === 1) {
-          firstInsertReached.resolve()
-          return continueFirstInsert.promise
-        }
-        if (insertAttempt === 2) {
-          secondInsertReached.resolve()
-          return continueSecondInsert.promise
-        }
-        throw new Error('UNEXPECTED_EXECUTION_PLAN_INSERT_RETRY')
-      },
-      onRacedPlanRead: async (rows) => {
-        conflictRead += 1
-        if (conflictRead === 1) {
-          expect(rows).toHaveLength(1)
-          firstConflictRead.resolve()
-          await continueFirstConflictRead.promise
-        }
-      },
-    })
-    const validationCommands = new PostgresExecutionValidationCommandRepository(racedDatabase)
-    const record = {
-      scope: {
-        callerPrincipalId: 'svc_agent-hq',
-        workspaceId: plan.correlation.workspaceId,
-        projectId: plan.correlation.projectId,
-        operation: 'execution.validate',
-        idempotencyKey: 'retention-window-validation-race-0002',
-      },
-      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
-      requestId: plan.correlation.requestId,
-      payloadHash: `sha256:${'a'.repeat(64)}`,
-      executionPlan: {
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-      },
-      recordedAt: plan.compiledAt,
-    }
-    const commit = validationCommands.commit(record, plan)
-    const commitResult = commit.then(
-      (value) => ({ value }),
-      (error) => ({ error })
-    )
-    const planClock = new Date('2026-12-22T00:00:00.000Z')
-
-    try {
-      const firstPause = await Promise.race([
-        firstInsertReached.promise.then(() => ({ paused: true })),
-        commitResult,
-      ])
-      if (!firstPause.paused) {
-        if (firstPause.error) throw firstPause.error
-        throw new Error('PLAN_INSERT_COMPLETED_BEFORE_FIRST_BARRIER')
-      }
-
-      await database.insert(executionPlans).values(planRow(plan))
-      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(planClock, {
+      const contextRetention = new PostgresContextPackageRetention(database)
+      const contextObservedAt = new Date(observedAt.getTime() + retentionMs + 2)
+      const contextFirst = await contextRetention.deleteEligibleContextPackages(contextObservedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
-      continueFirstInsert.resolve()
+      expect(contextFirst.deleted).toBe(0)
+      expect(contextFirst.retainedByReason).toEqual({ not_expired: 1 })
+      const [contextObserved] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+        .limit(1)
+      expect(contextObserved?.unreferencedSince?.toISOString()).toBe(
+        contextObservedAt.toISOString()
+      )
+      expect(
+        (
+          await contextRetention.deleteEligibleContextPackages(
+            new Date(contextObservedAt.getTime() + retentionMs),
+            { policyRetainMs: retentionMs, dryRun: false }
+          )
+        ).deleted
+      ).toBe(0)
+      expect(
+        (
+          await contextRetention.deleteEligibleContextPackages(
+            new Date(contextObservedAt.getTime() + retentionMs + 1),
+            { policyRetainMs: retentionMs, dryRun: false }
+          )
+        ).deleted
+      ).toBe(1)
+    },
+    integrationTestTimeout()
+  )
 
-      const readPause = await Promise.race([
-        firstConflictRead.promise.then(() => ({ paused: true })),
-        commitResult,
-      ])
-      if (!readPause.paused) {
-        if (readPause.error) throw readPause.error
-        throw new Error('PLAN_CONFLICT_READ_COMPLETED_BEFORE_BARRIER')
-      }
-      await database
-        .delete(executionPlans)
+  test(
+    'dry-run and zero-bound scans do not persist clocks; rollback and restart preserve observations',
+    async () => {
+      const database = await createDatabase()
+      const package_ = contextPackageSerializationFixtures.futurePi
+      await new PostgresContextPackageRepository(database).put(package_)
+      const retention = new PostgresContextPackageRetention(database)
+      const observedAt = new Date('2026-12-22T00:00:00.000Z')
+
+      const dryRun = await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        dryRun: true,
+      })
+      expect(dryRun.retainedByReason).toEqual({ not_expired: 1 })
+      const zeroBound = await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        bound: 0,
+        dryRun: false,
+      })
+      expect(zeroBound).toMatchObject({ scanned: 0, truncated: true, deleted: 0 })
+      expect(zeroBound.nextAfterId).toBeUndefined()
+      const [unobserved] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+        .limit(1)
+      expect(unobserved?.unreferencedSince).toBeNull()
+
+      await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      const rolledBack = await new PostgresContextPackageRetention(
+        database
+      ).deleteEligibleContextPackages(new Date(observedAt.getTime() - 24 * 60 * 60 * 1_000), {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      expect(rolledBack.retainedByReason).toEqual({ not_expired: 1 })
+      const [persisted] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+        .limit(1)
+      expect(persisted?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
+
+      await new PostgresRetentionReapplication(database).resetReferenceRetentionWindows()
+      const [restored] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+        .limit(1)
+      expect(restored?.unreferencedSince).toBeNull()
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'cursor pages start at ID order and reach later unreferenced targets after a pinned first row',
+    async () => {
+      const database = await createDatabase()
+      const packages = new PostgresContextPackageRepository(database)
+      const fixtures = [
+        contextPackageSerializationFixtures.futurePi,
+        contextPackageSerializationFixtures.futureAcp,
+        contextPackageSerializationFixtures.futureLangGraph,
+      ]
+      for (const package_ of fixtures) await packages.put(package_)
+      const ordered = await database
+        .select({ contextPackageId: contextPackages.contextPackageId })
+        .from(contextPackages)
+        .orderBy(contextPackages.contextPackageId)
+      expect(ordered).toHaveLength(3)
+      const firstPackage = await packages.getById(ordered[0].contextPackageId)
+      expect(firstPackage).toBeDefined()
+      const plan = planFor(firstPackage)
+      await new PostgresExecutionPlanRepository(database).put(plan)
+
+      const retention = new PostgresContextPackageRetention(database)
+      const observedAt = new Date('2026-12-22T00:00:00.000Z')
+      const first = await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        bound: 1,
+        dryRun: false,
+      })
+      expect(first).toMatchObject({
+        scanned: 1,
+        truncated: true,
+        nextAfterId: ordered[0].contextPackageId,
+      })
+      expect(first.retainedByReason).toEqual({ reference_pending: 1 })
+
+      const second = await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        bound: 1,
+        dryRun: false,
+        afterId: first.nextAfterId,
+      })
+      expect(second.scanned).toBe(1)
+      expect(second.truncated).toBe(true)
+      expect(second.nextAfterId).toBe(ordered[1].contextPackageId)
+      expect(second.retainedByReason).toEqual({ not_expired: 1 })
+
+      const finalPage = await retention.deleteEligibleContextPackages(observedAt, {
+        policyRetainMs: retentionMs,
+        bound: 1,
+        dryRun: false,
+        afterId: second.nextAfterId,
+      })
+      expect(finalPage).toMatchObject({ scanned: 1, truncated: false })
+      expect(finalPage.nextAfterId).toBeUndefined()
+      expect(finalPage.retainedByReason).toEqual({ not_expired: 1 })
+
+      const expired = await retention.deleteEligibleContextPackages(
+        new Date(observedAt.getTime() + retentionMs + 1),
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      expect(expired.deleted).toBe(2)
+      expect(await packages.getById(firstPackage.contextPackageId)).toBeDefined()
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'combining constrained and unconstrained plan refs preserves schema validation',
+    async () => {
+      const database = await createDatabase()
+      const package_ = contextPackageSerializationFixtures.futurePi
+      await new PostgresContextPackageRepository(database).put(package_)
+      const plan = planFor(package_)
+      const plans = new PostgresExecutionPlanRepository(database)
+      await plans.put(plan)
+      const observedAt = new Date('2026-12-22T00:00:00.000Z')
+      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(observedAt, {
+        policyRetainMs: retentionMs,
+        dryRun: false,
+      })
+      const [before] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
         .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      continueFirstConflictRead.resolve()
+        .limit(1)
+      expect(before?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
 
-      const secondPause = await Promise.race([
-        secondInsertReached.promise.then(() => ({ paused: true })),
-        commitResult,
-      ])
-      if (!secondPause.paused) {
-        if (secondPause.error) throw secondPause.error
-        throw new Error('PLAN_INSERT_COMPLETED_BEFORE_SECOND_BARRIER')
+      const result = await database.transaction((transaction) =>
+        lockAndResetReferenceRetentionWindows(transaction, {
+          executionPlans: [
+            {
+              executionPlanId: plan.executionPlanId,
+              contentDigest: plan.contentDigest,
+              schemaVersion: plan.schemaVersion + 1,
+            },
+            { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
+          ],
+        })
+      )
+      expect(result).toEqual({ ok: false, target: 'execution-plan', id: plan.executionPlanId })
+      const [after] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(after?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'new authoring and validation receipts clear previously observed reference clocks',
+    async () => {
+      const database = await createDatabase()
+      const packages = new PostgresContextPackageRepository(database)
+      const authoringPackage = contextPackageSerializationFixtures.futurePi
+      await packages.put(authoringPackage)
+      const observedAt = new Date('2026-12-22T00:00:00.000Z')
+      await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
+        observedAt,
+        {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        }
+      )
+      const [authoringClockBefore] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, authoringPackage.contextPackageId))
+        .limit(1)
+      expect(authoringClockBefore?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
+
+      const authoringScope = {
+        principalRef: 'service:retention-window-test',
+        workspaceId: authoringPackage.projectState.workspaceId,
+        projectId: authoringPackage.projectState.projectId,
+        operation: 'context.author',
+        idempotencyKey: 'retention-window-authoring-0001',
       }
-      await database.insert(executionPlans).values(planRow(plan))
-      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(planClock, {
+      await new PostgresContextAuthoringCommandRepository(database).commit(
+        {
+          scope: authoringScope,
+          payloadHash: `sha256:${'d'.repeat(64)}`,
+          contextPackage: {
+            contextPackageId: authoringPackage.contextPackageId,
+            contentDigest: authoringPackage.contentDigest,
+          },
+        },
+        authoringPackage
+      )
+      const [authoringClockAfter] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, authoringPackage.contextPackageId))
+        .limit(1)
+      expect(authoringClockAfter?.unreferencedSince).toBeNull()
+
+      const planPackage = contextPackageSerializationFixtures.futureAcp
+      await packages.put(planPackage)
+      const plan = planFor(planPackage)
+      const plans = new PostgresExecutionPlanRepository(database)
+      await plans.put(plan)
+      await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(observedAt, {
         policyRetainMs: retentionMs,
         dryRun: false,
       })
-      continueSecondInsert.resolve()
+      const [planClockBefore] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(planClockBefore?.unreferencedSince?.toISOString()).toBe(observedAt.toISOString())
 
-      const outcome = await commitResult
-      expect(outcome.error?.message).toBe('EXECUTION_PLAN_REFERENCE_CONFLICT_RETRY_EXHAUSTED')
-      expect(outcome.value).toBeUndefined()
-    } finally {
-      continueFirstInsert.resolve()
-      continueFirstConflictRead.resolve()
-      continueSecondInsert.resolve()
-      await commitResult
-    }
+      await new PostgresExecutionValidationCommandRepository(database).commit(
+        {
+          scope: {
+            callerPrincipalId: 'svc_agent-hq',
+            workspaceId: plan.correlation.workspaceId,
+            projectId: plan.correlation.projectId,
+            operation: 'execution.validate',
+            idempotencyKey: 'retention-window-validation-0001',
+          },
+          commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+          requestId: plan.correlation.requestId,
+          payloadHash: `sha256:${'e'.repeat(64)}`,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+          },
+          recordedAt: plan.compiledAt,
+        },
+        plan
+      )
+      const [planClockAfter] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(planClockAfter?.unreferencedSince).toBeNull()
+    },
+    integrationTestTimeout()
+  )
 
-    expect(await validationCommands.get(record.scope)).toBeUndefined()
-    const [packageAfter] = await database
-      .select({ unreferencedSince: contextPackages.unreferencedSince })
-      .from(contextPackages)
-      .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
-      .limit(1)
-    expect(packageAfter?.unreferencedSince?.toISOString()).toBe(originalContextClock.toISOString())
-    const [planAfter] = await database
-      .select({ unreferencedSince: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(planAfter?.unreferencedSince?.toISOString()).toBe(planClock.toISOString())
-    expect(await new PostgresExecutionPlanRepository(database).get(record.executionPlan)).toEqual(
-      plan
-    )
-  }, 30_000)
+  test(
+    'restarts a raced new plan reference after a retention scan observes it',
+    async () => {
+      const database = await createDatabase()
+      const package_ = contextPackageSerializationFixtures.futurePi
+      await new PostgresContextPackageRepository(database).put(package_)
+      const plan = planFor(package_)
+      const insertReached = deferred()
+      const continueInsert = deferred()
+      const updaterAcquired = deferred()
+      const releaseUpdater = deferred()
+      const racedDatabase = withPlanInsertBarrier(database, {
+        onPlanInsert: () => {
+          insertReached.resolve()
+          return continueInsert.promise
+        },
+      })
+      const validationCommands = new PostgresExecutionValidationCommandRepository(racedDatabase)
+      const record = {
+        scope: {
+          callerPrincipalId: 'svc_agent-hq',
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          operation: 'execution.validate',
+          idempotencyKey: 'retention-window-validation-race-0001',
+        },
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        requestId: plan.correlation.requestId,
+        payloadHash: `sha256:${'f'.repeat(64)}`,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        },
+        recordedAt: plan.compiledAt,
+      }
+      const commit = validationCommands.commit(record, plan)
+      const commitResult = commit.then(
+        () => ({ completed: true }),
+        (error) => ({ error })
+      )
+      const pending = [commit]
+
+      try {
+        const firstEvent = await Promise.race([
+          insertReached.promise.then(() => ({ insertReached: true })),
+          commitResult,
+        ])
+        if (!firstEvent.insertReached) {
+          if (firstEvent.error) throw firstEvent.error
+          throw new Error('PLAN_INSERT_COMPLETED_BEFORE_BARRIER')
+        }
+        await database.insert(executionPlans).values(planRow(plan))
+        const staleAt = new Date('2026-12-22T00:00:00.000Z')
+        await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(staleAt, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        const [observed] = await database
+          .select({ unreferencedSince: executionPlans.unreferencedSince })
+          .from(executionPlans)
+          .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+          .limit(1)
+        expect(observed?.unreferencedSince?.toISOString()).toBe(staleAt.toISOString())
+
+        const duplicateCommit = validationCommands.commit(record, plan)
+        pending.push(duplicateCommit)
+        await waitForLockWait(database, 'pg_advisory_xact_lock')
+
+        const updater = database.transaction(async (transaction) => {
+          await transaction
+            .update(contextPackages)
+            .set({ unreferencedSince: new Date('2026-12-23T00:00:00.000Z') })
+            .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+          updaterAcquired.resolve()
+          await releaseUpdater.promise
+        })
+        pending.push(updater)
+        await waitForLockWait(database, 'context_packages')
+        continueInsert.resolve()
+        await updaterAcquired.promise
+        await waitForLockWait(database, 'context_packages')
+        releaseUpdater.resolve()
+        const [committed, duplicate] = await Promise.all([commit, duplicateCommit])
+        expect(committed).toEqual(record)
+        expect(duplicate).toEqual(record)
+      } finally {
+        continueInsert.resolve()
+        releaseUpdater.resolve()
+        await Promise.allSettled(pending)
+      }
+
+      const [referenced] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(referenced?.unreferencedSince).toBeNull()
+      expect(await validationCommands.get(record.scope)).toEqual(record)
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'fails closed after a repeated plan reference race without a receipt or clock mutation',
+    async () => {
+      const database = await createDatabase()
+      const package_ = contextPackageSerializationFixtures.futurePi
+      await new PostgresContextPackageRepository(database).put(package_)
+      const originalContextClock = new Date('2026-09-01T00:00:00.000Z')
+      await new PostgresContextPackageRetention(database).deleteEligibleContextPackages(
+        originalContextClock,
+        { policyRetainMs: retentionMs, dryRun: false }
+      )
+      const plan = planFor(package_)
+      const firstInsertReached = deferred()
+      const continueFirstInsert = deferred()
+      const firstConflictRead = deferred()
+      const continueFirstConflictRead = deferred()
+      const secondInsertReached = deferred()
+      const continueSecondInsert = deferred()
+      let insertAttempt = 0
+      let conflictRead = 0
+      const racedDatabase = withPlanInsertBarrier(database, {
+        onPlanInsert: () => {
+          insertAttempt += 1
+          if (insertAttempt === 1) {
+            firstInsertReached.resolve()
+            return continueFirstInsert.promise
+          }
+          if (insertAttempt === 2) {
+            secondInsertReached.resolve()
+            return continueSecondInsert.promise
+          }
+          throw new Error('UNEXPECTED_EXECUTION_PLAN_INSERT_RETRY')
+        },
+        onRacedPlanRead: async (rows) => {
+          conflictRead += 1
+          if (conflictRead === 1) {
+            expect(rows).toHaveLength(1)
+            firstConflictRead.resolve()
+            await continueFirstConflictRead.promise
+          }
+        },
+      })
+      const validationCommands = new PostgresExecutionValidationCommandRepository(racedDatabase)
+      const record = {
+        scope: {
+          callerPrincipalId: 'svc_agent-hq',
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          operation: 'execution.validate',
+          idempotencyKey: 'retention-window-validation-race-0002',
+        },
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        requestId: plan.correlation.requestId,
+        payloadHash: `sha256:${'a'.repeat(64)}`,
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        },
+        recordedAt: plan.compiledAt,
+      }
+      const commit = validationCommands.commit(record, plan)
+      const commitResult = commit.then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+      const planClock = new Date('2026-12-22T00:00:00.000Z')
+
+      try {
+        const firstPause = await Promise.race([
+          firstInsertReached.promise.then(() => ({ paused: true })),
+          commitResult,
+        ])
+        if (!firstPause.paused) {
+          if (firstPause.error) throw firstPause.error
+          throw new Error('PLAN_INSERT_COMPLETED_BEFORE_FIRST_BARRIER')
+        }
+
+        await database.insert(executionPlans).values(planRow(plan))
+        await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(planClock, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        continueFirstInsert.resolve()
+
+        const readPause = await Promise.race([
+          firstConflictRead.promise.then(() => ({ paused: true })),
+          commitResult,
+        ])
+        if (!readPause.paused) {
+          if (readPause.error) throw readPause.error
+          throw new Error('PLAN_CONFLICT_READ_COMPLETED_BEFORE_BARRIER')
+        }
+        await database
+          .delete(executionPlans)
+          .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        continueFirstConflictRead.resolve()
+
+        const secondPause = await Promise.race([
+          secondInsertReached.promise.then(() => ({ paused: true })),
+          commitResult,
+        ])
+        if (!secondPause.paused) {
+          if (secondPause.error) throw secondPause.error
+          throw new Error('PLAN_INSERT_COMPLETED_BEFORE_SECOND_BARRIER')
+        }
+        await database.insert(executionPlans).values(planRow(plan))
+        await new PostgresExecutionPlanRetention(database).deleteEligibleExecutionPlans(planClock, {
+          policyRetainMs: retentionMs,
+          dryRun: false,
+        })
+        continueSecondInsert.resolve()
+
+        const outcome = await commitResult
+        expect(outcome.error?.message).toBe('EXECUTION_PLAN_REFERENCE_CONFLICT_RETRY_EXHAUSTED')
+        expect(outcome.value).toBeUndefined()
+      } finally {
+        continueFirstInsert.resolve()
+        continueFirstConflictRead.resolve()
+        continueSecondInsert.resolve()
+        await commitResult
+      }
+
+      expect(await validationCommands.get(record.scope)).toBeUndefined()
+      const [packageAfter] = await database
+        .select({ unreferencedSince: contextPackages.unreferencedSince })
+        .from(contextPackages)
+        .where(eq(contextPackages.contextPackageId, package_.contextPackageId))
+        .limit(1)
+      expect(packageAfter?.unreferencedSince?.toISOString()).toBe(
+        originalContextClock.toISOString()
+      )
+      const [planAfter] = await database
+        .select({ unreferencedSince: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(planAfter?.unreferencedSince?.toISOString()).toBe(planClock.toISOString())
+      expect(await new PostgresExecutionPlanRepository(database).get(record.executionPlan)).toEqual(
+        plan
+      )
+    },
+    integrationTestTimeout()
+  )
 })

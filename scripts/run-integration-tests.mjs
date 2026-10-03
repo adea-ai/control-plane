@@ -117,6 +117,11 @@ try {
       process.env.DATABASE_URL ??
       'postgresql://control_plane_app:local-application-only@127.0.0.1:54329/control_plane',
     RUN_DATABASE_INTEGRATION: 'true',
+    // Suites scale their explicit per-test and per-hook budgets through
+    // integrationTestTimeout(); an explicit bun test() timeout argument
+    // always overrides the CLI --timeout default, so the ceiling has to
+    // reach them through the environment.
+    INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase ? '120000' : undefined,
   }
   // Stream progress even while a remote database task is unfinished. Grouped
   // CI logs hide test/setup timing until the whole package exits.

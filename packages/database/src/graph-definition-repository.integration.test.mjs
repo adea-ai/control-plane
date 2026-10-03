@@ -7,7 +7,7 @@ import {
   InMemoryGraphDefinitionRepository,
 } from '@control-plane/orchestration'
 import { eq, sql } from 'drizzle-orm'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresGraphDefinitionRepository } from './graph-definition-repository.ts'
 import { graphDefinitionCommands } from './schema/graph-definitions.ts'
 
@@ -72,7 +72,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       })
       await isolated.migrate()
       repository = new PostgresGraphDefinitionRepository(isolated.application, workspaceId)
-    }, 60_000)
+    }, integrationTestTimeout(60_000))
 
     afterAll(async () => {
       await isolated?.dispose()

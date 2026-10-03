@@ -132,7 +132,7 @@ import {
   usageBudgetStates,
   usageOperationReceipts,
 } from './schema/index.ts'
-import { createIsolatedTestDatabase } from './testing.ts'
+import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresRetentionReapplication } from './retention-reapplication.ts'
 
 const integrationEnabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
@@ -448,13 +448,13 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     // must be per case, not per file, including the randomized integration lane.
     // Cold remote migrations have their own setup budget, not the child probes' deadline.
     isolated = await createMigratedIsolatedDatabase()
-  }, 60_000)
+  }, integrationTestTimeout(60_000))
 
   afterEach(async () => {
     const database = isolated
     if (database) await timedIntegrationPhase('dispose', () => database.dispose())
     isolated = undefined
-  }, 30_000)
+  }, integrationTestTimeout())
 
   test('reference-window metadata migrates without changing immutable plan/package contents', async () => {
     // This is storage-foundation evidence, not proof that retention writers
@@ -510,68 +510,72 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).rejects.toBe(rollback)
   })
 
-  test('persists scoped provider registrations with concurrent capacity and permanent revocation', async () => {
-    const readModel = createFakeContextProvider({
-      suffix: 'A',
-      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      scopeDigest: `sha256:${'a'.repeat(64)}`,
-      health: 'healthy',
-      state: 'active',
-      capabilities: { evidenceSearch: true },
-      kind: 'evidence',
-      tokenCount: 1,
-    }).readModel
-    const record = {
-      version: 1,
-      readModel,
-      providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-      mappedProjectRef: 'project-1',
-      authorizationRef: 'authz:registry-test',
-      expectedCorpusRevision: 'corpus:1',
-      maximumOutputBytes: 262144,
-    }
-    const scope = {
-      workspaceId: readModel.connection.workspaceId,
-      principalRef: readModel.connection.principalRef,
-    }
-    const first = new PostgresContextProviderRegistrationRepository(isolated.application)
-    const second = new PostgresContextProviderRegistrationRepository(isolated.application)
-    expect((await Promise.all([first.save(0, record), second.save(0, record)])).toSorted()).toEqual(
-      [false, true]
-    )
-    const refreshed = { ...structuredClone(record), version: 2 }
-    refreshed.readModel.health.checkedAt = '2026-09-12T12:00:00.000Z'
-    expect(await second.save(1, refreshed)).toBe(true)
-    expect(await first.save(1, refreshed)).toBe(false)
-    const moved = { ...structuredClone(refreshed), version: 3 }
-    moved.readModel.connection.principalRef = 'principal:other'
-    expect(await first.save(2, moved)).toBe(false)
-    expect(await first.save(2, { ...record, version: 3 })).toBe(false)
-    expect(await first.list({ ...scope, principalRef: 'principal:other' })).toEqual([])
-    const restarted = new PostgresContextProviderRegistrationRepository(isolated.application)
-    expect(await restarted.list(scope)).toEqual([refreshed])
-    const revoked = { ...structuredClone(refreshed), version: 3 }
-    revoked.readModel.connection.state = 'revoked'
-    expect(await restarted.save(2, revoked)).toBe(true)
-    expect(await first.list(scope)).toEqual([])
-    expect(await first.save(3, { ...refreshed, version: 4 })).toBe(false)
-    expect(await first.save(0, record)).toBe(false)
-    const additions = await Promise.all(
-      Array.from({ length: 33 }, (_, number) => {
-        const addition = structuredClone(record)
-        addition.readModel.connection.connectionId = `ctc_${String(number + 1).padStart(26, '0')}`
-        return new PostgresContextProviderRegistrationRepository(isolated.application).save(
-          0,
-          addition
-        )
-      })
-    )
-    expect(additions.filter(Boolean)).toHaveLength(32)
-    expect(await first.list(scope)).toHaveLength(32)
-    expect(await first.list({ ...scope, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })).toEqual(
-      []
-    )
-  }, 60_000)
+  test(
+    'persists scoped provider registrations with concurrent capacity and permanent revocation',
+    async () => {
+      const readModel = createFakeContextProvider({
+        suffix: 'A',
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        scopeDigest: `sha256:${'a'.repeat(64)}`,
+        health: 'healthy',
+        state: 'active',
+        capabilities: { evidenceSearch: true },
+        kind: 'evidence',
+        tokenCount: 1,
+      }).readModel
+      const record = {
+        version: 1,
+        readModel,
+        providerRef: 'pvr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        mappedProjectRef: 'project-1',
+        authorizationRef: 'authz:registry-test',
+        expectedCorpusRevision: 'corpus:1',
+        maximumOutputBytes: 262144,
+      }
+      const scope = {
+        workspaceId: readModel.connection.workspaceId,
+        principalRef: readModel.connection.principalRef,
+      }
+      const first = new PostgresContextProviderRegistrationRepository(isolated.application)
+      const second = new PostgresContextProviderRegistrationRepository(isolated.application)
+      expect(
+        (await Promise.all([first.save(0, record), second.save(0, record)])).toSorted()
+      ).toEqual([false, true])
+      const refreshed = { ...structuredClone(record), version: 2 }
+      refreshed.readModel.health.checkedAt = '2026-09-12T12:00:00.000Z'
+      expect(await second.save(1, refreshed)).toBe(true)
+      expect(await first.save(1, refreshed)).toBe(false)
+      const moved = { ...structuredClone(refreshed), version: 3 }
+      moved.readModel.connection.principalRef = 'principal:other'
+      expect(await first.save(2, moved)).toBe(false)
+      expect(await first.save(2, { ...record, version: 3 })).toBe(false)
+      expect(await first.list({ ...scope, principalRef: 'principal:other' })).toEqual([])
+      const restarted = new PostgresContextProviderRegistrationRepository(isolated.application)
+      expect(await restarted.list(scope)).toEqual([refreshed])
+      const revoked = { ...structuredClone(refreshed), version: 3 }
+      revoked.readModel.connection.state = 'revoked'
+      expect(await restarted.save(2, revoked)).toBe(true)
+      expect(await first.list(scope)).toEqual([])
+      expect(await first.save(3, { ...refreshed, version: 4 })).toBe(false)
+      expect(await first.save(0, record)).toBe(false)
+      const additions = await Promise.all(
+        Array.from({ length: 33 }, (_, number) => {
+          const addition = structuredClone(record)
+          addition.readModel.connection.connectionId = `ctc_${String(number + 1).padStart(26, '0')}`
+          return new PostgresContextProviderRegistrationRepository(isolated.application).save(
+            0,
+            addition
+          )
+        })
+      )
+      expect(additions.filter(Boolean)).toHaveLength(32)
+      expect(await first.list(scope)).toHaveLength(32)
+      expect(await first.list({ ...scope, workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' })).toEqual(
+        []
+      )
+    },
+    integrationTestTimeout(60_000)
+  )
 
   test('persists immutable context grants and permanent revocation across repositories', async () => {
     const grant = {
@@ -1483,61 +1487,65 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await repository.get(scope)).toEqual(results[0])
   })
 
-  test('new validation receipts require the exact stored context while identical replay survives cleanup', async () => {
-    const plan = createExecutionPlanTestFixture({
-      profileCapabilityRequirements: ['model.select'],
-      skillRequiredCapabilities: ['execution.cancel'],
-    })
-    const scope = {
-      callerPrincipalId: 'svc_agent-hq',
-      workspaceId: plan.correlation.workspaceId,
-      projectId: plan.correlation.projectId,
-      operation: 'execution.validate',
-      idempotencyKey: 'validation-missing-parent-0001',
-    }
-    const record = {
-      scope,
-      commandId: ControlApiFixtures.executionValidation.request.commandId,
-      requestId: plan.correlation.requestId,
-      payloadHash: executionValidationPayloadHash(ControlApiFixtures.executionValidation.request),
-      executionPlan: { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
-      recordedAt: '2026-09-07T12:00:00.000Z',
-    }
-    const packages = new PostgresContextPackageRepository(isolated.application)
-    const plans = new PostgresExecutionPlanRepository(isolated.application)
-    const repository = new PostgresExecutionValidationCommandRepository(isolated.application)
-    await packages.put(contextPackageSerializationFixtures.futurePi)
-    await plans.put(plan)
-    try {
-      await isolated.application
-        .delete(contextPackages)
-        .where(eq(contextPackages.contextPackageId, plan.contextPackage.contextPackageId))
-      await expect(repository.commit(record, plan)).rejects.toMatchObject({
-        code: 'MISSING_CONTEXT_PACKAGE',
+  test(
+    'new validation receipts require the exact stored context while identical replay survives cleanup',
+    async () => {
+      const plan = createExecutionPlanTestFixture({
+        profileCapabilityRequirements: ['model.select'],
+        skillRequiredCapabilities: ['execution.cancel'],
       })
-      expect(
+      const scope = {
+        callerPrincipalId: 'svc_agent-hq',
+        workspaceId: plan.correlation.workspaceId,
+        projectId: plan.correlation.projectId,
+        operation: 'execution.validate',
+        idempotencyKey: 'validation-missing-parent-0001',
+      }
+      const record = {
+        scope,
+        commandId: ControlApiFixtures.executionValidation.request.commandId,
+        requestId: plan.correlation.requestId,
+        payloadHash: executionValidationPayloadHash(ControlApiFixtures.executionValidation.request),
+        executionPlan: { executionPlanId: plan.executionPlanId, contentDigest: plan.contentDigest },
+        recordedAt: '2026-09-07T12:00:00.000Z',
+      }
+      const packages = new PostgresContextPackageRepository(isolated.application)
+      const plans = new PostgresExecutionPlanRepository(isolated.application)
+      const repository = new PostgresExecutionValidationCommandRepository(isolated.application)
+      await packages.put(contextPackageSerializationFixtures.futurePi)
+      await plans.put(plan)
+      try {
         await isolated.application
-          .select()
-          .from(executionValidationCommands)
-          .where(eq(executionValidationCommands.commandKey, executionValidationCommandKey(scope)))
-      ).toHaveLength(0)
+          .delete(contextPackages)
+          .where(eq(contextPackages.contextPackageId, plan.contextPackage.contextPackageId))
+        await expect(repository.commit(record, plan)).rejects.toMatchObject({
+          code: 'MISSING_CONTEXT_PACKAGE',
+        })
+        expect(
+          await isolated.application
+            .select()
+            .from(executionValidationCommands)
+            .where(eq(executionValidationCommands.commandKey, executionValidationCommandKey(scope)))
+        ).toHaveLength(0)
 
-      await packages.put(contextPackageSerializationFixtures.futurePi)
-      const accepted = await repository.commit(record, plan)
-      await isolated.application
-        .delete(contextPackages)
-        .where(eq(contextPackages.contextPackageId, plan.contextPackage.contextPackageId))
-      expect(await repository.commit(record, plan)).toEqual(accepted)
-    } finally {
-      await packages.put(contextPackageSerializationFixtures.futurePi)
-      await isolated.application
-        .delete(executionValidationCommands)
-        .where(eq(executionValidationCommands.executionPlanId, plan.executionPlanId))
-      await isolated.application
-        .delete(executionPlans)
-        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-    }
-  }, 30_000)
+        await packages.put(contextPackageSerializationFixtures.futurePi)
+        const accepted = await repository.commit(record, plan)
+        await isolated.application
+          .delete(contextPackages)
+          .where(eq(contextPackages.contextPackageId, plan.contextPackage.contextPackageId))
+        expect(await repository.commit(record, plan)).toEqual(accepted)
+      } finally {
+        await packages.put(contextPackageSerializationFixtures.futurePi)
+        await isolated.application
+          .delete(executionValidationCommands)
+          .where(eq(executionValidationCommands.executionPlanId, plan.executionPlanId))
+        await isolated.application
+          .delete(executionPlans)
+          .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+      }
+    },
+    integrationTestTimeout()
+  )
 
   test('persists workspace-scoped runtime discovery projections across restart', async () => {
     await isolated.migrate()
@@ -1977,153 +1985,156 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     })
   })
 
-  test('fences durable Hello claims and heartbeats against credential revocation and key retirement', async () => {
-    const revokedIdentity = makeRuntimeInventoryCredentialFixtures(
-      'rnr_01JABCDEF0123456789ABCDEFA',
-      'wsp_01JABCDEF0123456789ABCDEFA'
-    )
-    const retiredIdentity = makeRuntimeInventoryCredentialFixtures(
-      'rnr_01JABCDEF0123456789ABCDEFB',
-      'wsp_01JABCDEF0123456789ABCDEFB'
-    )
-    const installCredential = async (identity) => {
-      const credential = identity.credentials[0]
-      await isolated.withMigrationDatabase(async (database) => {
-        const writer = new PostgresRuntimeNodeIdentityRepository(database)
-        await writer.registerVerificationKey(identity.key)
-        await writer.insertIssuedCredential(credential)
-      })
-      expect(
-        await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
-          credential.credentialId,
-          credential.revocationVersion,
-          new Date()
-        )
-      ).toBe('consumed')
-      return {
-        credential,
-        fence: {
-          credentialId: credential.credentialId,
-          revocationVersion: credential.revocationVersion,
-        },
-      }
-    }
-    const revoked = await installCredential(revokedIdentity)
-    const retired = await installCredential(retiredIdentity)
-    const ownerRecord = (nodeId, workspaceId, suffix) => {
-      const now = new Date()
-      return {
-        nodeId,
-        workspaceId,
-        gatewayInstanceId: `gateway-${suffix}`,
-        connectionId: `connection-${suffix}`,
-        channelGeneration: 1,
-        protocolVersion: { major: 1, minor: 6 },
-        connectedAt: now.toISOString(),
-        lastHeartbeatAt: now.toISOString(),
-      }
-    }
-    const revokedOwner = ownerRecord(
-      revoked.credential.nodeId,
-      revoked.credential.workspaceId,
-      'revoked'
-    )
-    const revokedClaimEntered = createIntegrationBarrier()
-    const holdRevokedClaimCommit = createIntegrationBarrier()
-    let holdNextClaimCommit = true
-    const blockedClaimDatabase = new Proxy(isolated.application, {
-      get(target, property) {
-        const value = Reflect.get(target, property, target)
-        if (property !== 'transaction')
-          return typeof value === 'function' ? value.bind(target) : value
-        return (operation, ...args) =>
-          value.call(
-            target,
-            async (transaction) => {
-              const result = await operation(transaction)
-              if (holdNextClaimCommit) {
-                holdNextClaimCommit = false
-                revokedClaimEntered.release()
-                await holdRevokedClaimCommit.promise
-              }
-              return result
-            },
-            ...args
-          )
-      },
-    })
-    const blockedClaim = new PostgresRuntimeChannelOwnershipRepository(blockedClaimDatabase).claim(
-      revokedOwner,
-      revoked.fence
-    )
-    await revokedClaimEntered.promise
-    let revocationFinished = false
-    const revocation = isolated.withMigrationDatabase((database) =>
-      new PostgresRuntimeNodeIdentityRepository(database)
-        .revokeCredential(revoked.credential.credentialId, new Date())
-        .then((result) => {
-          revocationFinished = true
-          return result
+  test(
+    'fences durable Hello claims and heartbeats against credential revocation and key retirement',
+    async () => {
+      const revokedIdentity = makeRuntimeInventoryCredentialFixtures(
+        'rnr_01JABCDEF0123456789ABCDEFA',
+        'wsp_01JABCDEF0123456789ABCDEFA'
+      )
+      const retiredIdentity = makeRuntimeInventoryCredentialFixtures(
+        'rnr_01JABCDEF0123456789ABCDEFB',
+        'wsp_01JABCDEF0123456789ABCDEFB'
+      )
+      const installCredential = async (identity) => {
+        const credential = identity.credentials[0]
+        await isolated.withMigrationDatabase(async (database) => {
+          const writer = new PostgresRuntimeNodeIdentityRepository(database)
+          await writer.registerVerificationKey(identity.key)
+          await writer.insertIssuedCredential(credential)
         })
-    )
-    try {
-      await isolated.waitForBlockedTransaction()
-      expect(revocationFinished).toBe(false)
-    } finally {
-      holdRevokedClaimCommit.release()
-    }
-    expect(await blockedClaim).toEqual({ accepted: true })
-    expect((await revocation).revocationVersion).toBe(2)
-
-    const repository = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
-    const revokedHeartbeat = {
-      ...revokedOwner,
-      lastHeartbeatAt: new Date(Date.parse(revokedOwner.lastHeartbeatAt) + 1_000).toISOString(),
-    }
-    expect(await repository.heartbeat(revokedHeartbeat, revoked.fence)).toBe(false)
-    expect(
-      await repository.claim(
-        {
-          ...revokedOwner,
-          channelGeneration: 2,
-          connectionId: 'connection-revoked-replacement',
-        },
-        revoked.fence
+        expect(
+          await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+            credential.credentialId,
+            credential.revocationVersion,
+            new Date()
+          )
+        ).toBe('consumed')
+        return {
+          credential,
+          fence: {
+            credentialId: credential.credentialId,
+            revocationVersion: credential.revocationVersion,
+          },
+        }
+      }
+      const revoked = await installCredential(revokedIdentity)
+      const retired = await installCredential(retiredIdentity)
+      const ownerRecord = (nodeId, workspaceId, suffix) => {
+        const now = new Date()
+        return {
+          nodeId,
+          workspaceId,
+          gatewayInstanceId: `gateway-${suffix}`,
+          connectionId: `connection-${suffix}`,
+          channelGeneration: 1,
+          protocolVersion: { major: 1, minor: 6 },
+          connectedAt: now.toISOString(),
+          lastHeartbeatAt: now.toISOString(),
+        }
+      }
+      const revokedOwner = ownerRecord(
+        revoked.credential.nodeId,
+        revoked.credential.workspaceId,
+        'revoked'
       )
-    ).toEqual({ accepted: false })
-    expect(await repository.lookup(revokedOwner.nodeId)).toEqual(revokedOwner)
+      const revokedClaimEntered = createIntegrationBarrier()
+      const holdRevokedClaimCommit = createIntegrationBarrier()
+      let holdNextClaimCommit = true
+      const blockedClaimDatabase = new Proxy(isolated.application, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target)
+          if (property !== 'transaction')
+            return typeof value === 'function' ? value.bind(target) : value
+          return (operation, ...args) =>
+            value.call(
+              target,
+              async (transaction) => {
+                const result = await operation(transaction)
+                if (holdNextClaimCommit) {
+                  holdNextClaimCommit = false
+                  revokedClaimEntered.release()
+                  await holdRevokedClaimCommit.promise
+                }
+                return result
+              },
+              ...args
+            )
+        },
+      })
+      const blockedClaim = new PostgresRuntimeChannelOwnershipRepository(
+        blockedClaimDatabase
+      ).claim(revokedOwner, revoked.fence)
+      await revokedClaimEntered.promise
+      let revocationFinished = false
+      const revocation = isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database)
+          .revokeCredential(revoked.credential.credentialId, new Date())
+          .then((result) => {
+            revocationFinished = true
+            return result
+          })
+      )
+      try {
+        await isolated.waitForBlockedTransaction()
+        expect(revocationFinished).toBe(false)
+      } finally {
+        holdRevokedClaimCommit.release()
+      }
+      expect(await blockedClaim).toEqual({ accepted: true })
+      expect((await revocation).revocationVersion).toBe(2)
 
-    const retiredOwner = ownerRecord(
-      retired.credential.nodeId,
-      retired.credential.workspaceId,
-      'retired'
-    )
-    expect(await repository.claim(retiredOwner, retired.fence)).toEqual({ accepted: true })
-    expect(
-      await isolated.withMigrationDatabase((database) =>
-        new PostgresRuntimeNodeIdentityRepository(database).retireVerificationKey(
-          retiredIdentity.key.keyId,
-          'retired'
+      const repository = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+      const revokedHeartbeat = {
+        ...revokedOwner,
+        lastHeartbeatAt: new Date(Date.parse(revokedOwner.lastHeartbeatAt) + 1_000).toISOString(),
+      }
+      expect(await repository.heartbeat(revokedHeartbeat, revoked.fence)).toBe(false)
+      expect(
+        await repository.claim(
+          {
+            ...revokedOwner,
+            channelGeneration: 2,
+            connectionId: 'connection-revoked-replacement',
+          },
+          revoked.fence
         )
+      ).toEqual({ accepted: false })
+      expect(await repository.lookup(revokedOwner.nodeId)).toEqual(revokedOwner)
+
+      const retiredOwner = ownerRecord(
+        retired.credential.nodeId,
+        retired.credential.workspaceId,
+        'retired'
       )
-    ).toBe(true)
-    const retiredHeartbeat = {
-      ...retiredOwner,
-      lastHeartbeatAt: new Date(Date.parse(retiredOwner.lastHeartbeatAt) + 1_000).toISOString(),
-    }
-    expect(await repository.heartbeat(retiredHeartbeat, retired.fence)).toBe(false)
-    expect(
-      await repository.claim(
-        {
-          ...retiredOwner,
-          channelGeneration: 2,
-          connectionId: 'connection-retired-replacement',
-        },
-        retired.fence
-      )
-    ).toEqual({ accepted: false })
-    expect(await repository.lookup(retiredOwner.nodeId)).toEqual(retiredOwner)
-  }, 60_000)
+      expect(await repository.claim(retiredOwner, retired.fence)).toEqual({ accepted: true })
+      expect(
+        await isolated.withMigrationDatabase((database) =>
+          new PostgresRuntimeNodeIdentityRepository(database).retireVerificationKey(
+            retiredIdentity.key.keyId,
+            'retired'
+          )
+        )
+      ).toBe(true)
+      const retiredHeartbeat = {
+        ...retiredOwner,
+        lastHeartbeatAt: new Date(Date.parse(retiredOwner.lastHeartbeatAt) + 1_000).toISOString(),
+      }
+      expect(await repository.heartbeat(retiredHeartbeat, retired.fence)).toBe(false)
+      expect(
+        await repository.claim(
+          {
+            ...retiredOwner,
+            channelGeneration: 2,
+            connectionId: 'connection-retired-replacement',
+          },
+          retired.fence
+        )
+      ).toEqual({ accepted: false })
+      expect(await repository.lookup(retiredOwner.nodeId)).toEqual(retiredOwner)
+    },
+    integrationTestTimeout(60_000)
+  )
 
   test('persists inventory checkpoints across gateway restart with compare-and-set', async () => {
     await isolated.migrate()
@@ -2236,1072 +2247,1106 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(delegations)).toHaveLength(1)
   })
 
-  test('evaluation runs and release audit records age out on their own windows', async () => {
-    const oldAt = '2026-01-01T11:00:00.000Z'
-    const recentAt = '2026-12-01T11:00:00.000Z'
-    const repository = new PostgresEvaluationRepository(isolated.application)
-    const fixture = {
-      taskId: 'retention-case',
-      version: '1',
-      candidate: 'candidate',
-      prompt: 'Inspect the gate.',
-      untrustedSummary: 'Everything passed.',
-      requirements: [
-        { id: 'gate', evidence: { id: 'run', candidate: 'candidate', outcome: 'unavailable' } },
-      ],
-    }
-    const artifact = { id: 'offline-fixture', version: '1', digest: `sha256:${'1'.repeat(64)}` }
-    const createRun = async (evalRunId, clock) => {
-      const service = new EvaluationService({ repository, now: () => clock })
-      const observed = await service.run({
-        evalRunId,
-        suite: {
-          evalSuiteId: 'offline-suite',
-          version: '1',
-          digest: artifact.digest,
-          dataset: artifact,
-          mode: 'offline',
-          cases: [
-            {
-              evalCaseId: fixture.taskId,
-              inputDigest: evidenceAuditFixtureDigest(fixture),
-              scorers: [
-                {
-                  metric: 'functional_correctness',
-                  direction: 'min',
-                  threshold: 1,
-                  required: true,
-                },
-              ],
-            },
-          ],
-        },
-        configuration: {
-          executionPlanDigest: artifact.digest,
-          profile: artifact,
-          skills: [],
-          graph: artifact,
-          runtime: artifact,
-          model: artifact,
-          tools: [],
-          policy: artifact,
-        },
-        execute: createEvidenceAuditMetricsExecutor({
-          fixtures: [fixture],
-          executorReference: 'scripted-control',
-          seed: 1104,
-          executor: async ({ tools }) => {
-            const evidence = tools.inspect('gate')
-            return {
-              status: 'partial',
-              requirements: [{ id: 'gate', evidenceId: evidence.id, state: 'unavailable' }],
-            }
+  test(
+    'evaluation runs and release audit records age out on their own windows',
+    async () => {
+      const oldAt = '2026-01-01T11:00:00.000Z'
+      const recentAt = '2026-12-01T11:00:00.000Z'
+      const repository = new PostgresEvaluationRepository(isolated.application)
+      const fixture = {
+        taskId: 'retention-case',
+        version: '1',
+        candidate: 'candidate',
+        prompt: 'Inspect the gate.',
+        untrustedSummary: 'Everything passed.',
+        requirements: [
+          { id: 'gate', evidence: { id: 'run', candidate: 'candidate', outcome: 'unavailable' } },
+        ],
+      }
+      const artifact = { id: 'offline-fixture', version: '1', digest: `sha256:${'1'.repeat(64)}` }
+      const createRun = async (evalRunId, clock) => {
+        const service = new EvaluationService({ repository, now: () => clock })
+        const observed = await service.run({
+          evalRunId,
+          suite: {
+            evalSuiteId: 'offline-suite',
+            version: '1',
+            digest: artifact.digest,
+            dataset: artifact,
+            mode: 'offline',
+            cases: [
+              {
+                evalCaseId: fixture.taskId,
+                inputDigest: evidenceAuditFixtureDigest(fixture),
+                scorers: [
+                  {
+                    metric: 'functional_correctness',
+                    direction: 'min',
+                    threshold: 1,
+                    required: true,
+                  },
+                ],
+              },
+            ],
           },
-        }),
+          configuration: {
+            executionPlanDigest: artifact.digest,
+            profile: artifact,
+            skills: [],
+            graph: artifact,
+            runtime: artifact,
+            model: artifact,
+            tools: [],
+            policy: artifact,
+          },
+          execute: createEvidenceAuditMetricsExecutor({
+            fixtures: [fixture],
+            executorReference: 'scripted-control',
+            seed: 1104,
+            executor: async ({ tools }) => {
+              const evidence = tools.inspect('gate')
+              return {
+                status: 'partial',
+                requirements: [{ id: 'gate', evidenceId: evidence.id, state: 'unavailable' }],
+              }
+            },
+          }),
+        })
+        await repository.saveRun({ ...observed, completedAt: clock })
+      }
+      const oldRun = 'eval_retention_old_01CRZ3NDEKTSV4RRFFQ69G5FAR'
+      const recentRun = 'eval_retention_recent_01CRZ3NDEKTSV4RRFFQ69G5FAR'
+      await createRun(oldRun, oldAt)
+      await createRun(recentRun, recentAt)
+
+      const assessedAt = new Date('2027-01-01T12:00:00.000Z')
+      const halfYear = 180 * 24 * 60 * 60 * 1_000
+      const applied = await repository.deleteEligibleEvaluationRuns(assessedAt, {
+        policyRetainMs: halfYear,
+        bound: 64,
+        dryRun: false,
       })
-      await repository.saveRun({ ...observed, completedAt: clock })
-    }
-    const oldRun = 'eval_retention_old_01CRZ3NDEKTSV4RRFFQ69G5FAR'
-    const recentRun = 'eval_retention_recent_01CRZ3NDEKTSV4RRFFQ69G5FAR'
-    await createRun(oldRun, oldAt)
-    await createRun(recentRun, recentAt)
+      expect(applied.deleted).toBeGreaterThanOrEqual(1)
+      expect(await repository.getRun(oldRun)).toBeUndefined()
+      expect(await repository.getRun(recentRun)).toBeDefined()
 
-    const assessedAt = new Date('2027-01-01T12:00:00.000Z')
-    const halfYear = 180 * 24 * 60 * 60 * 1_000
-    const applied = await repository.deleteEligibleEvaluationRuns(assessedAt, {
-      policyRetainMs: halfYear,
-      bound: 64,
-      dryRun: false,
-    })
-    expect(applied.deleted).toBeGreaterThanOrEqual(1)
-    expect(await repository.getRun(oldRun)).toBeUndefined()
-    expect(await repository.getRun(recentRun)).toBeDefined()
-
-    // A release audit record gets its own longer window, so it survives a pass
-    // that removed a half-year-old evaluation.
-    const oldAudit = '00000000-0000-4000-8000-000000000011'
-    const recentAudit = '00000000-0000-4000-8000-000000000012'
-    const seedAudit = async (releaseAuditId, createdAt) => {
-      await isolated.application.execute(
-        sql`insert into release_audit_records (release_audit_id, release_gate_id, action, evidence, created_at) values (${releaseAuditId}, 'gate_retention_fixture', 'promote', ${JSON.stringify({ releaseGateId: 'gate_retention_fixture' })}::jsonb, ${createdAt}::timestamptz)`
+      // A release audit record gets its own longer window, so it survives a pass
+      // that removed a half-year-old evaluation.
+      const oldAudit = '00000000-0000-4000-8000-000000000011'
+      const recentAudit = '00000000-0000-4000-8000-000000000012'
+      const seedAudit = async (releaseAuditId, createdAt) => {
+        await isolated.application.execute(
+          sql`insert into release_audit_records (release_audit_id, release_gate_id, action, evidence, created_at) values (${releaseAuditId}, 'gate_retention_fixture', 'promote', ${JSON.stringify({ releaseGateId: 'gate_retention_fixture' })}::jsonb, ${createdAt}::timestamptz)`
+        )
+      }
+      await seedAudit(oldAudit, oldAt)
+      await seedAudit(recentAudit, recentAt)
+      const audit = await repository.deleteEligibleReleaseAuditRecords(assessedAt, {
+        policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
+        bound: 64,
+        dryRun: false,
+      })
+      expect(audit.deleted).toBe(0)
+      const survivors = await isolated.application.execute(
+        sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
       )
-    }
-    await seedAudit(oldAudit, oldAt)
-    await seedAudit(recentAudit, recentAt)
-    const audit = await repository.deleteEligibleReleaseAuditRecords(assessedAt, {
-      policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
-      bound: 64,
-      dryRun: false,
-    })
-    expect(audit.deleted).toBe(0)
-    const survivors = await isolated.application.execute(
-      sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
-    )
-    expect(survivors).toHaveLength(2)
+      expect(survivors).toHaveLength(2)
 
-    // Past the long window, only the older record goes.
-    const later = new Date('2028-01-01T12:00:00.000Z')
-    const longAfter = await repository.deleteEligibleReleaseAuditRecords(later, {
-      policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
-      bound: 64,
-      dryRun: false,
-    })
-    expect(longAfter.deleted).toBeGreaterThanOrEqual(1)
-    const remaining = await isolated.application.execute(
-      sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
-    )
-    expect(remaining.map((row) => row.release_audit_id)).toEqual([recentAudit])
+      // Past the long window, only the older record goes.
+      const later = new Date('2028-01-01T12:00:00.000Z')
+      const longAfter = await repository.deleteEligibleReleaseAuditRecords(later, {
+        policyRetainMs: 400 * 24 * 60 * 60 * 1_000,
+        bound: 64,
+        dryRun: false,
+      })
+      expect(longAfter.deleted).toBeGreaterThanOrEqual(1)
+      const remaining = await isolated.application.execute(
+        sql`select release_audit_id from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
+      )
+      expect(remaining.map((row) => row.release_audit_id)).toEqual([recentAudit])
 
-    // Everything this test created is removed again: other tests count rows.
-    await isolated.application.execute(
-      sql`delete from evaluation_runs where eval_run_id in (${oldRun}, ${recentRun})`
-    )
-    await isolated.application.execute(
-      sql`delete from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
-    )
-  }, 90_000)
+      // Everything this test created is removed again: other tests count rows.
+      await isolated.application.execute(
+        sql`delete from evaluation_runs where eval_run_id in (${oldRun}, ${recentRun})`
+      )
+      await isolated.application.execute(
+        sql`delete from release_audit_records where release_audit_id in (${oldAudit}, ${recentAudit})`
+      )
+    },
+    integrationTestTimeout(90_000)
+  )
 
-  test('deleteEligibleExecutionPlans frees a plan only once nothing pins it', async () => {
-    // A derived plan: the compiler stamps compiledAt, so the window is derived
-    // from the fixture rather than the fixture from the window. Give it a
-    // distinct content identity so earlier acceptance fixtures cannot pin it.
-    const contextPackage = composeProviderContextPackage(
-      contextPackageSerializationFixtures.futurePi,
-      {
-        callerContextRefs: ['contract://plan-retention-integration/v1'],
-        localProjectGrantRefs: [],
-        contributions: [],
+  test(
+    'deleteEligibleExecutionPlans frees a plan only once nothing pins it',
+    async () => {
+      // A derived plan: the compiler stamps compiledAt, so the window is derived
+      // from the fixture rather than the fixture from the window. Give it a
+      // distinct content identity so earlier acceptance fixtures cannot pin it.
+      const contextPackage = composeProviderContextPackage(
+        contextPackageSerializationFixtures.futurePi,
+        {
+          callerContextRefs: ['contract://plan-retention-integration/v1'],
+          localProjectGrantRefs: [],
+          contributions: [],
+        }
+      )
+      const plan = createExecutionPlanTestFixture({ contextPackage })
+      const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
+      const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
+      const options = {
+        policyRetainMs: ninetyDaysMs,
+        bound: 1,
+        dryRun: false,
+        afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
       }
-    )
-    const plan = createExecutionPlanTestFixture({ contextPackage })
-    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000
-    const assessedAt = new Date(Date.parse(plan.compiledAt) + ninetyDaysMs + 60_000)
-    const options = {
-      policyRetainMs: ninetyDaysMs,
-      bound: 1,
-      dryRun: false,
-      afterId: await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId),
-    }
-    const reference = {
-      executionPlanId: plan.executionPlanId,
-      contentDigest: plan.contentDigest,
-    }
-    await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
-    await new PostgresExecutionPlanRepository(isolated.application).put(plan)
-    const retention = new PostgresExecutionPlanRetention(isolated.application)
-
-    // An execution compiled from the plan pins it.
-    await seedAcceptancePlan(isolated.application)
-    const beforeExecutionReference = await retention.deleteEligibleExecutionPlans(
-      assessedAt,
-      options
-    )
-    expect(beforeExecutionReference.retainedByReason).toEqual({ not_expired: 1 })
-    const [beforeExecutionClock] = await isolated.application
-      .select({ clock: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(beforeExecutionClock?.clock?.toISOString()).toBe(assessedAt.toISOString())
-    const executionService = new ExecutionLifecycleService(
-      new PostgresExecutionRepository(isolated.application)
-    )
-    const execution = await executionService.createExecution({
-      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-      correlation: {
-        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-      },
-      executionPlan: { ...reference, schemaVersion: 1 },
-      acceptedAt: plan.compiledAt,
-    })
-    const [afterExecutionClock] = await isolated.application
-      .select({ clock: executionPlans.unreferencedSince })
-      .from(executionPlans)
-      .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
-      .limit(1)
-    expect(afterExecutionClock?.clock).toBeNull()
-    expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
-
-    // A validation command that checked the plan is a foreign key, so the
-    // reference check has to keep the plan before the database refuses.
-    const validation = new PostgresExecutionValidationCommandRepository(isolated.application)
-    await validation.commit(
-      {
-        // The record has to agree with the plan's own identity.
-        scope: {
-          callerPrincipalId: 'svc_agent-hq',
-          workspaceId: plan.correlation.workspaceId,
-          projectId: plan.correlation.projectId,
-          operation: 'execution.validate',
-          idempotencyKey: 'plan-retention-integration-0001',
-        },
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP',
-        requestId: plan.correlation.requestId,
-        payloadHash: `sha256:${'a'.repeat(64)}`,
-        executionPlan: reference,
-        recordedAt: plan.compiledAt,
-      },
-      plan
-    )
-
-    // Remove the execution pin: the validation reference still holds it.
-    await isolated.application.execute(
-      sql`delete from executions where execution_id = ${execution.executionId}`
-    )
-    const withValidation = await retention.deleteEligibleExecutionPlans(assessedAt, options)
-    expect(withValidation.deleted).toBe(0)
-
-    // With both references gone the first pass starts the post-reference window.
-    await isolated.application.execute(
-      sql`delete from execution_validation_commands where execution_plan_id = ${plan.executionPlanId}`
-    )
-    const unrelatedPlanId = 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA1'
-    const delegationPins = [
-      retentionDelegationRecord({
-        delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA1',
-        childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA2',
-        parentExecutionPlanId: plan.executionPlanId,
-        parentExecutionPlanDigest: plan.contentDigest,
-        childExecutionPlanId: unrelatedPlanId,
-        childExecutionPlanDigest: `sha256:${'e'.repeat(64)}`,
-        contextPackageId: plan.contextPackage.contextPackageId,
-        contextPackageDigest: plan.contextPackage.contentDigest,
-      }),
-      retentionDelegationRecord({
-        delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA2',
-        childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA3',
-        parentExecutionPlanId: unrelatedPlanId,
-        parentExecutionPlanDigest: `sha256:${'e'.repeat(64)}`,
-        childExecutionPlanId: plan.executionPlanId,
-        childExecutionPlanDigest: plan.contentDigest,
-        contextPackageId: plan.contextPackage.contextPackageId,
-        contextPackageDigest: plan.contextPackage.contentDigest,
-      }),
-    ]
-    for (const delegation of delegationPins)
-      await seedHistoricalDelegationPin(isolated.application, delegation)
-    expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
-    for (const delegation of delegationPins) {
-      await isolated.application
-        .delete(delegations)
-        .where(eq(delegations.delegationId, delegation.delegationId))
-    }
-    const freed = await retention.deleteEligibleExecutionPlans(assessedAt, options)
-    expect(freed.deleted).toBe(0)
-    expect(freed.retainedByReason).toEqual({ not_expired: 1 })
-    const expired = await retention.deleteEligibleExecutionPlans(
-      new Date(assessedAt.getTime() + ninetyDaysMs + 1),
-      options
-    )
-    expect(expired.deleted).toBe(1)
-    expect(
-      await new PostgresExecutionPlanRepository(isolated.application).get(reference)
-    ).toBeUndefined()
-  }, 60_000)
-
-  test('plan deletion locks before reference scans and denies a racing new acceptance', async () => {
-    const composedPackage = composeProviderContextPackage(
-      contextPackageSerializationFixtures.futurePi,
-      {
-        callerContextRefs: ['contract://retention-plan-race/v1'],
-        localProjectGrantRefs: [],
-        contributions: [],
-      }
-    )
-    const contextPackage = deriveContextPackage(composedPackage, {
-      objective: composedPackage.objective,
-      allowedStateItemIds: composedPackage.stateItems.map((item) => item.itemId),
-      allowedArtifactIds: composedPackage.artifactRefs.map((artifact) => artifact.artifactId),
-      budgets: composedPackage.budgets,
-      successCriteria: composedPackage.successCriteria,
-      returnContract: composedPackage.returnContract,
-      compiledAt: await compiledAtBeforeExistingRows(isolated.application, 'context-packages'),
-    })
-    const plan = createOldPlanFixture(
-      {
-        contextPackage,
-        profileCapabilityRequirements: ['execution.cancel', 'model.select'],
-      },
-      await compiledAtBeforeExistingRows(isolated.application, 'plans')
-    )
-    const packages = new PostgresContextPackageRepository(isolated.application)
-    await packages.put(composedPackage)
-    await packages.put(contextPackage)
-    await new PostgresExecutionPlanRepository(isolated.application).put(plan)
-    const now = new Date(Date.parse(plan.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
-    const afterId = await retentionCursorBefore(isolated.application, 'plans', plan.executionPlanId)
-    const commandService = new CommandInboxService({
-      repository: new PostgresCommandAcceptanceRepository(isolated.application),
-      executionIdFactory: () => 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFJ',
-      executionPlanValidator: { validate: async () => true },
-      now: () => now.toISOString(),
-    })
-    const input = {
-      callerPrincipalId: 'svc_plan-retention-race',
-      operation: 'execution.accept',
-      commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FFJ',
-      requestId: plan.correlation.requestId,
-      idempotencyKey: 'plan-retention-race-0001',
-      payloadHash: 'a'.repeat(64),
-      correlation: {
-        workspaceId: plan.correlation.workspaceId,
-        projectId: plan.correlation.projectId,
-        taskId: plan.correlation.taskId,
-        agentId: plan.correlation.agentId,
-      },
-      executionPlan: {
+      const reference = {
         executionPlanId: plan.executionPlanId,
         contentDigest: plan.contentDigest,
-        schemaVersion: plan.schemaVersion,
-      },
-      receivedAt: now.toISOString(),
-      retentionExpiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
-    }
-    let competingAcceptance
-    const deletion = new PostgresExecutionPlanRetention(isolated.application)
-    const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
-    const firstObservation = await deletion.deleteEligibleExecutionPlans(now, {
-      policyRetainMs,
-      bound: 1,
-      afterId,
-      dryRun: false,
-    })
-    expect(firstObservation).toMatchObject({
-      scanned: 1,
-      deleted: 0,
-      retainedByReason: { not_expired: 1 },
-    })
-    const result = await deletion.deleteEligibleExecutionPlans(
-      new Date(now.getTime() + policyRetainMs + 1),
-      {
+      }
+      await new PostgresContextPackageRepository(isolated.application).put(contextPackage)
+      await new PostgresExecutionPlanRepository(isolated.application).put(plan)
+      const retention = new PostgresExecutionPlanRetention(isolated.application)
+
+      // An execution compiled from the plan pins it.
+      await seedAcceptancePlan(isolated.application)
+      const beforeExecutionReference = await retention.deleteEligibleExecutionPlans(
+        assessedAt,
+        options
+      )
+      expect(beforeExecutionReference.retainedByReason).toEqual({ not_expired: 1 })
+      const [beforeExecutionClock] = await isolated.application
+        .select({ clock: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(beforeExecutionClock?.clock?.toISOString()).toBe(assessedAt.toISOString())
+      const executionService = new ExecutionLifecycleService(
+        new PostgresExecutionRepository(isolated.application)
+      )
+      const execution = await executionService.createExecution({
+        executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        correlation: {
+          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+          projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+          taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+          agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+          requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+        },
+        executionPlan: { ...reference, schemaVersion: 1 },
+        acceptedAt: plan.compiledAt,
+      })
+      const [afterExecutionClock] = await isolated.application
+        .select({ clock: executionPlans.unreferencedSince })
+        .from(executionPlans)
+        .where(eq(executionPlans.executionPlanId, plan.executionPlanId))
+        .limit(1)
+      expect(afterExecutionClock?.clock).toBeNull()
+      expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
+
+      // A validation command that checked the plan is a foreign key, so the
+      // reference check has to keep the plan before the database refuses.
+      const validation = new PostgresExecutionValidationCommandRepository(isolated.application)
+      await validation.commit(
+        {
+          // The record has to agree with the plan's own identity.
+          scope: {
+            callerPrincipalId: 'svc_agent-hq',
+            workspaceId: plan.correlation.workspaceId,
+            projectId: plan.correlation.projectId,
+            operation: 'execution.validate',
+            idempotencyKey: 'plan-retention-integration-0001',
+          },
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP',
+          requestId: plan.correlation.requestId,
+          payloadHash: `sha256:${'a'.repeat(64)}`,
+          executionPlan: reference,
+          recordedAt: plan.compiledAt,
+        },
+        plan
+      )
+
+      // Remove the execution pin: the validation reference still holds it.
+      await isolated.application.execute(
+        sql`delete from executions where execution_id = ${execution.executionId}`
+      )
+      const withValidation = await retention.deleteEligibleExecutionPlans(assessedAt, options)
+      expect(withValidation.deleted).toBe(0)
+
+      // With both references gone the first pass starts the post-reference window.
+      await isolated.application.execute(
+        sql`delete from execution_validation_commands where execution_plan_id = ${plan.executionPlanId}`
+      )
+      const unrelatedPlanId = 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA1'
+      const delegationPins = [
+        retentionDelegationRecord({
+          delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA1',
+          childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA2',
+          parentExecutionPlanId: plan.executionPlanId,
+          parentExecutionPlanDigest: plan.contentDigest,
+          childExecutionPlanId: unrelatedPlanId,
+          childExecutionPlanDigest: `sha256:${'e'.repeat(64)}`,
+          contextPackageId: plan.contextPackage.contextPackageId,
+          contextPackageDigest: plan.contextPackage.contentDigest,
+        }),
+        retentionDelegationRecord({
+          delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA2',
+          childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA3',
+          parentExecutionPlanId: unrelatedPlanId,
+          parentExecutionPlanDigest: `sha256:${'e'.repeat(64)}`,
+          childExecutionPlanId: plan.executionPlanId,
+          childExecutionPlanDigest: plan.contentDigest,
+          contextPackageId: plan.contextPackage.contextPackageId,
+          contextPackageDigest: plan.contextPackage.contentDigest,
+        }),
+      ]
+      for (const delegation of delegationPins)
+        await seedHistoricalDelegationPin(isolated.application, delegation)
+      expect((await retention.deleteEligibleExecutionPlans(assessedAt, options)).deleted).toBe(0)
+      for (const delegation of delegationPins) {
+        await isolated.application
+          .delete(delegations)
+          .where(eq(delegations.delegationId, delegation.delegationId))
+      }
+      const freed = await retention.deleteEligibleExecutionPlans(assessedAt, options)
+      expect(freed.deleted).toBe(0)
+      expect(freed.retainedByReason).toEqual({ not_expired: 1 })
+      const expired = await retention.deleteEligibleExecutionPlans(
+        new Date(assessedAt.getTime() + ninetyDaysMs + 1),
+        options
+      )
+      expect(expired.deleted).toBe(1)
+      expect(
+        await new PostgresExecutionPlanRepository(isolated.application).get(reference)
+      ).toBeUndefined()
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'plan deletion locks before reference scans and denies a racing new acceptance',
+    async () => {
+      const composedPackage = composeProviderContextPackage(
+        contextPackageSerializationFixtures.futurePi,
+        {
+          callerContextRefs: ['contract://retention-plan-race/v1'],
+          localProjectGrantRefs: [],
+          contributions: [],
+        }
+      )
+      const contextPackage = deriveContextPackage(composedPackage, {
+        objective: composedPackage.objective,
+        allowedStateItemIds: composedPackage.stateItems.map((item) => item.itemId),
+        allowedArtifactIds: composedPackage.artifactRefs.map((artifact) => artifact.artifactId),
+        budgets: composedPackage.budgets,
+        successCriteria: composedPackage.successCriteria,
+        returnContract: composedPackage.returnContract,
+        compiledAt: await compiledAtBeforeExistingRows(isolated.application, 'context-packages'),
+      })
+      const plan = createOldPlanFixture(
+        {
+          contextPackage,
+          profileCapabilityRequirements: ['execution.cancel', 'model.select'],
+        },
+        await compiledAtBeforeExistingRows(isolated.application, 'plans')
+      )
+      const packages = new PostgresContextPackageRepository(isolated.application)
+      await packages.put(composedPackage)
+      await packages.put(contextPackage)
+      await new PostgresExecutionPlanRepository(isolated.application).put(plan)
+      const now = new Date(Date.parse(plan.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
+      const afterId = await retentionCursorBefore(
+        isolated.application,
+        'plans',
+        plan.executionPlanId
+      )
+      const commandService = new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(isolated.application),
+        executionIdFactory: () => 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFJ',
+        executionPlanValidator: { validate: async () => true },
+        now: () => now.toISOString(),
+      })
+      const input = {
+        callerPrincipalId: 'svc_plan-retention-race',
+        operation: 'execution.accept',
+        commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FFJ',
+        requestId: plan.correlation.requestId,
+        idempotencyKey: 'plan-retention-race-0001',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: plan.correlation.workspaceId,
+          projectId: plan.correlation.projectId,
+          taskId: plan.correlation.taskId,
+          agentId: plan.correlation.agentId,
+        },
+        executionPlan: {
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+          schemaVersion: plan.schemaVersion,
+        },
+        receivedAt: now.toISOString(),
+        retentionExpiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+      }
+      let competingAcceptance
+      const deletion = new PostgresExecutionPlanRetention(isolated.application)
+      const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
+      const firstObservation = await deletion.deleteEligibleExecutionPlans(now, {
+        policyRetainMs,
+        bound: 1,
+        afterId,
+        dryRun: false,
+      })
+      expect(firstObservation).toMatchObject({
+        scanned: 1,
+        deleted: 0,
+        retainedByReason: { not_expired: 1 },
+      })
+      const result = await deletion.deleteEligibleExecutionPlans(
+        new Date(now.getTime() + policyRetainMs + 1),
+        {
+          policyRetainMs,
+          bound: 1,
+          afterId,
+          dryRun: false,
+          journal: async () => {
+            competingAcceptance = commandService.acceptExecution(input)
+            await waitForLockWait(isolated.application, 'execution_plans')
+          },
+        }
+      )
+
+      expect(result.deleted).toBe(1)
+      await expect(competingAcceptance).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, input.commandId))
+      ).toHaveLength(0)
+      expect(
+        await isolated.application
+          .select()
+          .from(executions)
+          .where(eq(executions.executionId, 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFJ'))
+      ).toHaveLength(0)
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'context deletion locks before reference scans and denies a racing new plan',
+    async () => {
+      const composedPackage = composeProviderContextPackage(
+        contextPackageSerializationFixtures.futurePi,
+        {
+          callerContextRefs: ['contract://retention-context-race/v1'],
+          localProjectGrantRefs: [],
+          contributions: [],
+        }
+      )
+      const contextPackage = deriveContextPackage(composedPackage, {
+        objective: composedPackage.objective,
+        allowedStateItemIds: composedPackage.stateItems.map((item) => item.itemId),
+        allowedArtifactIds: composedPackage.artifactRefs.map((artifact) => artifact.artifactId),
+        budgets: composedPackage.budgets,
+        successCriteria: composedPackage.successCriteria,
+        returnContract: composedPackage.returnContract,
+        compiledAt: await compiledAtBeforeExistingRows(isolated.application, 'context-packages'),
+      })
+      const plan = createOldPlanFixture({
+        contextPackage,
+        profileCapabilityRequirements: ['execution.cancel', 'model.select'],
+      })
+      const packages = new PostgresContextPackageRepository(isolated.application)
+      await packages.put(composedPackage)
+      await packages.put(contextPackage)
+      expect(
+        await new PostgresExecutionPlanRepository(isolated.application).get({
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        })
+      ).toBeUndefined()
+      let competingPut
+      let competingPutState = 'pending'
+      const now = new Date(
+        Date.parse(contextPackage.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000
+      )
+      const afterId = await retentionCursorBefore(
+        isolated.application,
+        'context-packages',
+        contextPackage.contextPackageId
+      )
+      const retention = new PostgresContextPackageRetention(isolated.application)
+      const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
+      const firstObservation = await retention.deleteEligibleContextPackages(now, {
+        policyRetainMs,
+        bound: 1,
+        afterId,
+        dryRun: false,
+      })
+      expect(firstObservation).toMatchObject({
+        scanned: 1,
+        deleted: 0,
+        retainedByReason: { not_expired: 1 },
+      })
+      const deletion = await new PostgresContextPackageRetention(
+        isolated.application
+      ).deleteEligibleContextPackages(new Date(now.getTime() + policyRetainMs + 1), {
         policyRetainMs,
         bound: 1,
         afterId,
         dryRun: false,
         journal: async () => {
-          competingAcceptance = commandService.acceptExecution(input)
-          await waitForLockWait(isolated.application, 'execution_plans')
-        },
-      }
-    )
-
-    expect(result.deleted).toBe(1)
-    await expect(competingAcceptance).rejects.toMatchObject({
-      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
-    })
-    expect(
-      await isolated.application
-        .select()
-        .from(commandInbox)
-        .where(eq(commandInbox.commandId, input.commandId))
-    ).toHaveLength(0)
-    expect(
-      await isolated.application
-        .select()
-        .from(executions)
-        .where(eq(executions.executionId, 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFJ'))
-    ).toHaveLength(0)
-  }, 30_000)
-
-  test('context deletion locks before reference scans and denies a racing new plan', async () => {
-    const composedPackage = composeProviderContextPackage(
-      contextPackageSerializationFixtures.futurePi,
-      {
-        callerContextRefs: ['contract://retention-context-race/v1'],
-        localProjectGrantRefs: [],
-        contributions: [],
-      }
-    )
-    const contextPackage = deriveContextPackage(composedPackage, {
-      objective: composedPackage.objective,
-      allowedStateItemIds: composedPackage.stateItems.map((item) => item.itemId),
-      allowedArtifactIds: composedPackage.artifactRefs.map((artifact) => artifact.artifactId),
-      budgets: composedPackage.budgets,
-      successCriteria: composedPackage.successCriteria,
-      returnContract: composedPackage.returnContract,
-      compiledAt: await compiledAtBeforeExistingRows(isolated.application, 'context-packages'),
-    })
-    const plan = createOldPlanFixture({
-      contextPackage,
-      profileCapabilityRequirements: ['execution.cancel', 'model.select'],
-    })
-    const packages = new PostgresContextPackageRepository(isolated.application)
-    await packages.put(composedPackage)
-    await packages.put(contextPackage)
-    expect(
-      await new PostgresExecutionPlanRepository(isolated.application).get({
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-      })
-    ).toBeUndefined()
-    let competingPut
-    let competingPutState = 'pending'
-    const now = new Date(Date.parse(contextPackage.compiledAt) + 90 * 24 * 60 * 60 * 1_000 + 60_000)
-    const afterId = await retentionCursorBefore(
-      isolated.application,
-      'context-packages',
-      contextPackage.contextPackageId
-    )
-    const retention = new PostgresContextPackageRetention(isolated.application)
-    const policyRetainMs = 90 * 24 * 60 * 60 * 1_000
-    const firstObservation = await retention.deleteEligibleContextPackages(now, {
-      policyRetainMs,
-      bound: 1,
-      afterId,
-      dryRun: false,
-    })
-    expect(firstObservation).toMatchObject({
-      scanned: 1,
-      deleted: 0,
-      retainedByReason: { not_expired: 1 },
-    })
-    const deletion = await new PostgresContextPackageRetention(
-      isolated.application
-    ).deleteEligibleContextPackages(new Date(now.getTime() + policyRetainMs + 1), {
-      policyRetainMs,
-      bound: 1,
-      afterId,
-      dryRun: false,
-      journal: async () => {
-        competingPut = new PostgresExecutionPlanRepository(isolated.application).put(plan).then(
-          (value) => {
-            competingPutState = 'resolved'
-            return value
-          },
-          (error) => {
-            competingPutState = `rejected:${error.code ?? error.message}`
-            throw error
+          competingPut = new PostgresExecutionPlanRepository(isolated.application).put(plan).then(
+            (value) => {
+              competingPutState = 'resolved'
+              return value
+            },
+            (error) => {
+              competingPutState = `rejected:${error.code ?? error.message}`
+              throw error
+            }
+          )
+          try {
+            await waitForLockWait(isolated.application, 'context_packages')
+          } catch (error) {
+            throw new Error(`${error.message}; competingPut=${competingPutState}`, { cause: error })
           }
-        )
-        try {
-          await waitForLockWait(isolated.application, 'context_packages')
-        } catch (error) {
-          throw new Error(`${error.message}; competingPut=${competingPutState}`, { cause: error })
-        }
-      },
-    })
-
-    expect(deletion.deleted).toBe(1)
-    await expect(competingPut).rejects.toMatchObject({ code: 'MISSING_CONTEXT_PACKAGE' })
-    expect(
-      await new PostgresExecutionPlanRepository(isolated.application).get({
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
+        },
       })
-    ).toBeUndefined()
-  }, 30_000)
 
-  test('sweepEligibleInteractionReceipts removes only confirmed receipts', async () => {
-    await seedAcceptancePlan(isolated.application)
-    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
-    const acceptedAt = '2026-08-01T11:00:00.000Z'
-    const recent = '2026-11-20T11:00:00.000Z'
-    const ownerExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB3'
-    const ownerAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB3'
-    const ownerInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB3'
-    const ownerWorkspaceId = `wsp_${suffix}`
-    const ownerProjectId = `prj_${suffix}`
-    const executionRepository = new PostgresExecutionRepository(isolated.application)
-    const lifecycle = new ExecutionLifecycleService(executionRepository)
-    const owner = await lifecycle.createExecution({
-      executionId: ownerExecutionId,
-      correlation: {
-        workspaceId: ownerWorkspaceId,
-        projectId: ownerProjectId,
-        taskId: `tsk_${suffix}`,
-        agentId: `agt_${suffix}`,
-        requestId: `req_${suffix}`,
-      },
-      executionPlan: acceptancePlanReference,
-      acceptedAt: '2026-01-01T10:00:00.000Z',
-    })
-    const ownerAttempt = await lifecycle.createAttempt({
-      executionId: ownerExecutionId,
-      attemptId: ownerAttemptId,
-      expectedExecutionVersion: owner.version,
-      queuedAt: '2026-01-02T10:00:00.000Z',
-    })
-    await lifecycle.transitionAttempt({
-      attemptId: ownerAttemptId,
-      expectedVersion: ownerAttempt.version,
-      to: 'failed',
-      transitionedAt: '2026-01-03T10:00:00.000Z',
-      failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
-    })
-    const currentOwner = await executionRepository.getExecution(ownerExecutionId)
-    await lifecycle.transitionExecution({
-      executionId: ownerExecutionId,
-      expectedVersion: currentOwner.version,
-      to: 'failed',
-      transitionedAt: '2026-01-04T10:00:00.000Z',
-      failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
-    })
-    await new PostgresInteractionRepository(isolated.application).insert({
-      interactionId: ownerInteractionId,
-      executionId: ownerExecutionId,
-      attemptId: ownerAttemptId,
-      kind: 'approval',
-      prompt: { title: 'Approve the operation' },
-      allowedActions: ['approve', 'deny'],
-      allowedPrincipalIds: ['svc_agent-hq'],
-      state: 'responded',
-      version: 2,
-      requestedAt: '2026-04-29T10:00:00.000Z',
-      expiresAt: '2026-04-30T10:00:00.000Z',
-      response: {
-        responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB3',
-        action: 'approve',
-        respondingPrincipalId: 'svc_agent-hq',
-        respondedAt: acceptedAt,
-      },
-    })
-    const crossExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB5'
-    const crossAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB5'
-    const crossInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB5'
-    const crossExecution = await lifecycle.createExecution({
-      executionId: crossExecutionId,
-      correlation: {
-        workspaceId: ownerWorkspaceId,
-        projectId: ownerProjectId,
-        taskId: 'tsk_01CRZ3NDEKTSV4RRFFQ69G5FB5',
-        agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FB5',
-        requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FB5',
-      },
-      executionPlan: acceptancePlanReference,
-      acceptedAt: '2026-01-01T10:00:00.000Z',
-    })
-    await lifecycle.createAttempt({
-      executionId: crossExecutionId,
-      attemptId: crossAttemptId,
-      expectedExecutionVersion: crossExecution.version,
-      queuedAt: '2026-01-02T10:00:00.000Z',
-    })
-    // Seed the invalid pair below the repository boundary so retention still
-    // proves it fails closed if legacy or externally-corrupted data is present.
-    await isolated.application.execute(
-      sql`insert into interaction_requests (interaction_id, execution_id, attempt_id, kind, state, prompt, allowed_actions, allowed_principal_ids, version, requested_at, expires_at, response, resolved_at) values (${crossInteractionId}, ${ownerExecutionId}, ${crossAttemptId}, 'approval', 'responded', ${JSON.stringify({ title: 'Approve the cross-owner operation' })}::jsonb, ${JSON.stringify(['approve', 'deny'])}::jsonb, ${JSON.stringify(['svc_agent-hq'])}::jsonb, 2, ${'2026-04-29T10:00:00.000Z'}::timestamptz, ${'2026-04-30T10:00:00.000Z'}::timestamptz, ${JSON.stringify({ responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB5', action: 'approve', respondingPrincipalId: 'svc_agent-hq', respondedAt: acceptedAt })}::jsonb, ${acceptedAt}::timestamptz)`
-    )
-    const seed = async (table, commandKey, receipt) => {
-      await isolated.application.execute(
-        sql`insert into ${sql.identifier(table)} (command_key, workspace_id, project_id, receipt) values (${commandKey}, ${receipt.request.workspaceId}, ${receipt.request.projectId}, ${JSON.stringify(receipt)}::jsonb)`
-      )
-    }
-    const request = (operation, key) => {
-      const base =
-        operation === 'interaction.respond'
-          ? ControlApiFixtures.interactionResponse.request
-          : ControlApiFixtures.executionCancellation.request
-      return {
-        ...base,
-        workspaceId: ownerWorkspaceId,
-        projectId: ownerProjectId,
-        idempotencyKey: `receipt-fixture-${operation}-${key}`,
-        payload:
-          operation === 'interaction.respond'
-            ? {
-                ...ControlApiFixtures.interactionResponse.request.payload,
-                executionId: ownerExecutionId,
-                attemptId: ownerAttemptId,
-                interactionId: ownerInteractionId,
-              }
-            : { executionId: ownerExecutionId },
-      }
-    }
-    const interactionKeys = {
-      settled: `${'1'.repeat(64)}`,
-      confirmedYoung: `${'2'.repeat(64)}`,
-      unconfirmed: `${'3'.repeat(64)}`,
-    }
-    const missingOwnerKey = `${'7'.repeat(64)}`
-    const scopeMismatchKey = `${'8'.repeat(64)}`
-    const missingInteractionKey = `${'0'.repeat(64)}`
-    const interactionMismatchKey = `${'9'.repeat(64)}`
-    const crossOwnerAttemptKey = `${'b'.repeat(64)}`
-    await seed('interaction_commands', interactionKeys.settled, {
-      request: request('interaction.respond', 'settled'),
-      acceptedAt,
-    })
-    await seed('interaction_commands', interactionKeys.confirmedYoung, {
-      request: request('interaction.respond', 'young'),
-      acceptedAt: recent,
-    })
-    await seed('interaction_commands', interactionKeys.unconfirmed, {
-      request: request('interaction.respond', 'unconfirmed'),
-    })
-    const cancellationKey = `${'4'.repeat(64)}`
-    await seed('execution_cancellations', cancellationKey, {
-      request: request('execution.cancel', 'settled-cancellation'),
-      acceptedAt,
-    })
-    await seed('execution_cancellations', missingOwnerKey, {
-      request: {
-        ...request('execution.cancel', 'missing-owner'),
-        payload: { executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
-      },
-      acceptedAt,
-    })
-    await seed('execution_cancellations', scopeMismatchKey, {
-      request: {
-        ...request('execution.cancel', 'scope-mismatch'),
-        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW',
-      },
-      acceptedAt,
-    })
-    const missingInteractionRequest = request('interaction.respond', 'missing-interaction')
-    await seed('interaction_commands', missingInteractionKey, {
-      request: {
-        ...missingInteractionRequest,
-        payload: {
-          ...missingInteractionRequest.payload,
-          interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+      expect(deletion.deleted).toBe(1)
+      await expect(competingPut).rejects.toMatchObject({ code: 'MISSING_CONTEXT_PACKAGE' })
+      expect(
+        await new PostgresExecutionPlanRepository(isolated.application).get({
+          executionPlanId: plan.executionPlanId,
+          contentDigest: plan.contentDigest,
+        })
+      ).toBeUndefined()
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'sweepEligibleInteractionReceipts removes only confirmed receipts',
+    async () => {
+      await seedAcceptancePlan(isolated.application)
+      const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FAQ'
+      const acceptedAt = '2026-08-01T11:00:00.000Z'
+      const recent = '2026-11-20T11:00:00.000Z'
+      const ownerExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+      const ownerAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+      const ownerInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB3'
+      const ownerWorkspaceId = `wsp_${suffix}`
+      const ownerProjectId = `prj_${suffix}`
+      const executionRepository = new PostgresExecutionRepository(isolated.application)
+      const lifecycle = new ExecutionLifecycleService(executionRepository)
+      const owner = await lifecycle.createExecution({
+        executionId: ownerExecutionId,
+        correlation: {
+          workspaceId: ownerWorkspaceId,
+          projectId: ownerProjectId,
+          taskId: `tsk_${suffix}`,
+          agentId: `agt_${suffix}`,
+          requestId: `req_${suffix}`,
         },
-      },
-      acceptedAt,
-    })
-    const mismatchedInteractionRequest = request('interaction.respond', 'mismatched-interaction')
-    await seed('interaction_commands', interactionMismatchKey, {
-      request: {
-        ...mismatchedInteractionRequest,
-        payload: {
-          ...mismatchedInteractionRequest.payload,
-          executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        },
-      },
-      acceptedAt,
-    })
-    const crossOwnerAttemptRequest = request('interaction.respond', 'cross-owner-attempt')
-    await seed('interaction_commands', crossOwnerAttemptKey, {
-      request: {
-        ...crossOwnerAttemptRequest,
-        payload: {
-          ...crossOwnerAttemptRequest.payload,
-          attemptId: crossAttemptId,
-          interactionId: crossInteractionId,
-        },
-      },
-      acceptedAt,
-    })
-
-    const retention = new PostgresReceiptRetention(isolated.application)
-    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
-    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
-
-    const dry = await retention.sweepEligibleInteractionReceipts(assessedAt, {
-      ...options,
-      dryRun: true,
-    })
-    expect(dry.deleted).toBe(0)
-
-    const applied = await retention.sweepEligibleInteractionReceipts(assessedAt, options)
-    expect(applied.deleted).toBe(2)
-    expect(applied.retainedByReason).toMatchObject({
-      unconfirmed_signal: 1,
-      non_terminal_owner: 4,
-      unsettled_publication: 1,
-    })
-
-    const remaining = await isolated.application.execute(
-      sql`select command_key from interaction_commands where command_key in (${interactionKeys.settled}, ${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
-    )
-    expect(remaining.map((row) => row.command_key).toSorted()).toEqual(
-      [interactionKeys.confirmedYoung, interactionKeys.unconfirmed].toSorted()
-    )
-    const cancellations = await isolated.application.execute(
-      sql`select command_key from execution_cancellations where command_key = ${cancellationKey}`
-    )
-    expect(cancellations).toHaveLength(0)
-    const unsafeCancellationRows = await isolated.application.execute(
-      sql`select command_key from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
-    )
-    expect(unsafeCancellationRows.map((row) => row.command_key).toSorted()).toEqual(
-      [missingOwnerKey, scopeMismatchKey].toSorted()
-    )
-    const unsafeInteractionRows = await isolated.application.execute(
-      sql`select command_key from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
-    )
-    expect(unsafeInteractionRows.map((row) => row.command_key).toSorted()).toEqual(
-      [missingInteractionKey, interactionMismatchKey, crossOwnerAttemptKey].toSorted()
-    )
-
-    // Clear the first scenario before checking the pass-wide bound.
-    await isolated.application.execute(
-      sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
-    )
-    await isolated.application.execute(
-      sql`delete from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
-    )
-    await isolated.application.execute(
-      sql`delete from interaction_requests where interaction_id = ${crossInteractionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_events where execution_id = ${crossExecutionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_attempts where execution_id = ${crossExecutionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from executions where execution_id = ${crossExecutionId}`
-    )
-
-    const boundedInteractionKey = `${'5'.repeat(64)}`
-    const boundedCancellationKey = `${'6'.repeat(64)}`
-    await seed('interaction_commands', boundedInteractionKey, {
-      request: request('interaction.respond', 'bounded-interaction'),
-      acceptedAt,
-    })
-    await seed('execution_cancellations', boundedCancellationKey, {
-      request: request('execution.cancel', 'bounded-cancellation'),
-      acceptedAt,
-    })
-    const journal = []
-    const bounded = await retention.sweepEligibleInteractionReceipts(assessedAt, {
-      ...options,
-      bound: 1,
-      journal: async (operations) => journal.push(...operations),
-    })
-    expect(bounded).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
-    expect(journal).toHaveLength(1)
-    const boundedInteraction = await isolated.application.execute(
-      sql`select command_key from interaction_commands where command_key = ${boundedInteractionKey}`
-    )
-    const boundedCancellation = await isolated.application.execute(
-      sql`select command_key from execution_cancellations where command_key = ${boundedCancellationKey}`
-    )
-    expect(boundedInteraction.length + boundedCancellation.length).toBe(1)
-
-    // Everything this test created is removed again: other tests in this file
-    // count rows globally.
-    await isolated.application.execute(
-      sql`delete from interaction_commands where command_key = ${boundedInteractionKey}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_cancellations where command_key = ${boundedCancellationKey}`
-    )
-    await isolated.application.execute(
-      sql`delete from interaction_requests where interaction_id = ${ownerInteractionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_events where execution_id = ${ownerExecutionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_attempts where execution_id = ${ownerExecutionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from executions where execution_id = ${ownerExecutionId}`
-    )
-  }, 60_000)
-
-  test('an old accepted cancellation remains a resume guard while its PostgreSQL execution is active', async () => {
-    await seedAcceptancePlan(isolated.application)
-    const acceptedAt = '2026-08-01T11:00:00.000Z'
-    const assessedAt = new Date('2027-12-01T12:00:00.000Z')
-    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB4'
-    const base = ControlApiFixtures.executionAcceptance.request
-    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
-    const executionRepository = new PostgresExecutionRepository(isolated.application)
-    const accepted = await new CommandInboxService({
-      repository: commands,
-      executionIdFactory: () => executionId,
-      executionPlanValidator: { validate: async () => true },
-      now: () => acceptedAt,
-    }).acceptExecution({
-      callerPrincipalId: base.caller.servicePrincipalId,
-      operation: base.operation,
-      commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB4',
-      requestId: base.requestId,
-      idempotencyKey: 'retention-pg-resume-guard-active',
-      payloadHash: base.payloadHash,
-      correlation: {
-        workspaceId: base.workspaceId,
-        projectId: base.projectId,
-        taskId: base.payload.taskId,
-        agentId: base.payload.agentId,
-      },
-      executionPlan: acceptancePlanReference,
-      receivedAt: acceptedAt,
-      retentionExpiresAt: '2026-09-01T11:00:00.000Z',
-    })
-    const cancellationRequest = {
-      ...ControlApiFixtures.executionCancellation.request,
-      idempotencyKey: 'retention-pg-cancel-active-execution-1',
-      payload: { executionId },
-    }
-    const cancellations = new PostgresExecutionCancellationRepository(isolated.application)
-    await cancellations.reserve({ request: cancellationRequest })
-    await cancellations.markAccepted(cancellationRequest, acceptedAt)
-    try {
-      const result = await new PostgresReceiptRetention(
-        isolated.application
-      ).sweepEligibleInteractionReceipts(assessedAt, {
-        policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
-        dryRun: false,
+        executionPlan: acceptancePlanReference,
+        acceptedAt: '2026-01-01T10:00:00.000Z',
       })
-      expect(result).toMatchObject({
-        deleted: 0,
-        retainedByReason: { non_terminal_owner: 1 },
+      const ownerAttempt = await lifecycle.createAttempt({
+        executionId: ownerExecutionId,
+        attemptId: ownerAttemptId,
+        expectedExecutionVersion: owner.version,
+        queuedAt: '2026-01-02T10:00:00.000Z',
       })
-      const stored = await cancellations.listByExecution({
-        executionId,
-        workspaceId: base.workspaceId,
-        projectId: base.projectId,
-        limit: 1,
+      await lifecycle.transitionAttempt({
+        attemptId: ownerAttemptId,
+        expectedVersion: ownerAttempt.version,
+        to: 'failed',
+        transitionedAt: '2026-01-03T10:00:00.000Z',
+        failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
       })
-      expect(stored).toHaveLength(1)
-
-      const submissions = []
-      await new PostgresReconciliationEffects({
-        executions: executionRepository,
-        commands,
-        events: { rearmPendingDelivery: async () => 0 },
-        workflowSubmitter: { submit: async (input) => submissions.push(input) },
-        cancellations,
-      }).resumeWorkflow({ executionId, checkpointId: `rcp_${'b'.repeat(32)}` })
-      expect(submissions).toEqual([])
-      expect(accepted.command.status).toBe('accepted')
-    } finally {
-      await isolated.application.execute(
-        sql`delete from execution_cancellations where receipt->'request'->'payload'->>'executionId' = ${executionId}`
-      )
-      await isolated.application.execute(
-        sql`delete from command_inbox where execution_id = ${executionId}`
-      )
-      await isolated.application.execute(
-        sql`delete from execution_events where execution_id = ${executionId}`
-      )
-      await isolated.application.execute(
-        sql`delete from execution_attempts where execution_id = ${executionId}`
-      )
-      await isolated.application.execute(
-        sql`delete from executions where execution_id = ${executionId}`
-      )
-    }
-  }, 60_000)
-
-  test('deleteEligibleRuntimeCommands removes settled commands with their receipts', async () => {
-    await isolated.migrate()
-    const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAN'
-    const nodeId = 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAN'
-    const workspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAN'
-    await new RuntimeConnectionRegistry(
-      new PostgresRuntimeConnectionRepository(isolated.application)
-    ).register({
-      runtimeConnectionId,
-      identityDigest: `sha256:${'9'.repeat(64)}`,
-      connectionType: 'managed_local',
-      runtimeNodeRefId: nodeId,
-      runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-      location: 'local_device',
-      adapterVersion: '1.0.0',
-      driverVersion: '1.0.0',
-      harnessVersion: '1.0.0',
-      status: 'connected',
-      health: 'healthy',
-      capabilities: [],
-      compatibilityState: 'compatible',
-      limitations: [],
-      lastDiscoveredAt: '2026-08-24T23:00:00.000Z',
-      lastHeartbeatAt: '2026-08-24T23:00:00.000Z',
-      lastHealthCheckAt: '2026-08-24T23:00:00.000Z',
-    })
-    await seedAcceptancePlan(isolated.application)
-    const executionService = new ExecutionLifecycleService(
-      new PostgresExecutionRepository(isolated.application)
-    )
-    const execution = await executionService.createExecution({
-      executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-      correlation: {
-        workspaceId,
-        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-      },
-      executionPlan: acceptancePlanReference,
-      acceptedAt: '2026-08-24T23:00:00.000Z',
-    })
-    const attempt = await executionService.createAttempt({
-      executionId: execution.executionId,
-      attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAN',
-      expectedExecutionVersion: execution.version,
-      queuedAt: '2026-08-24T23:00:01.000Z',
-      runtime: { runtimeConnectionId },
-    })
-    const repository = new PostgresRuntimeCommandRepository(isolated.application)
-    const settledAt = '2026-08-24T23:05:00.000Z'
-    const base = {
-      executionId: execution.executionId,
-      attemptId: attempt.attemptId,
-      nodeId,
-      runtimeConnectionId,
-      workspaceId,
-      idempotencyKey: 'runtime-command:integration:settled',
-      payloadHash: `sha256:${'4'.repeat(64)}`,
-      commandEnvelope: { operation: 'runtime.cancel' },
-      issuedAt: '2026-08-24T23:00:02.000Z',
-      expiresAt: '2026-08-24T23:10:02.000Z',
-      version: 1,
-      deliveryAttempts: 0,
-      createdAt: '2026-08-24T23:00:02.000Z',
-      updatedAt: '2026-08-24T23:00:02.000Z',
-    }
-    const settledId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAN'
-    const queuedId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP'
-    expect(
-      (await repository.create({ ...base, commandId: settledId, status: 'queued' })).outcome
-    ).toBe('created')
-    expect(
-      (await repository.create({ ...base, commandId: queuedId, status: 'queued' })).outcome
-    ).toBe('created')
-    // The settled shape needs complete dispatch, acknowledgement and result
-    // metadata; the record schema rejects partial sets.
-    const runtimeIdentity = makeRuntimeInventoryCredentialFixtures(nodeId, workspaceId)
-    await isolated.withMigrationDatabase(async (database) => {
-      const writer = new PostgresRuntimeNodeIdentityRepository(database)
-      await writer.registerVerificationKey(runtimeIdentity.key)
-      await writer.insertIssuedCredential(runtimeIdentity.credentials[0])
-    })
-    const runtimeCredential = runtimeIdentity.credentials[0]
-    expect(
-      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
-        runtimeCredential.credentialId,
-        runtimeCredential.revocationVersion,
-        new Date()
-      )
-    ).toBe('consumed')
-    const runtimeFence = {
-      credentialId: runtimeCredential.credentialId,
-      revocationVersion: runtimeCredential.revocationVersion,
-    }
-    const inboundTimestamp = '2026-08-24T23:00:02.000Z'
-    const inboundCasCases = [
-      {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBA',
-        idempotencyKey: 'runtime-command:integration:ack-fence',
-        next: {
-          status: 'acknowledged',
-          acknowledgementReference: 'ack-runtime-fence-0001',
-          acknowledgementDisposition: 'accepted',
-          acknowledgedAt: inboundTimestamp,
-        },
-      },
-      {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBB',
-        idempotencyKey: 'runtime-command:integration:result-fence',
-        next: {
-          status: 'succeeded',
-          resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAK',
-          resultStatus: 'succeeded',
-          resultRecordedAt: inboundTimestamp,
-        },
-      },
-      {
-        commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBC',
-        idempotencyKey: 'runtime-command:integration:error-fence',
-        next: {
-          status: 'failed',
-          resultStatus: 'failed',
-          resultRecordedAt: inboundTimestamp,
-        },
-      },
-    ]
-    for (const [index, testCase] of inboundCasCases.entries()) {
-      const queued = {
-        ...base,
-        commandId: testCase.commandId,
-        idempotencyKey: testCase.idempotencyKey,
-        status: 'queued',
-      }
-      expect((await repository.create(queued)).outcome).toBe('created')
-      const dispatched = {
-        ...queued,
-        status: 'dispatched',
+      const currentOwner = await executionRepository.getExecution(ownerExecutionId)
+      await lifecycle.transitionExecution({
+        executionId: ownerExecutionId,
+        expectedVersion: currentOwner.version,
+        to: 'failed',
+        transitionedAt: '2026-01-04T10:00:00.000Z',
+        failure: { classification: 'runtime_error', code: 'RETENTION_FIXTURE_TERMINAL' },
+      })
+      await new PostgresInteractionRepository(isolated.application).insert({
+        interactionId: ownerInteractionId,
+        executionId: ownerExecutionId,
+        attemptId: ownerAttemptId,
+        kind: 'approval',
+        prompt: { title: 'Approve the operation' },
+        allowedActions: ['approve', 'deny'],
+        allowedPrincipalIds: ['svc_agent-hq'],
+        state: 'responded',
         version: 2,
-        deliveryAttempts: 1,
-        lastChannelGeneration: 1,
-        lastSequence: index + 1,
-        firstDispatchedAt: inboundTimestamp,
-        lastDispatchedAt: inboundTimestamp,
-        updatedAt: inboundTimestamp,
-      }
-      expect(await repository.compareAndSet(1, dispatched)).toBe(true)
-      const inbound = {
-        ...dispatched,
-        ...testCase.next,
-        version: 3,
-        updatedAt: inboundTimestamp,
-      }
-      await expect(repository.compareAndSet(2, inbound)).rejects.toMatchObject({
-        code: 'INVENTORY_CREDENTIAL_FENCE_INVALID',
+        requestedAt: '2026-04-29T10:00:00.000Z',
+        expiresAt: '2026-04-30T10:00:00.000Z',
+        response: {
+          responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB3',
+          action: 'approve',
+          respondingPrincipalId: 'svc_agent-hq',
+          respondedAt: acceptedAt,
+        },
       })
-      expect(await repository.get(testCase.commandId)).toEqual(dispatched)
-      expect(await repository.compareAndSet(2, inbound, runtimeFence)).toBe(true)
-      await isolated.application
-        .delete(runtimeCommands)
-        .where(eq(runtimeCommands.commandId, testCase.commandId))
-    }
-    expect(
-      await repository.compareAndSet(
-        1,
-        {
+      const crossExecutionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+      const crossAttemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+      const crossInteractionId = 'int_01CRZ3NDEKTSV4RRFFQ69G5FB5'
+      const crossExecution = await lifecycle.createExecution({
+        executionId: crossExecutionId,
+        correlation: {
+          workspaceId: ownerWorkspaceId,
+          projectId: ownerProjectId,
+          taskId: 'tsk_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+          agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+          requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FB5',
+        },
+        executionPlan: acceptancePlanReference,
+        acceptedAt: '2026-01-01T10:00:00.000Z',
+      })
+      await lifecycle.createAttempt({
+        executionId: crossExecutionId,
+        attemptId: crossAttemptId,
+        expectedExecutionVersion: crossExecution.version,
+        queuedAt: '2026-01-02T10:00:00.000Z',
+      })
+      // Seed the invalid pair below the repository boundary so retention still
+      // proves it fails closed if legacy or externally-corrupted data is present.
+      await isolated.application.execute(
+        sql`insert into interaction_requests (interaction_id, execution_id, attempt_id, kind, state, prompt, allowed_actions, allowed_principal_ids, version, requested_at, expires_at, response, resolved_at) values (${crossInteractionId}, ${ownerExecutionId}, ${crossAttemptId}, 'approval', 'responded', ${JSON.stringify({ title: 'Approve the cross-owner operation' })}::jsonb, ${JSON.stringify(['approve', 'deny'])}::jsonb, ${JSON.stringify(['svc_agent-hq'])}::jsonb, 2, ${'2026-04-29T10:00:00.000Z'}::timestamptz, ${'2026-04-30T10:00:00.000Z'}::timestamptz, ${JSON.stringify({ responseId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB5', action: 'approve', respondingPrincipalId: 'svc_agent-hq', respondedAt: acceptedAt })}::jsonb, ${acceptedAt}::timestamptz)`
+      )
+      const seed = async (table, commandKey, receipt) => {
+        await isolated.application.execute(
+          sql`insert into ${sql.identifier(table)} (command_key, workspace_id, project_id, receipt) values (${commandKey}, ${receipt.request.workspaceId}, ${receipt.request.projectId}, ${JSON.stringify(receipt)}::jsonb)`
+        )
+      }
+      const request = (operation, key) => {
+        const base =
+          operation === 'interaction.respond'
+            ? ControlApiFixtures.interactionResponse.request
+            : ControlApiFixtures.executionCancellation.request
+        return {
           ...base,
-          commandId: settledId,
-          status: 'succeeded',
+          workspaceId: ownerWorkspaceId,
+          projectId: ownerProjectId,
+          idempotencyKey: `receipt-fixture-${operation}-${key}`,
+          payload:
+            operation === 'interaction.respond'
+              ? {
+                  ...ControlApiFixtures.interactionResponse.request.payload,
+                  executionId: ownerExecutionId,
+                  attemptId: ownerAttemptId,
+                  interactionId: ownerInteractionId,
+                }
+              : { executionId: ownerExecutionId },
+        }
+      }
+      const interactionKeys = {
+        settled: `${'1'.repeat(64)}`,
+        confirmedYoung: `${'2'.repeat(64)}`,
+        unconfirmed: `${'3'.repeat(64)}`,
+      }
+      const missingOwnerKey = `${'7'.repeat(64)}`
+      const scopeMismatchKey = `${'8'.repeat(64)}`
+      const missingInteractionKey = `${'0'.repeat(64)}`
+      const interactionMismatchKey = `${'9'.repeat(64)}`
+      const crossOwnerAttemptKey = `${'b'.repeat(64)}`
+      await seed('interaction_commands', interactionKeys.settled, {
+        request: request('interaction.respond', 'settled'),
+        acceptedAt,
+      })
+      await seed('interaction_commands', interactionKeys.confirmedYoung, {
+        request: request('interaction.respond', 'young'),
+        acceptedAt: recent,
+      })
+      await seed('interaction_commands', interactionKeys.unconfirmed, {
+        request: request('interaction.respond', 'unconfirmed'),
+      })
+      const cancellationKey = `${'4'.repeat(64)}`
+      await seed('execution_cancellations', cancellationKey, {
+        request: request('execution.cancel', 'settled-cancellation'),
+        acceptedAt,
+      })
+      await seed('execution_cancellations', missingOwnerKey, {
+        request: {
+          ...request('execution.cancel', 'missing-owner'),
+          payload: { executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+        },
+        acceptedAt,
+      })
+      await seed('execution_cancellations', scopeMismatchKey, {
+        request: {
+          ...request('execution.cancel', 'scope-mismatch'),
+          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        },
+        acceptedAt,
+      })
+      const missingInteractionRequest = request('interaction.respond', 'missing-interaction')
+      await seed('interaction_commands', missingInteractionKey, {
+        request: {
+          ...missingInteractionRequest,
+          payload: {
+            ...missingInteractionRequest.payload,
+            interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+          },
+        },
+        acceptedAt,
+      })
+      const mismatchedInteractionRequest = request('interaction.respond', 'mismatched-interaction')
+      await seed('interaction_commands', interactionMismatchKey, {
+        request: {
+          ...mismatchedInteractionRequest,
+          payload: {
+            ...mismatchedInteractionRequest.payload,
+            executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          },
+        },
+        acceptedAt,
+      })
+      const crossOwnerAttemptRequest = request('interaction.respond', 'cross-owner-attempt')
+      await seed('interaction_commands', crossOwnerAttemptKey, {
+        request: {
+          ...crossOwnerAttemptRequest,
+          payload: {
+            ...crossOwnerAttemptRequest.payload,
+            attemptId: crossAttemptId,
+            interactionId: crossInteractionId,
+          },
+        },
+        acceptedAt,
+      })
+
+      const retention = new PostgresReceiptRetention(isolated.application)
+      const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+      const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+      const dry = await retention.sweepEligibleInteractionReceipts(assessedAt, {
+        ...options,
+        dryRun: true,
+      })
+      expect(dry.deleted).toBe(0)
+
+      const applied = await retention.sweepEligibleInteractionReceipts(assessedAt, options)
+      expect(applied.deleted).toBe(2)
+      expect(applied.retainedByReason).toMatchObject({
+        unconfirmed_signal: 1,
+        non_terminal_owner: 4,
+        unsettled_publication: 1,
+      })
+
+      const remaining = await isolated.application.execute(
+        sql`select command_key from interaction_commands where command_key in (${interactionKeys.settled}, ${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+      )
+      expect(remaining.map((row) => row.command_key).toSorted()).toEqual(
+        [interactionKeys.confirmedYoung, interactionKeys.unconfirmed].toSorted()
+      )
+      const cancellations = await isolated.application.execute(
+        sql`select command_key from execution_cancellations where command_key = ${cancellationKey}`
+      )
+      expect(cancellations).toHaveLength(0)
+      const unsafeCancellationRows = await isolated.application.execute(
+        sql`select command_key from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
+      )
+      expect(unsafeCancellationRows.map((row) => row.command_key).toSorted()).toEqual(
+        [missingOwnerKey, scopeMismatchKey].toSorted()
+      )
+      const unsafeInteractionRows = await isolated.application.execute(
+        sql`select command_key from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
+      )
+      expect(unsafeInteractionRows.map((row) => row.command_key).toSorted()).toEqual(
+        [missingInteractionKey, interactionMismatchKey, crossOwnerAttemptKey].toSorted()
+      )
+
+      // Clear the first scenario before checking the pass-wide bound.
+      await isolated.application.execute(
+        sql`delete from interaction_commands where command_key in (${interactionKeys.confirmedYoung}, ${interactionKeys.unconfirmed})`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_cancellations where command_key in (${missingOwnerKey}, ${scopeMismatchKey})`
+      )
+      await isolated.application.execute(
+        sql`delete from interaction_commands where command_key in (${missingInteractionKey}, ${interactionMismatchKey}, ${crossOwnerAttemptKey})`
+      )
+      await isolated.application.execute(
+        sql`delete from interaction_requests where interaction_id = ${crossInteractionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${crossExecutionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_attempts where execution_id = ${crossExecutionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from executions where execution_id = ${crossExecutionId}`
+      )
+
+      const boundedInteractionKey = `${'5'.repeat(64)}`
+      const boundedCancellationKey = `${'6'.repeat(64)}`
+      await seed('interaction_commands', boundedInteractionKey, {
+        request: request('interaction.respond', 'bounded-interaction'),
+        acceptedAt,
+      })
+      await seed('execution_cancellations', boundedCancellationKey, {
+        request: request('execution.cancel', 'bounded-cancellation'),
+        acceptedAt,
+      })
+      const journal = []
+      const bounded = await retention.sweepEligibleInteractionReceipts(assessedAt, {
+        ...options,
+        bound: 1,
+        journal: async (operations) => journal.push(...operations),
+      })
+      expect(bounded).toMatchObject({ scanned: 1, eligible: 1, deleted: 1, truncated: true })
+      expect(journal).toHaveLength(1)
+      const boundedInteraction = await isolated.application.execute(
+        sql`select command_key from interaction_commands where command_key = ${boundedInteractionKey}`
+      )
+      const boundedCancellation = await isolated.application.execute(
+        sql`select command_key from execution_cancellations where command_key = ${boundedCancellationKey}`
+      )
+      expect(boundedInteraction.length + boundedCancellation.length).toBe(1)
+
+      // Everything this test created is removed again: other tests in this file
+      // count rows globally.
+      await isolated.application.execute(
+        sql`delete from interaction_commands where command_key = ${boundedInteractionKey}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_cancellations where command_key = ${boundedCancellationKey}`
+      )
+      await isolated.application.execute(
+        sql`delete from interaction_requests where interaction_id = ${ownerInteractionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${ownerExecutionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_attempts where execution_id = ${ownerExecutionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from executions where execution_id = ${ownerExecutionId}`
+      )
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'an old accepted cancellation remains a resume guard while its PostgreSQL execution is active',
+    async () => {
+      await seedAcceptancePlan(isolated.application)
+      const acceptedAt = '2026-08-01T11:00:00.000Z'
+      const assessedAt = new Date('2027-12-01T12:00:00.000Z')
+      const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FB4'
+      const base = ControlApiFixtures.executionAcceptance.request
+      const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+      const executionRepository = new PostgresExecutionRepository(isolated.application)
+      const accepted = await new CommandInboxService({
+        repository: commands,
+        executionIdFactory: () => executionId,
+        executionPlanValidator: { validate: async () => true },
+        now: () => acceptedAt,
+      }).acceptExecution({
+        callerPrincipalId: base.caller.servicePrincipalId,
+        operation: base.operation,
+        commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FB4',
+        requestId: base.requestId,
+        idempotencyKey: 'retention-pg-resume-guard-active',
+        payloadHash: base.payloadHash,
+        correlation: {
+          workspaceId: base.workspaceId,
+          projectId: base.projectId,
+          taskId: base.payload.taskId,
+          agentId: base.payload.agentId,
+        },
+        executionPlan: acceptancePlanReference,
+        receivedAt: acceptedAt,
+        retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+      })
+      const cancellationRequest = {
+        ...ControlApiFixtures.executionCancellation.request,
+        idempotencyKey: 'retention-pg-cancel-active-execution-1',
+        payload: { executionId },
+      }
+      const cancellations = new PostgresExecutionCancellationRepository(isolated.application)
+      await cancellations.reserve({ request: cancellationRequest })
+      await cancellations.markAccepted(cancellationRequest, acceptedAt)
+      try {
+        const result = await new PostgresReceiptRetention(
+          isolated.application
+        ).sweepEligibleInteractionReceipts(assessedAt, {
+          policyRetainMs: 30 * 24 * 60 * 60 * 1_000,
+          dryRun: false,
+        })
+        expect(result).toMatchObject({
+          deleted: 0,
+          retainedByReason: { non_terminal_owner: 1 },
+        })
+        const stored = await cancellations.listByExecution({
+          executionId,
+          workspaceId: base.workspaceId,
+          projectId: base.projectId,
+          limit: 1,
+        })
+        expect(stored).toHaveLength(1)
+
+        const submissions = []
+        await new PostgresReconciliationEffects({
+          executions: executionRepository,
+          commands,
+          events: { rearmPendingDelivery: async () => 0 },
+          workflowSubmitter: { submit: async (input) => submissions.push(input) },
+          cancellations,
+        }).resumeWorkflow({ executionId, checkpointId: `rcp_${'b'.repeat(32)}` })
+        expect(submissions).toEqual([])
+        expect(accepted.command.status).toBe('accepted')
+      } finally {
+        await isolated.application.execute(
+          sql`delete from execution_cancellations where receipt->'request'->'payload'->>'executionId' = ${executionId}`
+        )
+        await isolated.application.execute(
+          sql`delete from command_inbox where execution_id = ${executionId}`
+        )
+        await isolated.application.execute(
+          sql`delete from execution_events where execution_id = ${executionId}`
+        )
+        await isolated.application.execute(
+          sql`delete from execution_attempts where execution_id = ${executionId}`
+        )
+        await isolated.application.execute(
+          sql`delete from executions where execution_id = ${executionId}`
+        )
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'deleteEligibleRuntimeCommands removes settled commands with their receipts',
+    async () => {
+      await isolated.migrate()
+      const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+      const nodeId = 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+      const workspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+      await new RuntimeConnectionRegistry(
+        new PostgresRuntimeConnectionRepository(isolated.application)
+      ).register({
+        runtimeConnectionId,
+        identityDigest: `sha256:${'9'.repeat(64)}`,
+        connectionType: 'managed_local',
+        runtimeNodeRefId: nodeId,
+        runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        location: 'local_device',
+        adapterVersion: '1.0.0',
+        driverVersion: '1.0.0',
+        harnessVersion: '1.0.0',
+        status: 'connected',
+        health: 'healthy',
+        capabilities: [],
+        compatibilityState: 'compatible',
+        limitations: [],
+        lastDiscoveredAt: '2026-08-24T23:00:00.000Z',
+        lastHeartbeatAt: '2026-08-24T23:00:00.000Z',
+        lastHealthCheckAt: '2026-08-24T23:00:00.000Z',
+      })
+      await seedAcceptancePlan(isolated.application)
+      const executionService = new ExecutionLifecycleService(
+        new PostgresExecutionRepository(isolated.application)
+      )
+      const execution = await executionService.createExecution({
+        executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        correlation: {
+          workspaceId,
+          projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+          taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+          agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+          requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        },
+        executionPlan: acceptancePlanReference,
+        acceptedAt: '2026-08-24T23:00:00.000Z',
+      })
+      const attempt = await executionService.createAttempt({
+        executionId: execution.executionId,
+        attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAN',
+        expectedExecutionVersion: execution.version,
+        queuedAt: '2026-08-24T23:00:01.000Z',
+        runtime: { runtimeConnectionId },
+      })
+      const repository = new PostgresRuntimeCommandRepository(isolated.application)
+      const settledAt = '2026-08-24T23:05:00.000Z'
+      const base = {
+        executionId: execution.executionId,
+        attemptId: attempt.attemptId,
+        nodeId,
+        runtimeConnectionId,
+        workspaceId,
+        idempotencyKey: 'runtime-command:integration:settled',
+        payloadHash: `sha256:${'4'.repeat(64)}`,
+        commandEnvelope: { operation: 'runtime.cancel' },
+        issuedAt: '2026-08-24T23:00:02.000Z',
+        expiresAt: '2026-08-24T23:10:02.000Z',
+        version: 1,
+        deliveryAttempts: 0,
+        createdAt: '2026-08-24T23:00:02.000Z',
+        updatedAt: '2026-08-24T23:00:02.000Z',
+      }
+      const settledId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAN'
+      const queuedId = 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAP'
+      expect(
+        (await repository.create({ ...base, commandId: settledId, status: 'queued' })).outcome
+      ).toBe('created')
+      expect(
+        (await repository.create({ ...base, commandId: queuedId, status: 'queued' })).outcome
+      ).toBe('created')
+      // The settled shape needs complete dispatch, acknowledgement and result
+      // metadata; the record schema rejects partial sets.
+      const runtimeIdentity = makeRuntimeInventoryCredentialFixtures(nodeId, workspaceId)
+      await isolated.withMigrationDatabase(async (database) => {
+        const writer = new PostgresRuntimeNodeIdentityRepository(database)
+        await writer.registerVerificationKey(runtimeIdentity.key)
+        await writer.insertIssuedCredential(runtimeIdentity.credentials[0])
+      })
+      const runtimeCredential = runtimeIdentity.credentials[0]
+      expect(
+        await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+          runtimeCredential.credentialId,
+          runtimeCredential.revocationVersion,
+          new Date()
+        )
+      ).toBe('consumed')
+      const runtimeFence = {
+        credentialId: runtimeCredential.credentialId,
+        revocationVersion: runtimeCredential.revocationVersion,
+      }
+      const inboundTimestamp = '2026-08-24T23:00:02.000Z'
+      const inboundCasCases = [
+        {
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBA',
+          idempotencyKey: 'runtime-command:integration:ack-fence',
+          next: {
+            status: 'acknowledged',
+            acknowledgementReference: 'ack-runtime-fence-0001',
+            acknowledgementDisposition: 'accepted',
+            acknowledgedAt: inboundTimestamp,
+          },
+        },
+        {
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBB',
+          idempotencyKey: 'runtime-command:integration:result-fence',
+          next: {
+            status: 'succeeded',
+            resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+            resultStatus: 'succeeded',
+            resultRecordedAt: inboundTimestamp,
+          },
+        },
+        {
+          commandId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FBC',
+          idempotencyKey: 'runtime-command:integration:error-fence',
+          next: {
+            status: 'failed',
+            resultStatus: 'failed',
+            resultRecordedAt: inboundTimestamp,
+          },
+        },
+      ]
+      for (const [index, testCase] of inboundCasCases.entries()) {
+        const queued = {
+          ...base,
+          commandId: testCase.commandId,
+          idempotencyKey: testCase.idempotencyKey,
+          status: 'queued',
+        }
+        expect((await repository.create(queued)).outcome).toBe('created')
+        const dispatched = {
+          ...queued,
+          status: 'dispatched',
           version: 2,
           deliveryAttempts: 1,
           lastChannelGeneration: 1,
-          lastSequence: 1,
-          firstDispatchedAt: settledAt,
-          lastDispatchedAt: settledAt,
-          acknowledgementReference: 'ack-runtime-integration-0001',
-          acknowledgementDisposition: 'accepted',
-          acknowledgedAt: settledAt,
-          resultStatus: 'succeeded',
-          resultRecordedAt: settledAt,
-          updatedAt: settledAt,
-        },
-        runtimeFence
+          lastSequence: index + 1,
+          firstDispatchedAt: inboundTimestamp,
+          lastDispatchedAt: inboundTimestamp,
+          updatedAt: inboundTimestamp,
+        }
+        expect(await repository.compareAndSet(1, dispatched)).toBe(true)
+        const inbound = {
+          ...dispatched,
+          ...testCase.next,
+          version: 3,
+          updatedAt: inboundTimestamp,
+        }
+        await expect(repository.compareAndSet(2, inbound)).rejects.toMatchObject({
+          code: 'INVENTORY_CREDENTIAL_FENCE_INVALID',
+        })
+        expect(await repository.get(testCase.commandId)).toEqual(dispatched)
+        expect(await repository.compareAndSet(2, inbound, runtimeFence)).toBe(true)
+        await isolated.application
+          .delete(runtimeCommands)
+          .where(eq(runtimeCommands.commandId, testCase.commandId))
+      }
+      expect(
+        await repository.compareAndSet(
+          1,
+          {
+            ...base,
+            commandId: settledId,
+            status: 'succeeded',
+            version: 2,
+            deliveryAttempts: 1,
+            lastChannelGeneration: 1,
+            lastSequence: 1,
+            firstDispatchedAt: settledAt,
+            lastDispatchedAt: settledAt,
+            acknowledgementReference: 'ack-runtime-integration-0001',
+            acknowledgementDisposition: 'accepted',
+            acknowledgedAt: settledAt,
+            resultStatus: 'succeeded',
+            resultRecordedAt: settledAt,
+            updatedAt: settledAt,
+          },
+          runtimeFence
+        )
+      ).toBe(true)
+      await isolated.application.execute(
+        sql`insert into runtime_event_receipts (command_id, message_kind, message_sequence, frame_hash, outcome, recorded_at) values (${settledId}, 'progress', 1, ${`s2:${'a'.repeat(64)}`}, 'applied', ${settledAt}::timestamptz)`
       )
-    ).toBe(true)
-    await isolated.application.execute(
-      sql`insert into runtime_event_receipts (command_id, message_kind, message_sequence, frame_hash, outcome, recorded_at) values (${settledId}, 'progress', 1, ${`s2:${'a'.repeat(64)}`}, 'applied', ${settledAt}::timestamptz)`
-    )
 
-    const assessedAt = new Date('2026-09-25T12:00:00.000Z')
-    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
-    const applied = await repository.deleteEligibleRuntimeCommands(assessedAt, options)
-    expect(applied.deleted).toBeGreaterThanOrEqual(1)
-    expect(await repository.get(settledId)).toBeUndefined()
-    expect(await repository.get(queuedId)).toBeDefined()
-    const receipts = await isolated.application.execute(
-      sql`select command_id from runtime_event_receipts where command_id = ${settledId}`
-    )
-    expect(receipts).toHaveLength(0)
+      const assessedAt = new Date('2026-09-25T12:00:00.000Z')
+      const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+      const applied = await repository.deleteEligibleRuntimeCommands(assessedAt, options)
+      expect(applied.deleted).toBeGreaterThanOrEqual(1)
+      expect(await repository.get(settledId)).toBeUndefined()
+      expect(await repository.get(queuedId)).toBeDefined()
+      const receipts = await isolated.application.execute(
+        sql`select command_id from runtime_event_receipts where command_id = ${settledId}`
+      )
+      expect(receipts).toHaveLength(0)
 
-    // This file's other tests count rows globally, so everything this test
-    // created is removed again (reverse foreign-key order).
-    await isolated.application.execute(
-      sql`delete from runtime_event_receipts where command_id in (${settledId}, ${queuedId})`
-    )
-    await isolated.application.execute(
-      sql`delete from runtime_commands where command_id in (${settledId}, ${queuedId})`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_attempts where attempt_id = ${attempt.attemptId}`
-    )
-    await isolated.application.execute(
-      sql`delete from executions where execution_id = ${execution.executionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from runtime_connections where runtime_connection_id = ${runtimeConnectionId}`
-    )
-  }, 60_000)
+      // This file's other tests count rows globally, so everything this test
+      // created is removed again (reverse foreign-key order).
+      await isolated.application.execute(
+        sql`delete from runtime_event_receipts where command_id in (${settledId}, ${queuedId})`
+      )
+      await isolated.application.execute(
+        sql`delete from runtime_commands where command_id in (${settledId}, ${queuedId})`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_attempts where attempt_id = ${attempt.attemptId}`
+      )
+      await isolated.application.execute(
+        sql`delete from executions where execution_id = ${execution.executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from runtime_connections where runtime_connection_id = ${runtimeConnectionId}`
+      )
+    },
+    integrationTestTimeout(60_000)
+  )
 
   test('persists runtime command delivery state across gateway repository restarts', async () => {
     await isolated.migrate()
@@ -3633,776 +3678,791 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(runtimeEventReceipts)).toHaveLength(5)
   })
 
-  test('persists versioned health ingestion and freshness across service restarts', async () => {
-    const repository = new PostgresRuntimeConnectionRepository(isolated.application)
-    const registry = new RuntimeConnectionRegistry(repository)
-    const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
-    await registry.register({
-      runtimeConnectionId,
-      identityDigest: `sha256:${'f'.repeat(64)}`,
-      connectionType: 'managed_local',
-      runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      location: 'local_device',
-      opaqueNativeRef: 'nref_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      adapterVersion: '1.0.0',
-      driverVersion: '1.0.0',
-      harnessVersion: '1.0.0',
-      status: 'connected',
-      health: 'healthy',
-      capabilities: [],
-      compatibilityState: 'untested',
-      limitations: [],
-      lastDiscoveredAt: '2026-08-24T21:00:00.000Z',
-      lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
-      lastHealthCheckAt: '2026-08-24T21:00:00.000Z',
-    })
-    const policy = {
-      adapterMajor: 1,
-      driverMajor: 1,
-      harnessMajor: 1,
-      protocolMajor: 1,
-      healthTtlMs: 60_000,
-      maximumCapabilityTtlMs: 60_000,
-    }
-    const report = {
-      runtimeConnectionId,
-      reportSequence: 1,
-      observedAt: '2026-08-24T21:01:00.000Z',
-      discoveredAt: '2026-08-24T21:00:30.000Z',
-      nodeStatus: 'online',
-      runtimeState: 'healthy',
-      versions: {
-        adapter: '1.0.0',
-        driver: '1.0.0',
-        harness: '1.0.0',
-        protocol: '1.0.0',
-      },
-      capabilitySnapshot: {
-        version: 1,
+  test(
+    'persists versioned health ingestion and freshness across service restarts',
+    async () => {
+      const repository = new PostgresRuntimeConnectionRepository(isolated.application)
+      const registry = new RuntimeConnectionRegistry(repository)
+      const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
+      await registry.register({
+        runtimeConnectionId,
+        identityDigest: `sha256:${'f'.repeat(64)}`,
+        connectionType: 'managed_local',
+        runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        location: 'local_device',
+        opaqueNativeRef: 'nref_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        adapterVersion: '1.0.0',
+        driverVersion: '1.0.0',
+        harnessVersion: '1.0.0',
+        status: 'connected',
+        health: 'healthy',
+        capabilities: [],
+        compatibilityState: 'untested',
+        limitations: [],
+        lastDiscoveredAt: '2026-08-24T21:00:00.000Z',
+        lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
+        lastHealthCheckAt: '2026-08-24T21:00:00.000Z',
+      })
+      const policy = {
+        adapterMajor: 1,
+        driverMajor: 1,
+        harnessMajor: 1,
+        protocolMajor: 1,
+        healthTtlMs: 60_000,
+        maximumCapabilityTtlMs: 60_000,
+      }
+      const report = {
+        runtimeConnectionId,
+        reportSequence: 1,
         observedAt: '2026-08-24T21:01:00.000Z',
-        ttlMs: 60_000,
-        verification: 'verified',
-        source: 'adapter_driver_negotiation',
-        capabilities: [{ name: 'stream.output', support: 'supported' }],
-      },
-      limitations: [],
-      diagnostics: [],
-    }
-    const readPending = () =>
-      isolated.application
-        .select()
-        .from(outboxEvents)
-        .where(eq(outboxEvents.aggregateId, runtimeConnectionId))
-    const failing = new PostgresRuntimeHealthIngestionService(
-      {
-        transaction: (operation) =>
-          isolated.application.transaction((transaction) =>
-            operation(
-              new Proxy(transaction, {
-                get(target, property) {
-                  if (property === 'insert')
-                    return (table) => {
-                      if (table === outboxEvents) throw new Error('OUTBOX_UNAVAILABLE')
-                      return target.insert(table)
-                    }
-                  const value = Reflect.get(target, property)
-                  return typeof value === 'function' ? value.bind(target) : value
-                },
-              })
-            )
-          ),
-      },
-      policy
-    )
-    await expect(failing.ingest(report, '2026-08-24T21:01:10.000Z')).rejects.toThrow(
-      'OUTBOX_UNAVAILABLE'
-    )
-    expect((await registry.get(runtimeConnectionId)).lastHealthReportSequence).toBeUndefined()
-    expect(await readPending()).toHaveLength(0)
-    const ingestion = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    const healthy = await ingestion.ingest(report, '2026-08-24T21:01:10.000Z')
-    expect(healthy.connection).toMatchObject({
-      availabilityState: 'healthy',
-      protocolVersion: '1.0.0',
-      capabilitySnapshotVersion: 1,
-      capabilityVerification: 'verified',
-      lastHealthReportSequence: 1,
-      lastDiscoveredAt: '2026-08-24T21:00:30.000Z',
-    })
-    expect(await readPending()).toHaveLength(1)
+        discoveredAt: '2026-08-24T21:00:30.000Z',
+        nodeStatus: 'online',
+        runtimeState: 'healthy',
+        versions: {
+          adapter: '1.0.0',
+          driver: '1.0.0',
+          harness: '1.0.0',
+          protocol: '1.0.0',
+        },
+        capabilitySnapshot: {
+          version: 1,
+          observedAt: '2026-08-24T21:01:00.000Z',
+          ttlMs: 60_000,
+          verification: 'verified',
+          source: 'adapter_driver_negotiation',
+          capabilities: [{ name: 'stream.output', support: 'supported' }],
+        },
+        limitations: [],
+        diagnostics: [],
+      }
+      const readPending = () =>
+        isolated.application
+          .select()
+          .from(outboxEvents)
+          .where(eq(outboxEvents.aggregateId, runtimeConnectionId))
+      const failing = new PostgresRuntimeHealthIngestionService(
+        {
+          transaction: (operation) =>
+            isolated.application.transaction((transaction) =>
+              operation(
+                new Proxy(transaction, {
+                  get(target, property) {
+                    if (property === 'insert')
+                      return (table) => {
+                        if (table === outboxEvents) throw new Error('OUTBOX_UNAVAILABLE')
+                        return target.insert(table)
+                      }
+                    const value = Reflect.get(target, property)
+                    return typeof value === 'function' ? value.bind(target) : value
+                  },
+                })
+              )
+            ),
+        },
+        policy
+      )
+      await expect(failing.ingest(report, '2026-08-24T21:01:10.000Z')).rejects.toThrow(
+        'OUTBOX_UNAVAILABLE'
+      )
+      expect((await registry.get(runtimeConnectionId)).lastHealthReportSequence).toBeUndefined()
+      expect(await readPending()).toHaveLength(0)
+      const ingestion = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
+      const healthy = await ingestion.ingest(report, '2026-08-24T21:01:10.000Z')
+      expect(healthy.connection).toMatchObject({
+        availabilityState: 'healthy',
+        protocolVersion: '1.0.0',
+        capabilitySnapshotVersion: 1,
+        capabilityVerification: 'verified',
+        lastHealthReportSequence: 1,
+        lastDiscoveredAt: '2026-08-24T21:00:30.000Z',
+      })
+      expect(await readPending()).toHaveLength(1)
 
-    const restarted = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    expect(await restarted.ingest(report, '2026-08-24T21:01:20.000Z')).toMatchObject({
-      applied: false,
-      reason: 'replayed_report',
-    })
-    expect(await readPending()).toHaveLength(1)
-    await expect(
-      failing.refresh({
+      const restarted = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
+      expect(await restarted.ingest(report, '2026-08-24T21:01:20.000Z')).toMatchObject({
+        applied: false,
+        reason: 'replayed_report',
+      })
+      expect(await readPending()).toHaveLength(1)
+      await expect(
+        failing.refresh({
+          runtimeConnectionId,
+          nodeStatus: 'offline',
+          evaluatedAt: '2026-08-24T21:02:01.000Z',
+        })
+      ).rejects.toThrow('OUTBOX_UNAVAILABLE')
+      expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+      expect(await readPending()).toHaveLength(1)
+      const stale = await restarted.refresh({
         runtimeConnectionId,
         nodeStatus: 'offline',
         evaluatedAt: '2026-08-24T21:02:01.000Z',
       })
-    ).rejects.toThrow('OUTBOX_UNAVAILABLE')
-    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
-    expect(await readPending()).toHaveLength(1)
-    const stale = await restarted.refresh({
-      runtimeConnectionId,
-      nodeStatus: 'offline',
-      evaluatedAt: '2026-08-24T21:02:01.000Z',
-    })
-    expect(stale).toMatchObject({
-      applied: true,
-      connection: { availabilityState: 'stale', status: 'unavailable' },
-      assessment: {
-        nodeStatus: 'offline',
-        executable: false,
-        diagnostics: expect.arrayContaining(['CAPABILITY_SNAPSHOT_STALE', 'NODE_OFFLINE']),
-      },
-    })
-    const pending = await readPending()
-    expect(pending).toHaveLength(2)
-    expect(pending.every((row) => row.status === 'pending')).toBe(true)
-    expect(pending.map((row) => row.payload.currentState).toSorted()).toEqual(['healthy', 'stale'])
-    expect(
-      await restarted.refresh({
-        runtimeConnectionId,
-        nodeStatus: 'offline',
-        evaluatedAt: '2026-08-24T21:02:02.000Z',
+      expect(stale).toMatchObject({
+        applied: true,
+        connection: { availabilityState: 'stale', status: 'unavailable' },
+        assessment: {
+          nodeStatus: 'offline',
+          executable: false,
+          diagnostics: expect.arrayContaining(['CAPABILITY_SNAPSHOT_STALE', 'NODE_OFFLINE']),
+        },
       })
-    ).toMatchObject({ reason: 'already_current' })
-    expect(await readPending()).toHaveLength(2)
-    const readApplied = () =>
-      isolated.application
-        .select()
-        .from(outboxEvents)
-        .where(eq(outboxEvents.aggregateType, 'm11-health-consumer-effect'))
-    const deliveries = []
-    const envelopes = []
-    let exitedConsumer
-    let loseAcknowledgement = true
-    const transport = {
-      async deliver(event) {
-        deliveries.push(event.deliveryKey)
-        envelopes.push(structuredClone(event))
-        if (loseAcknowledgement) {
-          loseAcknowledgement = false
-          const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
-          applicationUrl.pathname = `/${isolated.name}`
-          exitedConsumer = spawnSync(
-            process.execPath,
-            [
-              '-e',
-              `
+      const pending = await readPending()
+      expect(pending).toHaveLength(2)
+      expect(pending.every((row) => row.status === 'pending')).toBe(true)
+      expect(pending.map((row) => row.payload.currentState).toSorted()).toEqual([
+        'healthy',
+        'stale',
+      ])
+      expect(
+        await restarted.refresh({
+          runtimeConnectionId,
+          nodeStatus: 'offline',
+          evaluatedAt: '2026-08-24T21:02:02.000Z',
+        })
+      ).toMatchObject({ reason: 'already_current' })
+      expect(await readPending()).toHaveLength(2)
+      const readApplied = () =>
+        isolated.application
+          .select()
+          .from(outboxEvents)
+          .where(eq(outboxEvents.aggregateType, 'm11-health-consumer-effect'))
+      const deliveries = []
+      const envelopes = []
+      let exitedConsumer
+      let loseAcknowledgement = true
+      const transport = {
+        async deliver(event) {
+          deliveries.push(event.deliveryKey)
+          envelopes.push(structuredClone(event))
+          if (loseAcknowledgement) {
+            loseAcknowledgement = false
+            const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+            applicationUrl.pathname = `/${isolated.name}`
+            exitedConsumer = spawnSync(
+              process.execPath,
+              [
+                '-e',
+                `
             import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
             import { acceptRuntimeHealthFixture } from ${JSON.stringify(new URL('./runtime-health-consumer-fixture.mjs', import.meta.url).href)};
             const connection = createPostgresConnection({ role: 'application', url: process.env.TEST_APPLICATION_URL });
             await acceptRuntimeHealthFixture(connection.database, JSON.parse(process.env.TEST_HEALTH_EVENT));
             process.exit(73);
           `,
-            ],
-            {
-              cwd: fileURLToPath(new URL('..', import.meta.url)),
-              env: {
-                PATH: process.env.PATH,
-                TEST_APPLICATION_URL: applicationUrl.toString(),
-                TEST_HEALTH_EVENT: JSON.stringify(event),
-              },
-              encoding: 'utf8',
-              timeout: 10_000,
-            }
-          )
-          throw new Error('ACK_LOST')
-        }
-        return acceptRuntimeHealthFixture(isolated.application, event)
-      },
-    }
-    let deliveryNow = Date.now()
-    const deliveryClock = () => new Date(deliveryNow)
-    const dispatcher = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      transport,
-      deliveryClock
-    )
-    const firstDispatch = dispatcher.dispatchBatch(1)
-    expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
-    expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(exitedConsumer.error).toBeUndefined()
-    expect(exitedConsumer.signal).toBeNull()
-    expect(exitedConsumer.status).toBe(73)
-    expect(exitedConsumer.stdout).toBe('')
-    expect(await readApplied()).toHaveLength(1)
-    expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
-    const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      transport,
-      deliveryClock
-    )
-    expect((await readPending()).filter((row) => row.status === 'failed')[0].nextAttemptAt).toEqual(
-      new Date(deliveryNow + 1_000)
-    )
-    // The other pending event remains eligible, but the failed event is not due yet.
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 999
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 1
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    expect(await readApplied()).toHaveLength(2)
-    const duplicateReceipts = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        acceptRuntimeHealthFixture(isolated.application, envelopes[0])
+              ],
+              {
+                cwd: fileURLToPath(new URL('..', import.meta.url)),
+                env: {
+                  PATH: process.env.PATH,
+                  TEST_APPLICATION_URL: applicationUrl.toString(),
+                  TEST_HEALTH_EVENT: JSON.stringify(event),
+                },
+                encoding: 'utf8',
+                timeout: 10_000,
+              }
+            )
+            throw new Error('ACK_LOST')
+          }
+          return acceptRuntimeHealthFixture(isolated.application, event)
+        },
+      }
+      let deliveryNow = Date.now()
+      const deliveryClock = () => new Date(deliveryNow)
+      const dispatcher = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        transport,
+        deliveryClock
       )
-    )
-    expect(
-      duplicateReceipts.every((receipt) => receipt.acceptedDeliveryKey === envelopes[0].deliveryKey)
-    ).toBe(true)
-    await expect(
-      acceptRuntimeHealthFixture(isolated.application, {
-        ...envelopes[0],
-        change: { ...envelopes[0].change, diagnostics: ['NODE_OFFLINE'] },
+      const firstDispatch = dispatcher.dispatchBatch(1)
+      expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
+      expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(exitedConsumer.error).toBeUndefined()
+      expect(exitedConsumer.signal).toBeNull()
+      expect(exitedConsumer.status).toBe(73)
+      expect(exitedConsumer.stdout).toBe('')
+      expect(await readApplied()).toHaveLength(1)
+      expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
+      const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        transport,
+        deliveryClock
+      )
+      expect(
+        (await readPending()).filter((row) => row.status === 'failed')[0].nextAttemptAt
+      ).toEqual(new Date(deliveryNow + 1_000))
+      // The other pending event remains eligible, but the failed event is not due yet.
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
       })
-    ).rejects.toThrow('HEALTH_DELIVERY_KEY_CONFLICT')
-    expect(await readApplied()).toHaveLength(2)
-    expect(deliveries).toHaveLength(3)
-    expect(new Set(deliveries).size).toBe(2)
-    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    for (const limit of [0, -1, 1.5, 129])
-      expect(() => recreatedDispatcher.dispatchBatch(limit)).toThrow(
-        'INVALID_RUNTIME_HEALTH_DISPATCH_LIMIT'
+      deliveryNow += 999
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      deliveryNow += 1
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
+      })
+      expect(await readApplied()).toHaveLength(2)
+      const duplicateReceipts = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          acceptRuntimeHealthFixture(isolated.application, envelopes[0])
+        )
       )
-    await restarted.ingest(
-      {
-        ...report,
-        reportSequence: 2,
-        observedAt: '2026-08-24T21:03:00.000Z',
-        capabilitySnapshot: {
-          ...report.capabilitySnapshot,
-          version: 2,
+      expect(
+        duplicateReceipts.every(
+          (receipt) => receipt.acceptedDeliveryKey === envelopes[0].deliveryKey
+        )
+      ).toBe(true)
+      await expect(
+        acceptRuntimeHealthFixture(isolated.application, {
+          ...envelopes[0],
+          change: { ...envelopes[0].change, diagnostics: ['NODE_OFFLINE'] },
+        })
+      ).rejects.toThrow('HEALTH_DELIVERY_KEY_CONFLICT')
+      expect(await readApplied()).toHaveLength(2)
+      expect(deliveries).toHaveLength(3)
+      expect(new Set(deliveries).size).toBe(2)
+      expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      for (const limit of [0, -1, 1.5, 129])
+        expect(() => recreatedDispatcher.dispatchBatch(limit)).toThrow(
+          'INVALID_RUNTIME_HEALTH_DISPATCH_LIMIT'
+        )
+      await restarted.ingest(
+        {
+          ...report,
+          reportSequence: 2,
           observedAt: '2026-08-24T21:03:00.000Z',
+          capabilitySnapshot: {
+            ...report.capabilitySnapshot,
+            version: 2,
+            observedAt: '2026-08-24T21:03:00.000Z',
+          },
         },
-      },
-      '2026-08-24T21:03:01.000Z'
-    )
-    let deliverySignal
-    const hung = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        deliver(_event, signal) {
-          deliverySignal = signal
-          return new Promise(() => {})
+        '2026-08-24T21:03:01.000Z'
+      )
+      let deliverySignal
+      const hung = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          deliver(_event, signal) {
+            deliverySignal = signal
+            return new Promise(() => {})
+          },
         },
-      },
-      deliveryClock,
-      10
-    )
-    expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(deliverySignal.aborted).toBe(true)
-    deliveryNow += 1_000
-    const wrongAck = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        async deliver() {
-          return { acceptedDeliveryKey: 'wrong-key' }
+        deliveryClock,
+        10
+      )
+      expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(deliverySignal.aborted).toBe(true)
+      deliveryNow += 1_000
+      const wrongAck = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          async deliver() {
+            return { acceptedDeliveryKey: 'wrong-key' }
+          },
         },
-      },
-      deliveryClock
-    )
-    expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 2_000
-    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    expect(await readApplied()).toHaveLength(3)
-    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
-    await isolated.application.insert(outboxEvents).values({
-      aggregateType: 'runtime_connection',
-      aggregateId: runtimeConnectionId,
-      eventType: 'runtime.availability_changed',
-      payload: envelopes[0].change,
-    })
-    const exhausted = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        async deliver() {
-          throw new Error('OFFLINE')
-        },
-      },
-      deliveryClock,
-      10_000,
-      { maximumAttempts: 2 }
-    )
-    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    deliveryNow += 1_000
-    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    const quarantined = (await readPending()).filter((row) => row.quarantinedAt !== null)
-    expect(quarantined).toHaveLength(1)
-    expect(quarantined[0]).toMatchObject({
-      status: 'failed',
-      attempts: 2,
-      nextAttemptAt: null,
-      quarantinedAt: new Date(deliveryNow),
-    })
-    deliveryNow += 86_400_000
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    const deliveryCount = deliveries.length
-    await isolated.application.insert(outboxEvents).values([
-      {
+        deliveryClock
+      )
+      expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      deliveryNow += 2_000
+      expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
+      })
+      expect(await readApplied()).toHaveLength(3)
+      expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+      await isolated.application.insert(outboxEvents).values({
         aggregateType: 'runtime_connection',
         aggregateId: runtimeConnectionId,
         eventType: 'runtime.availability_changed',
-        payload: {},
-      },
-      {
-        aggregateType: 'runtime_connection',
-        aggregateId: 'wrong-runtime',
-        eventType: 'runtime.availability_changed',
         payload: envelopes[0].change,
-      },
-    ])
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 2,
-      conflicts: 0,
-    })
-    expect(deliveries).toHaveLength(deliveryCount)
-    for (const retry of [
-      { baseDelayMs: 0 },
-      { baseDelayMs: 60_001 },
-      { maximumAttempts: 0 },
-      { maximumAttempts: 101 },
-      { maximumAttempts: 1.5 },
-    ])
-      expect(
-        () =>
-          new PostgresRuntimeHealthEventDispatcher(
-            isolated.application,
-            transport,
-            deliveryClock,
-            10_000,
-            retry
-          )
-      ).toThrow('INVALID_RUNTIME_HEALTH_RETRY_POLICY')
-    for (const timeout of [0, -1, 1.5, 60_001])
-      expect(
-        () =>
-          new PostgresRuntimeHealthEventDispatcher(
-            isolated.application,
-            transport,
-            undefined,
-            timeout
-          )
-      ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
-    const beforeDisappearance = await registry.get(runtimeConnectionId)
-    const removal = {
-      runtimeConnectionId,
-      runtimeNodeRefId: beforeDisappearance.runtimeNodeRefId,
-      expectedVersion: beforeDisappearance.version,
-      observedAt: '2026-08-24T21:04:00.000Z',
-      expiresAt: '2026-08-24T21:05:00.000Z',
-    }
-    const eventsBeforeRemoval = (await readPending()).length
-    await expect(failing.markDisappeared(removal)).rejects.toThrow('OUTBOX_UNAVAILABLE')
-    expect(await registry.get(runtimeConnectionId)).toEqual(beforeDisappearance)
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval)
-    await expect(
-      restarted.markDisappeared({ ...removal, runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAK' })
-    ).rejects.toThrow('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
-    const disappeared = await restarted.markDisappeared(removal)
-    expect(disappeared).toMatchObject({
-      availabilityState: 'offline',
-      diagnostics: ['RUNTIME_DISAPPEARED'],
-    })
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
-    const replay = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    expect(
-      await replay.markDisappeared({ ...removal, expectedVersion: disappeared.version })
-    ).toEqual(disappeared)
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
-    expect(
-      (await readPending()).filter((row) =>
-        row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
+      })
+      const exhausted = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          async deliver() {
+            throw new Error('OFFLINE')
+          },
+        },
+        deliveryClock,
+        10_000,
+        { maximumAttempts: 2 }
       )
-    ).toHaveLength(1)
-    const inventoryIdentity = makeRuntimeInventoryCredentialFixtures(
-      removal.runtimeNodeRefId,
-      'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
-    )
-    await isolated.withMigrationDatabase(async (database) => {
-      const identityRepositoryWriter = new PostgresRuntimeNodeIdentityRepository(database)
-      await identityRepositoryWriter.registerVerificationKey(inventoryIdentity.key)
-      for (const credential of inventoryIdentity.credentials)
-        await identityRepositoryWriter.insertIssuedCredential(credential)
-    })
-    const inventoryIdentityRepository = new PostgresRuntimeNodeIdentityRepository(
-      isolated.application
-    )
-    for (const credential of inventoryIdentity.credentials)
+      expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      deliveryNow += 1_000
+      expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      const quarantined = (await readPending()).filter((row) => row.quarantinedAt !== null)
+      expect(quarantined).toHaveLength(1)
+      expect(quarantined[0]).toMatchObject({
+        status: 'failed',
+        attempts: 2,
+        nextAttemptAt: null,
+        quarantinedAt: new Date(deliveryNow),
+      })
+      deliveryNow += 86_400_000
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      const deliveryCount = deliveries.length
+      await isolated.application.insert(outboxEvents).values([
+        {
+          aggregateType: 'runtime_connection',
+          aggregateId: runtimeConnectionId,
+          eventType: 'runtime.availability_changed',
+          payload: {},
+        },
+        {
+          aggregateType: 'runtime_connection',
+          aggregateId: 'wrong-runtime',
+          eventType: 'runtime.availability_changed',
+          payload: envelopes[0].change,
+        },
+      ])
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 2,
+        conflicts: 0,
+      })
+      expect(deliveries).toHaveLength(deliveryCount)
+      for (const retry of [
+        { baseDelayMs: 0 },
+        { baseDelayMs: 60_001 },
+        { maximumAttempts: 0 },
+        { maximumAttempts: 101 },
+        { maximumAttempts: 1.5 },
+      ])
+        expect(
+          () =>
+            new PostgresRuntimeHealthEventDispatcher(
+              isolated.application,
+              transport,
+              deliveryClock,
+              10_000,
+              retry
+            )
+        ).toThrow('INVALID_RUNTIME_HEALTH_RETRY_POLICY')
+      for (const timeout of [0, -1, 1.5, 60_001])
+        expect(
+          () =>
+            new PostgresRuntimeHealthEventDispatcher(
+              isolated.application,
+              transport,
+              undefined,
+              timeout
+            )
+        ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
+      const beforeDisappearance = await registry.get(runtimeConnectionId)
+      const removal = {
+        runtimeConnectionId,
+        runtimeNodeRefId: beforeDisappearance.runtimeNodeRefId,
+        expectedVersion: beforeDisappearance.version,
+        observedAt: '2026-08-24T21:04:00.000Z',
+        expiresAt: '2026-08-24T21:05:00.000Z',
+      }
+      const eventsBeforeRemoval = (await readPending()).length
+      await expect(failing.markDisappeared(removal)).rejects.toThrow('OUTBOX_UNAVAILABLE')
+      expect(await registry.get(runtimeConnectionId)).toEqual(beforeDisappearance)
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval)
+      await expect(
+        restarted.markDisappeared({
+          ...removal,
+          runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+        })
+      ).rejects.toThrow('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
+      const disappeared = await restarted.markDisappeared(removal)
+      expect(disappeared).toMatchObject({
+        availabilityState: 'offline',
+        diagnostics: ['RUNTIME_DISAPPEARED'],
+      })
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+      const replay = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
       expect(
-        await inventoryIdentityRepository.consumeCredential(
-          credential.credentialId,
-          credential.revocationVersion,
+        await replay.markDisappeared({ ...removal, expectedVersion: disappeared.version })
+      ).toEqual(disappeared)
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+      expect(
+        (await readPending()).filter((row) =>
+          row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
+        )
+      ).toHaveLength(1)
+      const inventoryIdentity = makeRuntimeInventoryCredentialFixtures(
+        removal.runtimeNodeRefId,
+        'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
+      )
+      await isolated.withMigrationDatabase(async (database) => {
+        const identityRepositoryWriter = new PostgresRuntimeNodeIdentityRepository(database)
+        await identityRepositoryWriter.registerVerificationKey(inventoryIdentity.key)
+        for (const credential of inventoryIdentity.credentials)
+          await identityRepositoryWriter.insertIssuedCredential(credential)
+      })
+      const inventoryIdentityRepository = new PostgresRuntimeNodeIdentityRepository(
+        isolated.application
+      )
+      for (const credential of inventoryIdentity.credentials)
+        expect(
+          await inventoryIdentityRepository.consumeCredential(
+            credential.credentialId,
+            credential.revocationVersion,
+            new Date()
+          )
+        ).toBe('consumed')
+
+      const inventoryScope = {
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        runtimeNodeRefId: removal.runtimeNodeRefId,
+        credentialFence: {
+          credentialId: inventoryIdentity.credentials[0].credentialId,
+          revocationVersion: inventoryIdentity.credentials[0].revocationVersion,
+        },
+        channel: {
+          nodeId: removal.runtimeNodeRefId,
+          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+          gatewayInstanceId: 'inventory-gateway',
+          connectionId: 'inventory-connection',
+          channelGeneration: 1,
+          protocolVersion: { major: 1, minor: 6 },
+          connectedAt: '2026-08-24T21:00:00.000Z',
+          lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
+        },
+      }
+      const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+      expect(
+        (await inventoryOwnership.claim(inventoryScope.channel, inventoryScope.credentialFence))
+          .accepted
+      ).toBe(true)
+      const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
+      const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
+        isolated.application
+      )
+      const discovery = new PostgresRuntimeDiscoveryRepository(isolated.application)
+      const beforeAtomic = await registry.get(runtimeConnectionId)
+      const eventCount = (await readPending()).length
+      const projection = {
+        ...runtimeDiscoveryProjection(),
+        runtimeConnectionId,
+        runtimeDefinitionId: beforeAtomic.runtimeDefinitionId,
+        node: { ...runtimeDiscoveryProjection().node, runtimeNodeRefId: removal.runtimeNodeRefId },
+        observedAt: '2026-08-24T21:06:00.000Z',
+      }
+      const applyInventory = async (ports) => {
+        await ports.health.ingest(
+          {
+            ...report,
+            reportSequence: 3,
+            observedAt: '2026-08-24T21:06:00.000Z',
+            capabilitySnapshot: {
+              ...report.capabilitySnapshot,
+              version: 3,
+              observedAt: '2026-08-24T21:06:00.000Z',
+            },
+          },
+          '2026-08-24T21:06:00.000Z'
+        )
+        await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
+        expect(
+          await ports.checkpoints.compareAndSet(undefined, {
+            workspaceId: inventoryScope.workspaceId,
+            runtimeNodeRefId: inventoryScope.runtimeNodeRefId,
+            snapshotVersion: 1,
+            snapshotDigest: `sha256:${'a'.repeat(64)}`,
+            observedAt: projection.observedAt,
+            activeRuntimeRefs: [beforeAtomic.opaqueNativeRef],
+            revision: 1,
+          })
+        ).toBe(true)
+      }
+      await expect(
+        unit.run(inventoryScope, async (ports) => {
+          await applyInventory(ports)
+          throw new Error('INVENTORY_COMMIT_FAILURE')
+        })
+      ).rejects.toThrow('INVENTORY_COMMIT_FAILURE')
+      expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+      expect(await readPending()).toHaveLength(eventCount)
+      expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+      expect(
+        await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+      ).toBeUndefined()
+      for (const timeout of [0, -1, 30_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(
+          () =>
+            new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy, {
+              transactionTimeoutMs: timeout,
+            })
+        ).toThrow('Invalid inventory transactionTimeoutMs')
+      }
+      for (const stall of ['idle', 'query']) {
+        let finished
+        let wrote = false
+        let rejectionCode = 'UNKNOWN'
+        const startedAt = performance.now()
+        const settled = new Promise((resolve) => {
+          finished = resolve
+        })
+        const timeoutDatabase = {
+          transaction: (operation) =>
+            isolated.application.transaction(async (transaction) => {
+              try {
+                const result = await operation(transaction)
+                if (stall === 'query') await transaction.execute(sql`select pg_sleep(11)`)
+                return result
+              } finally {
+                finished()
+              }
+            }),
+        }
+        // Use the real 10-second production budget. A 500 ms test override can
+        // expire during normal remote writes, before reaching the injected stall.
+        const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy)
+        let phase = 'timeout'
+        try {
+          await rejects(
+            bounded.run(inventoryScope, async (ports) => {
+              await applyInventory(ports)
+              wrote = true
+              if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 11_000))
+            }),
+            (error) => {
+              for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
+                if (typeof cause.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(cause.code))
+                  rejectionCode = cause.code
+              }
+              return true
+            }
+          )
+          await settled
+          if (!wrote)
+            throw new Error(
+              `INVENTORY_TIMEOUT_BEFORE_WRITES:${rejectionCode}:${Math.round(performance.now() - startedAt)}ms`
+            )
+          expect(wrote).toBe(true)
+          phase = 'registry'
+          expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+          phase = 'outbox'
+          expect(await readPending()).toHaveLength(eventCount)
+          phase = 'checkpoint'
+          expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+          phase = 'projection'
+          expect(
+            await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+          ).toBeUndefined()
+          phase = 'heartbeat'
+          expect(
+            await inventoryOwnership.heartbeat(
+              inventoryScope.channel,
+              inventoryScope.credentialFence
+            )
+          ).toBe(true)
+        } catch (error) {
+          throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
+        }
+      }
+      await unit.run(inventoryScope, applyInventory)
+      expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+      expect(await readPending()).toHaveLength(eventCount + 1)
+      expect(await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)).toEqual(
+        projection
+      )
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy).run(
+            inventoryScope,
+            async (ports) => {
+              const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+              if (
+                !(await ports.checkpoints.compareAndSet(checkpoint.revision, {
+                  ...checkpoint,
+                  revision: checkpoint.revision + 1,
+                  snapshotVersion: checkpoint.snapshotVersion + 1,
+                }))
+              )
+                throw new Error('INVENTORY_SERIALIZATION_FAILED')
+            }
+          )
+        )
+      )
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
+      await unit.run(inventoryScope, async () => {
+        await isolated.application.transaction(async (transaction) => {
+          const lock = await transaction.execute(
+            sql`select pg_try_advisory_xact_lock(hashtextextended(${`runtime-channel:${inventoryScope.runtimeNodeRefId}`}, 0)) as acquired`
+          )
+          expect(lock[0].acquired).toBe(false)
+        })
+      })
+
+      const revocationFenceScope = inventoryScope
+      const revocationWriteEntered = createIntegrationBarrier()
+      const holdRevocationWrite = createIntegrationBarrier()
+      const revocationWrite = unit.run(revocationFenceScope, async (ports) => {
+        const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+        expect(
+          await ports.checkpoints.compareAndSet(checkpoint.revision, {
+            ...checkpoint,
+            revision: checkpoint.revision + 1,
+            snapshotVersion: checkpoint.snapshotVersion + 1,
+          })
+        ).toBe(true)
+        revocationWriteEntered.release()
+        await holdRevocationWrite.promise
+      })
+      await revocationWriteEntered.promise
+      let revocationFinished = false
+      const revoke = isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database)
+          .revokeCredential(inventoryIdentity.credentials[0].credentialId, new Date())
+          .then((result) => {
+            revocationFinished = true
+            return result
+          })
+      )
+      try {
+        await isolated.waitForBlockedTransaction()
+        expect(revocationFinished).toBe(false)
+      } finally {
+        holdRevocationWrite.release()
+      }
+      await revocationWrite
+      expect((await revoke).revocationVersion).toBe(2)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+      let revokedFenceCallbackReached = false
+      await expect(
+        unit.run(revocationFenceScope, async () => {
+          revokedFenceCallbackReached = true
+        })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(revokedFenceCallbackReached).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+
+      const retirementFenceScope = {
+        ...inventoryScope,
+        credentialFence: {
+          credentialId: inventoryIdentity.credentials[1].credentialId,
+          revocationVersion: inventoryIdentity.credentials[1].revocationVersion,
+        },
+      }
+      const retirementWriteEntered = createIntegrationBarrier()
+      const holdRetirementWrite = createIntegrationBarrier()
+      const retirementWrite = unit.run(retirementFenceScope, async (ports) => {
+        const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+        expect(
+          await ports.checkpoints.compareAndSet(checkpoint.revision, {
+            ...checkpoint,
+            revision: checkpoint.revision + 1,
+            snapshotVersion: checkpoint.snapshotVersion + 1,
+          })
+        ).toBe(true)
+        retirementWriteEntered.release()
+        await holdRetirementWrite.promise
+      })
+      await retirementWriteEntered.promise
+      let retirementFinished = false
+      const retire = isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database)
+          .retireVerificationKey(inventoryIdentity.key.keyId, 'retired')
+          .then((result) => {
+            retirementFinished = true
+            return result
+          })
+      )
+      try {
+        await isolated.waitForBlockedTransaction()
+        expect(retirementFinished).toBe(false)
+      } finally {
+        holdRetirementWrite.release()
+      }
+      await retirementWrite
+      expect(await retire).toBe(true)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+      let retiredKeyFenceCallbackReached = false
+      await expect(
+        unit.run(retirementFenceScope, async () => {
+          retiredKeyFenceCallbackReached = true
+        })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(retiredKeyFenceCallbackReached).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+
+      await expect(
+        unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
+          throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
+        })
+      ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
+      await expect(
+        unit.run(
+          { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
+          async () => {
+            throw new Error('WRONG_CHANNEL_CALLBACK_REACHED')
+          }
+        )
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
+      const replacementIdentity = makeRuntimeInventoryCredentialFixtures(
+        inventoryScope.runtimeNodeRefId,
+        inventoryScope.workspaceId
+      )
+      await isolated.withMigrationDatabase(async (database) => {
+        const writer = new PostgresRuntimeNodeIdentityRepository(database)
+        await writer.registerVerificationKey(replacementIdentity.key)
+        await writer.insertIssuedCredential(replacementIdentity.credentials[0])
+      })
+      const replacementCredential = replacementIdentity.credentials[0]
+      expect(
+        await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+          replacementCredential.credentialId,
+          replacementCredential.revocationVersion,
           new Date()
         )
       ).toBe('consumed')
-
-    const inventoryScope = {
-      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      runtimeNodeRefId: removal.runtimeNodeRefId,
-      credentialFence: {
-        credentialId: inventoryIdentity.credentials[0].credentialId,
-        revocationVersion: inventoryIdentity.credentials[0].revocationVersion,
-      },
-      channel: {
-        nodeId: removal.runtimeNodeRefId,
-        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-        gatewayInstanceId: 'inventory-gateway',
-        connectionId: 'inventory-connection',
-        channelGeneration: 1,
-        protocolVersion: { major: 1, minor: 6 },
-        connectedAt: '2026-08-24T21:00:00.000Z',
-        lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
-      },
-    }
-    const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
-    expect(
-      (await inventoryOwnership.claim(inventoryScope.channel, inventoryScope.credentialFence))
-        .accepted
-    ).toBe(true)
-    const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
-    const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
-      isolated.application
-    )
-    const discovery = new PostgresRuntimeDiscoveryRepository(isolated.application)
-    const beforeAtomic = await registry.get(runtimeConnectionId)
-    const eventCount = (await readPending()).length
-    const projection = {
-      ...runtimeDiscoveryProjection(),
-      runtimeConnectionId,
-      runtimeDefinitionId: beforeAtomic.runtimeDefinitionId,
-      node: { ...runtimeDiscoveryProjection().node, runtimeNodeRefId: removal.runtimeNodeRefId },
-      observedAt: '2026-08-24T21:06:00.000Z',
-    }
-    const applyInventory = async (ports) => {
-      await ports.health.ingest(
-        {
-          ...report,
-          reportSequence: 3,
-          observedAt: '2026-08-24T21:06:00.000Z',
-          capabilitySnapshot: {
-            ...report.capabilitySnapshot,
-            version: 3,
-            observedAt: '2026-08-24T21:06:00.000Z',
-          },
-        },
-        '2026-08-24T21:06:00.000Z'
-      )
-      await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
       expect(
-        await ports.checkpoints.compareAndSet(undefined, {
-          workspaceId: inventoryScope.workspaceId,
-          runtimeNodeRefId: inventoryScope.runtimeNodeRefId,
-          snapshotVersion: 1,
-          snapshotDigest: `sha256:${'a'.repeat(64)}`,
-          observedAt: projection.observedAt,
-          activeRuntimeRefs: [beforeAtomic.opaqueNativeRef],
-          revision: 1,
-        })
-      ).toBe(true)
-    }
-    await expect(
-      unit.run(inventoryScope, async (ports) => {
-        await applyInventory(ports)
-        throw new Error('INVENTORY_COMMIT_FAILURE')
-      })
-    ).rejects.toThrow('INVENTORY_COMMIT_FAILURE')
-    expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
-    expect(await readPending()).toHaveLength(eventCount)
-    expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
-    expect(
-      await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
-    ).toBeUndefined()
-    for (const timeout of [0, -1, 30_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(
-        () =>
-          new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy, {
-            transactionTimeoutMs: timeout,
+        (
+          await inventoryOwnership.claim(replacement, {
+            credentialId: replacementCredential.credentialId,
+            revocationVersion: replacementCredential.revocationVersion,
           })
-      ).toThrow('Invalid inventory transactionTimeoutMs')
-    }
-    for (const stall of ['idle', 'query']) {
-      let finished
-      let wrote = false
-      let rejectionCode = 'UNKNOWN'
-      const startedAt = performance.now()
-      const settled = new Promise((resolve) => {
-        finished = resolve
-      })
-      const timeoutDatabase = {
-        transaction: (operation) =>
-          isolated.application.transaction(async (transaction) => {
-            try {
-              const result = await operation(transaction)
-              if (stall === 'query') await transaction.execute(sql`select pg_sleep(11)`)
-              return result
-            } finally {
-              finished()
-            }
-          }),
-      }
-      // Use the real 10-second production budget. A 500 ms test override can
-      // expire during normal remote writes, before reaching the injected stall.
-      const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy)
-      let phase = 'timeout'
-      try {
-        await rejects(
-          bounded.run(inventoryScope, async (ports) => {
-            await applyInventory(ports)
-            wrote = true
-            if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 11_000))
-          }),
-          (error) => {
-            for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
-              if (typeof cause.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(cause.code))
-                rejectionCode = cause.code
-            }
-            return true
-          }
-        )
-        await settled
-        if (!wrote)
-          throw new Error(
-            `INVENTORY_TIMEOUT_BEFORE_WRITES:${rejectionCode}:${Math.round(performance.now() - startedAt)}ms`
-          )
-        expect(wrote).toBe(true)
-        phase = 'registry'
-        expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
-        phase = 'outbox'
-        expect(await readPending()).toHaveLength(eventCount)
-        phase = 'checkpoint'
-        expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
-        phase = 'projection'
-        expect(
-          await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
-        ).toBeUndefined()
-        phase = 'heartbeat'
-        expect(
-          await inventoryOwnership.heartbeat(inventoryScope.channel, inventoryScope.credentialFence)
-        ).toBe(true)
-      } catch (error) {
-        throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
-      }
-    }
-    await unit.run(inventoryScope, applyInventory)
-    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
-    expect(await readPending()).toHaveLength(eventCount + 1)
-    expect(await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)).toEqual(
-      projection
-    )
-    await Promise.all(
-      Array.from({ length: 8 }, () =>
-        new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy).run(
-          inventoryScope,
-          async (ports) => {
-            const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-            if (
-              !(await ports.checkpoints.compareAndSet(checkpoint.revision, {
-                ...checkpoint,
-                revision: checkpoint.revision + 1,
-                snapshotVersion: checkpoint.snapshotVersion + 1,
-              }))
-            )
-              throw new Error('INVENTORY_SERIALIZATION_FAILED')
-          }
-        )
-      )
-    )
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
-    await unit.run(inventoryScope, async () => {
-      await isolated.application.transaction(async (transaction) => {
-        const lock = await transaction.execute(
-          sql`select pg_try_advisory_xact_lock(hashtextextended(${`runtime-channel:${inventoryScope.runtimeNodeRefId}`}, 0)) as acquired`
-        )
-        expect(lock[0].acquired).toBe(false)
-      })
-    })
-
-    const revocationFenceScope = inventoryScope
-    const revocationWriteEntered = createIntegrationBarrier()
-    const holdRevocationWrite = createIntegrationBarrier()
-    const revocationWrite = unit.run(revocationFenceScope, async (ports) => {
-      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-      expect(
-        await ports.checkpoints.compareAndSet(checkpoint.revision, {
-          ...checkpoint,
-          revision: checkpoint.revision + 1,
-          snapshotVersion: checkpoint.snapshotVersion + 1,
-        })
+        ).accepted
       ).toBe(true)
-      revocationWriteEntered.release()
-      await holdRevocationWrite.promise
-    })
-    await revocationWriteEntered.promise
-    let revocationFinished = false
-    const revoke = isolated.withMigrationDatabase((database) =>
-      new PostgresRuntimeNodeIdentityRepository(database)
-        .revokeCredential(inventoryIdentity.credentials[0].credentialId, new Date())
-        .then((result) => {
-          revocationFinished = true
-          return result
+      let staleCallback = false
+      await expect(
+        unit.run(inventoryScope, async () => {
+          staleCallback = true
         })
-    )
-    try {
-      await isolated.waitForBlockedTransaction()
-      expect(revocationFinished).toBe(false)
-    } finally {
-      holdRevocationWrite.release()
-    }
-    await revocationWrite
-    expect((await revoke).revocationVersion).toBe(2)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
-    let revokedFenceCallbackReached = false
-    await expect(
-      unit.run(revocationFenceScope, async () => {
-        revokedFenceCallbackReached = true
-      })
-    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
-    expect(revokedFenceCallbackReached).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
-
-    const retirementFenceScope = {
-      ...inventoryScope,
-      credentialFence: {
-        credentialId: inventoryIdentity.credentials[1].credentialId,
-        revocationVersion: inventoryIdentity.credentials[1].revocationVersion,
-      },
-    }
-    const retirementWriteEntered = createIntegrationBarrier()
-    const holdRetirementWrite = createIntegrationBarrier()
-    const retirementWrite = unit.run(retirementFenceScope, async (ports) => {
-      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-      expect(
-        await ports.checkpoints.compareAndSet(checkpoint.revision, {
-          ...checkpoint,
-          revision: checkpoint.revision + 1,
-          snapshotVersion: checkpoint.snapshotVersion + 1,
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      expect(staleCallback).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+      expect(await inventoryOwnership.release(replacement)).toBe(true)
+      await expect(
+        unit.run({ ...inventoryScope, channel: replacement }, async () => {
+          throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
         })
-      ).toBe(true)
-      retirementWriteEntered.release()
-      await holdRetirementWrite.promise
-    })
-    await retirementWriteEntered.promise
-    let retirementFinished = false
-    const retire = isolated.withMigrationDatabase((database) =>
-      new PostgresRuntimeNodeIdentityRepository(database)
-        .retireVerificationKey(inventoryIdentity.key.keyId, 'retired')
-        .then((result) => {
-          retirementFinished = true
-          return result
-        })
-    )
-    try {
-      await isolated.waitForBlockedTransaction()
-      expect(retirementFinished).toBe(false)
-    } finally {
-      holdRetirementWrite.release()
-    }
-    await retirementWrite
-    expect(await retire).toBe(true)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-    let retiredKeyFenceCallbackReached = false
-    await expect(
-      unit.run(retirementFenceScope, async () => {
-        retiredKeyFenceCallbackReached = true
-      })
-    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
-    expect(retiredKeyFenceCallbackReached).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-
-    await expect(
-      unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
-        throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
-      })
-    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
-    await expect(
-      unit.run(
-        { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
-        async () => {
-          throw new Error('WRONG_CHANNEL_CALLBACK_REACHED')
-        }
-      )
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
-    const replacementIdentity = makeRuntimeInventoryCredentialFixtures(
-      inventoryScope.runtimeNodeRefId,
-      inventoryScope.workspaceId
-    )
-    await isolated.withMigrationDatabase(async (database) => {
-      const writer = new PostgresRuntimeNodeIdentityRepository(database)
-      await writer.registerVerificationKey(replacementIdentity.key)
-      await writer.insertIssuedCredential(replacementIdentity.credentials[0])
-    })
-    const replacementCredential = replacementIdentity.credentials[0]
-    expect(
-      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
-        replacementCredential.credentialId,
-        replacementCredential.revocationVersion,
-        new Date()
-      )
-    ).toBe('consumed')
-    expect(
-      (
-        await inventoryOwnership.claim(replacement, {
-          credentialId: replacementCredential.credentialId,
-          revocationVersion: replacementCredential.revocationVersion,
-        })
-      ).accepted
-    ).toBe(true)
-    let staleCallback = false
-    await expect(
-      unit.run(inventoryScope, async () => {
-        staleCallback = true
-      })
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    expect(staleCallback).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-    expect(await inventoryOwnership.release(replacement)).toBe(true)
-    await expect(
-      unit.run({ ...inventoryScope, channel: replacement }, async () => {
-        throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
-      })
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    // Includes two real 11-second stalls and the complete remote persistence/fencing path.
-    // This outer test budget does not change the production 10-second transaction limit.
-  }, 120_000)
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      // Includes two real 11-second stalls and the complete remote persistence/fencing path.
+      // This outer test budget does not change the production 10-second transaction limit.
+    },
+    integrationTestTimeout(120_000)
+  )
 
   test('persists scoped external session references without native ownership transfer', async () => {
     await isolated.migrate()
@@ -4836,33 +4896,35 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     )
   })
 
-  test('recovers a committed command after the accepting process exits before replying', async () => {
-    const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
-    const input = {
-      callerPrincipalId: 'svc_agent-hq',
-      operation: 'execution.accept',
-      commandId: `cmd_${suffix}`,
-      requestId: `req_${suffix}`,
-      idempotencyKey: 'integration-process-exit',
-      payloadHash: 'a'.repeat(64),
-      correlation: {
-        workspaceId: `wsp_${suffix}`,
-        projectId: `prj_${suffix}`,
-        taskId: `tsk_${suffix}`,
-        agentId: `agt_${suffix}`,
-      },
-      executionPlan: acceptancePlanReference,
-      receivedAt: '2026-08-24T11:00:00.000Z',
-      retentionExpiresAt: '2026-09-23T11:00:00.000Z',
-    }
-    await seedAcceptancePlan(isolated.application)
-    const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
-    applicationUrl.pathname = `/${isolated.name}`
-    const child = spawnSync(
-      process.execPath,
-      [
-        '-e',
-        `
+  test(
+    'recovers a committed command after the accepting process exits before replying',
+    async () => {
+      const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
+      const input = {
+        callerPrincipalId: 'svc_agent-hq',
+        operation: 'execution.accept',
+        commandId: `cmd_${suffix}`,
+        requestId: `req_${suffix}`,
+        idempotencyKey: 'integration-process-exit',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: `wsp_${suffix}`,
+          projectId: `prj_${suffix}`,
+          taskId: `tsk_${suffix}`,
+          agentId: `agt_${suffix}`,
+        },
+        executionPlan: acceptancePlanReference,
+        receivedAt: '2026-08-24T11:00:00.000Z',
+        retentionExpiresAt: '2026-09-23T11:00:00.000Z',
+      }
+      await seedAcceptancePlan(isolated.application)
+      const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+      applicationUrl.pathname = `/${isolated.name}`
+      const child = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `
       import { CommandInboxService } from '@control-plane/domain';
       import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
       import { PostgresCommandAcceptanceRepository } from ${JSON.stringify(new URL('./command-inbox-repository.ts', import.meta.url).href)};
@@ -4877,179 +4939,187 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await service.acceptExecution(${JSON.stringify(input)});
       console.log('UNEXPECTED_ACCEPTANCE_REPLY');
     `,
-      ],
-      {
-        cwd: fileURLToPath(new URL('..', import.meta.url)),
-        env: { PATH: process.env.PATH, TEST_APPLICATION_URL: applicationUrl.toString() },
-        encoding: 'utf8',
-        timeout: 10_000,
+        ],
+        {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: { PATH: process.env.PATH, TEST_APPLICATION_URL: applicationUrl.toString() },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      )
+      expect(child.error).toBeUndefined()
+      expect(child.signal).toBeNull()
+      expect(child.status).toBe(73)
+      expect(child.stdout).toBe('')
+      const recovered = new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(isolated.application),
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
+        },
+        executionPlanValidator: {
+          authorize: async () => true,
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+          },
+        },
+        now: () => input.receivedAt,
+      })
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => recovered.acceptExecution(input))
+      )
+      expect(results.every((result) => result.replayed)).toBe(true)
+      expect(results.every((result) => result.command.commandId === input.commandId)).toBe(true)
+      expect(results.every((result) => result.execution.executionId === `exe_${suffix}`)).toBe(true)
+      expect(
+        await isolated.application
+          .select()
+          .from(executions)
+          .where(eq(executions.taskId, input.correlation.taskId))
+      ).toHaveLength(1)
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, input.commandId))
+      ).toHaveLength(1)
+      await expect(
+        recovered.acceptExecution({ ...input, payloadHash: 'c'.repeat(64) })
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
+    },
+    integrationTestTimeout(15_000)
+  )
+
+  test(
+    'new acceptance rejects an orphan plan but exact accepted replay survives missing parents',
+    async () => {
+      await seedAcceptancePlan(isolated.application)
+      const repository = new PostgresCommandAcceptanceRepository(isolated.application)
+      const input = {
+        callerPrincipalId: 'svc_orphan-plan-test',
+        operation: 'execution.accept',
+        commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+        requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+        idempotencyKey: 'orphan-plan-replay-0001',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: 'wsp_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+          projectId: 'prj_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+          taskId: 'tsk_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+          agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+        },
+        executionPlan: acceptancePlanReference,
+        receivedAt: '2026-08-24T11:00:00.000Z',
+        retentionExpiresAt: '2026-09-23T11:00:00.000Z',
       }
-    )
-    expect(child.error).toBeUndefined()
-    expect(child.signal).toBeNull()
-    expect(child.status).toBe(73)
-    expect(child.stdout).toBe('')
-    const recovered = new CommandInboxService({
-      repository: new PostgresCommandAcceptanceRepository(isolated.application),
-      executionIdFactory: () => {
-        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
-      },
-      executionPlanValidator: {
-        authorize: async () => true,
-        validate: async () => {
-          throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+      const service = new CommandInboxService({
+        repository,
+        executionIdFactory: () => 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFK',
+        executionPlanValidator: { validate: async () => true },
+        now: () => input.receivedAt,
+      })
+
+      await isolated.application
+        .delete(executionPlans)
+        .where(eq(executionPlans.executionPlanId, acceptancePlan.executionPlanId))
+      await expect(service.acceptExecution(input)).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, input.commandId))
+      ).toHaveLength(0)
+
+      await new PostgresExecutionPlanRepository(isolated.application).put(acceptancePlan)
+      await isolated.application
+        .delete(contextPackages)
+        .where(
+          eq(
+            contextPackages.contextPackageId,
+            contextPackageSerializationFixtures.futurePi.contextPackageId
+          )
+        )
+      await expect(service.acceptExecution(input)).rejects.toMatchObject({
+        code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+      })
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, input.commandId))
+      ).toHaveLength(0)
+
+      await new PostgresContextPackageRepository(isolated.application).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      const accepted = await service.acceptExecution(input)
+      expect(accepted.replayed).toBe(false)
+
+      const executionsRepository = new PostgresExecutionRepository(isolated.application)
+      const standaloneExecution = {
+        ...accepted.execution,
+        executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFM',
+      }
+      await isolated.application
+        .delete(contextPackages)
+        .where(
+          eq(
+            contextPackages.contextPackageId,
+            contextPackageSerializationFixtures.futurePi.contextPackageId
+          )
+        )
+      await expect(executionsRepository.insertExecution(standaloneExecution)).rejects.toMatchObject(
+        {
+          code: 'INVALID_EXECUTION_PLAN_REFERENCE',
+        }
+      )
+      await new PostgresContextPackageRepository(isolated.application).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+      expect(await executionsRepository.insertExecution(standaloneExecution)).toBe(true)
+      await isolated.application
+        .delete(contextPackages)
+        .where(
+          eq(
+            contextPackages.contextPackageId,
+            contextPackageSerializationFixtures.futurePi.contextPackageId
+          )
+        )
+      expect(await executionsRepository.insertExecution(standaloneExecution)).toBe(false)
+      await new PostgresContextPackageRepository(isolated.application).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+
+      await isolated.application
+        .delete(contextPackages)
+        .where(
+          eq(
+            contextPackages.contextPackageId,
+            contextPackageSerializationFixtures.futurePi.contextPackageId
+          )
+        )
+      const replay = await new CommandInboxService({
+        repository,
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
         },
-      },
-      now: () => input.receivedAt,
-    })
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () => recovered.acceptExecution(input))
-    )
-    expect(results.every((result) => result.replayed)).toBe(true)
-    expect(results.every((result) => result.command.commandId === input.commandId)).toBe(true)
-    expect(results.every((result) => result.execution.executionId === `exe_${suffix}`)).toBe(true)
-    expect(
-      await isolated.application
-        .select()
-        .from(executions)
-        .where(eq(executions.taskId, input.correlation.taskId))
-    ).toHaveLength(1)
-    expect(
-      await isolated.application
-        .select()
-        .from(commandInbox)
-        .where(eq(commandInbox.commandId, input.commandId))
-    ).toHaveLength(1)
-    await expect(
-      recovered.acceptExecution({ ...input, payloadHash: 'c'.repeat(64) })
-    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
-  }, 15_000)
-
-  test('new acceptance rejects an orphan plan but exact accepted replay survives missing parents', async () => {
-    await seedAcceptancePlan(isolated.application)
-    const repository = new PostgresCommandAcceptanceRepository(isolated.application)
-    const input = {
-      callerPrincipalId: 'svc_orphan-plan-test',
-      operation: 'execution.accept',
-      commandId: 'cmd_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-      requestId: 'req_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-      idempotencyKey: 'orphan-plan-replay-0001',
-      payloadHash: 'a'.repeat(64),
-      correlation: {
-        workspaceId: 'wsp_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-        projectId: 'prj_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-        taskId: 'tsk_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-        agentId: 'agt_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-      },
-      executionPlan: acceptancePlanReference,
-      receivedAt: '2026-08-24T11:00:00.000Z',
-      retentionExpiresAt: '2026-09-23T11:00:00.000Z',
-    }
-    const service = new CommandInboxService({
-      repository,
-      executionIdFactory: () => 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFK',
-      executionPlanValidator: { validate: async () => true },
-      now: () => input.receivedAt,
-    })
-
-    await isolated.application
-      .delete(executionPlans)
-      .where(eq(executionPlans.executionPlanId, acceptancePlan.executionPlanId))
-    await expect(service.acceptExecution(input)).rejects.toMatchObject({
-      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
-    })
-    expect(
-      await isolated.application
-        .select()
-        .from(commandInbox)
-        .where(eq(commandInbox.commandId, input.commandId))
-    ).toHaveLength(0)
-
-    await new PostgresExecutionPlanRepository(isolated.application).put(acceptancePlan)
-    await isolated.application
-      .delete(contextPackages)
-      .where(
-        eq(
-          contextPackages.contextPackageId,
-          contextPackageSerializationFixtures.futurePi.contextPackageId
-        )
-      )
-    await expect(service.acceptExecution(input)).rejects.toMatchObject({
-      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
-    })
-    expect(
-      await isolated.application
-        .select()
-        .from(commandInbox)
-        .where(eq(commandInbox.commandId, input.commandId))
-    ).toHaveLength(0)
-
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-    const accepted = await service.acceptExecution(input)
-    expect(accepted.replayed).toBe(false)
-
-    const executionsRepository = new PostgresExecutionRepository(isolated.application)
-    const standaloneExecution = {
-      ...accepted.execution,
-      executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FFM',
-    }
-    await isolated.application
-      .delete(contextPackages)
-      .where(
-        eq(
-          contextPackages.contextPackageId,
-          contextPackageSerializationFixtures.futurePi.contextPackageId
-        )
-      )
-    await expect(executionsRepository.insertExecution(standaloneExecution)).rejects.toMatchObject({
-      code: 'INVALID_EXECUTION_PLAN_REFERENCE',
-    })
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-    expect(await executionsRepository.insertExecution(standaloneExecution)).toBe(true)
-    await isolated.application
-      .delete(contextPackages)
-      .where(
-        eq(
-          contextPackages.contextPackageId,
-          contextPackageSerializationFixtures.futurePi.contextPackageId
-        )
-      )
-    expect(await executionsRepository.insertExecution(standaloneExecution)).toBe(false)
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-
-    await isolated.application
-      .delete(contextPackages)
-      .where(
-        eq(
-          contextPackages.contextPackageId,
-          contextPackageSerializationFixtures.futurePi.contextPackageId
-        )
-      )
-    const replay = await new CommandInboxService({
-      repository,
-      executionIdFactory: () => {
-        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
-      },
-      executionPlanValidator: {
-        authorize: async () => true,
-        validate: async () => {
-          throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+        executionPlanValidator: {
+          authorize: async () => true,
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+          },
         },
-      },
-      now: () => input.receivedAt,
-    }).acceptExecution(input)
-    expect(replay.replayed).toBe(true)
-    expect(replay.execution).toEqual(accepted.execution)
-    await new PostgresContextPackageRepository(isolated.application).put(
-      contextPackageSerializationFixtures.futurePi
-    )
-  }, 30_000)
+        now: () => input.receivedAt,
+      }).acceptExecution(input)
+      expect(replay.replayed).toBe(true)
+      expect(replay.execution).toEqual(accepted.execution)
+      await new PostgresContextPackageRepository(isolated.application).put(
+        contextPackageSerializationFixtures.futurePi
+      )
+    },
+    integrationTestTimeout()
+  )
 
   test('atomically accepts one execution for concurrent duplicate commands and audits conflicts', async () => {
     await seedAcceptancePlan(isolated.application)
@@ -5214,52 +5284,58 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toHaveLength(1)
   })
 
-  test('new interaction inserts require their attempt to belong to the scoped execution', async () => {
-    const request = ControlApiFixtures.executionAcceptance.request
-    const executionA = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC1'
-    const executionB = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC2'
-    const attemptA = 'att_01CRZ3NDEKTSV4RRFFQ69G5FC1'
-    const attemptB = 'att_01CRZ3NDEKTSV4RRFFQ69G5FC2'
-    await createExecutionOwner(isolated.application, request, executionA, attemptA)
-    await createExecutionOwner(isolated.application, request, executionB, attemptB)
-    const repository = new PostgresInteractionRepository(isolated.application)
-    const base = {
-      interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC1',
-      executionId: executionA,
-      attemptId: attemptB,
-      kind: 'approval',
-      prompt: { title: 'Approve scoped insertion' },
-      allowedActions: ['approve', 'deny'],
-      allowedPrincipalIds: ['svc_agent-hq'],
-      state: 'pending',
-      version: 1,
-      requestedAt: request.issuedAt,
-      expiresAt: '2026-09-09T00:00:00.000Z',
-    }
-    await expect(repository.insert(base)).rejects.toThrow('INTERACTION_ATTEMPT_EXECUTION_MISMATCH')
-    await expect(
-      repository.insert({
-        ...base,
-        interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC2',
-        executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC3',
-      })
-    ).rejects.toThrow('INTERACTION_EXECUTION_MISSING')
-    await expect(
-      repository.insert({
-        ...base,
-        interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC3',
-        attemptId: 'att_01CRZ3NDEKTSV4RRFFQ69G5FC3',
-      })
-    ).rejects.toThrow('INTERACTION_ATTEMPT_MISSING')
-    expect(await repository.insert({ ...base, attemptId: attemptA })).toBe(true)
-    expect(
-      await repository.insert({
-        ...base,
-        executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC3',
-        attemptId: 'att_01CRZ3NDEKTSV4RRFFQ69G5FC3',
-      })
-    ).toBe(false)
-  }, 60_000)
+  test(
+    'new interaction inserts require their attempt to belong to the scoped execution',
+    async () => {
+      const request = ControlApiFixtures.executionAcceptance.request
+      const executionA = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC1'
+      const executionB = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC2'
+      const attemptA = 'att_01CRZ3NDEKTSV4RRFFQ69G5FC1'
+      const attemptB = 'att_01CRZ3NDEKTSV4RRFFQ69G5FC2'
+      await createExecutionOwner(isolated.application, request, executionA, attemptA)
+      await createExecutionOwner(isolated.application, request, executionB, attemptB)
+      const repository = new PostgresInteractionRepository(isolated.application)
+      const base = {
+        interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC1',
+        executionId: executionA,
+        attemptId: attemptB,
+        kind: 'approval',
+        prompt: { title: 'Approve scoped insertion' },
+        allowedActions: ['approve', 'deny'],
+        allowedPrincipalIds: ['svc_agent-hq'],
+        state: 'pending',
+        version: 1,
+        requestedAt: request.issuedAt,
+        expiresAt: '2026-09-09T00:00:00.000Z',
+      }
+      await expect(repository.insert(base)).rejects.toThrow(
+        'INTERACTION_ATTEMPT_EXECUTION_MISMATCH'
+      )
+      await expect(
+        repository.insert({
+          ...base,
+          interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC2',
+          executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC3',
+        })
+      ).rejects.toThrow('INTERACTION_EXECUTION_MISSING')
+      await expect(
+        repository.insert({
+          ...base,
+          interactionId: 'int_01CRZ3NDEKTSV4RRFFQ69G5FC3',
+          attemptId: 'att_01CRZ3NDEKTSV4RRFFQ69G5FC3',
+        })
+      ).rejects.toThrow('INTERACTION_ATTEMPT_MISSING')
+      expect(await repository.insert({ ...base, attemptId: attemptA })).toBe(true)
+      expect(
+        await repository.insert({
+          ...base,
+          executionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FC3',
+          attemptId: 'att_01CRZ3NDEKTSV4RRFFQ69G5FC3',
+        })
+      ).toBe(false)
+    },
+    integrationTestTimeout(60_000)
+  )
 
   test('interaction command receipts retain one concurrent winner and first confirmed acknowledgement', async () => {
     await isolated.migrate()
@@ -5383,802 +5459,846 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     ).toBeUndefined()
   })
 
-  test('sweepEligibleMessaging deletes settled deliveries and compacts the inbox', async () => {
-    const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFJ'
-    const publishedAt = '2026-08-01T11:00:00.000Z'
-    // Inside the window relative to the assessment instant below.
-    const recent = '2026-11-15T11:00:00.000Z'
-    const seed = async (idSuffix, status, settledAt, extra = {}) => {
-      // outbox_events.id is a uuid column.
-      const id = `00000000-0000-4000-8000-0000000000${idSuffix}`
-      await isolated.application.execute(
-        sql`insert into outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status, attempts, revision, created_at, updated_at, published_at, quarantined_at) values (${id}, 'runtime_connection', ${`rnc_${suffix}`}, 'runtime.availability_changed', ${JSON.stringify({ marker: id })}::jsonb, ${status}, 1, 1, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${settledAt}::timestamptz, ${
-          extra.quarantinedAt === undefined ? null : extra.quarantinedAt
-        }::timestamptz)`
-      )
-      return id
-    }
-    // Settled and old: the only deletable shape.
-    const settled = await seed('01', 'published', publishedAt)
-    // Settled but inside the window.
-    const young = await seed('02', 'published', recent)
-    // Settled shape, but quarantined: unresolved work, never swept.
-    const quarantined = await seed('03', 'published', publishedAt, { quarantinedAt: publishedAt })
-    // Still to be delivered.
-    const pending = await seed('04', 'pending', null)
-    const failed = await seed('05', 'failed', null)
-
-    const retention = new PostgresMessagingRetention(isolated.application)
-    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
-    const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
-
-    const dry = await retention.deleteEligibleOutboxEvents(assessedAt, {
-      ...options,
-      dryRun: true,
-    })
-    expect(dry.deleted).toBe(0)
-    expect(dry.eligible).toBeGreaterThanOrEqual(1)
-
-    const applied = await retention.deleteEligibleOutboxEvents(assessedAt, options)
-    expect(applied.deleted).toBeGreaterThanOrEqual(1)
-    const remaining = await isolated.application.execute(
-      sql`select id from outbox_events where id in (${settled}, ${young}, ${quarantined}, ${pending}, ${failed}) order by id`
-    )
-    expect(remaining.map((row) => row.id)).toEqual([young, quarantined, pending, failed].toSorted())
-
-    // The consumer inbox is compacted, never removed: the row's
-    // (consumer, messageId) identity is what recognises a redelivery.
-    const consumer = 'm11-health-consumer'
-    const seedInbox = async (messageId, createdAt, extra = {}) => {
-      await isolated.application.execute(
-        sql`insert into inbox_messages (consumer, message_id, payload, revision, created_at, updated_at, deleted_at) values (${consumer}, ${messageId}, ${JSON.stringify({ deliveryKey: messageId })}::jsonb, 1, ${createdAt}::timestamptz, ${createdAt}::timestamptz, ${
-          extra.deletedAt === undefined ? null : extra.deletedAt
-        }::timestamptz)`
-      )
-    }
-    await seedInbox('sha256:settled-old', '2026-08-01T11:00:00.000Z')
-    await seedInbox('sha256:settled-young', recent)
-    await seedInbox('sha256:already-compacted', '2026-08-01T11:00:00.000Z', {
-      deletedAt: '2026-09-01T11:00:00.000Z',
-    })
-
-    const swept = await retention.sweepEligibleMessaging(assessedAt, options)
-    expect(swept.compacted).toBeGreaterThanOrEqual(1)
-    const inboxRows = await isolated.application.execute(
-      sql`select message_id, payload, deleted_at from inbox_messages where consumer = ${consumer} order by message_id`
-    )
-    const byMessage = Object.fromEntries(inboxRows.map((row) => [row.message_id, row]))
-    // Identity kept, payload replaced, marked compacted.
-    expect(byMessage['sha256:settled-old']).toBeDefined()
-    expect(byMessage['sha256:settled-old'].payload).toEqual({ compacted: true, version: 1 })
-    expect(byMessage['sha256:settled-old'].deleted_at).not.toBeNull()
-    // Inside the window: untouched.
-    expect(byMessage['sha256:settled-young'].payload).toEqual({
-      deliveryKey: 'sha256:settled-young',
-    })
-    expect(byMessage['sha256:settled-young'].deleted_at).toBeNull()
-
-    // A second sweep has nothing left to compact.
-    const again = await retention.sweepEligibleMessaging(assessedAt, options)
-    expect(again.compacted).toBe(0)
-
-    const boundedOutbox = await seed('06', 'published', publishedAt)
-    await seedInbox('sha256:bounded-inbox', publishedAt)
-    const journal = []
-    const bounded = await retention.sweepEligibleMessaging(assessedAt, {
-      ...options,
-      bound: 1,
-      journal: async (operations) => journal.push(...operations),
-    })
-    expect(bounded).toMatchObject({
-      scanned: 1,
-      eligible: 1,
-      deleted: 1,
-      compacted: 0,
-      truncated: true,
-    })
-    expect(journal).toHaveLength(1)
-    const boundedOutboxRows = await isolated.application.execute(
-      sql`select id from outbox_events where id = ${boundedOutbox}`
-    )
-    const boundedInboxRows = await isolated.application.execute(
-      sql`select payload, deleted_at from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
-    )
-    expect(boundedOutboxRows).toHaveLength(0)
-    expect(boundedInboxRows).toHaveLength(1)
-    expect(boundedInboxRows[0].payload).toEqual({ deliveryKey: 'sha256:bounded-inbox' })
-    expect(boundedInboxRows[0].deleted_at).toBeNull()
-    await isolated.application.execute(
-      sql`delete from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
-    )
-  }, 60_000)
-
-  test('deleteEligibleContextPackages respects plan pins and authoring commands', async () => {
-    // A derived package: the shared fixtures are referenced by other tests and
-    // one of them is tampered on purpose, so this test mints its own coherent
-    // package (its own digest and id) from a parent fixture.
-    const parent = contextPackageSerializationFixtures.futurePi
-    const compiledAt = '2026-08-20T12:00:00.000Z'
-    const fixture = deriveContextPackage(parent, {
-      objective: 'retention deletion fixture',
-      allowedStateItemIds: [],
-      allowedArtifactIds: [],
-      budgets: parent.budgets,
-      successCriteria: parent.successCriteria,
-      returnContract: parent.returnContract,
-      compiledAt,
-    })
-    const packages = new PostgresContextPackageRepository(isolated.application)
-    await packages.put(parent)
-    await packages.put(fixture)
-    // A plan pin: the pin lives inside the plan JSON.
-    await isolated.application.execute(
-      sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${compiledAt}::timestamptz)`
-    )
-
-    const retention = new PostgresContextPackageRetention(isolated.application)
-    const now = new Date(Date.parse(compiledAt) + 2 * 24 * 60 * 60 * 1_000)
-    const options = { policyRetainMs: 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
-
-    // Assertions are on this package, not on aggregate counts: the shared
-    // database also holds other tests' packages.
-    await retention.deleteEligibleContextPackages(now, options)
-    expect(await packages.get(fixture)).toBeDefined()
-
-    // An authoring command reference is a foreign key, so removing the pin
-    // still leaves the package unremovable until that row goes too.
-    await isolated.application.execute(
-      sql`delete from execution_plans where execution_plan_id = 'pln_retention_fixture'`
-    )
-    const delegation = retentionDelegationRecord({
-      delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA4',
-      childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA5',
-      parentExecutionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA1',
-      parentExecutionPlanDigest: `sha256:${'a'.repeat(64)}`,
-      childExecutionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA2',
-      childExecutionPlanDigest: `sha256:${'b'.repeat(64)}`,
-      contextPackageId: fixture.contextPackageId,
-      contextPackageDigest: fixture.contentDigest,
-    })
-    await seedHistoricalDelegationPin(isolated.application, delegation)
-    await retention.deleteEligibleContextPackages(now, options)
-    expect(await packages.get(fixture)).toBeDefined()
-    await isolated.application
-      .delete(delegations)
-      .where(eq(delegations.delegationId, delegation.delegationId))
-
-    await isolated.application.execute(
-      sql`insert into context_authoring_commands (command_key, workspace_id, project_id, context_package_id, record) values (${'f'.repeat(64)}, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, ${fixture.contextPackageId}, ${JSON.stringify({ state: 'completed' })}::jsonb)`
-    )
-    await retention.deleteEligibleContextPackages(now, options)
-    expect(await packages.get(fixture)).toBeDefined()
-
-    // With both references gone the first pass starts a full post-reference window.
-    await isolated.application.execute(
-      sql`delete from context_authoring_commands where command_key = ${'f'.repeat(64)}`
-    )
-    await retention.deleteEligibleContextPackages(now, options)
-    expect(await packages.get(fixture)).toBeDefined()
-    await retention.deleteEligibleContextPackages(
-      new Date(now.getTime() + options.policyRetainMs + 1),
-      options
-    )
-    expect(await packages.get(fixture)).toBeUndefined()
-  }, 60_000)
-
-  test('deleteEligibleExecutions requires a terminal unreferenced execution', async () => {
-    // The fixtures below are deliberately older than every other execution in
-    // this database, so a longer retention window keeps the pass from touching
-    // another test's fixtures while still covering these two.
-    const now = '2026-07-31T11:00:00.000Z'
-    await seedAcceptancePlan(isolated.application)
-    const commands = new PostgresCommandAcceptanceRepository(isolated.application)
-    const accept = (key, executionSuffix) =>
-      new CommandInboxService({
-        repository: commands,
-        executionIdFactory: () => `exe_${executionSuffix}`,
-        executionPlanValidator: { validate: async () => true },
-        now: () => now,
-      }).acceptExecution({
-        callerPrincipalId: 'svc_execution-retention',
-        operation: 'execution.accept',
-        commandId: `cmd_${executionSuffix}`,
-        requestId: `req_${executionSuffix}`,
-        idempotencyKey: key,
-        payloadHash: 'a'.repeat(64),
-        correlation: {
-          workspaceId: `wsp_${executionSuffix}`,
-          projectId: `prj_${executionSuffix}`,
-          taskId: `tsk_${executionSuffix}`,
-          agentId: `agt_${executionSuffix}`,
-        },
-        executionPlan: acceptancePlanReference,
-        receivedAt: now,
-        retentionExpiresAt: '2026-09-01T11:00:00.000Z',
-      })
-    const referenced = await accept('execution-retention-1', '01CRZ3NDEKTSV4RRFFQ69G5FFG')
-    const clean = await accept('execution-retention-2', '01CRZ3NDEKTSV4RRFFQ69G5FFH')
-    const receiptReferenced = await accept('execution-retention-3', '01CRZ3NDEKTSV4RRFFQ69G5FFJ')
-    const terminalAt = '2026-07-15T11:00:00.000Z'
-    for (const executionId of [
-      referenced.execution.executionId,
-      clean.execution.executionId,
-      receiptReferenced.execution.executionId,
-    ]) {
-      await isolated.application.execute(
-        sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
-      )
-    }
-    // An execution is the last class to become eligible: its acceptance record
-    // and its events both outlive it, so a bottom-up pass removes those first.
-    const remainingEvents = await isolated.application.execute(
-      sql`select count(*)::int as count from execution_events where execution_id = ${clean.execution.executionId}`
-    )
-    expect(remainingEvents[0].count).toBeGreaterThanOrEqual(0)
-    await isolated.application.execute(
-      sql`delete from command_inbox where execution_id = ${clean.execution.executionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_events where execution_id = ${clean.execution.executionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from command_inbox where execution_id = ${receiptReferenced.execution.executionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_events where execution_id = ${receiptReferenced.execution.executionId}`
-    )
-    const cancellationKey = `${'9'.repeat(64)}`
-    const interactionKey = `${'a'.repeat(64)}`
-    const cancellationReceipt = {
-      request: {
-        ...ControlApiFixtures.executionCancellation.request,
-        workspaceId: receiptReferenced.execution.correlation.workspaceId,
-        projectId: receiptReferenced.execution.correlation.projectId,
-        idempotencyKey: 'execution-retention-cancellation-reference-1',
-        payload: { executionId: receiptReferenced.execution.executionId },
-      },
-      acceptedAt: '2026-07-15T11:00:00.000Z',
-    }
-    const interactionReceipt = {
-      request: {
-        ...ControlApiFixtures.interactionResponse.request,
-        workspaceId: receiptReferenced.execution.correlation.workspaceId,
-        projectId: receiptReferenced.execution.correlation.projectId,
-        idempotencyKey: 'execution-retention-interaction-reference-1',
-        payload: {
-          ...ControlApiFixtures.interactionResponse.request.payload,
-          executionId: receiptReferenced.execution.executionId,
-        },
-      },
-      acceptedAt: '2026-07-15T11:00:00.000Z',
-    }
-    await isolated.application.execute(
-      sql`insert into execution_cancellations (command_key, workspace_id, project_id, receipt, created_at) values (${cancellationKey}, ${cancellationReceipt.request.workspaceId}, ${cancellationReceipt.request.projectId}, ${JSON.stringify(cancellationReceipt)}::jsonb, ${now}::timestamptz)`
-    )
-    await isolated.application.execute(
-      sql`insert into interaction_commands (command_key, workspace_id, project_id, receipt, created_at) values (${interactionKey}, ${interactionReceipt.request.workspaceId}, ${interactionReceipt.request.projectId}, ${JSON.stringify(interactionReceipt)}::jsonb, ${now}::timestamptz)`
-    )
-
-    const repository = new PostgresExecutionRepository(isolated.application)
-    const assessedAt = new Date('2026-12-01T12:00:00.000Z')
-    const options = { policyRetainMs: 120 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
-    // Nothing references the clean execution any more.
-    const referenceProbe = await isolated.application.execute(
-      sql`select (select count(*)::int from command_inbox where execution_id = ${clean.execution.executionId}) as commands, (select count(*)::int from execution_events where execution_id = ${clean.execution.executionId}) as events, (select count(*)::int from execution_attempts where execution_id = ${clean.execution.executionId}) as attempts, (select count(*)::int from reconciliation_checkpoints where execution_id = ${clean.execution.executionId}) as checkpoints`
-    )
-    expect(referenceProbe[0]).toMatchObject({ commands: 0, events: 0, attempts: 0, checkpoints: 0 })
-
-    const applied = await repository.deleteEligibleExecutions(assessedAt, options)
-    expect(applied.deleted, JSON.stringify(applied)).toBe(1)
-    expect(await repository.getExecution(clean.execution.executionId)).toBeUndefined()
-    // The referenced execution survives because its acceptance record does.
-    expect(await repository.getExecution(referenced.execution.executionId)).toBeDefined()
-
-    const retained = await repository.deleteEligibleExecutions(assessedAt, {
-      ...options,
-      dryRun: true,
-    })
-    expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 2 } })
-
-    // Once its acceptance record goes too, it becomes eligible on a later pass.
-    await isolated.application.execute(
-      sql`delete from command_inbox where execution_id = ${referenced.execution.executionId}`
-    )
-    await isolated.application.execute(
-      sql`delete from execution_events where execution_id = ${referenced.execution.executionId}`
-    )
-    const receiptHeld = await repository.deleteEligibleExecutions(assessedAt, options)
-    expect(receiptHeld).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 1 } })
-    expect(await repository.getExecution(referenced.execution.executionId)).toBeUndefined()
-    expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeDefined()
-    await isolated.application.execute(
-      sql`delete from execution_cancellations where command_key = ${cancellationKey}`
-    )
-    await isolated.application.execute(
-      sql`delete from interaction_commands where command_key = ${interactionKey}`
-    )
-    const final = await repository.deleteEligibleExecutions(assessedAt, options)
-    expect(final.deleted).toBe(1)
-    expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeUndefined()
-  }, 60_000)
-
-  test('execution deletion preserves an owner when a cancellation receipt commits before its lock', async () => {
-    const raceDatabase = await createMigratedIsolatedDatabase()
-    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD3'
-    const request = {
-      ...ControlApiFixtures.executionAcceptance.request,
-      operation: 'execution.cancel',
-      idempotencyKey: 'execution-delete-receipt-race-01',
-      payload: { executionId },
-    }
-    let announceClaim
-    let releaseClaim
-    const claimStarted = new Promise((resolve) => {
-      announceClaim = resolve
-    })
-    const claimGate = new Promise((resolve) => {
-      releaseClaim = resolve
-    })
-    // This callback runs inside the opened transaction, before it locks the owner.
-    let pauseBeforeOwnerLock = true
-    const claimDatabase = new Proxy(raceDatabase.application, {
-      get(target, property, receiver) {
-        const value = Reflect.get(target, property, receiver)
-        if (property === 'transaction') {
-          return async (operation, ...args) => {
-            return value.call(
-              target,
-              async (transaction) => {
-                if (pauseBeforeOwnerLock) {
-                  pauseBeforeOwnerLock = false
-                  announceClaim()
-                  await claimGate
-                }
-                return operation(transaction)
-              },
-              ...args
-            )
-          }
-        }
-        return typeof value === 'function' ? value.bind(target) : value
-      },
-    })
-    const journal = []
-    let deletion
-    try {
-      await createExecutionOwner(raceDatabase.application, request, executionId)
-      await raceDatabase.application.execute(
-        sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
-      )
-      deletion = new PostgresExecutionRepository(claimDatabase).deleteEligibleExecutions(
-        new Date('2026-09-26T00:00:00.000Z'),
-        {
-          policyRetainMs: 1,
-          bound: 8,
-          dryRun: false,
-          journal: async (operations) => journal.push(...operations),
-        }
-      )
-      await claimStarted
-      const reserved = await new PostgresExecutionCancellationRepository(
-        raceDatabase.application
-      ).reserve({ request })
-      expect(reserved.inserted).toBe(true)
-      releaseClaim()
-      const result = await deletion
-      expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
-      expect(journal).toEqual([])
-      expect(
-        await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
-      ).toBeDefined()
-    } finally {
-      releaseClaim()
-      await deletion?.catch(() => undefined)
-      try {
-        await raceDatabase.application.execute(
-          sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+  test(
+    'sweepEligibleMessaging deletes settled deliveries and compacts the inbox',
+    async () => {
+      const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFJ'
+      const publishedAt = '2026-08-01T11:00:00.000Z'
+      // Inside the window relative to the assessment instant below.
+      const recent = '2026-11-15T11:00:00.000Z'
+      const seed = async (idSuffix, status, settledAt, extra = {}) => {
+        // outbox_events.id is a uuid column.
+        const id = `00000000-0000-4000-8000-0000000000${idSuffix}`
+        await isolated.application.execute(
+          sql`insert into outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status, attempts, revision, created_at, updated_at, published_at, quarantined_at) values (${id}, 'runtime_connection', ${`rnc_${suffix}`}, 'runtime.availability_changed', ${JSON.stringify({ marker: id })}::jsonb, ${status}, 1, 1, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${'2026-08-01T10:00:00.000Z'}::timestamptz, ${settledAt}::timestamptz, ${
+            extra.quarantinedAt === undefined ? null : extra.quarantinedAt
+          }::timestamptz)`
         )
-        await raceDatabase.application.execute(
-          sql`delete from executions where execution_id = ${executionId}`
-        )
-      } finally {
-        await raceDatabase.dispose()
+        return id
       }
-    }
-  }, 60_000)
+      // Settled and old: the only deletable shape.
+      const settled = await seed('01', 'published', publishedAt)
+      // Settled but inside the window.
+      const young = await seed('02', 'published', recent)
+      // Settled shape, but quarantined: unresolved work, never swept.
+      const quarantined = await seed('03', 'published', publishedAt, { quarantinedAt: publishedAt })
+      // Still to be delivered.
+      const pending = await seed('04', 'pending', null)
+      const failed = await seed('05', 'failed', null)
 
-  test('execution deletion wins a cancellation reservation that waits behind its owner lock', async () => {
-    const raceDatabase = await createMigratedIsolatedDatabase()
-    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD5'
-    const request = {
-      ...ControlApiFixtures.executionAcceptance.request,
-      operation: 'execution.cancel',
-      idempotencyKey: 'execution-delete-before-cancel-reserve-01',
-      payload: { executionId },
-    }
-    let announceOwnerLock
-    let releaseOwnerLock
-    let announceReservationQuery
-    const ownerLockAcquired = new Promise((resolve) => {
-      announceOwnerLock = resolve
-    })
-    const ownerLockGate = new Promise((resolve) => {
-      releaseOwnerLock = resolve
-    })
-    const reservationQueryStarted = new Promise((resolve) => {
-      announceReservationQuery = resolve
-    })
-    let pausedOwnerLock = false
-    let startedKeyShareQuery = false
-    const deletionDatabase = instrumentTransactionSelects(raceDatabase.application, {
-      onQueryResolved: async (mode) => {
-        if (mode === 'update' && !pausedOwnerLock) {
-          pausedOwnerLock = true
-          announceOwnerLock()
-          await ownerLockGate
-        }
-      },
-    })
-    const reservationDatabase = instrumentTransactionSelects(raceDatabase.application, {
-      onQueryStarted: (mode) => {
-        if (mode === 'key share' && !startedKeyShareQuery) {
-          startedKeyShareQuery = true
-          announceReservationQuery()
-        }
-      },
-    })
-    let deletion
-    let reservation
-    const journal = []
-    try {
-      await createExecutionOwner(raceDatabase.application, request, executionId)
-      await raceDatabase.application.execute(
-        sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
-      )
+      const retention = new PostgresMessagingRetention(isolated.application)
+      const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+      const options = { policyRetainMs: 30 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
 
-      deletion = new PostgresExecutionRepository(deletionDatabase).deleteEligibleExecutions(
-        new Date('2026-09-26T00:00:00.000Z'),
-        {
-          policyRetainMs: 1,
-          bound: 8,
-          dryRun: false,
-          journal: async (operations) => journal.push(...operations),
-        }
-      )
-      await ownerLockAcquired
-      reservation = new PostgresExecutionCancellationRepository(reservationDatabase)
-        .reserve({ request })
-        .then(
-          (value) => ({ value }),
-          (error) => ({ error })
-        )
-      await reservationQueryStarted
-      await waitForBlockedExecutionKeyShare(raceDatabase.application)
-      releaseOwnerLock()
-
-      const deletionResult = await deletion
-      const reservationResult = await reservation
-      expect(deletionResult).toMatchObject({ deleted: 1, eligible: 1 })
-      expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId }])
-      expect(
-        await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
-      ).toBeUndefined()
-      expect(reservationResult.error).toMatchObject({
-        message: 'EXECUTION_CANCELLATION_EXECUTION_MISSING',
+      const dry = await retention.deleteEligibleOutboxEvents(assessedAt, {
+        ...options,
+        dryRun: true,
       })
-      const orphanReceipts = await raceDatabase.application.execute(
-        sql`select command_key from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+      expect(dry.deleted).toBe(0)
+      expect(dry.eligible).toBeGreaterThanOrEqual(1)
+
+      const applied = await retention.deleteEligibleOutboxEvents(assessedAt, options)
+      expect(applied.deleted).toBeGreaterThanOrEqual(1)
+      const remaining = await isolated.application.execute(
+        sql`select id from outbox_events where id in (${settled}, ${young}, ${quarantined}, ${pending}, ${failed}) order by id`
       )
-      expect(orphanReceipts).toHaveLength(0)
-    } finally {
-      releaseOwnerLock()
-      await deletion?.catch(() => undefined)
-      await reservation?.catch(() => undefined)
-      try {
-        await raceDatabase.application.execute(
-          sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+      expect(remaining.map((row) => row.id)).toEqual(
+        [young, quarantined, pending, failed].toSorted()
+      )
+
+      // The consumer inbox is compacted, never removed: the row's
+      // (consumer, messageId) identity is what recognises a redelivery.
+      const consumer = 'm11-health-consumer'
+      const seedInbox = async (messageId, createdAt, extra = {}) => {
+        await isolated.application.execute(
+          sql`insert into inbox_messages (consumer, message_id, payload, revision, created_at, updated_at, deleted_at) values (${consumer}, ${messageId}, ${JSON.stringify({ deliveryKey: messageId })}::jsonb, 1, ${createdAt}::timestamptz, ${createdAt}::timestamptz, ${
+            extra.deletedAt === undefined ? null : extra.deletedAt
+          }::timestamptz)`
         )
-        await raceDatabase.application.execute(
-          sql`delete from executions where execution_id = ${executionId}`
-        )
-      } finally {
-        await raceDatabase.dispose()
       }
-    }
-  }, 60_000)
+      await seedInbox('sha256:settled-old', '2026-08-01T11:00:00.000Z')
+      await seedInbox('sha256:settled-young', recent)
+      await seedInbox('sha256:already-compacted', '2026-08-01T11:00:00.000Z', {
+        deletedAt: '2026-09-01T11:00:00.000Z',
+      })
 
-  test('execution retention keeps an owner whose latest attempt row is missing', async () => {
-    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD7'
-    const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FD7'
-    const request = {
-      ...ControlApiFixtures.executionAcceptance.request,
-      issuedAt: '2019-12-31T23:00:00.000Z',
-    }
-    const terminalAt = '2020-01-01T00:00:00.000Z'
-    await createExecutionOwner(isolated.application, request, executionId)
-    try {
-      await isolated.application.execute(
-        sql`update executions set state = 'completed', attempt_count = 1, latest_attempt_id = ${attemptId}, terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+      const swept = await retention.sweepEligibleMessaging(assessedAt, options)
+      expect(swept.compacted).toBeGreaterThanOrEqual(1)
+      const inboxRows = await isolated.application.execute(
+        sql`select message_id, payload, deleted_at from inbox_messages where consumer = ${consumer} order by message_id`
       )
-      const attempts = await isolated.application.execute(
-        sql`select count(*)::int as count from execution_attempts where execution_id = ${executionId}`
-      )
-      expect(attempts[0].count).toBe(0)
+      const byMessage = Object.fromEntries(inboxRows.map((row) => [row.message_id, row]))
+      // Identity kept, payload replaced, marked compacted.
+      expect(byMessage['sha256:settled-old']).toBeDefined()
+      expect(byMessage['sha256:settled-old'].payload).toEqual({ compacted: true, version: 1 })
+      expect(byMessage['sha256:settled-old'].deleted_at).not.toBeNull()
+      // Inside the window: untouched.
+      expect(byMessage['sha256:settled-young'].payload).toEqual({
+        deliveryKey: 'sha256:settled-young',
+      })
+      expect(byMessage['sha256:settled-young'].deleted_at).toBeNull()
 
+      // A second sweep has nothing left to compact.
+      const again = await retention.sweepEligibleMessaging(assessedAt, options)
+      expect(again.compacted).toBe(0)
+
+      const boundedOutbox = await seed('06', 'published', publishedAt)
+      await seedInbox('sha256:bounded-inbox', publishedAt)
       const journal = []
-      const result = await new PostgresExecutionRepository(
-        isolated.application
-      ).deleteEligibleExecutions(new Date('2020-01-03T00:00:00.000Z'), {
-        policyRetainMs: 1,
-        bound: 8,
-        dryRun: false,
+      const bounded = await retention.sweepEligibleMessaging(assessedAt, {
+        ...options,
+        bound: 1,
         journal: async (operations) => journal.push(...operations),
       })
-      expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
-      expect(journal).toEqual([])
-      expect(
-        await new PostgresExecutionRepository(isolated.application).getExecution(executionId)
-      ).toBeDefined()
-    } finally {
-      await isolated.application.execute(
-        sql`delete from executions where execution_id = ${executionId}`
+      expect(bounded).toMatchObject({
+        scanned: 1,
+        eligible: 1,
+        deleted: 1,
+        compacted: 0,
+        truncated: true,
+      })
+      expect(journal).toHaveLength(1)
+      const boundedOutboxRows = await isolated.application.execute(
+        sql`select id from outbox_events where id = ${boundedOutbox}`
       )
-    }
-  }, 60_000)
+      const boundedInboxRows = await isolated.application.execute(
+        sql`select payload, deleted_at from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
+      )
+      expect(boundedOutboxRows).toHaveLength(0)
+      expect(boundedInboxRows).toHaveLength(1)
+      expect(boundedInboxRows[0].payload).toEqual({ deliveryKey: 'sha256:bounded-inbox' })
+      expect(boundedInboxRows[0].deleted_at).toBeNull()
+      await isolated.application.execute(
+        sql`delete from inbox_messages where consumer = ${consumer} and message_id = 'sha256:bounded-inbox'`
+      )
+    },
+    integrationTestTimeout(60_000)
+  )
 
-  test('execution retention pins both delegation endpoints and posted usage ledger rows', async () => {
-    const now = new Date('2020-01-02T00:00:00.000Z')
-    const terminalAt = new Date('2020-01-01T00:00:00.000Z')
-    const request = {
-      ...ControlApiFixtures.executionAcceptance.request,
-      issuedAt: '2019-12-31T00:00:00.000Z',
-    }
-    const parentId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD4'
-    const childId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD5'
-    const usageId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD6'
-    for (const executionId of [parentId, childId, usageId]) {
+  test(
+    'deleteEligibleContextPackages respects plan pins and authoring commands',
+    async () => {
+      // A derived package: the shared fixtures are referenced by other tests and
+      // one of them is tampered on purpose, so this test mints its own coherent
+      // package (its own digest and id) from a parent fixture.
+      const parent = contextPackageSerializationFixtures.futurePi
+      const compiledAt = '2026-08-20T12:00:00.000Z'
+      const fixture = deriveContextPackage(parent, {
+        objective: 'retention deletion fixture',
+        allowedStateItemIds: [],
+        allowedArtifactIds: [],
+        budgets: parent.budgets,
+        successCriteria: parent.successCriteria,
+        returnContract: parent.returnContract,
+        compiledAt,
+      })
+      const packages = new PostgresContextPackageRepository(isolated.application)
+      await packages.put(parent)
+      await packages.put(fixture)
+      // A plan pin: the pin lives inside the plan JSON.
+      await isolated.application.execute(
+        sql`insert into execution_plans (execution_plan_id, content_digest, schema_version, workspace_id, project_id, task_id, agent_id, plan, compiled_at) values ('pln_retention_fixture', ${`sha256:${'c'.repeat(64)}`}, 1, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, 'tsk_retention_fixture', 'agt_retention_fixture', ${JSON.stringify({ contextPackage: { contextPackageId: fixture.contextPackageId } })}::jsonb, ${compiledAt}::timestamptz)`
+      )
+
+      const retention = new PostgresContextPackageRetention(isolated.application)
+      const now = new Date(Date.parse(compiledAt) + 2 * 24 * 60 * 60 * 1_000)
+      const options = { policyRetainMs: 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+
+      // Assertions are on this package, not on aggregate counts: the shared
+      // database also holds other tests' packages.
+      await retention.deleteEligibleContextPackages(now, options)
+      expect(await packages.get(fixture)).toBeDefined()
+
+      // An authoring command reference is a foreign key, so removing the pin
+      // still leaves the package unremovable until that row goes too.
+      await isolated.application.execute(
+        sql`delete from execution_plans where execution_plan_id = 'pln_retention_fixture'`
+      )
+      const delegation = retentionDelegationRecord({
+        delegationId: 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FA4',
+        childExecutionId: 'exe_01CRZ3NDEKTSV4RRFFQ69G5FA5',
+        parentExecutionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA1',
+        parentExecutionPlanDigest: `sha256:${'a'.repeat(64)}`,
+        childExecutionPlanId: 'pln_01CRZ3NDEKTSV4RRFFQ69G5FA2',
+        childExecutionPlanDigest: `sha256:${'b'.repeat(64)}`,
+        contextPackageId: fixture.contextPackageId,
+        contextPackageDigest: fixture.contentDigest,
+      })
+      await seedHistoricalDelegationPin(isolated.application, delegation)
+      await retention.deleteEligibleContextPackages(now, options)
+      expect(await packages.get(fixture)).toBeDefined()
+      await isolated.application
+        .delete(delegations)
+        .where(eq(delegations.delegationId, delegation.delegationId))
+
+      await isolated.application.execute(
+        sql`insert into context_authoring_commands (command_key, workspace_id, project_id, context_package_id, record) values (${'f'.repeat(64)}, ${fixture.projectState.workspaceId}, ${fixture.projectState.projectId}, ${fixture.contextPackageId}, ${JSON.stringify({ state: 'completed' })}::jsonb)`
+      )
+      await retention.deleteEligibleContextPackages(now, options)
+      expect(await packages.get(fixture)).toBeDefined()
+
+      // With both references gone the first pass starts a full post-reference window.
+      await isolated.application.execute(
+        sql`delete from context_authoring_commands where command_key = ${'f'.repeat(64)}`
+      )
+      await retention.deleteEligibleContextPackages(now, options)
+      expect(await packages.get(fixture)).toBeDefined()
+      await retention.deleteEligibleContextPackages(
+        new Date(now.getTime() + options.policyRetainMs + 1),
+        options
+      )
+      expect(await packages.get(fixture)).toBeUndefined()
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'deleteEligibleExecutions requires a terminal unreferenced execution',
+    async () => {
+      // The fixtures below are deliberately older than every other execution in
+      // this database, so a longer retention window keeps the pass from touching
+      // another test's fixtures while still covering these two.
+      const now = '2026-07-31T11:00:00.000Z'
+      await seedAcceptancePlan(isolated.application)
+      const commands = new PostgresCommandAcceptanceRepository(isolated.application)
+      const accept = (key, executionSuffix) =>
+        new CommandInboxService({
+          repository: commands,
+          executionIdFactory: () => `exe_${executionSuffix}`,
+          executionPlanValidator: { validate: async () => true },
+          now: () => now,
+        }).acceptExecution({
+          callerPrincipalId: 'svc_execution-retention',
+          operation: 'execution.accept',
+          commandId: `cmd_${executionSuffix}`,
+          requestId: `req_${executionSuffix}`,
+          idempotencyKey: key,
+          payloadHash: 'a'.repeat(64),
+          correlation: {
+            workspaceId: `wsp_${executionSuffix}`,
+            projectId: `prj_${executionSuffix}`,
+            taskId: `tsk_${executionSuffix}`,
+            agentId: `agt_${executionSuffix}`,
+          },
+          executionPlan: acceptancePlanReference,
+          receivedAt: now,
+          retentionExpiresAt: '2026-09-01T11:00:00.000Z',
+        })
+      const referenced = await accept('execution-retention-1', '01CRZ3NDEKTSV4RRFFQ69G5FFG')
+      const clean = await accept('execution-retention-2', '01CRZ3NDEKTSV4RRFFQ69G5FFH')
+      const receiptReferenced = await accept('execution-retention-3', '01CRZ3NDEKTSV4RRFFQ69G5FFJ')
+      const terminalAt = '2026-07-15T11:00:00.000Z'
+      for (const executionId of [
+        referenced.execution.executionId,
+        clean.execution.executionId,
+        receiptReferenced.execution.executionId,
+      ]) {
+        await isolated.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+        )
+      }
+      // An execution is the last class to become eligible: its acceptance record
+      // and its events both outlive it, so a bottom-up pass removes those first.
+      const remainingEvents = await isolated.application.execute(
+        sql`select count(*)::int as count from execution_events where execution_id = ${clean.execution.executionId}`
+      )
+      expect(remainingEvents[0].count).toBeGreaterThanOrEqual(0)
+      await isolated.application.execute(
+        sql`delete from command_inbox where execution_id = ${clean.execution.executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${clean.execution.executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from command_inbox where execution_id = ${receiptReferenced.execution.executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${receiptReferenced.execution.executionId}`
+      )
+      const cancellationKey = `${'9'.repeat(64)}`
+      const interactionKey = `${'a'.repeat(64)}`
+      const cancellationReceipt = {
+        request: {
+          ...ControlApiFixtures.executionCancellation.request,
+          workspaceId: receiptReferenced.execution.correlation.workspaceId,
+          projectId: receiptReferenced.execution.correlation.projectId,
+          idempotencyKey: 'execution-retention-cancellation-reference-1',
+          payload: { executionId: receiptReferenced.execution.executionId },
+        },
+        acceptedAt: '2026-07-15T11:00:00.000Z',
+      }
+      const interactionReceipt = {
+        request: {
+          ...ControlApiFixtures.interactionResponse.request,
+          workspaceId: receiptReferenced.execution.correlation.workspaceId,
+          projectId: receiptReferenced.execution.correlation.projectId,
+          idempotencyKey: 'execution-retention-interaction-reference-1',
+          payload: {
+            ...ControlApiFixtures.interactionResponse.request.payload,
+            executionId: receiptReferenced.execution.executionId,
+          },
+        },
+        acceptedAt: '2026-07-15T11:00:00.000Z',
+      }
+      await isolated.application.execute(
+        sql`insert into execution_cancellations (command_key, workspace_id, project_id, receipt, created_at) values (${cancellationKey}, ${cancellationReceipt.request.workspaceId}, ${cancellationReceipt.request.projectId}, ${JSON.stringify(cancellationReceipt)}::jsonb, ${now}::timestamptz)`
+      )
+      await isolated.application.execute(
+        sql`insert into interaction_commands (command_key, workspace_id, project_id, receipt, created_at) values (${interactionKey}, ${interactionReceipt.request.workspaceId}, ${interactionReceipt.request.projectId}, ${JSON.stringify(interactionReceipt)}::jsonb, ${now}::timestamptz)`
+      )
+
+      const repository = new PostgresExecutionRepository(isolated.application)
+      const assessedAt = new Date('2026-12-01T12:00:00.000Z')
+      const options = { policyRetainMs: 120 * 24 * 60 * 60 * 1_000, bound: 64, dryRun: false }
+      // Nothing references the clean execution any more.
+      const referenceProbe = await isolated.application.execute(
+        sql`select (select count(*)::int from command_inbox where execution_id = ${clean.execution.executionId}) as commands, (select count(*)::int from execution_events where execution_id = ${clean.execution.executionId}) as events, (select count(*)::int from execution_attempts where execution_id = ${clean.execution.executionId}) as attempts, (select count(*)::int from reconciliation_checkpoints where execution_id = ${clean.execution.executionId}) as checkpoints`
+      )
+      expect(referenceProbe[0]).toMatchObject({
+        commands: 0,
+        events: 0,
+        attempts: 0,
+        checkpoints: 0,
+      })
+
+      const applied = await repository.deleteEligibleExecutions(assessedAt, options)
+      expect(applied.deleted, JSON.stringify(applied)).toBe(1)
+      expect(await repository.getExecution(clean.execution.executionId)).toBeUndefined()
+      // The referenced execution survives because its acceptance record does.
+      expect(await repository.getExecution(referenced.execution.executionId)).toBeDefined()
+
+      const retained = await repository.deleteEligibleExecutions(assessedAt, {
+        ...options,
+        dryRun: true,
+      })
+      expect(retained).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 2 } })
+
+      // Once its acceptance record goes too, it becomes eligible on a later pass.
+      await isolated.application.execute(
+        sql`delete from command_inbox where execution_id = ${referenced.execution.executionId}`
+      )
+      await isolated.application.execute(
+        sql`delete from execution_events where execution_id = ${referenced.execution.executionId}`
+      )
+      const receiptHeld = await repository.deleteEligibleExecutions(assessedAt, options)
+      expect(receiptHeld).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 1 } })
+      expect(await repository.getExecution(referenced.execution.executionId)).toBeUndefined()
+      expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeDefined()
+      await isolated.application.execute(
+        sql`delete from execution_cancellations where command_key = ${cancellationKey}`
+      )
+      await isolated.application.execute(
+        sql`delete from interaction_commands where command_key = ${interactionKey}`
+      )
+      const final = await repository.deleteEligibleExecutions(assessedAt, options)
+      expect(final.deleted).toBe(1)
+      expect(await repository.getExecution(receiptReferenced.execution.executionId)).toBeUndefined()
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'execution deletion preserves an owner when a cancellation receipt commits before its lock',
+    async () => {
+      const raceDatabase = await createMigratedIsolatedDatabase()
+      const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD3'
+      const request = {
+        ...ControlApiFixtures.executionAcceptance.request,
+        operation: 'execution.cancel',
+        idempotencyKey: 'execution-delete-receipt-race-01',
+        payload: { executionId },
+      }
+      let announceClaim
+      let releaseClaim
+      const claimStarted = new Promise((resolve) => {
+        announceClaim = resolve
+      })
+      const claimGate = new Promise((resolve) => {
+        releaseClaim = resolve
+      })
+      // This callback runs inside the opened transaction, before it locks the owner.
+      let pauseBeforeOwnerLock = true
+      const claimDatabase = new Proxy(raceDatabase.application, {
+        get(target, property, receiver) {
+          const value = Reflect.get(target, property, receiver)
+          if (property === 'transaction') {
+            return async (operation, ...args) => {
+              return value.call(
+                target,
+                async (transaction) => {
+                  if (pauseBeforeOwnerLock) {
+                    pauseBeforeOwnerLock = false
+                    announceClaim()
+                    await claimGate
+                  }
+                  return operation(transaction)
+                },
+                ...args
+              )
+            }
+          }
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      const journal = []
+      let deletion
+      try {
+        await createExecutionOwner(raceDatabase.application, request, executionId)
+        await raceDatabase.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
+        )
+        deletion = new PostgresExecutionRepository(claimDatabase).deleteEligibleExecutions(
+          new Date('2026-09-26T00:00:00.000Z'),
+          {
+            policyRetainMs: 1,
+            bound: 8,
+            dryRun: false,
+            journal: async (operations) => journal.push(...operations),
+          }
+        )
+        await claimStarted
+        const reserved = await new PostgresExecutionCancellationRepository(
+          raceDatabase.application
+        ).reserve({ request })
+        expect(reserved.inserted).toBe(true)
+        releaseClaim()
+        const result = await deletion
+        expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+        expect(journal).toEqual([])
+        expect(
+          await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
+        ).toBeDefined()
+      } finally {
+        releaseClaim()
+        await deletion?.catch(() => undefined)
+        try {
+          await raceDatabase.application.execute(
+            sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+          )
+          await raceDatabase.application.execute(
+            sql`delete from executions where execution_id = ${executionId}`
+          )
+        } finally {
+          await raceDatabase.dispose()
+        }
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'execution deletion wins a cancellation reservation that waits behind its owner lock',
+    async () => {
+      const raceDatabase = await createMigratedIsolatedDatabase()
+      const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD5'
+      const request = {
+        ...ControlApiFixtures.executionAcceptance.request,
+        operation: 'execution.cancel',
+        idempotencyKey: 'execution-delete-before-cancel-reserve-01',
+        payload: { executionId },
+      }
+      let announceOwnerLock
+      let releaseOwnerLock
+      let announceReservationQuery
+      const ownerLockAcquired = new Promise((resolve) => {
+        announceOwnerLock = resolve
+      })
+      const ownerLockGate = new Promise((resolve) => {
+        releaseOwnerLock = resolve
+      })
+      const reservationQueryStarted = new Promise((resolve) => {
+        announceReservationQuery = resolve
+      })
+      let pausedOwnerLock = false
+      let startedKeyShareQuery = false
+      const deletionDatabase = instrumentTransactionSelects(raceDatabase.application, {
+        onQueryResolved: async (mode) => {
+          if (mode === 'update' && !pausedOwnerLock) {
+            pausedOwnerLock = true
+            announceOwnerLock()
+            await ownerLockGate
+          }
+        },
+      })
+      const reservationDatabase = instrumentTransactionSelects(raceDatabase.application, {
+        onQueryStarted: (mode) => {
+          if (mode === 'key share' && !startedKeyShareQuery) {
+            startedKeyShareQuery = true
+            announceReservationQuery()
+          }
+        },
+      })
+      let deletion
+      let reservation
+      const journal = []
+      try {
+        await createExecutionOwner(raceDatabase.application, request, executionId)
+        await raceDatabase.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz, updated_at = ${'2026-09-25T00:00:00.000Z'}::timestamptz where execution_id = ${executionId}`
+        )
+
+        deletion = new PostgresExecutionRepository(deletionDatabase).deleteEligibleExecutions(
+          new Date('2026-09-26T00:00:00.000Z'),
+          {
+            policyRetainMs: 1,
+            bound: 8,
+            dryRun: false,
+            journal: async (operations) => journal.push(...operations),
+          }
+        )
+        await ownerLockAcquired
+        reservation = new PostgresExecutionCancellationRepository(reservationDatabase)
+          .reserve({ request })
+          .then(
+            (value) => ({ value }),
+            (error) => ({ error })
+          )
+        await reservationQueryStarted
+        await waitForBlockedExecutionKeyShare(raceDatabase.application)
+        releaseOwnerLock()
+
+        const deletionResult = await deletion
+        const reservationResult = await reservation
+        expect(deletionResult).toMatchObject({ deleted: 1, eligible: 1 })
+        expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId }])
+        expect(
+          await new PostgresExecutionRepository(raceDatabase.application).getExecution(executionId)
+        ).toBeUndefined()
+        expect(reservationResult.error).toMatchObject({
+          message: 'EXECUTION_CANCELLATION_EXECUTION_MISSING',
+        })
+        const orphanReceipts = await raceDatabase.application.execute(
+          sql`select command_key from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+        )
+        expect(orphanReceipts).toHaveLength(0)
+      } finally {
+        releaseOwnerLock()
+        await deletion?.catch(() => undefined)
+        await reservation?.catch(() => undefined)
+        try {
+          await raceDatabase.application.execute(
+            sql`delete from execution_cancellations where receipt -> 'request' -> 'payload' ->> 'executionId' = ${executionId}`
+          )
+          await raceDatabase.application.execute(
+            sql`delete from executions where execution_id = ${executionId}`
+          )
+        } finally {
+          await raceDatabase.dispose()
+        }
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'execution retention keeps an owner whose latest attempt row is missing',
+    async () => {
+      const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD7'
+      const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FD7'
+      const request = {
+        ...ControlApiFixtures.executionAcceptance.request,
+        issuedAt: '2019-12-31T23:00:00.000Z',
+      }
+      const terminalAt = '2020-01-01T00:00:00.000Z'
       await createExecutionOwner(isolated.application, request, executionId)
-      await isolated.application.execute(
-        sql`update executions set state = 'completed', terminal_at = ${terminalAt.toISOString()}::timestamptz, updated_at = ${terminalAt.toISOString()}::timestamptz where execution_id = ${executionId}`
-      )
-    }
-    const delegationId = 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FD4'
-    const delegationDigest = `sha256:${'c'.repeat(64)}`
-    await isolated.application.insert(delegations).values({
-      delegationId,
-      parentExecutionId: parentId,
-      childExecutionId: childId,
-      state: 'completed',
-      revision: 1,
-      inputDigest: delegationDigest,
-      record: { parentExecutionId: parentId, childExecutionId: childId },
-      acceptedAt: terminalAt,
-      updatedAt: terminalAt,
-    })
-    await new PostgresUsageLedgerRepository(isolated.application).append({
-      entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FD6',
-      sequence: 1,
-      workspaceId: request.workspaceId,
-      executionId: usageId,
-      kind: 'settlement',
-      source: { sourceId: 'retention-fixture', idempotencyKey: 'execution-retention-ledger-pin' },
-      fundingSource: 'hq_managed',
-      quantity: { unit: 'tokens', value: 0 },
-      currency: 'USD',
-      costMicrounits: 0,
-      costExact: true,
-      recordedAt: terminalAt.toISOString(),
-    })
+      try {
+        await isolated.application.execute(
+          sql`update executions set state = 'completed', attempt_count = 1, latest_attempt_id = ${attemptId}, terminal_at = ${terminalAt}::timestamptz, updated_at = ${terminalAt}::timestamptz where execution_id = ${executionId}`
+        )
+        const attempts = await isolated.application.execute(
+          sql`select count(*)::int as count from execution_attempts where execution_id = ${executionId}`
+        )
+        expect(attempts[0].count).toBe(0)
 
-    try {
-      const result = await new PostgresExecutionRepository(
-        isolated.application
-      ).deleteEligibleExecutions(now, { policyRetainMs: 1, bound: 64, dryRun: false })
-      expect(result.scanned).toBe(3)
-      expect(result.retainedByReason).toEqual({ reference_pending: 3 })
-      for (const executionId of [parentId, childId, usageId])
+        const journal = []
+        const result = await new PostgresExecutionRepository(
+          isolated.application
+        ).deleteEligibleExecutions(new Date('2020-01-03T00:00:00.000Z'), {
+          policyRetainMs: 1,
+          bound: 8,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        })
+        expect(result).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 1 } })
+        expect(journal).toEqual([])
         expect(
           await new PostgresExecutionRepository(isolated.application).getExecution(executionId)
         ).toBeDefined()
-    } finally {
-      await isolated.application
-        .delete(usageLedgerEntries)
-        .where(eq(usageLedgerEntries.executionId, usageId))
-      await isolated.application
-        .delete(delegations)
-        .where(eq(delegations.delegationId, delegationId))
-      await isolated.application.execute(
-        sql`delete from executions where execution_id in (${parentId}, ${childId}, ${usageId})`
-      )
-    }
-  }, 60_000)
-
-  test('public durable usage service records and replays a real PostgreSQL lifecycle', async () => {
-    const database = isolated
-    const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
-    const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FE9'
-    const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FE9'
-    const request = ControlApiFixtures.executionAcceptance.request
-    const workspaceId = request.workspaceId
-    const source = (idempotencyKey) => ({ sourceId: 'postgres-lifecycle', idempotencyKey })
-    const createLedger = () =>
-      new DurableUsageLedger({
-        store: new PostgresDurableUsageStore(database.application),
-      })
-    try {
-      await timedIntegrationPhase('seed', () =>
-        createExecutionOwner(database.application, request, executionId, attemptId)
-      )
-      const ledger = createLedger()
-      const opening = {
-        workspaceId,
-        executionId,
-        currency: 'USD',
-        maximumMicrounits: 1000,
-        maximumTokens: 100,
-        source: source('open'),
+      } finally {
+        await isolated.application.execute(
+          sql`delete from executions where execution_id = ${executionId}`
+        )
       }
-      const opened = await ledger.openBudget(opening)
-      await ledger.reserve({
-        workspaceId,
-        executionId,
-        attemptId,
-        reservationKey: 'model',
-        maximumMicrounits: 800,
-        maximumTokens: 80,
-        source: source('reserve'),
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'execution retention pins both delegation endpoints and posted usage ledger rows',
+    async () => {
+      const now = new Date('2020-01-02T00:00:00.000Z')
+      const terminalAt = new Date('2020-01-01T00:00:00.000Z')
+      const request = {
+        ...ControlApiFixtures.executionAcceptance.request,
+        issuedAt: '2019-12-31T00:00:00.000Z',
+      }
+      const parentId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD4'
+      const childId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD5'
+      const usageId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FD6'
+      for (const executionId of [parentId, childId, usageId]) {
+        await createExecutionOwner(isolated.application, request, executionId)
+        await isolated.application.execute(
+          sql`update executions set state = 'completed', terminal_at = ${terminalAt.toISOString()}::timestamptz, updated_at = ${terminalAt.toISOString()}::timestamptz where execution_id = ${executionId}`
+        )
+      }
+      const delegationId = 'dlg_01CRZ3NDEKTSV4RRFFQ69G5FD4'
+      const delegationDigest = `sha256:${'c'.repeat(64)}`
+      await isolated.application.insert(delegations).values({
+        delegationId,
+        parentExecutionId: parentId,
+        childExecutionId: childId,
+        state: 'completed',
+        revision: 1,
+        inputDigest: delegationDigest,
+        record: { parentExecutionId: parentId, childExecutionId: childId },
+        acceptedAt: terminalAt,
+        updatedAt: terminalAt,
       })
-      const chargeInput = {
-        workspaceId,
-        executionId,
-        attemptId,
-        reservationKey: 'model',
-        kind: 'model_usage',
-        quantity: { unit: 'tokens', value: 30 },
-        costMicrounits: 250,
+      await new PostgresUsageLedgerRepository(isolated.application).append({
+        entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FD6',
+        sequence: 1,
+        workspaceId: request.workspaceId,
+        executionId: usageId,
+        kind: 'settlement',
+        source: { sourceId: 'retention-fixture', idempotencyKey: 'execution-retention-ledger-pin' },
         fundingSource: 'hq_managed',
-        source: source('charge'),
-      }
-      const charged = await ledger.charge(chargeInput)
-      const settleInput = {
-        workspaceId,
-        executionId,
-        reservationKey: 'model',
-        source: source('settle'),
-      }
-      const settled = await ledger.settle(settleInput)
-      const finalizeInput = { workspaceId, executionId, source: source('finalize') }
-      const finalized = await ledger.finalizeBudget(finalizeInput)
-      const entries = await ledger.entries(workspaceId, executionId)
-      const recreated = createLedger()
-      expect(await recreated.openBudget(opening)).toEqual(opened)
-      expect(await recreated.charge(chargeInput)).toEqual(charged)
-      expect(await recreated.settle(settleInput)).toEqual(settled)
-      expect(await recreated.finalizeBudget(finalizeInput)).toEqual(finalized)
-      expect(await recreated.entries(workspaceId, executionId)).toEqual(entries)
-      expect(await recreated.summary(workspaceId, executionId)).toMatchObject({
-        spentMicrounits: 250,
-        spentTokens: 30,
-        reservedMicrounits: 0,
-        reservedTokens: 0,
-        settled: true,
+        quantity: { unit: 'tokens', value: 0 },
+        currency: 'USD',
+        costMicrounits: 0,
+        costExact: true,
+        recordedAt: terminalAt.toISOString(),
       })
-      await expect(recreated.charge({ ...chargeInput, costMicrounits: 251 })).rejects.toThrow(
-        'IDEMPOTENCY_CONFLICT'
-      )
-    } finally {
-      if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
-    }
-  }, 60_000)
 
-  test('execution retention pins durable usage scalar and payload funding references', async () => {
-    const database = isolated
-    const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
-    const ids = Array.from({ length: 8 }, (_, index) => `exe_01CRZ3NDEKTSV4RRFFQ69G5FE${index}`)
-    const [owner, parent, payloadOwner, payloadParent, child, receiptOwner, rawParent, clean] = ids
-    const terminalAt = '2020-01-01T00:00:00.000Z'
-    const request = {
-      ...ControlApiFixtures.executionAcceptance.request,
-      issuedAt: '2019-12-31T00:00:00.000Z',
-    }
-    try {
-      let state
-      await timedIntegrationPhase('seed', async () => {
-        for (const id of ids) {
-          await createExecutionOwner(database.application, request, id)
-          await database.application.execute(
-            sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
-          )
-        }
-        state = {
-          schemaVersion: 1,
-          workspaceId: request.workspaceId,
-          executionId: payloadOwner,
-          parentExecutionId: payloadParent,
-          currency: 'USD',
-          maximumMicrounits: 100,
-          maximumTokens: 100,
-          status: 'open',
-          nextSequence: 1,
-          reservations: [
-            {
-              reservationKey: 'child-funding',
-              childExecutionId: child,
-              maximumMicrounits: 10,
-              maximumTokens: 10,
-              chargedMicrounits: 0,
-              chargedTokens: 0,
-              status: 'open',
-            },
-          ],
-        }
-        // Valid JSON identities deliberately disagree with indexes: either side
-        // must pin its positively identified owner, even when recovery rejects it.
-        await database.application.insert(usageBudgetStates).values({
-          executionId: owner,
-          workspaceId: request.workspaceId,
-          parentExecutionId: parent,
-          schemaVersion: 1,
-          state,
+      try {
+        const result = await new PostgresExecutionRepository(
+          isolated.application
+        ).deleteEligibleExecutions(now, { policyRetainMs: 1, bound: 64, dryRun: false })
+        expect(result.scanned).toBe(3)
+        expect(result.retainedByReason).toEqual({ reference_pending: 3 })
+        for (const executionId of [parentId, childId, usageId])
+          expect(
+            await new PostgresExecutionRepository(isolated.application).getExecution(executionId)
+          ).toBeDefined()
+      } finally {
+        await isolated.application
+          .delete(usageLedgerEntries)
+          .where(eq(usageLedgerEntries.executionId, usageId))
+        await isolated.application
+          .delete(delegations)
+          .where(eq(delegations.delegationId, delegationId))
+        await isolated.application.execute(
+          sql`delete from executions where execution_id in (${parentId}, ${childId}, ${usageId})`
+        )
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'public durable usage service records and replays a real PostgreSQL lifecycle',
+    async () => {
+      const database = isolated
+      const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
+      const executionId = 'exe_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+      const attemptId = 'att_01CRZ3NDEKTSV4RRFFQ69G5FE9'
+      const request = ControlApiFixtures.executionAcceptance.request
+      const workspaceId = request.workspaceId
+      const source = (idempotencyKey) => ({ sourceId: 'postgres-lifecycle', idempotencyKey })
+      const createLedger = () =>
+        new DurableUsageLedger({
+          store: new PostgresDurableUsageStore(database.application),
         })
-        await database.application.insert(usageOperationReceipts).values({
-          executionId: owner,
-          workspaceId: request.workspaceId,
-          idempotencyKey: 'retention-receipt-pin',
-          fingerprint: `sha256:${'a'.repeat(64)}`,
-          schemaVersion: 1,
-          receipt: {
+      try {
+        await timedIntegrationPhase('seed', () =>
+          createExecutionOwner(database.application, request, executionId, attemptId)
+        )
+        const ledger = createLedger()
+        const opening = {
+          workspaceId,
+          executionId,
+          currency: 'USD',
+          maximumMicrounits: 1000,
+          maximumTokens: 100,
+          source: source('open'),
+        }
+        const opened = await ledger.openBudget(opening)
+        await ledger.reserve({
+          workspaceId,
+          executionId,
+          attemptId,
+          reservationKey: 'model',
+          maximumMicrounits: 800,
+          maximumTokens: 80,
+          source: source('reserve'),
+        })
+        const chargeInput = {
+          workspaceId,
+          executionId,
+          attemptId,
+          reservationKey: 'model',
+          kind: 'model_usage',
+          quantity: { unit: 'tokens', value: 30 },
+          costMicrounits: 250,
+          fundingSource: 'hq_managed',
+          source: source('charge'),
+        }
+        const charged = await ledger.charge(chargeInput)
+        const settleInput = {
+          workspaceId,
+          executionId,
+          reservationKey: 'model',
+          source: source('settle'),
+        }
+        const settled = await ledger.settle(settleInput)
+        const finalizeInput = { workspaceId, executionId, source: source('finalize') }
+        const finalized = await ledger.finalizeBudget(finalizeInput)
+        const entries = await ledger.entries(workspaceId, executionId)
+        const recreated = createLedger()
+        expect(await recreated.openBudget(opening)).toEqual(opened)
+        expect(await recreated.charge(chargeInput)).toEqual(charged)
+        expect(await recreated.settle(settleInput)).toEqual(settled)
+        expect(await recreated.finalizeBudget(finalizeInput)).toEqual(finalized)
+        expect(await recreated.entries(workspaceId, executionId)).toEqual(entries)
+        expect(await recreated.summary(workspaceId, executionId)).toMatchObject({
+          spentMicrounits: 250,
+          spentTokens: 30,
+          reservedMicrounits: 0,
+          reservedTokens: 0,
+          settled: true,
+        })
+        await expect(recreated.charge({ ...chargeInput, costMicrounits: 251 })).rejects.toThrow(
+          'IDEMPOTENCY_CONFLICT'
+        )
+      } finally {
+        if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
+    'execution retention pins durable usage scalar and payload funding references',
+    async () => {
+      const database = isolated
+      const bodyStartedAt = integrationTimingEnabled ? performance.now() : undefined
+      const ids = Array.from({ length: 8 }, (_, index) => `exe_01CRZ3NDEKTSV4RRFFQ69G5FE${index}`)
+      const [owner, parent, payloadOwner, payloadParent, child, receiptOwner, rawParent, clean] =
+        ids
+      const terminalAt = '2020-01-01T00:00:00.000Z'
+      const request = {
+        ...ControlApiFixtures.executionAcceptance.request,
+        issuedAt: '2019-12-31T00:00:00.000Z',
+      }
+      try {
+        let state
+        await timedIntegrationPhase('seed', async () => {
+          for (const id of ids) {
+            await createExecutionOwner(database.application, request, id)
+            await database.application.execute(
+              sql`update executions set state = 'completed', terminal_at = ${terminalAt}::timestamptz where execution_id = ${id}`
+            )
+          }
+          state = {
             schemaVersion: 1,
             workspaceId: request.workspaceId,
-            executionId: receiptOwner,
+            executionId: payloadOwner,
+            parentExecutionId: payloadParent,
+            currency: 'USD',
+            maximumMicrounits: 100,
+            maximumTokens: 100,
+            status: 'open',
+            nextSequence: 1,
+            reservations: [
+              {
+                reservationKey: 'child-funding',
+                childExecutionId: child,
+                maximumMicrounits: 10,
+                maximumTokens: 10,
+                chargedMicrounits: 0,
+                chargedTokens: 0,
+                status: 'open',
+              },
+            ],
+          }
+          // Valid JSON identities deliberately disagree with indexes: either side
+          // must pin its positively identified owner, even when recovery rejects it.
+          await database.application.insert(usageBudgetStates).values({
+            executionId: owner,
+            workspaceId: request.workspaceId,
+            parentExecutionId: parent,
+            schemaVersion: 1,
+            state,
+          })
+          await database.application.insert(usageOperationReceipts).values({
+            executionId: owner,
+            workspaceId: request.workspaceId,
             idempotencyKey: 'retention-receipt-pin',
             fingerprint: `sha256:${'a'.repeat(64)}`,
-            result: {},
-          },
+            schemaVersion: 1,
+            receipt: {
+              schemaVersion: 1,
+              workspaceId: request.workspaceId,
+              executionId: receiptOwner,
+              idempotencyKey: 'retention-receipt-pin',
+              fingerprint: `sha256:${'a'.repeat(64)}`,
+              result: {},
+            },
+          })
+          await new PostgresUsageLedgerRepository(database.application).append({
+            entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
+            executionId: owner,
+            parentExecutionId: rawParent,
+            workspaceId: request.workspaceId,
+            sequence: 1,
+            kind: 'settlement',
+            source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
+            fundingSource: 'hq_managed',
+            quantity: { unit: 'tokens', value: 0 },
+            currency: 'USD',
+            costMicrounits: 0,
+            costExact: true,
+            recordedAt: terminalAt,
+          })
         })
-        await new PostgresUsageLedgerRepository(database.application).append({
-          entryId: 'usg_01CRZ3NDEKTSV4RRFFQ69G5FE0',
-          executionId: owner,
-          parentExecutionId: rawParent,
-          workspaceId: request.workspaceId,
-          sequence: 1,
-          kind: 'settlement',
-          source: { sourceId: 'retention', idempotencyKey: 'retention-raw-parent' },
-          fundingSource: 'hq_managed',
-          quantity: { unit: 'tokens', value: 0 },
-          currency: 'USD',
-          costMicrounits: 0,
-          costExact: true,
-          recordedAt: terminalAt,
+        const repository = new PostgresExecutionRepository(database.application)
+        const now = new Date('2020-01-03T00:00:00.000Z')
+        const journal = []
+        const options = {
+          policyRetainMs: 1,
+          bound: 64,
+          dryRun: false,
+          journal: async (operations) => journal.push(...operations),
+        }
+        await database.application.update(usageBudgetStates).set({
+          state: { ...state, reservations: { damaged: true } },
         })
-      })
-      const repository = new PostgresExecutionRepository(database.application)
-      const now = new Date('2020-01-03T00:00:00.000Z')
-      const journal = []
-      const options = {
-        policyRetainMs: 1,
-        bound: 64,
-        dryRun: false,
-        journal: async (operations) => journal.push(...operations),
+        const damaged = await repository.deleteEligibleExecutions(now, options)
+        expect(damaged).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 8 } })
+        expect(journal).toEqual([])
+        await database.application.update(usageBudgetStates).set({ state })
+        const valid = await repository.deleteEligibleExecutions(now, options)
+        expect(valid).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 7 } })
+        expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId: clean }])
+        for (const id of ids.slice(0, 7)) expect(await repository.getExecution(id)).toBeDefined()
+        expect(await repository.getExecution(clean)).toBeUndefined()
+      } finally {
+        if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
       }
-      await database.application.update(usageBudgetStates).set({
-        state: { ...state, reservations: { damaged: true } },
-      })
-      const damaged = await repository.deleteEligibleExecutions(now, options)
-      expect(damaged).toMatchObject({ deleted: 0, retainedByReason: { reference_pending: 8 } })
-      expect(journal).toEqual([])
-      await database.application.update(usageBudgetStates).set({ state })
-      const valid = await repository.deleteEligibleExecutions(now, options)
-      expect(valid).toMatchObject({ deleted: 1, retainedByReason: { reference_pending: 7 } })
-      expect(journal).toEqual([{ kind: 'postgres.deleteExecution', executionId: clean }])
-      for (const id of ids.slice(0, 7)) expect(await repository.getExecution(id)).toBeDefined()
-      expect(await repository.getExecution(clean)).toBeUndefined()
-    } finally {
-      if (bodyStartedAt !== undefined) recordIntegrationTiming('body', bodyStartedAt)
-    }
-    // Eight funding-reference variants and their retention assertions took
-    // 73s against real Neon; keep this compound body bounded at 90s.
-  }, 90_000)
+      // Eight funding-reference variants and their retention assertions took
+      // 73s against real Neon; keep this compound body bounded at 90s.
+    },
+    integrationTestTimeout(90_000)
+  )
 
   test('reapplying the journal restores rejection identity on a snapshot without it', async () => {
     const suffix = '01CRZ3NDEKTSV4RRFFQ69G5FFE'

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.13.2](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.13.1...workflow-worker-v1.13.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **testing:** preserve local budgets and forward remote timeouts ([#849](https://github.com/adea-ai/control-plane/issues/849)) ([8b564a9](https://github.com/adea-ai/control-plane/commit/8b564a9ee7535780a688f20789a34dac3573fd98))
+
+## [1.13.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.13.0...workflow-worker-v1.13.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.12.0...workflow-worker-v1.13.0) (2026-10-02)
+
+
+### Features
+
+* **local:** execute pinned graph tools with durable approval and reconciliation ([#845](https://github.com/adea-ai/control-plane/issues/845)) ([9d01be9](https://github.com/adea-ai/control-plane/commit/9d01be92933db5a0b02a9b9def73da2abae41078))
+
 ## [1.12.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.11.4...workflow-worker-v1.12.0) (2026-10-01)
 
 
