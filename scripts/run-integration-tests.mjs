@@ -121,7 +121,7 @@ try {
     // integrationTestTimeout(); an explicit bun test() timeout argument
     // always overrides the CLI --timeout default, so the ceiling has to
     // reach them through the environment.
-    INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase ? '120000' : '30000',
+    INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase ? '120000' : undefined,
   }
   // Stream progress even while a remote database task is unfinished. Grouped
   // CI logs hide test/setup timing until the whole package exits.

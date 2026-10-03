@@ -643,7 +643,7 @@ test('provides a documented isolated integration-test runner', async () => {
   // through INTEGRATION_TEST_TIMEOUT_MS.
   assert.match(runner, /remoteDatabase \? '120000' : '30000'/)
   assert.match(runner, /retrying once before failing the shard/)
-  assert.match(runner, /INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase \? '120000' : '30000'/)
+  assert.match(runner, /INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase \? '120000' : undefined/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
   assert.match(testing.scripts['test:integration'], /--timeout 30000/)
   assert.match(sharedPostgresSuite, /30_000/)

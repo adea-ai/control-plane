@@ -3678,776 +3678,791 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await isolated.application.select().from(runtimeEventReceipts)).toHaveLength(5)
   })
 
-  test('persists versioned health ingestion and freshness across service restarts', async () => {
-    const repository = new PostgresRuntimeConnectionRepository(isolated.application)
-    const registry = new RuntimeConnectionRegistry(repository)
-    const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
-    await registry.register({
-      runtimeConnectionId,
-      identityDigest: `sha256:${'f'.repeat(64)}`,
-      connectionType: 'managed_local',
-      runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      location: 'local_device',
-      opaqueNativeRef: 'nref_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      adapterVersion: '1.0.0',
-      driverVersion: '1.0.0',
-      harnessVersion: '1.0.0',
-      status: 'connected',
-      health: 'healthy',
-      capabilities: [],
-      compatibilityState: 'untested',
-      limitations: [],
-      lastDiscoveredAt: '2026-08-24T21:00:00.000Z',
-      lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
-      lastHealthCheckAt: '2026-08-24T21:00:00.000Z',
-    })
-    const policy = {
-      adapterMajor: 1,
-      driverMajor: 1,
-      harnessMajor: 1,
-      protocolMajor: 1,
-      healthTtlMs: 60_000,
-      maximumCapabilityTtlMs: 60_000,
-    }
-    const report = {
-      runtimeConnectionId,
-      reportSequence: 1,
-      observedAt: '2026-08-24T21:01:00.000Z',
-      discoveredAt: '2026-08-24T21:00:30.000Z',
-      nodeStatus: 'online',
-      runtimeState: 'healthy',
-      versions: {
-        adapter: '1.0.0',
-        driver: '1.0.0',
-        harness: '1.0.0',
-        protocol: '1.0.0',
-      },
-      capabilitySnapshot: {
-        version: 1,
+  test(
+    'persists versioned health ingestion and freshness across service restarts',
+    async () => {
+      const repository = new PostgresRuntimeConnectionRepository(isolated.application)
+      const registry = new RuntimeConnectionRegistry(repository)
+      const runtimeConnectionId = 'rtc_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
+      await registry.register({
+        runtimeConnectionId,
+        identityDigest: `sha256:${'f'.repeat(64)}`,
+        connectionType: 'managed_local',
+        runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        runtimeDefinitionId: 'rtd_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        location: 'local_device',
+        opaqueNativeRef: 'nref_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        adapterVersion: '1.0.0',
+        driverVersion: '1.0.0',
+        harnessVersion: '1.0.0',
+        status: 'connected',
+        health: 'healthy',
+        capabilities: [],
+        compatibilityState: 'untested',
+        limitations: [],
+        lastDiscoveredAt: '2026-08-24T21:00:00.000Z',
+        lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
+        lastHealthCheckAt: '2026-08-24T21:00:00.000Z',
+      })
+      const policy = {
+        adapterMajor: 1,
+        driverMajor: 1,
+        harnessMajor: 1,
+        protocolMajor: 1,
+        healthTtlMs: 60_000,
+        maximumCapabilityTtlMs: 60_000,
+      }
+      const report = {
+        runtimeConnectionId,
+        reportSequence: 1,
         observedAt: '2026-08-24T21:01:00.000Z',
-        ttlMs: 60_000,
-        verification: 'verified',
-        source: 'adapter_driver_negotiation',
-        capabilities: [{ name: 'stream.output', support: 'supported' }],
-      },
-      limitations: [],
-      diagnostics: [],
-    }
-    const readPending = () =>
-      isolated.application
-        .select()
-        .from(outboxEvents)
-        .where(eq(outboxEvents.aggregateId, runtimeConnectionId))
-    const failing = new PostgresRuntimeHealthIngestionService(
-      {
-        transaction: (operation) =>
-          isolated.application.transaction((transaction) =>
-            operation(
-              new Proxy(transaction, {
-                get(target, property) {
-                  if (property === 'insert')
-                    return (table) => {
-                      if (table === outboxEvents) throw new Error('OUTBOX_UNAVAILABLE')
-                      return target.insert(table)
-                    }
-                  const value = Reflect.get(target, property)
-                  return typeof value === 'function' ? value.bind(target) : value
-                },
-              })
-            )
-          ),
-      },
-      policy
-    )
-    await expect(failing.ingest(report, '2026-08-24T21:01:10.000Z')).rejects.toThrow(
-      'OUTBOX_UNAVAILABLE'
-    )
-    expect((await registry.get(runtimeConnectionId)).lastHealthReportSequence).toBeUndefined()
-    expect(await readPending()).toHaveLength(0)
-    const ingestion = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    const healthy = await ingestion.ingest(report, '2026-08-24T21:01:10.000Z')
-    expect(healthy.connection).toMatchObject({
-      availabilityState: 'healthy',
-      protocolVersion: '1.0.0',
-      capabilitySnapshotVersion: 1,
-      capabilityVerification: 'verified',
-      lastHealthReportSequence: 1,
-      lastDiscoveredAt: '2026-08-24T21:00:30.000Z',
-    })
-    expect(await readPending()).toHaveLength(1)
+        discoveredAt: '2026-08-24T21:00:30.000Z',
+        nodeStatus: 'online',
+        runtimeState: 'healthy',
+        versions: {
+          adapter: '1.0.0',
+          driver: '1.0.0',
+          harness: '1.0.0',
+          protocol: '1.0.0',
+        },
+        capabilitySnapshot: {
+          version: 1,
+          observedAt: '2026-08-24T21:01:00.000Z',
+          ttlMs: 60_000,
+          verification: 'verified',
+          source: 'adapter_driver_negotiation',
+          capabilities: [{ name: 'stream.output', support: 'supported' }],
+        },
+        limitations: [],
+        diagnostics: [],
+      }
+      const readPending = () =>
+        isolated.application
+          .select()
+          .from(outboxEvents)
+          .where(eq(outboxEvents.aggregateId, runtimeConnectionId))
+      const failing = new PostgresRuntimeHealthIngestionService(
+        {
+          transaction: (operation) =>
+            isolated.application.transaction((transaction) =>
+              operation(
+                new Proxy(transaction, {
+                  get(target, property) {
+                    if (property === 'insert')
+                      return (table) => {
+                        if (table === outboxEvents) throw new Error('OUTBOX_UNAVAILABLE')
+                        return target.insert(table)
+                      }
+                    const value = Reflect.get(target, property)
+                    return typeof value === 'function' ? value.bind(target) : value
+                  },
+                })
+              )
+            ),
+        },
+        policy
+      )
+      await expect(failing.ingest(report, '2026-08-24T21:01:10.000Z')).rejects.toThrow(
+        'OUTBOX_UNAVAILABLE'
+      )
+      expect((await registry.get(runtimeConnectionId)).lastHealthReportSequence).toBeUndefined()
+      expect(await readPending()).toHaveLength(0)
+      const ingestion = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
+      const healthy = await ingestion.ingest(report, '2026-08-24T21:01:10.000Z')
+      expect(healthy.connection).toMatchObject({
+        availabilityState: 'healthy',
+        protocolVersion: '1.0.0',
+        capabilitySnapshotVersion: 1,
+        capabilityVerification: 'verified',
+        lastHealthReportSequence: 1,
+        lastDiscoveredAt: '2026-08-24T21:00:30.000Z',
+      })
+      expect(await readPending()).toHaveLength(1)
 
-    const restarted = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    expect(await restarted.ingest(report, '2026-08-24T21:01:20.000Z')).toMatchObject({
-      applied: false,
-      reason: 'replayed_report',
-    })
-    expect(await readPending()).toHaveLength(1)
-    await expect(
-      failing.refresh({
+      const restarted = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
+      expect(await restarted.ingest(report, '2026-08-24T21:01:20.000Z')).toMatchObject({
+        applied: false,
+        reason: 'replayed_report',
+      })
+      expect(await readPending()).toHaveLength(1)
+      await expect(
+        failing.refresh({
+          runtimeConnectionId,
+          nodeStatus: 'offline',
+          evaluatedAt: '2026-08-24T21:02:01.000Z',
+        })
+      ).rejects.toThrow('OUTBOX_UNAVAILABLE')
+      expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+      expect(await readPending()).toHaveLength(1)
+      const stale = await restarted.refresh({
         runtimeConnectionId,
         nodeStatus: 'offline',
         evaluatedAt: '2026-08-24T21:02:01.000Z',
       })
-    ).rejects.toThrow('OUTBOX_UNAVAILABLE')
-    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
-    expect(await readPending()).toHaveLength(1)
-    const stale = await restarted.refresh({
-      runtimeConnectionId,
-      nodeStatus: 'offline',
-      evaluatedAt: '2026-08-24T21:02:01.000Z',
-    })
-    expect(stale).toMatchObject({
-      applied: true,
-      connection: { availabilityState: 'stale', status: 'unavailable' },
-      assessment: {
-        nodeStatus: 'offline',
-        executable: false,
-        diagnostics: expect.arrayContaining(['CAPABILITY_SNAPSHOT_STALE', 'NODE_OFFLINE']),
-      },
-    })
-    const pending = await readPending()
-    expect(pending).toHaveLength(2)
-    expect(pending.every((row) => row.status === 'pending')).toBe(true)
-    expect(pending.map((row) => row.payload.currentState).toSorted()).toEqual(['healthy', 'stale'])
-    expect(
-      await restarted.refresh({
-        runtimeConnectionId,
-        nodeStatus: 'offline',
-        evaluatedAt: '2026-08-24T21:02:02.000Z',
+      expect(stale).toMatchObject({
+        applied: true,
+        connection: { availabilityState: 'stale', status: 'unavailable' },
+        assessment: {
+          nodeStatus: 'offline',
+          executable: false,
+          diagnostics: expect.arrayContaining(['CAPABILITY_SNAPSHOT_STALE', 'NODE_OFFLINE']),
+        },
       })
-    ).toMatchObject({ reason: 'already_current' })
-    expect(await readPending()).toHaveLength(2)
-    const readApplied = () =>
-      isolated.application
-        .select()
-        .from(outboxEvents)
-        .where(eq(outboxEvents.aggregateType, 'm11-health-consumer-effect'))
-    const deliveries = []
-    const envelopes = []
-    let exitedConsumer
-    let loseAcknowledgement = true
-    const transport = {
-      async deliver(event) {
-        deliveries.push(event.deliveryKey)
-        envelopes.push(structuredClone(event))
-        if (loseAcknowledgement) {
-          loseAcknowledgement = false
-          const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
-          applicationUrl.pathname = `/${isolated.name}`
-          exitedConsumer = spawnSync(
-            process.execPath,
-            [
-              '-e',
-              `
+      const pending = await readPending()
+      expect(pending).toHaveLength(2)
+      expect(pending.every((row) => row.status === 'pending')).toBe(true)
+      expect(pending.map((row) => row.payload.currentState).toSorted()).toEqual([
+        'healthy',
+        'stale',
+      ])
+      expect(
+        await restarted.refresh({
+          runtimeConnectionId,
+          nodeStatus: 'offline',
+          evaluatedAt: '2026-08-24T21:02:02.000Z',
+        })
+      ).toMatchObject({ reason: 'already_current' })
+      expect(await readPending()).toHaveLength(2)
+      const readApplied = () =>
+        isolated.application
+          .select()
+          .from(outboxEvents)
+          .where(eq(outboxEvents.aggregateType, 'm11-health-consumer-effect'))
+      const deliveries = []
+      const envelopes = []
+      let exitedConsumer
+      let loseAcknowledgement = true
+      const transport = {
+        async deliver(event) {
+          deliveries.push(event.deliveryKey)
+          envelopes.push(structuredClone(event))
+          if (loseAcknowledgement) {
+            loseAcknowledgement = false
+            const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+            applicationUrl.pathname = `/${isolated.name}`
+            exitedConsumer = spawnSync(
+              process.execPath,
+              [
+                '-e',
+                `
             import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
             import { acceptRuntimeHealthFixture } from ${JSON.stringify(new URL('./runtime-health-consumer-fixture.mjs', import.meta.url).href)};
             const connection = createPostgresConnection({ role: 'application', url: process.env.TEST_APPLICATION_URL });
             await acceptRuntimeHealthFixture(connection.database, JSON.parse(process.env.TEST_HEALTH_EVENT));
             process.exit(73);
           `,
-            ],
-            {
-              cwd: fileURLToPath(new URL('..', import.meta.url)),
-              env: {
-                PATH: process.env.PATH,
-                TEST_APPLICATION_URL: applicationUrl.toString(),
-                TEST_HEALTH_EVENT: JSON.stringify(event),
-              },
-              encoding: 'utf8',
-              timeout: 10_000,
-            }
-          )
-          throw new Error('ACK_LOST')
-        }
-        return acceptRuntimeHealthFixture(isolated.application, event)
-      },
-    }
-    let deliveryNow = Date.now()
-    const deliveryClock = () => new Date(deliveryNow)
-    const dispatcher = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      transport,
-      deliveryClock
-    )
-    const firstDispatch = dispatcher.dispatchBatch(1)
-    expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
-    expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(exitedConsumer.error).toBeUndefined()
-    expect(exitedConsumer.signal).toBeNull()
-    expect(exitedConsumer.status).toBe(73)
-    expect(exitedConsumer.stdout).toBe('')
-    expect(await readApplied()).toHaveLength(1)
-    expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
-    const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      transport,
-      deliveryClock
-    )
-    expect((await readPending()).filter((row) => row.status === 'failed')[0].nextAttemptAt).toEqual(
-      new Date(deliveryNow + 1_000)
-    )
-    // The other pending event remains eligible, but the failed event is not due yet.
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 999
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 1
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    expect(await readApplied()).toHaveLength(2)
-    const duplicateReceipts = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        acceptRuntimeHealthFixture(isolated.application, envelopes[0])
+              ],
+              {
+                cwd: fileURLToPath(new URL('..', import.meta.url)),
+                env: {
+                  PATH: process.env.PATH,
+                  TEST_APPLICATION_URL: applicationUrl.toString(),
+                  TEST_HEALTH_EVENT: JSON.stringify(event),
+                },
+                encoding: 'utf8',
+                timeout: 10_000,
+              }
+            )
+            throw new Error('ACK_LOST')
+          }
+          return acceptRuntimeHealthFixture(isolated.application, event)
+        },
+      }
+      let deliveryNow = Date.now()
+      const deliveryClock = () => new Date(deliveryNow)
+      const dispatcher = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        transport,
+        deliveryClock
       )
-    )
-    expect(
-      duplicateReceipts.every((receipt) => receipt.acceptedDeliveryKey === envelopes[0].deliveryKey)
-    ).toBe(true)
-    await expect(
-      acceptRuntimeHealthFixture(isolated.application, {
-        ...envelopes[0],
-        change: { ...envelopes[0].change, diagnostics: ['NODE_OFFLINE'] },
+      const firstDispatch = dispatcher.dispatchBatch(1)
+      expect(dispatcher.dispatchBatch(1)).toBe(firstDispatch)
+      expect(await firstDispatch).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(exitedConsumer.error).toBeUndefined()
+      expect(exitedConsumer.signal).toBeNull()
+      expect(exitedConsumer.status).toBe(73)
+      expect(exitedConsumer.stdout).toBe('')
+      expect(await readApplied()).toHaveLength(1)
+      expect((await readPending()).filter((row) => row.status === 'failed')).toHaveLength(1)
+      const recreatedDispatcher = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        transport,
+        deliveryClock
+      )
+      expect(
+        (await readPending()).filter((row) => row.status === 'failed')[0].nextAttemptAt
+      ).toEqual(new Date(deliveryNow + 1_000))
+      // The other pending event remains eligible, but the failed event is not due yet.
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
       })
-    ).rejects.toThrow('HEALTH_DELIVERY_KEY_CONFLICT')
-    expect(await readApplied()).toHaveLength(2)
-    expect(deliveries).toHaveLength(3)
-    expect(new Set(deliveries).size).toBe(2)
-    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    for (const limit of [0, -1, 1.5, 129])
-      expect(() => recreatedDispatcher.dispatchBatch(limit)).toThrow(
-        'INVALID_RUNTIME_HEALTH_DISPATCH_LIMIT'
+      deliveryNow += 999
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      deliveryNow += 1
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
+      })
+      expect(await readApplied()).toHaveLength(2)
+      const duplicateReceipts = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          acceptRuntimeHealthFixture(isolated.application, envelopes[0])
+        )
       )
-    await restarted.ingest(
-      {
-        ...report,
-        reportSequence: 2,
-        observedAt: '2026-08-24T21:03:00.000Z',
-        capabilitySnapshot: {
-          ...report.capabilitySnapshot,
-          version: 2,
+      expect(
+        duplicateReceipts.every(
+          (receipt) => receipt.acceptedDeliveryKey === envelopes[0].deliveryKey
+        )
+      ).toBe(true)
+      await expect(
+        acceptRuntimeHealthFixture(isolated.application, {
+          ...envelopes[0],
+          change: { ...envelopes[0].change, diagnostics: ['NODE_OFFLINE'] },
+        })
+      ).rejects.toThrow('HEALTH_DELIVERY_KEY_CONFLICT')
+      expect(await readApplied()).toHaveLength(2)
+      expect(deliveries).toHaveLength(3)
+      expect(new Set(deliveries).size).toBe(2)
+      expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      for (const limit of [0, -1, 1.5, 129])
+        expect(() => recreatedDispatcher.dispatchBatch(limit)).toThrow(
+          'INVALID_RUNTIME_HEALTH_DISPATCH_LIMIT'
+        )
+      await restarted.ingest(
+        {
+          ...report,
+          reportSequence: 2,
           observedAt: '2026-08-24T21:03:00.000Z',
+          capabilitySnapshot: {
+            ...report.capabilitySnapshot,
+            version: 2,
+            observedAt: '2026-08-24T21:03:00.000Z',
+          },
         },
-      },
-      '2026-08-24T21:03:01.000Z'
-    )
-    let deliverySignal
-    const hung = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        deliver(_event, signal) {
-          deliverySignal = signal
-          return new Promise(() => {})
+        '2026-08-24T21:03:01.000Z'
+      )
+      let deliverySignal
+      const hung = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          deliver(_event, signal) {
+            deliverySignal = signal
+            return new Promise(() => {})
+          },
         },
-      },
-      deliveryClock,
-      10
-    )
-    expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(deliverySignal.aborted).toBe(true)
-    deliveryNow += 1_000
-    const wrongAck = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        async deliver() {
-          return { acceptedDeliveryKey: 'wrong-key' }
+        deliveryClock,
+        10
+      )
+      expect(await hung.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(deliverySignal.aborted).toBe(true)
+      deliveryNow += 1_000
+      const wrongAck = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          async deliver() {
+            return { acceptedDeliveryKey: 'wrong-key' }
+          },
         },
-      },
-      deliveryClock
-    )
-    expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    deliveryNow += 2_000
-    expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
-      delivered: 1,
-      failed: 0,
-      conflicts: 0,
-    })
-    expect(await readApplied()).toHaveLength(3)
-    expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
-    await isolated.application.insert(outboxEvents).values({
-      aggregateType: 'runtime_connection',
-      aggregateId: runtimeConnectionId,
-      eventType: 'runtime.availability_changed',
-      payload: envelopes[0].change,
-    })
-    const exhausted = new PostgresRuntimeHealthEventDispatcher(
-      isolated.application,
-      {
-        async deliver() {
-          throw new Error('OFFLINE')
-        },
-      },
-      deliveryClock,
-      10_000,
-      { maximumAttempts: 2 }
-    )
-    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    deliveryNow += 1_000
-    expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
-    const quarantined = (await readPending()).filter((row) => row.quarantinedAt !== null)
-    expect(quarantined).toHaveLength(1)
-    expect(quarantined[0]).toMatchObject({
-      status: 'failed',
-      attempts: 2,
-      nextAttemptAt: null,
-      quarantinedAt: new Date(deliveryNow),
-    })
-    deliveryNow += 86_400_000
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 0,
-      conflicts: 0,
-    })
-    const deliveryCount = deliveries.length
-    await isolated.application.insert(outboxEvents).values([
-      {
+        deliveryClock
+      )
+      expect(await wrongAck.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      deliveryNow += 2_000
+      expect(await recreatedDispatcher.dispatchBatch(1)).toEqual({
+        delivered: 1,
+        failed: 0,
+        conflicts: 0,
+      })
+      expect(await readApplied()).toHaveLength(3)
+      expect((await readPending()).every((row) => row.status === 'published')).toBe(true)
+      await isolated.application.insert(outboxEvents).values({
         aggregateType: 'runtime_connection',
         aggregateId: runtimeConnectionId,
         eventType: 'runtime.availability_changed',
-        payload: {},
-      },
-      {
-        aggregateType: 'runtime_connection',
-        aggregateId: 'wrong-runtime',
-        eventType: 'runtime.availability_changed',
         payload: envelopes[0].change,
-      },
-    ])
-    expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
-      delivered: 0,
-      failed: 2,
-      conflicts: 0,
-    })
-    expect(deliveries).toHaveLength(deliveryCount)
-    for (const retry of [
-      { baseDelayMs: 0 },
-      { baseDelayMs: 60_001 },
-      { maximumAttempts: 0 },
-      { maximumAttempts: 101 },
-      { maximumAttempts: 1.5 },
-    ])
-      expect(
-        () =>
-          new PostgresRuntimeHealthEventDispatcher(
-            isolated.application,
-            transport,
-            deliveryClock,
-            10_000,
-            retry
-          )
-      ).toThrow('INVALID_RUNTIME_HEALTH_RETRY_POLICY')
-    for (const timeout of [0, -1, 1.5, 60_001])
-      expect(
-        () =>
-          new PostgresRuntimeHealthEventDispatcher(
-            isolated.application,
-            transport,
-            undefined,
-            timeout
-          )
-      ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
-    const beforeDisappearance = await registry.get(runtimeConnectionId)
-    const removal = {
-      runtimeConnectionId,
-      runtimeNodeRefId: beforeDisappearance.runtimeNodeRefId,
-      expectedVersion: beforeDisappearance.version,
-      observedAt: '2026-08-24T21:04:00.000Z',
-      expiresAt: '2026-08-24T21:05:00.000Z',
-    }
-    const eventsBeforeRemoval = (await readPending()).length
-    await expect(failing.markDisappeared(removal)).rejects.toThrow('OUTBOX_UNAVAILABLE')
-    expect(await registry.get(runtimeConnectionId)).toEqual(beforeDisappearance)
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval)
-    await expect(
-      restarted.markDisappeared({ ...removal, runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAK' })
-    ).rejects.toThrow('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
-    const disappeared = await restarted.markDisappeared(removal)
-    expect(disappeared).toMatchObject({
-      availabilityState: 'offline',
-      diagnostics: ['RUNTIME_DISAPPEARED'],
-    })
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
-    const replay = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
-    expect(
-      await replay.markDisappeared({ ...removal, expectedVersion: disappeared.version })
-    ).toEqual(disappeared)
-    expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
-    expect(
-      (await readPending()).filter((row) =>
-        row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
+      })
+      const exhausted = new PostgresRuntimeHealthEventDispatcher(
+        isolated.application,
+        {
+          async deliver() {
+            throw new Error('OFFLINE')
+          },
+        },
+        deliveryClock,
+        10_000,
+        { maximumAttempts: 2 }
       )
-    ).toHaveLength(1)
-    const inventoryIdentity = makeRuntimeInventoryCredentialFixtures(
-      removal.runtimeNodeRefId,
-      'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
-    )
-    await isolated.withMigrationDatabase(async (database) => {
-      const identityRepositoryWriter = new PostgresRuntimeNodeIdentityRepository(database)
-      await identityRepositoryWriter.registerVerificationKey(inventoryIdentity.key)
-      for (const credential of inventoryIdentity.credentials)
-        await identityRepositoryWriter.insertIssuedCredential(credential)
-    })
-    const inventoryIdentityRepository = new PostgresRuntimeNodeIdentityRepository(
-      isolated.application
-    )
-    for (const credential of inventoryIdentity.credentials)
+      expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      deliveryNow += 1_000
+      expect(await exhausted.dispatchBatch(1)).toEqual({ delivered: 0, failed: 1, conflicts: 0 })
+      const quarantined = (await readPending()).filter((row) => row.quarantinedAt !== null)
+      expect(quarantined).toHaveLength(1)
+      expect(quarantined[0]).toMatchObject({
+        status: 'failed',
+        attempts: 2,
+        nextAttemptAt: null,
+        quarantinedAt: new Date(deliveryNow),
+      })
+      deliveryNow += 86_400_000
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 0,
+        conflicts: 0,
+      })
+      const deliveryCount = deliveries.length
+      await isolated.application.insert(outboxEvents).values([
+        {
+          aggregateType: 'runtime_connection',
+          aggregateId: runtimeConnectionId,
+          eventType: 'runtime.availability_changed',
+          payload: {},
+        },
+        {
+          aggregateType: 'runtime_connection',
+          aggregateId: 'wrong-runtime',
+          eventType: 'runtime.availability_changed',
+          payload: envelopes[0].change,
+        },
+      ])
+      expect(await recreatedDispatcher.dispatchBatch(128)).toEqual({
+        delivered: 0,
+        failed: 2,
+        conflicts: 0,
+      })
+      expect(deliveries).toHaveLength(deliveryCount)
+      for (const retry of [
+        { baseDelayMs: 0 },
+        { baseDelayMs: 60_001 },
+        { maximumAttempts: 0 },
+        { maximumAttempts: 101 },
+        { maximumAttempts: 1.5 },
+      ])
+        expect(
+          () =>
+            new PostgresRuntimeHealthEventDispatcher(
+              isolated.application,
+              transport,
+              deliveryClock,
+              10_000,
+              retry
+            )
+        ).toThrow('INVALID_RUNTIME_HEALTH_RETRY_POLICY')
+      for (const timeout of [0, -1, 1.5, 60_001])
+        expect(
+          () =>
+            new PostgresRuntimeHealthEventDispatcher(
+              isolated.application,
+              transport,
+              undefined,
+              timeout
+            )
+        ).toThrow('INVALID_RUNTIME_HEALTH_DISPATCH_TIMEOUT')
+      const beforeDisappearance = await registry.get(runtimeConnectionId)
+      const removal = {
+        runtimeConnectionId,
+        runtimeNodeRefId: beforeDisappearance.runtimeNodeRefId,
+        expectedVersion: beforeDisappearance.version,
+        observedAt: '2026-08-24T21:04:00.000Z',
+        expiresAt: '2026-08-24T21:05:00.000Z',
+      }
+      const eventsBeforeRemoval = (await readPending()).length
+      await expect(failing.markDisappeared(removal)).rejects.toThrow('OUTBOX_UNAVAILABLE')
+      expect(await registry.get(runtimeConnectionId)).toEqual(beforeDisappearance)
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval)
+      await expect(
+        restarted.markDisappeared({
+          ...removal,
+          runtimeNodeRefId: 'rnr_01ARZ3NDEKTSV4RRFFQ69G5FAK',
+        })
+      ).rejects.toThrow('RUNTIME_DISAPPEARANCE_SCOPE_MISMATCH')
+      const disappeared = await restarted.markDisappeared(removal)
+      expect(disappeared).toMatchObject({
+        availabilityState: 'offline',
+        diagnostics: ['RUNTIME_DISAPPEARED'],
+      })
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+      const replay = new PostgresRuntimeHealthIngestionService(isolated.application, policy)
       expect(
-        await inventoryIdentityRepository.consumeCredential(
-          credential.credentialId,
-          credential.revocationVersion,
+        await replay.markDisappeared({ ...removal, expectedVersion: disappeared.version })
+      ).toEqual(disappeared)
+      expect(await readPending()).toHaveLength(eventsBeforeRemoval + 1)
+      expect(
+        (await readPending()).filter((row) =>
+          row.payload.diagnostics?.includes('RUNTIME_DISAPPEARED')
+        )
+      ).toHaveLength(1)
+      const inventoryIdentity = makeRuntimeInventoryCredentialFixtures(
+        removal.runtimeNodeRefId,
+        'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ'
+      )
+      await isolated.withMigrationDatabase(async (database) => {
+        const identityRepositoryWriter = new PostgresRuntimeNodeIdentityRepository(database)
+        await identityRepositoryWriter.registerVerificationKey(inventoryIdentity.key)
+        for (const credential of inventoryIdentity.credentials)
+          await identityRepositoryWriter.insertIssuedCredential(credential)
+      })
+      const inventoryIdentityRepository = new PostgresRuntimeNodeIdentityRepository(
+        isolated.application
+      )
+      for (const credential of inventoryIdentity.credentials)
+        expect(
+          await inventoryIdentityRepository.consumeCredential(
+            credential.credentialId,
+            credential.revocationVersion,
+            new Date()
+          )
+        ).toBe('consumed')
+
+      const inventoryScope = {
+        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+        runtimeNodeRefId: removal.runtimeNodeRefId,
+        credentialFence: {
+          credentialId: inventoryIdentity.credentials[0].credentialId,
+          revocationVersion: inventoryIdentity.credentials[0].revocationVersion,
+        },
+        channel: {
+          nodeId: removal.runtimeNodeRefId,
+          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
+          gatewayInstanceId: 'inventory-gateway',
+          connectionId: 'inventory-connection',
+          channelGeneration: 1,
+          protocolVersion: { major: 1, minor: 6 },
+          connectedAt: '2026-08-24T21:00:00.000Z',
+          lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
+        },
+      }
+      const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
+      expect(
+        (await inventoryOwnership.claim(inventoryScope.channel, inventoryScope.credentialFence))
+          .accepted
+      ).toBe(true)
+      const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
+      const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
+        isolated.application
+      )
+      const discovery = new PostgresRuntimeDiscoveryRepository(isolated.application)
+      const beforeAtomic = await registry.get(runtimeConnectionId)
+      const eventCount = (await readPending()).length
+      const projection = {
+        ...runtimeDiscoveryProjection(),
+        runtimeConnectionId,
+        runtimeDefinitionId: beforeAtomic.runtimeDefinitionId,
+        node: { ...runtimeDiscoveryProjection().node, runtimeNodeRefId: removal.runtimeNodeRefId },
+        observedAt: '2026-08-24T21:06:00.000Z',
+      }
+      const applyInventory = async (ports) => {
+        await ports.health.ingest(
+          {
+            ...report,
+            reportSequence: 3,
+            observedAt: '2026-08-24T21:06:00.000Z',
+            capabilitySnapshot: {
+              ...report.capabilitySnapshot,
+              version: 3,
+              observedAt: '2026-08-24T21:06:00.000Z',
+            },
+          },
+          '2026-08-24T21:06:00.000Z'
+        )
+        await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
+        expect(
+          await ports.checkpoints.compareAndSet(undefined, {
+            workspaceId: inventoryScope.workspaceId,
+            runtimeNodeRefId: inventoryScope.runtimeNodeRefId,
+            snapshotVersion: 1,
+            snapshotDigest: `sha256:${'a'.repeat(64)}`,
+            observedAt: projection.observedAt,
+            activeRuntimeRefs: [beforeAtomic.opaqueNativeRef],
+            revision: 1,
+          })
+        ).toBe(true)
+      }
+      await expect(
+        unit.run(inventoryScope, async (ports) => {
+          await applyInventory(ports)
+          throw new Error('INVENTORY_COMMIT_FAILURE')
+        })
+      ).rejects.toThrow('INVENTORY_COMMIT_FAILURE')
+      expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+      expect(await readPending()).toHaveLength(eventCount)
+      expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+      expect(
+        await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+      ).toBeUndefined()
+      for (const timeout of [0, -1, 30_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(
+          () =>
+            new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy, {
+              transactionTimeoutMs: timeout,
+            })
+        ).toThrow('Invalid inventory transactionTimeoutMs')
+      }
+      for (const stall of ['idle', 'query']) {
+        let finished
+        let wrote = false
+        let rejectionCode = 'UNKNOWN'
+        const startedAt = performance.now()
+        const settled = new Promise((resolve) => {
+          finished = resolve
+        })
+        const timeoutDatabase = {
+          transaction: (operation) =>
+            isolated.application.transaction(async (transaction) => {
+              try {
+                const result = await operation(transaction)
+                if (stall === 'query') await transaction.execute(sql`select pg_sleep(11)`)
+                return result
+              } finally {
+                finished()
+              }
+            }),
+        }
+        // Use the real 10-second production budget. A 500 ms test override can
+        // expire during normal remote writes, before reaching the injected stall.
+        const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy)
+        let phase = 'timeout'
+        try {
+          await rejects(
+            bounded.run(inventoryScope, async (ports) => {
+              await applyInventory(ports)
+              wrote = true
+              if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 11_000))
+            }),
+            (error) => {
+              for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
+                if (typeof cause.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(cause.code))
+                  rejectionCode = cause.code
+              }
+              return true
+            }
+          )
+          await settled
+          if (!wrote)
+            throw new Error(
+              `INVENTORY_TIMEOUT_BEFORE_WRITES:${rejectionCode}:${Math.round(performance.now() - startedAt)}ms`
+            )
+          expect(wrote).toBe(true)
+          phase = 'registry'
+          expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
+          phase = 'outbox'
+          expect(await readPending()).toHaveLength(eventCount)
+          phase = 'checkpoint'
+          expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
+          phase = 'projection'
+          expect(
+            await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
+          ).toBeUndefined()
+          phase = 'heartbeat'
+          expect(
+            await inventoryOwnership.heartbeat(
+              inventoryScope.channel,
+              inventoryScope.credentialFence
+            )
+          ).toBe(true)
+        } catch (error) {
+          throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
+        }
+      }
+      await unit.run(inventoryScope, applyInventory)
+      expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
+      expect(await readPending()).toHaveLength(eventCount + 1)
+      expect(await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)).toEqual(
+        projection
+      )
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy).run(
+            inventoryScope,
+            async (ports) => {
+              const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+              if (
+                !(await ports.checkpoints.compareAndSet(checkpoint.revision, {
+                  ...checkpoint,
+                  revision: checkpoint.revision + 1,
+                  snapshotVersion: checkpoint.snapshotVersion + 1,
+                }))
+              )
+                throw new Error('INVENTORY_SERIALIZATION_FAILED')
+            }
+          )
+        )
+      )
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
+      await unit.run(inventoryScope, async () => {
+        await isolated.application.transaction(async (transaction) => {
+          const lock = await transaction.execute(
+            sql`select pg_try_advisory_xact_lock(hashtextextended(${`runtime-channel:${inventoryScope.runtimeNodeRefId}`}, 0)) as acquired`
+          )
+          expect(lock[0].acquired).toBe(false)
+        })
+      })
+
+      const revocationFenceScope = inventoryScope
+      const revocationWriteEntered = createIntegrationBarrier()
+      const holdRevocationWrite = createIntegrationBarrier()
+      const revocationWrite = unit.run(revocationFenceScope, async (ports) => {
+        const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+        expect(
+          await ports.checkpoints.compareAndSet(checkpoint.revision, {
+            ...checkpoint,
+            revision: checkpoint.revision + 1,
+            snapshotVersion: checkpoint.snapshotVersion + 1,
+          })
+        ).toBe(true)
+        revocationWriteEntered.release()
+        await holdRevocationWrite.promise
+      })
+      await revocationWriteEntered.promise
+      let revocationFinished = false
+      const revoke = isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database)
+          .revokeCredential(inventoryIdentity.credentials[0].credentialId, new Date())
+          .then((result) => {
+            revocationFinished = true
+            return result
+          })
+      )
+      try {
+        await isolated.waitForBlockedTransaction()
+        expect(revocationFinished).toBe(false)
+      } finally {
+        holdRevocationWrite.release()
+      }
+      await revocationWrite
+      expect((await revoke).revocationVersion).toBe(2)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+      let revokedFenceCallbackReached = false
+      await expect(
+        unit.run(revocationFenceScope, async () => {
+          revokedFenceCallbackReached = true
+        })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(revokedFenceCallbackReached).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
+
+      const retirementFenceScope = {
+        ...inventoryScope,
+        credentialFence: {
+          credentialId: inventoryIdentity.credentials[1].credentialId,
+          revocationVersion: inventoryIdentity.credentials[1].revocationVersion,
+        },
+      }
+      const retirementWriteEntered = createIntegrationBarrier()
+      const holdRetirementWrite = createIntegrationBarrier()
+      const retirementWrite = unit.run(retirementFenceScope, async (ports) => {
+        const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
+        expect(
+          await ports.checkpoints.compareAndSet(checkpoint.revision, {
+            ...checkpoint,
+            revision: checkpoint.revision + 1,
+            snapshotVersion: checkpoint.snapshotVersion + 1,
+          })
+        ).toBe(true)
+        retirementWriteEntered.release()
+        await holdRetirementWrite.promise
+      })
+      await retirementWriteEntered.promise
+      let retirementFinished = false
+      const retire = isolated.withMigrationDatabase((database) =>
+        new PostgresRuntimeNodeIdentityRepository(database)
+          .retireVerificationKey(inventoryIdentity.key.keyId, 'retired')
+          .then((result) => {
+            retirementFinished = true
+            return result
+          })
+      )
+      try {
+        await isolated.waitForBlockedTransaction()
+        expect(retirementFinished).toBe(false)
+      } finally {
+        holdRetirementWrite.release()
+      }
+      await retirementWrite
+      expect(await retire).toBe(true)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+      let retiredKeyFenceCallbackReached = false
+      await expect(
+        unit.run(retirementFenceScope, async () => {
+          retiredKeyFenceCallbackReached = true
+        })
+      ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
+      expect(retiredKeyFenceCallbackReached).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+
+      await expect(
+        unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
+          throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
+        })
+      ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
+      await expect(
+        unit.run(
+          { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
+          async () => {
+            throw new Error('WRONG_CHANNEL_CALLBACK_REACHED')
+          }
+        )
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
+      const replacementIdentity = makeRuntimeInventoryCredentialFixtures(
+        inventoryScope.runtimeNodeRefId,
+        inventoryScope.workspaceId
+      )
+      await isolated.withMigrationDatabase(async (database) => {
+        const writer = new PostgresRuntimeNodeIdentityRepository(database)
+        await writer.registerVerificationKey(replacementIdentity.key)
+        await writer.insertIssuedCredential(replacementIdentity.credentials[0])
+      })
+      const replacementCredential = replacementIdentity.credentials[0]
+      expect(
+        await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
+          replacementCredential.credentialId,
+          replacementCredential.revocationVersion,
           new Date()
         )
       ).toBe('consumed')
-
-    const inventoryScope = {
-      workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-      runtimeNodeRefId: removal.runtimeNodeRefId,
-      credentialFence: {
-        credentialId: inventoryIdentity.credentials[0].credentialId,
-        revocationVersion: inventoryIdentity.credentials[0].revocationVersion,
-      },
-      channel: {
-        nodeId: removal.runtimeNodeRefId,
-        workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAJ',
-        gatewayInstanceId: 'inventory-gateway',
-        connectionId: 'inventory-connection',
-        channelGeneration: 1,
-        protocolVersion: { major: 1, minor: 6 },
-        connectedAt: '2026-08-24T21:00:00.000Z',
-        lastHeartbeatAt: '2026-08-24T21:00:00.000Z',
-      },
-    }
-    const inventoryOwnership = new PostgresRuntimeChannelOwnershipRepository(isolated.application)
-    expect(
-      (await inventoryOwnership.claim(inventoryScope.channel, inventoryScope.credentialFence))
-        .accepted
-    ).toBe(true)
-    const unit = new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy)
-    const inventoryCheckpoints = new PostgresRuntimeInventoryCheckpointRepository(
-      isolated.application
-    )
-    const discovery = new PostgresRuntimeDiscoveryRepository(isolated.application)
-    const beforeAtomic = await registry.get(runtimeConnectionId)
-    const eventCount = (await readPending()).length
-    const projection = {
-      ...runtimeDiscoveryProjection(),
-      runtimeConnectionId,
-      runtimeDefinitionId: beforeAtomic.runtimeDefinitionId,
-      node: { ...runtimeDiscoveryProjection().node, runtimeNodeRefId: removal.runtimeNodeRefId },
-      observedAt: '2026-08-24T21:06:00.000Z',
-    }
-    const applyInventory = async (ports) => {
-      await ports.health.ingest(
-        {
-          ...report,
-          reportSequence: 3,
-          observedAt: '2026-08-24T21:06:00.000Z',
-          capabilitySnapshot: {
-            ...report.capabilitySnapshot,
-            version: 3,
-            observedAt: '2026-08-24T21:06:00.000Z',
-          },
-        },
-        '2026-08-24T21:06:00.000Z'
-      )
-      await ports.projections.putRuntimeConnection(inventoryScope.workspaceId, projection)
       expect(
-        await ports.checkpoints.compareAndSet(undefined, {
-          workspaceId: inventoryScope.workspaceId,
-          runtimeNodeRefId: inventoryScope.runtimeNodeRefId,
-          snapshotVersion: 1,
-          snapshotDigest: `sha256:${'a'.repeat(64)}`,
-          observedAt: projection.observedAt,
-          activeRuntimeRefs: [beforeAtomic.opaqueNativeRef],
-          revision: 1,
-        })
-      ).toBe(true)
-    }
-    await expect(
-      unit.run(inventoryScope, async (ports) => {
-        await applyInventory(ports)
-        throw new Error('INVENTORY_COMMIT_FAILURE')
-      })
-    ).rejects.toThrow('INVENTORY_COMMIT_FAILURE')
-    expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
-    expect(await readPending()).toHaveLength(eventCount)
-    expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
-    expect(
-      await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
-    ).toBeUndefined()
-    for (const timeout of [0, -1, 30_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(
-        () =>
-          new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy, {
-            transactionTimeoutMs: timeout,
+        (
+          await inventoryOwnership.claim(replacement, {
+            credentialId: replacementCredential.credentialId,
+            revocationVersion: replacementCredential.revocationVersion,
           })
-      ).toThrow('Invalid inventory transactionTimeoutMs')
-    }
-    for (const stall of ['idle', 'query']) {
-      let finished
-      let wrote = false
-      let rejectionCode = 'UNKNOWN'
-      const startedAt = performance.now()
-      const settled = new Promise((resolve) => {
-        finished = resolve
-      })
-      const timeoutDatabase = {
-        transaction: (operation) =>
-          isolated.application.transaction(async (transaction) => {
-            try {
-              const result = await operation(transaction)
-              if (stall === 'query') await transaction.execute(sql`select pg_sleep(11)`)
-              return result
-            } finally {
-              finished()
-            }
-          }),
-      }
-      // Use the real 10-second production budget. A 500 ms test override can
-      // expire during normal remote writes, before reaching the injected stall.
-      const bounded = new PostgresRuntimeInventoryUnitOfWork(timeoutDatabase, policy)
-      let phase = 'timeout'
-      try {
-        await rejects(
-          bounded.run(inventoryScope, async (ports) => {
-            await applyInventory(ports)
-            wrote = true
-            if (stall === 'idle') await new Promise((resolve) => setTimeout(resolve, 11_000))
-          }),
-          (error) => {
-            for (let cause = error, depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
-              if (typeof cause.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(cause.code))
-                rejectionCode = cause.code
-            }
-            return true
-          }
-        )
-        await settled
-        if (!wrote)
-          throw new Error(
-            `INVENTORY_TIMEOUT_BEFORE_WRITES:${rejectionCode}:${Math.round(performance.now() - startedAt)}ms`
-          )
-        expect(wrote).toBe(true)
-        phase = 'registry'
-        expect(await registry.get(runtimeConnectionId)).toEqual(beforeAtomic)
-        phase = 'outbox'
-        expect(await readPending()).toHaveLength(eventCount)
-        phase = 'checkpoint'
-        expect(await inventoryCheckpoints.get(removal.runtimeNodeRefId)).toBeUndefined()
-        phase = 'projection'
-        expect(
-          await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)
-        ).toBeUndefined()
-        phase = 'heartbeat'
-        expect(
-          await inventoryOwnership.heartbeat(inventoryScope.channel, inventoryScope.credentialFence)
-        ).toBe(true)
-      } catch (error) {
-        throw new Error(`INVENTORY_TIMEOUT_PROBE_FAILED:${stall}:${phase}`, { cause: error })
-      }
-    }
-    await unit.run(inventoryScope, applyInventory)
-    expect((await registry.get(runtimeConnectionId)).availabilityState).toBe('healthy')
-    expect(await readPending()).toHaveLength(eventCount + 1)
-    expect(await discovery.getRuntimeConnection(inventoryScope, runtimeConnectionId)).toEqual(
-      projection
-    )
-    await Promise.all(
-      Array.from({ length: 8 }, () =>
-        new PostgresRuntimeInventoryUnitOfWork(isolated.application, policy).run(
-          inventoryScope,
-          async (ports) => {
-            const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-            if (
-              !(await ports.checkpoints.compareAndSet(checkpoint.revision, {
-                ...checkpoint,
-                revision: checkpoint.revision + 1,
-                snapshotVersion: checkpoint.snapshotVersion + 1,
-              }))
-            )
-              throw new Error('INVENTORY_SERIALIZATION_FAILED')
-          }
-        )
-      )
-    )
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(9)
-    await unit.run(inventoryScope, async () => {
-      await isolated.application.transaction(async (transaction) => {
-        const lock = await transaction.execute(
-          sql`select pg_try_advisory_xact_lock(hashtextextended(${`runtime-channel:${inventoryScope.runtimeNodeRefId}`}, 0)) as acquired`
-        )
-        expect(lock[0].acquired).toBe(false)
-      })
-    })
-
-    const revocationFenceScope = inventoryScope
-    const revocationWriteEntered = createIntegrationBarrier()
-    const holdRevocationWrite = createIntegrationBarrier()
-    const revocationWrite = unit.run(revocationFenceScope, async (ports) => {
-      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-      expect(
-        await ports.checkpoints.compareAndSet(checkpoint.revision, {
-          ...checkpoint,
-          revision: checkpoint.revision + 1,
-          snapshotVersion: checkpoint.snapshotVersion + 1,
-        })
+        ).accepted
       ).toBe(true)
-      revocationWriteEntered.release()
-      await holdRevocationWrite.promise
-    })
-    await revocationWriteEntered.promise
-    let revocationFinished = false
-    const revoke = isolated.withMigrationDatabase((database) =>
-      new PostgresRuntimeNodeIdentityRepository(database)
-        .revokeCredential(inventoryIdentity.credentials[0].credentialId, new Date())
-        .then((result) => {
-          revocationFinished = true
-          return result
+      let staleCallback = false
+      await expect(
+        unit.run(inventoryScope, async () => {
+          staleCallback = true
         })
-    )
-    try {
-      await isolated.waitForBlockedTransaction()
-      expect(revocationFinished).toBe(false)
-    } finally {
-      holdRevocationWrite.release()
-    }
-    await revocationWrite
-    expect((await revoke).revocationVersion).toBe(2)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
-    let revokedFenceCallbackReached = false
-    await expect(
-      unit.run(revocationFenceScope, async () => {
-        revokedFenceCallbackReached = true
-      })
-    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
-    expect(revokedFenceCallbackReached).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(10)
-
-    const retirementFenceScope = {
-      ...inventoryScope,
-      credentialFence: {
-        credentialId: inventoryIdentity.credentials[1].credentialId,
-        revocationVersion: inventoryIdentity.credentials[1].revocationVersion,
-      },
-    }
-    const retirementWriteEntered = createIntegrationBarrier()
-    const holdRetirementWrite = createIntegrationBarrier()
-    const retirementWrite = unit.run(retirementFenceScope, async (ports) => {
-      const checkpoint = await ports.checkpoints.get(removal.runtimeNodeRefId)
-      expect(
-        await ports.checkpoints.compareAndSet(checkpoint.revision, {
-          ...checkpoint,
-          revision: checkpoint.revision + 1,
-          snapshotVersion: checkpoint.snapshotVersion + 1,
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      expect(staleCallback).toBe(false)
+      expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
+      expect(await inventoryOwnership.release(replacement)).toBe(true)
+      await expect(
+        unit.run({ ...inventoryScope, channel: replacement }, async () => {
+          throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
         })
-      ).toBe(true)
-      retirementWriteEntered.release()
-      await holdRetirementWrite.promise
-    })
-    await retirementWriteEntered.promise
-    let retirementFinished = false
-    const retire = isolated.withMigrationDatabase((database) =>
-      new PostgresRuntimeNodeIdentityRepository(database)
-        .retireVerificationKey(inventoryIdentity.key.keyId, 'retired')
-        .then((result) => {
-          retirementFinished = true
-          return result
-        })
-    )
-    try {
-      await isolated.waitForBlockedTransaction()
-      expect(retirementFinished).toBe(false)
-    } finally {
-      holdRetirementWrite.release()
-    }
-    await retirementWrite
-    expect(await retire).toBe(true)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-    let retiredKeyFenceCallbackReached = false
-    await expect(
-      unit.run(retirementFenceScope, async () => {
-        retiredKeyFenceCallbackReached = true
-      })
-    ).rejects.toMatchObject({ code: 'INVENTORY_CREDENTIAL_FENCE_INVALID' })
-    expect(retiredKeyFenceCallbackReached).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-
-    await expect(
-      unit.run({ ...inventoryScope, workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG' }, async () => {
-        throw new Error('WRONG_SCOPE_CALLBACK_REACHED')
-      })
-    ).rejects.toThrow('INVENTORY_SCOPE_MISMATCH')
-    await expect(
-      unit.run(
-        { ...inventoryScope, channel: { ...inventoryScope.channel, connectionId: 'imposter' } },
-        async () => {
-          throw new Error('WRONG_CHANNEL_CALLBACK_REACHED')
-        }
-      )
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    const replacement = { ...inventoryScope.channel, channelGeneration: 2 }
-    const replacementIdentity = makeRuntimeInventoryCredentialFixtures(
-      inventoryScope.runtimeNodeRefId,
-      inventoryScope.workspaceId
-    )
-    await isolated.withMigrationDatabase(async (database) => {
-      const writer = new PostgresRuntimeNodeIdentityRepository(database)
-      await writer.registerVerificationKey(replacementIdentity.key)
-      await writer.insertIssuedCredential(replacementIdentity.credentials[0])
-    })
-    const replacementCredential = replacementIdentity.credentials[0]
-    expect(
-      await new PostgresRuntimeNodeIdentityRepository(isolated.application).consumeCredential(
-        replacementCredential.credentialId,
-        replacementCredential.revocationVersion,
-        new Date()
-      )
-    ).toBe('consumed')
-    expect(
-      (
-        await inventoryOwnership.claim(replacement, {
-          credentialId: replacementCredential.credentialId,
-          revocationVersion: replacementCredential.revocationVersion,
-        })
-      ).accepted
-    ).toBe(true)
-    let staleCallback = false
-    await expect(
-      unit.run(inventoryScope, async () => {
-        staleCallback = true
-      })
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    expect(staleCallback).toBe(false)
-    expect((await inventoryCheckpoints.get(removal.runtimeNodeRefId)).revision).toBe(11)
-    expect(await inventoryOwnership.release(replacement)).toBe(true)
-    await expect(
-      unit.run({ ...inventoryScope, channel: replacement }, async () => {
-        throw new Error('RELEASED_CHANNEL_CALLBACK_REACHED')
-      })
-    ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
-    // Includes two real 11-second stalls and the complete remote persistence/fencing path.
-    // This outer test budget does not change the production 10-second transaction limit.
-  }, 120_000)
+      ).rejects.toThrow('INVENTORY_CHANNEL_STALE')
+      // Includes two real 11-second stalls and the complete remote persistence/fencing path.
+      // This outer test budget does not change the production 10-second transaction limit.
+    },
+    integrationTestTimeout(120_000)
+  )
 
   test('persists scoped external session references without native ownership transfer', async () => {
     await isolated.migrate()
@@ -4881,33 +4896,35 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     )
   })
 
-  test('recovers a committed command after the accepting process exits before replying', async () => {
-    const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
-    const input = {
-      callerPrincipalId: 'svc_agent-hq',
-      operation: 'execution.accept',
-      commandId: `cmd_${suffix}`,
-      requestId: `req_${suffix}`,
-      idempotencyKey: 'integration-process-exit',
-      payloadHash: 'a'.repeat(64),
-      correlation: {
-        workspaceId: `wsp_${suffix}`,
-        projectId: `prj_${suffix}`,
-        taskId: `tsk_${suffix}`,
-        agentId: `agt_${suffix}`,
-      },
-      executionPlan: acceptancePlanReference,
-      receivedAt: '2026-08-24T11:00:00.000Z',
-      retentionExpiresAt: '2026-09-23T11:00:00.000Z',
-    }
-    await seedAcceptancePlan(isolated.application)
-    const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
-    applicationUrl.pathname = `/${isolated.name}`
-    const child = spawnSync(
-      process.execPath,
-      [
-        '-e',
-        `
+  test(
+    'recovers a committed command after the accepting process exits before replying',
+    async () => {
+      const suffix = '01ZRZ3NDEKTSV4RRFFQ69G5FAV'
+      const input = {
+        callerPrincipalId: 'svc_agent-hq',
+        operation: 'execution.accept',
+        commandId: `cmd_${suffix}`,
+        requestId: `req_${suffix}`,
+        idempotencyKey: 'integration-process-exit',
+        payloadHash: 'a'.repeat(64),
+        correlation: {
+          workspaceId: `wsp_${suffix}`,
+          projectId: `prj_${suffix}`,
+          taskId: `tsk_${suffix}`,
+          agentId: `agt_${suffix}`,
+        },
+        executionPlan: acceptancePlanReference,
+        receivedAt: '2026-08-24T11:00:00.000Z',
+        retentionExpiresAt: '2026-09-23T11:00:00.000Z',
+      }
+      await seedAcceptancePlan(isolated.application)
+      const applicationUrl = new URL(loadDatabaseCredentials(process.env, 'application').url)
+      applicationUrl.pathname = `/${isolated.name}`
+      const child = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `
       import { CommandInboxService } from '@control-plane/domain';
       import { createPostgresConnection } from ${JSON.stringify(new URL('./connection.ts', import.meta.url).href)};
       import { PostgresCommandAcceptanceRepository } from ${JSON.stringify(new URL('./command-inbox-repository.ts', import.meta.url).href)};
@@ -4922,53 +4939,55 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       await service.acceptExecution(${JSON.stringify(input)});
       console.log('UNEXPECTED_ACCEPTANCE_REPLY');
     `,
-      ],
-      {
-        cwd: fileURLToPath(new URL('..', import.meta.url)),
-        env: { PATH: process.env.PATH, TEST_APPLICATION_URL: applicationUrl.toString() },
-        encoding: 'utf8',
-        timeout: 10_000,
-      }
-    )
-    expect(child.error).toBeUndefined()
-    expect(child.signal).toBeNull()
-    expect(child.status).toBe(73)
-    expect(child.stdout).toBe('')
-    const recovered = new CommandInboxService({
-      repository: new PostgresCommandAcceptanceRepository(isolated.application),
-      executionIdFactory: () => {
-        throw new Error('REPLAY_MUST_NOT_ALLOCATE')
-      },
-      executionPlanValidator: {
-        authorize: async () => true,
-        validate: async () => {
-          throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+        ],
+        {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: { PATH: process.env.PATH, TEST_APPLICATION_URL: applicationUrl.toString() },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      )
+      expect(child.error).toBeUndefined()
+      expect(child.signal).toBeNull()
+      expect(child.status).toBe(73)
+      expect(child.stdout).toBe('')
+      const recovered = new CommandInboxService({
+        repository: new PostgresCommandAcceptanceRepository(isolated.application),
+        executionIdFactory: () => {
+          throw new Error('REPLAY_MUST_NOT_ALLOCATE')
         },
-      },
-      now: () => input.receivedAt,
-    })
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () => recovered.acceptExecution(input))
-    )
-    expect(results.every((result) => result.replayed)).toBe(true)
-    expect(results.every((result) => result.command.commandId === input.commandId)).toBe(true)
-    expect(results.every((result) => result.execution.executionId === `exe_${suffix}`)).toBe(true)
-    expect(
-      await isolated.application
-        .select()
-        .from(executions)
-        .where(eq(executions.taskId, input.correlation.taskId))
-    ).toHaveLength(1)
-    expect(
-      await isolated.application
-        .select()
-        .from(commandInbox)
-        .where(eq(commandInbox.commandId, input.commandId))
-    ).toHaveLength(1)
-    await expect(
-      recovered.acceptExecution({ ...input, payloadHash: 'c'.repeat(64) })
-    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
-  }, 15_000)
+        executionPlanValidator: {
+          authorize: async () => true,
+          validate: async () => {
+            throw new Error('REPLAY_MUST_NOT_REVALIDATE')
+          },
+        },
+        now: () => input.receivedAt,
+      })
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => recovered.acceptExecution(input))
+      )
+      expect(results.every((result) => result.replayed)).toBe(true)
+      expect(results.every((result) => result.command.commandId === input.commandId)).toBe(true)
+      expect(results.every((result) => result.execution.executionId === `exe_${suffix}`)).toBe(true)
+      expect(
+        await isolated.application
+          .select()
+          .from(executions)
+          .where(eq(executions.taskId, input.correlation.taskId))
+      ).toHaveLength(1)
+      expect(
+        await isolated.application
+          .select()
+          .from(commandInbox)
+          .where(eq(commandInbox.commandId, input.commandId))
+      ).toHaveLength(1)
+      await expect(
+        recovered.acceptExecution({ ...input, payloadHash: 'c'.repeat(64) })
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_PAYLOAD_CONFLICT' })
+    },
+    integrationTestTimeout(15_000)
+  )
 
   test(
     'new acceptance rejects an orphan plan but exact accepted replay survives missing parents',
