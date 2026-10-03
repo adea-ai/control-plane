@@ -18,6 +18,51 @@ docker compose --profile simple ps
 
 The API binds to `127.0.0.1:3000` by default. Readiness is available at `/ready`. The bearer credential is generated inside `data/simple`; do not publish the port directly or copy that credential into Compose configuration. Use a same-host TLS reverse proxy with authentication, or the outbound encrypted relay adapter when it is configured.
 
+### Optional native Pi runtime
+
+The default Simple image contains Bun only and does not start Pi. To opt in, set the managed-Pi route values and `CONTROL_PLANE_PI_AGENT_DIRECTORY` in `.env`, then add the explicit overlay when invoking Compose. The route values must match a published model and the tenant policy; Compose fails configuration when one is missing. The host Pi configuration directory is mounted read-only at `/run/control-plane/pi-agent-config`. On each container start, the opt-in entrypoint copies only `auth.json`, `models.json`, and `settings.json` into the private, persistent `/var/lib/control-plane/pi-agent` runtime directory (directory mode `0700`, copied file mode `0600`). This lets Pi create the lock files its credential and settings stores require without granting it write access to the host source. The image pins Pi `0.84.2`, overrides its `undici` dependency to `8.10.2`, and includes Node only in this opt-in target.
+
+After syncing the files and before starting Control Plane, the managed entrypoint runs Pi's `--version` with only `PATH` and `PI_CODING_AGENT_DIR` in its environment. The 30-second Pi version preflight requires exactly Pi `0.84.2` and caps captured output at 16 KiB; timeout, launch failure, oversized output, or a version mismatch prevents startup and emits only a sanitized error code. It makes no model request and leaves the runtime process client's 15-second version-probe timeout unchanged.
+
+Pi `0.84.2` declares the MIT license. Its published package omits the license file, so `infrastructure/containers/managed-pi/LICENSE.pi` preserves the complete copyright and permission notice from the [pinned upstream release](https://github.com/earendil-works/pi/blob/v0.84.2/LICENSE) (Git blob `b0a8e9b81083294360c69b4ec45d3d39a2b28197`). The managed image copies that notice to `/opt/managed-pi/node_modules/@earendil-works/pi-coding-agent/LICENSE`; the complete installed dependency tree retains the notices shipped by its other packages. This opt-in dependency adds the Node/Pi runtime and its nested dependencies only to the managed image; the default Simple image remains unchanged.
+
+```sh
+cd infrastructure/compose
+mkdir -p data/simple
+sudo chown 1000:1000 data/simple
+chmod 700 data/simple
+# Set CONTROL_PLANE_PI_AGENT_DIRECTORY to an existing private directory containing
+# only the Pi auth.json, models.json, and settings.json files this runtime needs.
+# On Linux, make the directory/files readable by container uid 1000 and keep them private:
+# chown -R 1000:1000 "$CONTROL_PLANE_PI_AGENT_DIRECTORY"
+# chmod 700 "$CONTROL_PLANE_PI_AGENT_DIRECTORY"
+# chmod 600 "$CONTROL_PLANE_PI_AGENT_DIRECTORY"/*.json
+# Set all CONTROL_PLANE_MANAGED_PI_* route values in .env.
+docker compose -f compose.yaml -f compose.managed-pi.yaml --profile simple up --build -d control-plane-simple
+docker compose -f compose.yaml -f compose.managed-pi.yaml --profile simple ps
+```
+
+The host source is authoritative at startup. Updating or removing one of those three files and recreating the container synchronizes the private runtime copy; removing `auth.json` also removes the old copied credential. Pi-generated runtime files outside that whitelist remain in the private data directory. Credentials changed interactively inside the container are overwritten from the host source on the next recreation, so rotate API keys in the host directory and recreate the service. The Docker certification covers API-key `auth.json` with a local fixture only; OAuth refresh and interactive in-container login are not certified.
+
+Do not put tokens or API keys in Compose environment variables, image build arguments, or the repository. Keep the host directory private and limited to the Pi configuration needed by this service. Removing `compose.managed-pi.yaml` returns to the default Bun-only Simple image definition.
+
+#### M11 real-Pi Docker certification
+
+The opt-in package-certification service runs the same bounded Pi version preflight used by the shipped entrypoint, then exercises the pinned Pi process and existing local composition acceptance against an in-container deterministic HTTP model fixture. It exercises Pi RPC, the API-key `auth.json` path, completion, cancellation, and cleanup with `network_mode: none`; it makes no external model-provider request and does not certify real provider credentials, model quality, production readiness, or the full M11 acceptance matrix. It defaults to the Local embedded-SQLite workflow; set `M11_REAL_PI_DURABLE_EXECUTION=restate` to run the same checks through Local Restate instead. Both modes use the test composition and do not prove that the shipped Simple API has been seeded with executable catalog/context inputs.
+
+```sh
+cd infrastructure/compose
+docker compose -p cp-m11-native-pi-test \
+  -f compose.yaml -f compose.native-pi-test.yaml \
+  --profile native-pi-test run --build --rm native-pi-certification
+
+M11_REAL_PI_DURABLE_EXECUTION=restate docker compose -p cp-m11-native-pi-test \
+  -f compose.yaml -f compose.native-pi-test.yaml \
+  --profile native-pi-test run --build --rm native-pi-certification
+```
+
+The certification target is test-only and is not referenced by either shipped Simple target. It has no credential mount, no network, a read-only root filesystem, and writable temporary filesystems only for the test process.
+
 ## Server profile
 
 The `server` profile runs three long-lived services: the all-in-one hosted Control Plane, PostgreSQL, and Restate. A one-shot migration container applies the versioned schema before the Control Plane starts. PostgreSQL and Restate stay private on the Compose network; only the Control API is published to host loopback.
