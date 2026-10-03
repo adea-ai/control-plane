@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.7.0...managed-pi-adapter-v1.7.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** validate Pi 1.0 packaged runtime ([#868](https://github.com/adea-ai/control-plane/issues/868)) ([f1aead5](https://github.com/adea-ai/control-plane/commit/f1aead5e995c52142af587f5ae764c049565d29e))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.6.3...managed-pi-adapter-v1.7.0) (2026-10-01)
 
 

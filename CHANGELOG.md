@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.2...workspace-v1.70.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** validate Pi 1.0 packaged runtime ([#868](https://github.com/adea-ai/control-plane/issues/868)) ([f1aead5](https://github.com/adea-ai/control-plane/commit/f1aead5e995c52142af587f5ae764c049565d29e))
+
 ## [1.70.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.1...workspace-v1.70.2) (2026-10-03)
 
 
