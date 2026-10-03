@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { translateExecutionPlanToManagedPi } from '@control-plane/managed-pi-adapter'
-import { RepositoryManagedPiProcessInputResolver } from './managed-pi-runtime.ts'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  createLocalManagedPiRuntime,
+  RepositoryManagedPiProcessInputResolver,
+} from './managed-pi-runtime.ts'
 import { createRepositoryAcpTaskPromptResolver } from './acp-runtime.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -178,3 +184,49 @@ function skillVersion() {
 function planConstraints() {
   return createExecutionPlanTestFixture().constraints
 }
+
+test.each([
+  ['1.0.0', true],
+  ['0.84.2', false],
+])(
+  'Local managed Pi admission validates runtime %s compatibility',
+  async (runtimeVersion, eligible) => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-pi-version-'))
+    try {
+      const executablePath = join(directory, 'pi.mjs')
+      await writeFile(
+        executablePath,
+        `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${runtimeVersion}\n`)})\n`,
+        { mode: 0o700 }
+      )
+      const runtime = createLocalManagedPiRuntime(
+        {
+          catalog: {
+            getAgentProfileVersion: async () => undefined,
+            getSkillVersion: async () => undefined,
+          },
+          contextPackages: { get: async () => undefined },
+          dataDirectory: directory,
+        },
+        {
+          executablePath,
+          provider: 'fixture',
+          model: 'fixture',
+          modelAlias: 'fixture',
+          modelCapabilities: [],
+          providerClass: 'managed',
+          dataResidency: 'us',
+          environment: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        }
+      )
+      const inspection = await runtime.inspect([
+        { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+      ])
+      expect(inspection.metadata.harnessVersion).toBe(runtimeVersion)
+      expect(inspection.health === 'healthy').toBe(eligible)
+      expect(inspection.capabilityEvaluation.eligible).toBe(eligible)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)

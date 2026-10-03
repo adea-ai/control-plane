@@ -14,11 +14,11 @@ test('managed Pi startup preflight uses the pinned version, a bounded direct spa
     pathValue: '/usr/local/bin:/usr/bin:/bin',
     run(executable, args, options) {
       invocation = { executable, args, options }
-      return { status: 0, stdout: '0.84.2\n', stderr: '' }
+      return { status: 0, stdout: '1.0.0\n', stderr: '' }
     },
   })
 
-  assert.deepEqual(result, { ok: true, version: '0.84.2' })
+  assert.deepEqual(result, { ok: true, version: '1.0.0' })
   assert.deepEqual(invocation, {
     executable: '/usr/local/bin/pi',
     args: ['--version'],

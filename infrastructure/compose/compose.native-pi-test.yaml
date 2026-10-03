@@ -1,6 +1,6 @@
 services:
   native-pi-certification:
-    image: ${CONTROL_PLANE_PI_CERTIFICATION_IMAGE:-control-plane/native-pi-certification:0.84.2}
+    image: ${CONTROL_PLANE_PI_CERTIFICATION_IMAGE:-control-plane/native-pi-certification:1.0.0}
     build:
       context: ../..
       dockerfile: infrastructure/containers/Dockerfile.hosted

@@ -202,8 +202,8 @@ try {
       new ManagedPiDriver({
         client,
         adapterVersion: '1.2.0',
-        minimumRuntimeVersion: '0.84.0',
-        maximumRuntimeVersionExclusive: '0.85.0',
+        minimumRuntimeVersion: '1.0.0',
+        maximumRuntimeVersionExclusive: '1.1.0',
       })
     ),
   })
@@ -213,7 +213,7 @@ try {
   })
   const inspection = await adapter.inspect(plan.runtimeRequirements)
   assert.equal(inspection.health, 'healthy')
-  assert.equal(inspection.metadata.harnessVersion, '0.84.2')
+  assert.equal(inspection.metadata.harnessVersion, '1.0.0')
   assert.equal(inspection.metadata.transportKind, 'direct-local')
   assert.equal(inspection.capabilityEvaluation.eligible, true)
   const executableSha256 = createHash('sha256')
