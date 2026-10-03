@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.0...workspace-v1.70.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** reject stale integration shard test paths ([#865](https://github.com/adea-ai/control-plane/issues/865)) ([719d496](https://github.com/adea-ai/control-plane/commit/719d496fbb3847b7db4aa1f2097ec4776ac232f6))
+
 ## [1.70.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.69.0...workspace-v1.70.0) (2026-10-03)
 
 
