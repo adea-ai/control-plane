@@ -87,7 +87,7 @@ jobs:
       runtime-ref: v1.44.3
       ci-runner: ubuntu-slim
       test-runner: ubuntu-latest
-      unit-runner: ubuntu-slim
+      unit-runner: ubuntu-latest
       performance-runner: ubuntu-latest
       security-runner: ubuntu-slim
       eval-runner: ubuntu-slim
