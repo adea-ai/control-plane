@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { preflightManagedPiVersion } from '../../../infrastructure/containers/managed-pi/version-preflight.mjs'
+import { preflightManagedPiVersion } from '../infrastructure/containers/managed-pi/version-preflight.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -120,7 +120,7 @@ test('managed Pi preflight CLI emits only a sanitized code when Pi reports a mis
   const directory = await mkdtemp(join(tmpdir(), 'managed-pi-version-preflight-'))
   const fakePi = join(directory, 'pi')
   const helper = fileURLToPath(
-    new URL('../../../infrastructure/containers/managed-pi/version-preflight.mjs', import.meta.url)
+    new URL('../infrastructure/containers/managed-pi/version-preflight.mjs', import.meta.url)
   )
 
   try {

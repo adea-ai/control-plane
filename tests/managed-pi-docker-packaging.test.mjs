@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'bun:test'
 
-const readRepositoryFile = (path) => readFile(new URL(`../../../${path}`, import.meta.url), 'utf8')
+const readRepositoryFile = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
 test('Simple managed Pi packaging is opt-in, pinned, and keeps credentials external', async () => {
   const [
@@ -176,7 +176,7 @@ test('managed Pi config sync rotates and removes copied credentials without expo
   const runtime = join(directory, 'runtime')
   const outsideFile = join(directory, 'outside.json')
   const script = fileURLToPath(
-    new URL('../../../infrastructure/containers/managed-pi/sync-agent-config.mjs', import.meta.url)
+    new URL('../infrastructure/containers/managed-pi/sync-agent-config.mjs', import.meta.url)
   )
   const runSync = () =>
     spawnSync('node', [script, source, runtime], {
