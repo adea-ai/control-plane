@@ -69,6 +69,7 @@ COPY --from=build --chown=1000:1000 /workspace/apps ./apps
 COPY --from=build --chown=1000:1000 /workspace/packages ./packages
 COPY --from=dependencies /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=managed-pi-dependencies --chown=1000:1000 /opt/managed-pi/node_modules /opt/managed-pi/node_modules
+COPY infrastructure/containers/managed-pi/LICENSE.pi /opt/managed-pi/node_modules/@earendil-works/pi-coding-agent/LICENSE
 COPY --chown=1000:1000 infrastructure/containers/entrypoint.sh /usr/local/bin/control-plane-entrypoint
 COPY infrastructure/containers/managed-pi-entrypoint.sh /usr/local/bin/managed-pi-entrypoint
 COPY infrastructure/containers/managed-pi/sync-agent-config.mjs /usr/local/bin/sync-managed-pi-config.mjs

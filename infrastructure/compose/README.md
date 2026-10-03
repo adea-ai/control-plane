@@ -24,6 +24,8 @@ The default Simple image contains Bun only and does not start Pi. To opt in, set
 
 After syncing the files and before starting Control Plane, the managed entrypoint runs Pi's `--version` with only `PATH` and `PI_CODING_AGENT_DIR` in its environment. The 30-second Pi version preflight requires exactly Pi `0.84.2` and caps captured output at 16 KiB; timeout, launch failure, oversized output, or a version mismatch prevents startup and emits only a sanitized error code. It makes no model request and leaves the runtime process client's 15-second version-probe timeout unchanged.
 
+Pi `0.84.2` declares the MIT license. Its published package omits the license file, so `infrastructure/containers/managed-pi/LICENSE.pi` preserves the complete copyright and permission notice from the [pinned upstream release](https://github.com/earendil-works/pi/blob/v0.84.2/LICENSE) (Git blob `b0a8e9b81083294360c69b4ec45d3d39a2b28197`). The managed image copies that notice to `/opt/managed-pi/node_modules/@earendil-works/pi-coding-agent/LICENSE`; the complete installed dependency tree retains the notices shipped by its other packages. This opt-in dependency adds the Node/Pi runtime and its nested dependencies only to the managed image; the default Simple image remains unchanged.
+
 ```sh
 cd infrastructure/compose
 mkdir -p data/simple

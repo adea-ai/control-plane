@@ -78,6 +78,10 @@ test('Simple managed Pi packaging is opt-in, pinned, and keeps credentials exter
   assert.match(dockerfile, /FROM runtime-managed-pi AS runtime-managed-pi-certification\b/)
   assert.match(
     dockerfile,
+    /COPY infrastructure\/containers\/managed-pi\/LICENSE\.pi \/opt\/managed-pi\/node_modules\/@earendil-works\/pi-coding-agent\/LICENSE/
+  )
+  assert.match(
+    dockerfile,
     /bun install --cwd \/opt\/managed-pi --frozen-lockfile --production --ignore-scripts/
   )
   assert.match(dockerfile, /COPY --chown=1000:1000 scripts\/ \/workspace\/scripts\//)
