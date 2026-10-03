@@ -47,6 +47,7 @@ export const INTEGRATION_SHARDS = [
           'src/delegation-reference.integration.test.mjs',
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
+          'src/hosted-graph-operations.integration.test.mjs',
           'src/retention-hold-operator.integration.test.mjs',
           'src/retention-hold-repository.integration.test.mjs',
           'src/retention-claim-budget.integration.test.mjs',
@@ -73,6 +74,7 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'apps/hosted-control-plane',
         files: [
+          'src/hosted-graph.integration.test.mjs',
           'src/hosted-http.integration.test.mjs',
           'src/reconciliation-metrics.integration.test.mjs',
           'src/reconciliation-projection.integration.test.mjs',
