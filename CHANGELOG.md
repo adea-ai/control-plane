@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.4...workspace-v1.71.0) (2026-10-03)
+
+
+### Features
+
+* **requirements:** materialize captured atomic crosswalks ([#873](https://github.com/adea-ai/control-plane/issues/873)) ([4cad29d](https://github.com/adea-ai/control-plane/commit/4cad29d0083fbdf88cebf230f5b8289108358e1f))
+
 ## [1.70.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.3...workspace-v1.70.4) (2026-10-03)
 
 
