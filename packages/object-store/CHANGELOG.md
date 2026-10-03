@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.4...object-store-v1.6.0) (2026-10-03)
+
+
+### Features
+
+* run Hosted Server graphs through durable tool authority ([#860](https://github.com/adea-ai/control-plane/issues/860)) ([7e57c39](https://github.com/adea-ai/control-plane/commit/7e57c39831c17c704a54e37a1f091d5161fc4811))
+
 ## [1.5.4](https://github.com/adea-ai/control-plane/compare/object-store-v1.5.3...object-store-v1.5.4) (2026-10-02)
 
 

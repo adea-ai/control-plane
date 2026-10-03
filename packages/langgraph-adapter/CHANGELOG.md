@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.7.0...langgraph-adapter-v1.8.0) (2026-10-03)
+
+
+### Features
+
+* run Hosted Server graphs through durable tool authority ([#860](https://github.com/adea-ai/control-plane/issues/860)) ([7e57c39](https://github.com/adea-ai/control-plane/commit/7e57c39831c17c704a54e37a1f091d5161fc4811))
+
 ## [1.7.0](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.6.0...langgraph-adapter-v1.7.0) (2026-10-03)
 
 
