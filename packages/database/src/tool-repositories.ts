@@ -18,6 +18,14 @@ import { and, eq, or } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { toolCalls, toolDefinitions, toolVersions } from './schema/tool-execution.js'
 
+type ToolCallAdmissionTransaction = Parameters<
+  Parameters<ControlPlaneDatabase['transaction']>[0]
+>[0]
+type ToolCallAdmissionFence = (
+  transaction: ToolCallAdmissionTransaction,
+  call: ToolCall
+) => Promise<void>
+
 /** Immutable definitions and versions scoped to the workspace supplied at construction. */
 export class PostgresToolRegistryRepository implements ToolRegistryRepository {
   readonly #workspaceId: string
@@ -159,18 +167,22 @@ export class PostgresToolRegistryRepository implements ToolRegistryRepository {
 /** Durable call receipts with a database-enforced, workspace-local idempotency fence. */
 export class PostgresToolCallRepository implements ToolCallRepository {
   readonly #workspaceId: string
+  readonly #admissionFence: ToolCallAdmissionFence | undefined
 
   constructor(
     readonly database: ControlPlaneDatabase,
-    workspaceId: string
+    workspaceId: string,
+    options: { readonly admissionFence?: ToolCallAdmissionFence } = {}
   ) {
     this.#workspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
+    this.#admissionFence = options.admissionFence
   }
 
   async insert(input: ToolCall): Promise<boolean> {
     const call = ToolCallSchema.parse(input)
     assertCallScope(call, this.#workspaceId)
     return this.database.transaction(async (transaction) => {
+      await this.#admissionFence?.(transaction, call)
       const [inserted] = await transaction
         .insert(toolCalls)
         .values(toCallRow(this.#workspaceId, call))

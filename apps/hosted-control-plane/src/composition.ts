@@ -88,6 +88,11 @@ import {
   type RestateEndpointHandle,
 } from '@control-plane/workflow-runtime'
 import { ReconciliationScheduler, RetentionSweep } from '@control-plane/deployment'
+import { HostedServerGraphRuntime } from './hosted-graph-runtime.js'
+import {
+  parseHostedGraphToolConfiguration,
+  type HostedGraphToolConfiguration,
+} from './hosted-graph-tool-operations.js'
 import {
   DisabledGraphSegmentActivities,
   DurableExecutionLifecycleActivities,
@@ -204,6 +209,10 @@ export interface HostedServerCompositionOptions {
   ) => RemoteControlHostAdapter<unknown>
   readonly runtimeActivityPort?: WorkflowRuntimeActivityPort
   readonly graphActivities?: GraphSegmentActivityPort
+  /** Enables the Hosted PostgreSQL graph/tool authority path; disabled by default. */
+  readonly hostedGraphEnabled?: boolean
+  /** Required operator-owned graph tool IDs, publication timestamps, and tariff. */
+  readonly hostedGraphToolConfiguration?: HostedGraphToolConfiguration
   readonly metricAdapter?: MetricAdapter
   readonly reconciliation?: HostedReconciliationConfiguration
   /** Retention sweep cadence override; defaults to one hour. */
@@ -239,6 +248,7 @@ export class HostedServerControlPlaneComposition {
   readonly reconciliationEffects: ReconciliationEffects | undefined
   readonly #endpointFactory: RestateEndpointFactory
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
+  readonly #hostedGraphRuntime: HostedServerGraphRuntime | undefined
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
@@ -250,6 +260,12 @@ export class HostedServerControlPlaneComposition {
       !/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(options.requestIdentityPublicKey ?? '')
     ) {
       throw new Error('HOSTED_RESTATE_REQUEST_IDENTITY_REQUIRED')
+    }
+    if (options.hostedGraphEnabled === true && options.hostedGraphToolConfiguration === undefined) {
+      throw new Error('HOSTED_GRAPH_TOOL_CONFIG_REQUIRED')
+    }
+    if (options.hostedGraphEnabled === true) {
+      parseHostedGraphToolConfiguration(options.hostedGraphToolConfiguration)
     }
     this.dataDirectory = resolve(options.dataDirectory)
     this.connection =
@@ -268,6 +284,9 @@ export class HostedServerControlPlaneComposition {
         maxObjectBytes: MAX_ARTIFACT_BYTES,
       })
     this.#objectStoreKind = options.objectStoreKind ?? 'filesystem'
+    if (options.hostedGraphEnabled === true && options.graphActivities !== undefined) {
+      throw new Error('HOSTED_GRAPH_ACTIVITY_CONFIGURATION_CONFLICT')
+    }
     this.secrets =
       options.secrets ??
       new CompositeSecretsProvider({
@@ -293,8 +312,20 @@ export class HostedServerControlPlaneComposition {
     const catalogApprovals = new PostgresCatalogApprovalRepository(this.connection.database)
     const projectStates = new PostgresProjectStateRepository(this.connection.database)
     const contextPackages = new PostgresContextPackageRepository(this.connection.database)
+    this.#hostedGraphRuntime =
+      options.hostedGraphEnabled === true
+        ? new HostedServerGraphRuntime({
+            database: this.connection.database,
+            databaseUrl: options.databaseUrl,
+            objectStore: this.objectStore,
+            configuration: parseHostedGraphToolConfiguration(options.hostedGraphToolConfiguration),
+          })
+        : undefined
     const executionPlanValidatorOptions = {
       catalog: { profiles: catalog, skills: catalog },
+      ...(this.#hostedGraphRuntime === undefined
+        ? {}
+        : { graphs: this.#hostedGraphRuntime.authority }),
       ...(options.catalogApprovalPolicy === undefined
         ? {}
         : {
@@ -358,6 +389,9 @@ export class HostedServerControlPlaneComposition {
       profiles: catalog,
       projectStates,
       skills: catalog,
+      ...(this.#hostedGraphRuntime === undefined
+        ? {}
+        : { graphs: this.#hostedGraphRuntime.authority }),
       ...(options.catalogApprovalPolicy === undefined
         ? {}
         : {
@@ -431,7 +465,10 @@ export class HostedServerControlPlaneComposition {
       lifecycle: new ExecutionLifecycleService(executions),
       plans,
       runtime: this.runtimeActivityPort,
-      graph: options.graphActivities ?? new DisabledGraphSegmentActivities(),
+      graph:
+        this.#hostedGraphRuntime?.activities ??
+        options.graphActivities ??
+        new DisabledGraphSegmentActivities(),
       runtimeRouter: this.runtimeAttemptRouter,
       budgetAdmission: new DurableRuntimeBudgetAdmission({
         store: new PostgresDurableUsageStore(this.connection.database),
@@ -576,6 +613,7 @@ export class HostedServerControlPlaneComposition {
     if (this.#started) throw new Error('HOSTED_CONTROL_PLANE_ALREADY_STARTED')
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
     await this.connection.check()
+    await this.#hostedGraphRuntime?.start()
     this.#endpoint = await this.#endpointFactory.create()
     await this.#endpoint.run()
     try {
@@ -645,6 +683,7 @@ export class HostedServerControlPlaneComposition {
     await this.workflow.stop().catch(() => undefined)
     await this.#endpoint?.shutdown().catch(() => undefined)
     this.#endpoint = undefined
+    await this.#hostedGraphRuntime?.close().catch(() => undefined)
     await this.secrets.close()
     await this.objectStore.close()
     await this.connection.close()

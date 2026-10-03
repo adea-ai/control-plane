@@ -122,19 +122,30 @@ adapter. The embedding application must select graph definitions, authorize oper
 the saver into its graph activity port; the CLI does not enable graph execution automatically.
 
 Local (including Hosted Simple) and Hosted Server composition options accept `graphActivities`
-using the shared `GraphSegmentActivityPort`. The Hosted launcher preserves this option. The
-normal durable execution activities forward run, resume, continue and graph cancellation to it;
-omitting it retains the disabled-graph default. Local requires a runtime transport/factory for
-this composed path and rejects combining `graphActivities` with a replacement `activities` object.
-The injecting application owns the graph adapter's durable checkpoint store and resource lifecycle.
-Local and Hosted Simple can instead supply `graphActivitiesFactory({ persistence })`, which receives
-the composition-owned SQLite provider and constructs the graph activity port synchronously. The
-factory must not access the database before composition startup migrates it. This enables the
-SQLite graph saver to share application backup/restore and shutdown without opening another database.
-Supplying both the factory and a graph port, or combining either with replacement activities, fails
-configuration. The Local launcher preserves this factory through its composition options.
-This option alone does not provision graph definitions, a SQLite checkpointer, graph operation
-authorization or an environment-selected graph deployment; those remain acceptance work.
+using the shared `GraphSegmentActivityPort`. The Hosted launcher preserves this custom adapter
+option. The normal durable execution activities forward run, resume, continue and graph cancellation
+to it; omitting it retains the disabled-graph default. Local requires a runtime transport/factory
+for this composed path and rejects combining `graphActivities` with a replacement `activities`
+object. The injecting application owns the graph adapter's durable checkpoint store and resource
+lifecycle. Local and Hosted Simple can instead supply `graphActivitiesFactory({ persistence })`,
+which receives the composition-owned SQLite provider and constructs the graph activity port
+synchronously. The factory must not access the database before composition startup migrates it.
+This enables the SQLite graph saver to share application backup/restore and shutdown without opening
+another database. Supplying both the factory and a graph port, or combining either with replacement
+activities, fails configuration. The Local launcher preserves this factory through its composition
+options. These adapter hooks alone do not provision graph definitions or operation authority.
+
+Hosted Server additionally has an opt-in PostgreSQL-backed declarative graph path through its
+normal `start()` launcher. It remains disabled by default. Operators must set
+`CONTROL_PLANE_HOSTED_GRAPH_ENABLED=true` and provide the immutable tool identity and tariff file
+through `CONTROL_PLANE_HOSTED_GRAPH_TOOL_CONFIG`; the launcher then binds the published graph
+authority, Restate graph activity, PostgreSQL checkpoint/event/tool/usage stores, and the configured
+ObjectStore JSON writer. Only the pinned JSON artifact `tool/store` operation is supported. Apply
+the database migrations with the separate migration role before enabling it; app startup verifies
+the checkpoint schema and uses application DML, not DDL. See
+[`hosted-server-graph-tools.md`](hosted-server-graph-tools.md) for the exact file schema, policy
+checks, recovery behavior, and limitations. This option does not enable Local, Hosted Simple,
+model/provider execution, or native Pi/ACP operations.
 
 The accepted Cloud process topology has two application services plus one infrastructure runtime:
 

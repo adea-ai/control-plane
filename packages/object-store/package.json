@@ -22,7 +22,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
-    "@control-plane/deployment": "workspace:*"
+    "@control-plane/contracts": "workspace:*",
+    "@control-plane/deployment": "workspace:*",
+    "@control-plane/tool-sdk": "workspace:*"
   },
   "engines": {
     "node": "24.21.0"

@@ -1,5 +1,7 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { constants } from 'node:fs'
+import { open } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 import {
   bootstrapService,
   jsonLogger,
@@ -16,6 +18,7 @@ import {
   HostedServerControlPlaneComposition,
   type HostedServerCompositionOptions,
 } from './composition.js'
+import { parseHostedGraphToolConfiguration } from './hosted-graph-tool-operations.js'
 import { hostedDependencyReadiness } from './dependency-readiness.js'
 
 export const serviceName = 'hosted-control-plane'
@@ -37,10 +40,38 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
     ...(options.processAdapter === undefined ? {} : { processAdapter: options.processAdapter }),
     start: async ({ config, health, markReady, readiness, registerResource }) => {
       const environment = options.environment ?? process.env
+      const graphEnabled =
+        options.compositionOptions?.hostedGraphEnabled ?? resolveHostedGraphEnabled(environment)
+      const graphConfigPath = environment['CONTROL_PLANE_HOSTED_GRAPH_TOOL_CONFIG']
+      if (
+        options.compositionOptions?.hostedGraphToolConfiguration !== undefined &&
+        graphConfigPath !== undefined
+      ) {
+        throw new Error('HOSTED_GRAPH_TOOL_CONFIG_CONFLICT')
+      }
+      if (
+        !graphEnabled &&
+        (options.compositionOptions?.hostedGraphToolConfiguration !== undefined ||
+          graphConfigPath !== undefined)
+      ) {
+        throw new Error('HOSTED_GRAPH_TOOL_CONFIG_DISABLED')
+      }
+      const graphConfiguration = graphEnabled
+        ? (options.compositionOptions?.hostedGraphToolConfiguration ??
+          (await resolveHostedGraphToolConfiguration(environment)))
+        : undefined
+      if (graphEnabled && graphConfiguration === undefined) {
+        throw new Error('HOSTED_GRAPH_TOOL_CONFIG_REQUIRED')
+      }
       const composition =
         options.composition ??
         new HostedServerControlPlaneComposition(
-          resolveHostedCompositionConfiguration(environment, options.compositionOptions)
+          resolveHostedCompositionConfiguration(environment, {
+            ...options.compositionOptions,
+            ...(graphConfiguration === undefined
+              ? {}
+              : { hostedGraphToolConfiguration: graphConfiguration }),
+          })
         )
       registerResource('hosted-control-plane-composition', () => composition.close())
       await composition.start()
@@ -86,6 +117,12 @@ export function resolveHostedCompositionConfiguration(
     options.workflowDeploymentUri ?? environment['WORKFLOW_DEPLOYMENT_URI']
   const pinnedHarnessId = options.pinnedHarnessId ?? environment['CONTROL_PLANE_PINNED_HARNESS_ID']
   const catalogApprovalPolicy = resolveCatalogApprovalPolicy(environment)
+  const hostedGraphEnabled = options.hostedGraphEnabled ?? resolveHostedGraphEnabled(environment)
+  if (hostedGraphEnabled !== (options.hostedGraphToolConfiguration !== undefined)) {
+    throw new Error(
+      hostedGraphEnabled ? 'HOSTED_GRAPH_TOOL_CONFIG_REQUIRED' : 'HOSTED_GRAPH_TOOL_CONFIG_DISABLED'
+    )
+  }
   return {
     dataDirectory:
       options.dataDirectory ??
@@ -98,6 +135,10 @@ export function resolveHostedCompositionConfiguration(
     ...(workflowDeploymentUri === undefined ? {} : { workflowDeploymentUri }),
     ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }),
     ...(catalogApprovalPolicy === undefined ? {} : { catalogApprovalPolicy }),
+    hostedGraphEnabled,
+    ...(options.hostedGraphToolConfiguration === undefined
+      ? {}
+      : { hostedGraphToolConfiguration: options.hostedGraphToolConfiguration }),
     ...resolveHostedObjectStore(environment, options),
     ...optional('workflowEndpointPort'),
     ...optional('endpointFactory'),
@@ -110,6 +151,41 @@ export function resolveHostedCompositionConfiguration(
     ...optional('graphActivities'),
     ...optional('contextAuthoring'),
   }
+}
+
+const HOSTED_GRAPH_CONFIG_MAX_BYTES = 16_384
+
+/** Reads only an operator-owned regular JSON file; runtime graph callers cannot set pricing. */
+export async function resolveHostedGraphToolConfiguration(
+  environment: Readonly<Record<string, string | undefined>>
+) {
+  const path = environment['CONTROL_PLANE_HOSTED_GRAPH_TOOL_CONFIG']
+  if (path === undefined) return undefined
+  if (!path || !isAbsolute(path)) throw new Error('HOSTED_GRAPH_TOOL_CONFIG_PATH_INVALID')
+  let file
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.size > HOSTED_GRAPH_CONFIG_MAX_BYTES) {
+      throw new Error('HOSTED_GRAPH_TOOL_CONFIG_INVALID')
+    }
+    const contents = await file.readFile('utf8')
+    if (Buffer.byteLength(contents, 'utf8') > HOSTED_GRAPH_CONFIG_MAX_BYTES) {
+      throw new Error('HOSTED_GRAPH_TOOL_CONFIG_INVALID')
+    }
+    return parseHostedGraphToolConfiguration(JSON.parse(contents))
+  } catch {
+    throw new Error('HOSTED_GRAPH_TOOL_CONFIG_INVALID')
+  } finally {
+    await file?.close()
+  }
+}
+
+function resolveHostedGraphEnabled(environment: RawEnvironment): boolean {
+  const value = environment['CONTROL_PLANE_HOSTED_GRAPH_ENABLED']
+  if (value === undefined || value === 'false') return false
+  if (value === 'true') return true
+  throw new Error('HOSTED_GRAPH_CONFIGURATION_INVALID')
 }
 
 export function resolveHostedApiHost(explicitHost?: string): string {

@@ -21,6 +21,7 @@ export interface IsolatedDatabaseCredentials {
 export interface IsolatedTestDatabase {
   readonly application: ControlPlaneDatabase
   readonly name: string
+  assertApplicationCannotCreateOrAlter(): Promise<void>
   dispose(): Promise<void>
   migrate(): Promise<void>
   waitForBlockedTransaction(): Promise<void>
@@ -76,6 +77,18 @@ export async function createIsolatedTestDatabase(
       application,
       name,
       dispose,
+      assertApplicationCannotCreateOrAlter: async () => {
+        if (applicationClient === undefined) throw new TestDatabaseError('APPLICATION_NOT_OPEN')
+        const suffix = randomUUID().replaceAll('-', '')
+        await assertDdlDenied(
+          applicationClient,
+          `create table public.hosted_graph_ddl_probe_${suffix} (id integer)`
+        )
+        await assertDdlDenied(
+          applicationClient,
+          `alter table public.execution_plans add column hosted_graph_ddl_probe_${suffix} integer`
+        )
+      },
       async waitForBlockedTransaction() {
         for (let attempt = 0; attempt < 200; attempt += 1) {
           const rows = await administration`
@@ -105,6 +118,32 @@ export async function createIsolatedTestDatabase(
       transaction: (operation) => withDomainTransaction(application, operation),
     }
   }, dispose)
+}
+
+async function assertDdlDenied(
+  client: ReturnType<typeof postgres>,
+  statement: string
+): Promise<void> {
+  try {
+    await client.begin(async (transaction) => {
+      await transaction.unsafe(statement)
+      throw new DdlProbeRollback()
+    })
+  } catch (error) {
+    if (error instanceof DdlProbeRollback)
+      throw new TestDatabaseError('APPLICATION_ROLE_DDL_ALLOWED')
+    if (postgresErrorCode(error) === '42501') return
+    throw new TestDatabaseError('APPLICATION_DDL_PROBE_FAILED')
+  }
+  throw new TestDatabaseError('APPLICATION_DDL_PROBE_INVALID')
+}
+
+class DdlProbeRollback extends Error {}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String(error.code)
+    : undefined
 }
 
 async function grantApplicationAccess(

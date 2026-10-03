@@ -38,7 +38,16 @@ export {
 } from './executions.js'
 export { executionPlans } from './execution-plans.js'
 export { graphDefinitionCommands, graphDefinitionVersions } from './graph-definitions.js'
+export { graphToolCancellations } from './graph-tool-cancellations.js'
+export { hostedGraphToolConfigurations } from './hosted-graph-tool-configurations.js'
+export {
+  langgraphCheckpointBlobs,
+  langgraphCheckpointMigrations,
+  langgraphCheckpointWrites,
+  langgraphCheckpoints,
+} from './langgraph-checkpoints.js'
 export { toolCalls, toolDefinitions, toolVersions } from './tool-execution.js'
+export { toolRateLimitEvents } from './tool-rate-limit-events.js'
 export { executionValidationCommands } from './execution-validation-commands.js'
 export {
   projectStateMutations,
