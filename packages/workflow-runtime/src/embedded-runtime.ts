@@ -276,7 +276,7 @@ export class EmbeddedWorkflowRuntime {
         }
         for (;;) {
           if (signal?.aborted) throw new WorkflowRunInterrupted()
-          const saved = await store.getInteractionResponse(workflowKey, interactionId)
+          const saved = await store.getInteractionResponse(input.executionId, interactionId)
           if (saved !== undefined) {
             if (!(await store.markRunning({ workflowKey, owner: this.#owner, token, at: now() }))) {
               throw new Error('WORKFLOW_CLAIM_LOST')

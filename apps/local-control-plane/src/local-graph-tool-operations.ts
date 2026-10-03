@@ -56,6 +56,7 @@ import type { WorkflowJobRecord } from '@control-plane/workflow-runtime'
 import type { LocalControlPlaneComposition } from './composition.js'
 import type { LocalControlApiComposition } from './local-api-composition.js'
 import { authorizeLocalGraphTool } from './local-graph-tool-authority.js'
+import { LocalGraphToolCommandReceipts } from './local-graph-tool-command-receipts.js'
 import { ObjectStoreJsonToolExecutor } from './object-store-tool.js'
 
 export interface LocalGraphToolPrice {
@@ -112,6 +113,8 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
   readonly #active = new Map<AbortController, string>()
   readonly #ledger: DurableUsageLedger
   readonly #rateLimiter: ToolRateLimiter
+  readonly #commandReceipts: LocalGraphToolCommandReceipts
+  readonly #reconciliationLocks = new Map<string, Promise<unknown>>()
   #recoveryRuntime: LocalControlPlaneComposition | undefined
 
   constructor(options: LocalGraphToolOperationsOptions) {
@@ -128,6 +131,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     this.#ledger = new DurableUsageLedger({
       store: new SqliteDurableUsageStore(options.persistence),
     })
+    this.#commandReceipts = new LocalGraphToolCommandReceipts(options.persistence)
     this.#rateLimiter = new SqliteGraphToolRateLimiter(options.persistence, this.#now)
   }
 
@@ -411,6 +415,158 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     this.#assertInspectionScope(envelope, principal)
     if (envelope.payloadHash !== sha256(canonicalJsonStringify(envelope.payload)))
       throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+    const receiptCommand = {
+      callerPrincipalId: principal.principalId,
+      workspaceId: envelope.workspaceId,
+      projectId: envelope.projectId!,
+      operation: 'execution.tool-effect.reconcile' as const,
+      idempotencyKey: envelope.idempotencyKey,
+      commandId: envelope.commandId,
+      contractVersion: envelope.contractVersion,
+      correlation: envelope.correlation,
+      ...(envelope.requestId === undefined ? {} : { requestId: envelope.requestId }),
+      ...(envelope.issuedAt === undefined ? {} : { issuedAt: envelope.issuedAt }),
+      payloadHash: envelope.payloadHash,
+      payload: envelope.payload,
+    }
+    const lockKey = canonicalJsonStringify([
+      receiptCommand.callerPrincipalId,
+      receiptCommand.workspaceId,
+      receiptCommand.operation,
+      receiptCommand.idempotencyKey,
+    ])
+    return await this.#serializeReconciliation(lockKey, async () => {
+      const claim = await this.#commandReceipts.claim(receiptCommand, this.#now())
+      if (claim.state !== 'owned') return claim.response
+      const accepted = claim.receipt.command
+      const acceptedRequestId = accepted.requestId ?? envelope.requestId
+      const acceptedEnvelope: StateChangingCommandEnvelope = {
+        ...envelope,
+        caller: { servicePrincipalId: accepted.callerPrincipalId },
+        contractVersion: accepted.contractVersion ?? envelope.contractVersion,
+        correlation: accepted.correlation ?? envelope.correlation,
+        ...(acceptedRequestId === undefined
+          ? {}
+          : { requestId: IdentifierSchemas.requestId.parse(acceptedRequestId) }),
+        workspaceId: IdentifierSchemas.workspaceId.parse(accepted.workspaceId),
+        projectId: IdentifierSchemas.projectId.parse(accepted.projectId),
+        commandId: IdentifierSchemas.commandId.parse(accepted.commandId),
+        idempotencyKey: accepted.idempotencyKey,
+        payloadHash: accepted.payloadHash,
+        operation: accepted.operation,
+        issuedAt: accepted.issuedAt ?? envelope.issuedAt,
+        payload: accepted.payload,
+      }
+      let completed = false
+      try {
+        const enqueuedResponse = await this.#existingRecoveryResponse(claim.receipt.intent, command)
+        if (enqueuedResponse !== undefined) {
+          const response = await this.#commandReceipts.complete(
+            claim,
+            enqueuedResponse,
+            this.#now()
+          )
+          completed = true
+          return response
+        }
+        const result = await this.#reconcileCommand(
+          acceptedEnvelope,
+          principal,
+          command,
+          claim.receipt.intent,
+          async (intent) => this.#commandReceipts.saveIntent(claim, intent, this.#now())
+        )
+        const response = await this.#commandReceipts.complete(claim, result, this.#now())
+        completed = true
+        return response
+      } finally {
+        if (!completed)
+          await this.#commandReceipts.release(claim, this.#now()).catch(() => undefined)
+      }
+    })
+  }
+
+  async #serializeReconciliation<Result>(
+    key: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    const previous = this.#reconciliationLocks.get(key)
+    const pending = (
+      previous === undefined ? Promise.resolve() : previous.catch(() => undefined)
+    ).then(operation) as Promise<Result>
+    this.#reconciliationLocks.set(key, pending)
+    try {
+      return await pending
+    } finally {
+      if (this.#reconciliationLocks.get(key) === pending) this.#reconciliationLocks.delete(key)
+    }
+  }
+
+  async #existingRecoveryResponse(
+    intentValue: unknown,
+    command: RecoveryCommand
+  ): Promise<unknown | undefined> {
+    if (!isJsonObject(intentValue) || intentValue['kind'] !== 'resume') return undefined
+    const executionId = IdentifierSchemas.executionId.safeParse(intentValue['executionId'])
+    const toolCallId = IdentifierSchemas.toolCallId.safeParse(intentValue['toolCallId'])
+    const recoveryId = intentValue['recoveryId']
+    const workflowKey = intentValue['workflowKey']
+    const checkpointId = intentValue['checkpointId']
+    const workspaceId = intentValue['workspaceId']
+    const parentWorkflowKey = intentValue['parentWorkflowKey']
+    const inputDigest = intentValue['inputDigest']
+    const recoveryDigest = intentValue['recoveryDigest']
+    const response = intentValue['response']
+    if (
+      !executionId.success ||
+      !toolCallId.success ||
+      executionId.data !== command.executionId ||
+      toolCallId.data !== command.toolCallId ||
+      typeof recoveryId !== 'string' ||
+      typeof workflowKey !== 'string' ||
+      typeof checkpointId !== 'string' ||
+      typeof workspaceId !== 'string' ||
+      (parentWorkflowKey !== undefined && typeof parentWorkflowKey !== 'string') ||
+      typeof inputDigest !== 'string' ||
+      typeof recoveryDigest !== 'string' ||
+      !isJsonObject(response) ||
+      response['outcome'] !== 'recovery_scheduled' ||
+      workflowKey !== `${executionId.data}:graph-recovery:${recoveryId}`
+    )
+      throw new Error('TOOL_EFFECT_RECONCILIATION_RECEIPT_CORRUPT')
+    const runtime = this.#recoveryRuntime
+    const job = await runtime?.workflowJobs?.get(workflowKey)
+    if (job === undefined) return undefined
+    const input = ExecutionWorkflowInputSchema.safeParse(job.input)
+    const recovery = {
+      recoveryId,
+      checkpointId,
+      ...(parentWorkflowKey === undefined ? {} : { parentWorkflowKey }),
+    }
+    if (
+      job.workflowKey !== workflowKey ||
+      !input.success ||
+      input.data.executionId !== executionId.data ||
+      input.data.graph?.workspaceId !== workspaceId ||
+      !isJsonObject(job.recovery) ||
+      sha256(canonicalJsonStringify(input.data)) !== inputDigest ||
+      sha256(canonicalJsonStringify(job.recovery)) !== recoveryDigest ||
+      !isDeepStrictEqual(job.recovery, recovery) ||
+      response['executionId'] !== executionId.data ||
+      response['toolCallId'] !== toolCallId.data ||
+      response['workflowKey'] !== workflowKey
+    )
+      throw new Error('TOOL_EFFECT_RECONCILIATION_RECEIPT_CORRUPT')
+    return response
+  }
+
+  async #reconcileCommand(
+    envelope: StateChangingCommandEnvelope,
+    principal: ServicePrincipal,
+    command: RecoveryCommand,
+    existingIntent: unknown,
+    persistIntent: (intent: unknown) => Promise<unknown>
+  ): Promise<unknown> {
     const inspection = await this.inspect(
       {
         ...envelope,
@@ -435,6 +591,15 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         throw new Error('TOOL_EFFECT_STALE_REVISION')
     }
     if (command.action === 'cancel') {
+      const cancelIntent = {
+        schemaVersion: 1,
+        kind: 'cancel',
+        executionId: command.executionId,
+        toolCallId: command.toolCallId,
+        response: { outcome: 'cancelled', executionId: command.executionId },
+      }
+      if (existingIntent === undefined) await persistIntent(cancelIntent)
+      else assertReconciliationIntent(existingIntent, cancelIntent)
       if (entry.artifact.state === 'verified' && entry.evidence !== undefined) {
         const recovered = await this.#commitKnownSuccess(call, entry.evidence, call.revision)
         if (recovered !== undefined) {
@@ -462,65 +627,66 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     }
     if (entry.artifact.state !== 'verified' || entry.evidence === undefined)
       return { outcome: 'held', reason: entry.artifact.state }
-    const recovered = await this.#commitKnownSuccess(call, entry.evidence, command.expectedRevision)
+    const runtime = this.#recoveryRuntime
+    if (!runtime) throw new Error('TOOL_EFFECT_RECOVERY_NOT_CONFIGURED')
+    if (runtime.durableExecution !== 'embedded-sqlite' || !runtime.workflowDispatcher)
+      throw new Error('TOOL_EFFECT_RECOVERY_UNSUPPORTED')
+    const evidence = entry.evidence
+    const cancellation = await this.#options.persistence.transaction((transaction) =>
+      transaction.get('graph-tool-cancellations', evidence.execution.executionId)
+    )
+    const deadlineOpen = Date.parse(this.#now()) < evidence.deadline
+    const currentLeaf = evidence.workflowKey === undefined || evidence.isCurrentLeaf === true
+    const authorityCurrent =
+      evidence.execution.state === 'reconciliation_required' &&
+      evidence.attempt.state === 'reconciliation_required' &&
+      (evidence.version.lifecycle === 'published' || evidence.version.lifecycle === 'deprecated')
+    const intentAllowsContinuation =
+      existingIntent === undefined ||
+      (isJsonObject(existingIntent) && typeof existingIntent['workflowKey'] === 'string')
+    const canContinue =
+      cancellation === undefined &&
+      currentLeaf &&
+      authorityCurrent &&
+      deadlineOpen &&
+      intentAllowsContinuation
+    const plan = canContinue ? recoveryPlan(call, evidence) : undefined
+    const intent = plan?.intent ?? {
+      schemaVersion: 1,
+      kind: 'resume',
+      executionId: command.executionId,
+      toolCallId: command.toolCallId,
+      checkpointId: evidence.checkpointId,
+      ...(evidence.workflowKey === undefined ? {} : { parentWorkflowKey: evidence.workflowKey }),
+      deadlineAt: new Date(evidence.deadline).toISOString(),
+      response: { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId },
+    }
+    if (existingIntent === undefined) await persistIntent(intent)
+    else assertReconciliationIntent(existingIntent, intent)
+
+    const recovered = await this.#commitKnownSuccess(call, evidence, command.expectedRevision)
     if (!recovered) throw new Error('TOOL_EFFECT_STALE_REVISION')
     const accounting = await this.#repairAccounting(recovered)
     if (!accounting.charged || !accounting.settled)
       return { outcome: 'held', reason: 'accounting_unconfirmed' }
-    const runtime = this.#recoveryRuntime
-    if (!runtime) throw new Error('TOOL_EFFECT_RECOVERY_NOT_CONFIGURED')
-    if (runtime.durableExecution !== 'embedded-sqlite' || !runtime.workflowDispatcher) {
-      throw new Error('TOOL_EFFECT_RECOVERY_UNSUPPORTED')
-    }
-    const cancellation = await this.#options.persistence.transaction((transaction) =>
-      transaction.get('graph-tool-cancellations', recovered.execution.executionId)
-    )
-    if (cancellation !== undefined)
+    if (!canContinue) {
+      if (!currentLeaf) return { outcome: 'held', reason: 'recovery_checkpoint_advanced' }
       return { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId }
-    if (entry.evidence.workflowKey !== undefined && entry.evidence.isCurrentLeaf !== true)
-      return { outcome: 'held', reason: 'recovery_checkpoint_advanced' }
-    if (
-      recovered.execution.state !== 'reconciliation_required' ||
-      recovered.attempt.state !== 'reconciliation_required' ||
-      (recovered.version.lifecycle !== 'published' &&
-        recovered.version.lifecycle !== 'deprecated') ||
-      Date.parse(this.#now()) >= recovered.deadline
-    )
-      return { outcome: 'accounted_awaiting_cancel', toolCallId: call.toolCallId }
-    // Recovery is a continuation of this server-resolved effect/checkpoint,
-    // not a distinct action per operator request. Different authorized
-    // commands that inspect the same evidence must enqueue one durable job.
-    const suffix = sha256(
-      `${recovered.execution.executionId}:${call.toolCallId}:${entry.evidence.checkpointId}`
-    ).slice(0, 48)
-    const input = ExecutionWorkflowInputSchema.parse({
-      executionId: recovered.execution.executionId,
-      workflowId: `wfl_${recovered.execution.executionId.slice(4)}`,
-      executionPlan: recovered.execution.executionPlan,
-      deadlineAt: new Date(recovered.deadline).toISOString(),
-      ...(recovered.execution.marketplacePluginReferences === undefined
-        ? {}
-        : { marketplacePluginReferences: recovered.execution.marketplacePluginReferences }),
-      graph: {
-        workspaceId: recovered.execution.correlation.workspaceId,
-        reference: recovered.plan.graph!.reference,
-        threadId: `graph:${recovered.execution.executionId}`,
-        input: recovered.plan.graph!.input,
-      },
-    })
-    await runtime.workflowDispatcher.submitRecovery(input, {
-      recoveryId: suffix,
-      checkpointId: entry.evidence.checkpointId,
-      ...(entry.evidence.workflowKey === undefined
-        ? {}
-        : { parentWorkflowKey: entry.evidence.workflowKey }),
-    })
-    return {
-      outcome: 'recovery_scheduled',
-      executionId: recovered.execution.executionId,
-      toolCallId: call.toolCallId,
-      workflowKey: `${recovered.execution.executionId}:graph-recovery:${suffix}`,
     }
+    if (existingIntent !== undefined && isJsonObject(existingIntent)) {
+      if (existingIntent['workflowKey'] === undefined)
+        return (
+          existingIntent['response'] ?? {
+            outcome: 'accounted_awaiting_cancel',
+            toolCallId: call.toolCallId,
+          }
+        )
+      if (existingIntent['workflowKey'] !== plan?.intent.workflowKey)
+        throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+    }
+    if (plan === undefined) throw new Error('TOOL_EFFECT_RECOVERY_PLAN_MISSING')
+    await runtime.workflowDispatcher.submitRecovery(plan.input, plan.recovery)
+    return plan.intent.response
   }
 
   async #signalWorkflowCancellation(
@@ -1244,6 +1410,105 @@ function parseRecoveryCommand(value: unknown): RecoveryCommand {
     toolCallId: IdentifierSchemas.toolCallId.parse(value['toolCallId']),
     expectedRevision: value['expectedRevision'] as number,
     action: value['action'],
+  }
+}
+
+function recoveryPlan(call: ToolCall, evidence: RecoveryEvidence) {
+  const recoveryId = sha256(
+    `${evidence.execution.executionId}:${call.toolCallId}:${evidence.checkpointId}`
+  ).slice(0, 48)
+  const input = ExecutionWorkflowInputSchema.parse({
+    executionId: evidence.execution.executionId,
+    workflowId: `wfl_${evidence.execution.executionId.slice(4)}`,
+    executionPlan: evidence.execution.executionPlan,
+    deadlineAt: new Date(evidence.deadline).toISOString(),
+    ...(evidence.execution.marketplacePluginReferences === undefined
+      ? {}
+      : { marketplacePluginReferences: evidence.execution.marketplacePluginReferences }),
+    graph: {
+      workspaceId: evidence.execution.correlation.workspaceId,
+      reference: evidence.plan.graph!.reference,
+      threadId: `graph:${evidence.execution.executionId}`,
+      input: evidence.plan.graph!.input,
+    },
+  })
+  const recovery = {
+    recoveryId,
+    checkpointId: evidence.checkpointId,
+    ...(evidence.workflowKey === undefined ? {} : { parentWorkflowKey: evidence.workflowKey }),
+  }
+  const workflowKey = `${evidence.execution.executionId}:graph-recovery:${recoveryId}`
+  const response = {
+    outcome: 'recovery_scheduled',
+    executionId: evidence.execution.executionId,
+    toolCallId: call.toolCallId,
+    workflowKey,
+  }
+  const intent = {
+    schemaVersion: 1,
+    kind: 'resume',
+    executionId: evidence.execution.executionId,
+    toolCallId: call.toolCallId,
+    workspaceId: evidence.execution.correlation.workspaceId,
+    projectId: evidence.execution.correlation.projectId,
+    checkpointId: evidence.checkpointId,
+    ...(evidence.workflowKey === undefined ? {} : { parentWorkflowKey: evidence.workflowKey }),
+    deadlineAt: new Date(evidence.deadline).toISOString(),
+    recoveryId,
+    workflowKey,
+    inputDigest: sha256(canonicalJsonStringify(input)),
+    recoveryDigest: sha256(canonicalJsonStringify(recovery)),
+    response,
+  }
+  return { input, recovery, intent }
+}
+
+function assertReconciliationIntent(existingValue: unknown, candidateValue: unknown): void {
+  if (!isJsonObject(existingValue) || !isJsonObject(candidateValue))
+    throw new Error('TOOL_EFFECT_RECONCILIATION_RECEIPT_CORRUPT')
+  const identityKeys = [
+    'schemaVersion',
+    'kind',
+    'executionId',
+    'toolCallId',
+    'workspaceId',
+    'projectId',
+    'checkpointId',
+    'parentWorkflowKey',
+    'deadlineAt',
+  ]
+  if (
+    identityKeys.some(
+      (key) =>
+        canonicalJsonStringify(existingValue[key] ?? null) !==
+        canonicalJsonStringify(candidateValue[key] ?? null)
+    )
+  )
+    throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+  const storedWorkflowKey = existingValue['workflowKey']
+  const candidateWorkflowKey = candidateValue['workflowKey']
+  if (storedWorkflowKey === undefined && candidateWorkflowKey !== undefined)
+    throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+  if (storedWorkflowKey !== undefined && typeof storedWorkflowKey !== 'string')
+    throw new Error('TOOL_EFFECT_RECONCILIATION_RECEIPT_CORRUPT')
+  if (candidateWorkflowKey !== undefined && storedWorkflowKey !== candidateWorkflowKey)
+    throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+  if (storedWorkflowKey !== undefined && candidateWorkflowKey !== undefined) {
+    for (const key of ['recoveryId', 'inputDigest', 'recoveryDigest'] as const) {
+      if (existingValue[key] !== candidateValue[key])
+        throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+    }
+    if (
+      canonicalJsonStringify(existingValue['response']) !==
+      canonicalJsonStringify(candidateValue['response'])
+    )
+      throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+  } else if (storedWorkflowKey === undefined) {
+    if (
+      canonicalJsonStringify(existingValue['response']) !==
+      canonicalJsonStringify(candidateValue['response'])
+    )
+      throw new Error('TOOL_EFFECT_RECONCILIATION_CONFLICT')
   }
 }
 

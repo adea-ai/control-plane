@@ -112,6 +112,18 @@ second continuation. Missing, conflicting, or unverifiable evidence stays held w
 unchanged. If execution deadline or current delivery authority has expired, verified historical
 accounting may finish, but continuation is refused and cancellation remains available.
 
+Each reconcile command is fenced by a durable Local receipt in
+`local-graph-tool-reconciliation-receipts`. Its identity is the authenticated caller, workspace,
+operation, and idempotency key; project and canonical payload are checked for conflicts. The receipt
+preserves the first command ID, request ID, and issue time, so a retry with new transport IDs returns
+the original acknowledgment. A pending intent is persisted before accounting or continuation work;
+if dispatch succeeds but receipt completion is lost, retry resolves the exact persisted recovery job
+before returning the planned acknowledgment. An active owner produces a bounded processing result,
+not a false held result. This namespace currently has no age-based deletion path and must remain
+protected. Issue #194 still needs an explicit retention policy, retired-key fence, hold/reference
+rules, and cleanup/restore evidence for this class; this receipt is not a completed retention
+implementation.
+
 This remediation path is supported only by Local `embedded-sqlite`; Restate is explicitly
 unsupported. It does not migrate old records. A historical effect is reconcilable only when its
 persisted accepted plan, graph pin, checkpoint/input identity, tool request, reservation, and object

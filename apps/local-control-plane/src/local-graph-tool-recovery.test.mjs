@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import { canonicalJsonStringify, ControlApiFixtures } from '@control-plane/contracts'
+import { createControlApiApplication } from '@control-plane/control-api'
 import { DurableExecutionCancellationService } from '@control-plane/domain'
 import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
@@ -23,8 +24,18 @@ import {
 import { DurableExecutionLifecycleActivities } from '@control-plane/workflow-worker'
 import { LangGraphSqliteCheckpointSaver } from '@control-plane/langgraph-adapter'
 import { LocalGraphToolOperations } from './local-graph-tool-operations.ts'
+import { LOCAL_GRAPH_TOOL_RECONCILIATION_RECEIPTS } from './local-graph-tool-command-receipts.ts'
+import { LocalControlApiComposition } from './local-api-composition.ts'
 import { ManagedLocalGraphRuntime } from './managed-graph-runtime.ts'
 import { createLocalGraphToolFixture } from './local-graph-tool-fixture.mjs'
+
+const metadata = {
+  serviceName: 'local-control-plane',
+  version: 'test',
+  commitSha: 'test',
+  environment: 'test',
+  instanceId: 'local-graph-recovery-test',
+}
 
 async function overwriteStoredCall(persistence, workspaceId, call) {
   const namespace = `tool-calls-r-${createHash('sha256').update(workspaceId).digest('hex')}`
@@ -60,6 +71,60 @@ function noEffectCallFrom(call, index, executionId = call.executionId) {
       { status: 'denied', at: completedAt, reasonCode: 'GRAPH_TOOL_CANCELLED' },
     ],
   }
+}
+
+async function createRecoveryHttpApplication(operations, { principal }) {
+  return await createControlApiApplication({
+    health: () => ({ status: 'ok', metadata }),
+    readiness: () => ({ status: 'ready', metadata }),
+    metadata,
+    logger: { write: () => undefined },
+    serviceAuthenticator: {
+      authenticate: async (request, requiredScopes) => {
+        if (
+          request.headers.authorization !== 'Bearer local-graph-recovery-test-token' ||
+          !requiredScopes.every((scope) => principal.scopes.includes(scope))
+        )
+          throw new Error('TEST_SERVICE_AUTHENTICATION_REJECTED')
+        return principal
+      },
+    },
+    toolEffectRecoveryService: operations,
+  })
+}
+
+function recoveryHttpCommand(fixture, principal, call, suffix, action = 'resume') {
+  const base = ControlApiFixtures.executionAcceptance.request
+  const payload = {
+    executionId: fixture.operation.executionId,
+    toolCallId: call.toolCallId,
+    expectedRevision: call.revision,
+    action,
+  }
+  return {
+    ...base,
+    caller: { servicePrincipalId: principal.principalId },
+    commandId: base.commandId,
+    requestId: base.requestId,
+    correlation: base.correlation,
+    operation: 'execution.tool-effect.reconcile',
+    workspaceId: fixture.operation.workspaceId,
+    projectId: fixture.plan.correlation.projectId,
+    idempotencyKey: `chained-recovery-operator-${suffix}`,
+    issuedAt: fixture.at,
+    payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
+    payload,
+  }
+}
+
+async function postRecoveryCommand(application, command) {
+  const response = await application.inject({
+    method: 'POST',
+    url: '/v1/executions/tool-effects/reconcile',
+    headers: { authorization: 'Bearer local-graph-recovery-test-token' },
+    payload: command,
+  })
+  return { statusCode: response.statusCode, body: response.json() }
 }
 
 test('inspects a lost immutable write response from its persisted checkpoint without exposing input', async () => {
@@ -273,7 +338,11 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
     expect(await operations.inspect(inspectEnvelope, principal)).toMatchObject({
       calls: [{ artifact: { state: 'conflict' } }],
     })
-    expect(await operations.reconcile(command, principal)).toMatchObject({
+    const conflictCommand = {
+      ...command,
+      idempotencyKey: 'recovery-resume-command-0002',
+    }
+    expect(await operations.reconcile(conflictCommand, principal)).toMatchObject({
       outcome: 'held',
       reason: 'conflict',
     })
@@ -367,6 +436,7 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
     payload = { ...payload, expectedRevision: call.revision }
     command = {
       ...command,
+      idempotencyKey: 'recovery-resume-command-0003',
       payload,
       payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
     }
@@ -386,7 +456,8 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
     expect(JSON.stringify(inspection)).not.toContain('execute')
     expect(physicalCreates).toBe(1)
 
-    const scheduled = await operations.reconcile(command, principal)
+    const scheduledCommand = command
+    const scheduled = await operations.reconcile(scheduledCommand, principal)
     expect(scheduled).toMatchObject({ outcome: 'recovery_scheduled' })
     const workflowKey = scheduled.workflowKey
     const recoveryJob = await workflowJobs.get(workflowKey)
@@ -401,25 +472,24 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
       store: new SqliteDurableUsageStore(fixture.persistence),
     }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
     expect(repairedSummary).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 25 })
+    expect(await operations.reconcile(scheduledCommand, principal)).toEqual(scheduled)
     payload = { ...payload, expectedRevision: afterRecovery.revision }
     command = {
       ...command,
+      idempotencyKey: 'recovery-resume-command-0004',
       payload,
       payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
     }
-    expect(await operations.reconcile(command, principal)).toMatchObject({
+    const postRecoveryHeld = await operations.reconcile(command, principal)
+    expect(postRecoveryHeld).toMatchObject({
       outcome: 'held',
       reason: 'unverifiable',
     })
     const replayWithNewCommand = {
       ...command,
       commandId: 'cmd_01JABCDEF0123456789ABCDEFN',
-      idempotencyKey: 'recovery-resume-command-0002',
     }
-    expect(await operations.reconcile(replayWithNewCommand, principal)).toMatchObject({
-      outcome: 'held',
-      reason: 'unverifiable',
-    })
+    expect(await operations.reconcile(replayWithNewCommand, principal)).toEqual(postRecoveryHeld)
     expect(await workflowJobs.get(workflowKey)).toMatchObject({ status: 'queued', attempt: 0 })
     expect((await calls.get(call.toolCallId)).revision).toBe(afterRecovery.revision)
     expect(physicalCreates).toBe(1)
@@ -429,7 +499,7 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
       {
         ...command,
         commandId: 'cmd_01JABCDEF0123456789ABCDEFR',
-        idempotencyKey: 'recovery-cancel-command-0001',
+        idempotencyKey: 'recovery-cancel-command-0005',
         payloadHash: createHash('sha256')
           .update(canonicalJsonStringify(cancelPayload))
           .digest('hex'),
@@ -448,7 +518,7 @@ test('inspects a lost immutable write response from its persisted checkpoint wit
       {
         ...command,
         commandId: 'cmd_01JABCDEF0123456789ABCDEFQ',
-        idempotencyKey: 'recovery-resume-command-0003',
+        idempotencyKey: 'recovery-resume-command-0006',
       },
       principal
     )
@@ -525,6 +595,234 @@ test('cancellation stays held while the immutable write outcome is unknown', asy
     storedObjects.close()
     await fixture.cleanup()
   }
+})
+
+test('expired deadlines and revoked tools stop continuation but preserve accounting and cancellation', async () => {
+  async function verifyCase({ expired, revoked, suffix }) {
+    const fixture = await createLocalGraphToolFixture({ approvalMode: 'never' })
+    const storedObjects = new FilesystemObjectStore({
+      rootDirectory: join(fixture.directory, 'expired-revoked-objects'),
+      maxObjectBytes: 4_096,
+    })
+    let writes = 0
+    let now = fixture.at
+    const objectStore = new Proxy(storedObjects, {
+      get(target, property) {
+        if (property === 'putIfAbsent')
+          return async (input) => {
+            const result = await target.putIfAbsent(input)
+            if (result.outcome === 'created') {
+              writes += 1
+              throw new Error('lost write receipt')
+            }
+            return result
+          }
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const operations = new LocalGraphToolOperations({
+      api: fixture.api,
+      persistence: fixture.persistence,
+      objectStore,
+      prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
+      now: () => now,
+    })
+    const graphRuntime = new ManagedLocalGraphRuntime(
+      fixture.persistence,
+      {
+        capabilities: ['graph.tool-pins.v1'],
+        compiler: {
+          operationAllowlist: [{ kind: 'tool', name: 'store' }],
+          schemaRegistry: {
+            getValidator(reference) {
+              if (reference === 'schema:json' || reference === 'local.graph-json-object.v1')
+                return (value) =>
+                  value !== null && typeof value === 'object' && !Array.isArray(value)
+              if (reference === 'local.graph-state.v1')
+                return (value) => value !== null && typeof value === 'object'
+              return undefined
+            },
+          },
+          maximumSteps: 8,
+        },
+        operations,
+      },
+      objectStore
+    )
+    const calls = new SqliteToolCallRepository(fixture.persistence, fixture.operation.workspaceId)
+    try {
+      const outcome = await graphRuntime.activities(fixture.api).runGraphSegment({
+        executionId: fixture.operation.executionId,
+        attemptId: fixture.operation.attemptId,
+        workspaceId: fixture.operation.workspaceId,
+        workflowId: fixture.operation.workflowId,
+        graph: fixture.graph.reference,
+        threadId: fixture.operation.threadId,
+        input: fixture.plan.graph.input,
+        idempotencyKey: 'expired-revoked:original-run',
+      })
+      expect(outcome.outcome).toBe('reconciliation_required')
+      expect(writes).toBe(1)
+      let call = (await calls.listByExecution(fixture.operation.executionId))[0]
+      const lifecycle = new ExecutionLifecycleService(fixture.api.executions)
+      const execution = await fixture.api.executions.getExecution(fixture.operation.executionId)
+      const attempt = await fixture.api.executions.getAttempt(fixture.operation.attemptId)
+      await lifecycle.transitionExecution({
+        executionId: execution.executionId,
+        expectedVersion: execution.version,
+        to: 'reconciliation_required',
+        transitionedAt: fixture.at,
+      })
+      await lifecycle.transitionAttempt({
+        attemptId: attempt.attemptId,
+        expectedVersion: attempt.version,
+        to: 'reconciliation_required',
+        transitionedAt: fixture.at,
+      })
+
+      const versionNamespace = `tool-versions-r-${createHash('sha256')
+        .update(fixture.operation.workspaceId)
+        .digest('hex')}`
+      await fixture.persistence.transaction(async (transaction) => {
+        const stored = (await transaction.list(versionNamespace)).find(
+          (candidate) => candidate.value?.toolVersionId === fixture.operation.toolPin.toolVersionId
+        )
+        expect(stored).toBeDefined()
+        expect(stored.value.version.lifecycle).toBe('published')
+        if (!revoked) return
+        await transaction.put({
+          namespace: versionNamespace,
+          id: stored.id,
+          expectedRevision: stored.revision,
+          value: {
+            ...stored.value,
+            version: {
+              ...stored.value.version,
+              revision: stored.value.version.revision + 1,
+              lifecycle: 'revoked',
+            },
+          },
+        })
+      })
+      const actualLifecycle = await fixture.persistence.transaction(
+        async (transaction) =>
+          (await transaction.list(versionNamespace)).find(
+            (candidate) =>
+              candidate.value?.toolVersionId === fixture.operation.toolPin.toolVersionId
+          )?.value?.version?.lifecycle
+      )
+      expect(actualLifecycle).toBe(revoked ? 'revoked' : 'published')
+
+      const workflowJobs = new WorkflowJobStore(fixture.persistence, {
+        beforeEnqueue: assertSqliteWorkflowExecutionReference,
+      })
+      const workflowDispatcher = new EmbeddedExecutionWorkflowDispatcher({
+        store: workflowJobs,
+        now: () => now,
+      })
+      operations.bindRecoveryRuntime({
+        workflowJobs,
+        workflowDispatcher,
+        durableExecution: 'embedded-sqlite',
+        executionLifecycleActivities: { persistStatus: async () => undefined },
+      })
+      fixture.api.executionCancellationService = new DurableExecutionCancellationService(
+        new SqliteExecutionCancellationRepository(fixture.persistence),
+        fixture.api.commandRepository,
+        workflowDispatcher,
+        () => now
+      )
+
+      const acceptedCommand = await fixture.api.commandRepository.getByExecutionId(
+        fixture.operation.executionId
+      )
+      const deadline = Math.min(
+        Date.parse(
+          execution.deadlineAt ??
+            new Date(
+              Date.parse(execution.acceptedAt) + fixture.plan.constraints.limits.duration.maximumMs
+            ).toISOString()
+        ),
+        Date.parse(acceptedCommand.retentionExpiresAt)
+      )
+      now = expired ? new Date(deadline + 1).toISOString() : fixture.at
+      expect(expired ? Date.parse(now) > deadline : Date.parse(now) <= deadline).toBe(true)
+      const principal = {
+        principalId: 'svc_graph-tool-test',
+        workspaceIds: [fixture.operation.workspaceId],
+        projectIds: [fixture.plan.correlation.projectId],
+        scopes: ['execution:reconcile'],
+        kind: 'internal_service',
+      }
+      const inspection = await operations.inspect(
+        {
+          operation: 'execution.tool-effect.inspect',
+          workspaceId: fixture.operation.workspaceId,
+          projectId: fixture.plan.correlation.projectId,
+          caller: { servicePrincipalId: principal.principalId },
+          parameters: {
+            executionId: fixture.operation.executionId,
+            toolCallId: call.toolCallId,
+          },
+        },
+        principal
+      )
+      expect(inspection).toMatchObject({ calls: [{ artifact: { state: 'verified' } }] })
+
+      const unresolvedRevision = call.revision
+      const resume = recoveryHttpCommand(fixture, principal, call, `${suffix}-resume`)
+      const accounted = await operations.reconcile(resume, principal)
+      expect(accounted).toMatchObject({
+        outcome: 'accounted_awaiting_cancel',
+        toolCallId: call.toolCallId,
+      })
+      call = await calls.get(call.toolCallId)
+      expect(call.status).toBe('succeeded')
+      expect(call.revision).toBe(unresolvedRevision + 1)
+      const accountedRevision = call.revision
+      const graphJobsAfterAccounting = await workflowJobs.getExecutionGraphJobsSnapshot(
+        fixture.operation.executionId
+      )
+      expect(graphJobsAfterAccounting).toEqual([])
+      expect(
+        await new DurableUsageLedger({
+          store: new SqliteDurableUsageStore(fixture.persistence),
+        }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+      ).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 25 })
+
+      const freshResume = recoveryHttpCommand(fixture, principal, call, `${suffix}-fresh-resume`)
+      expect(await operations.reconcile(freshResume, principal)).toMatchObject({
+        outcome: 'accounted_awaiting_cancel',
+        toolCallId: call.toolCallId,
+      })
+      expect(
+        await workflowJobs.getExecutionGraphJobsSnapshot(fixture.operation.executionId)
+      ).toEqual(graphJobsAfterAccounting)
+      expect((await calls.get(call.toolCallId)).revision).toBe(accountedRevision)
+      const cancelled = await operations.reconcile(
+        recoveryHttpCommand(fixture, principal, call, `${suffix}-cancel`, 'cancel'),
+        principal
+      )
+      expect(cancelled).toMatchObject({
+        outcome: 'cancelled',
+        executionId: fixture.operation.executionId,
+      })
+      expect(
+        await new DurableUsageLedger({
+          store: new SqliteDurableUsageStore(fixture.persistence),
+        }).summary(fixture.operation.workspaceId, fixture.operation.executionId)
+      ).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 25 })
+      expect(await workflowJobs.getCancellation(fixture.operation.executionId)).toBeDefined()
+      expect(writes).toBe(1)
+    } finally {
+      storedObjects.close()
+      await fixture.cleanup()
+    }
+  }
+
+  await verifyCase({ expired: true, revoked: false, suffix: 'expired-published' })
+  await verifyCase({ expired: false, revoked: true, suffix: 'live-revoked' })
 })
 
 test('recovers a lost receipt at the later of two graph nodes sharing one tool pin', async () => {
@@ -914,6 +1212,8 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
     maxObjectBytes: 4_096,
   })
   let physicalCreates = 0
+  let failReceiptCompletion = false
+  let failReceiptRelease = false
   const objectStore = new Proxy(storedObjects, {
     get(target, property) {
       if (property === 'putIfAbsent')
@@ -929,9 +1229,51 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
       return typeof value === 'function' ? value.bind(target) : value
     },
   })
-  const operations = new LocalGraphToolOperations({
+  const receiptFailurePersistence = new Proxy(fixture.persistence, {
+    get(target, property) {
+      if (property === 'transaction')
+        return (operation) =>
+          target.transaction((transaction) =>
+            operation(
+              new Proxy(transaction, {
+                get(transactionTarget, method) {
+                  if (method === 'put')
+                    return async (write) => {
+                      if (
+                        failReceiptCompletion &&
+                        write.namespace === LOCAL_GRAPH_TOOL_RECONCILIATION_RECEIPTS &&
+                        write.value?.status === 'completed'
+                      ) {
+                        failReceiptCompletion = false
+                        throw new Error('injected receipt acknowledgement loss')
+                      }
+                      if (
+                        failReceiptRelease &&
+                        write.namespace === LOCAL_GRAPH_TOOL_RECONCILIATION_RECEIPTS &&
+                        write.value?.status === 'pending' &&
+                        write.value?.lease === undefined
+                      ) {
+                        failReceiptRelease = false
+                        throw new Error('injected owner-process loss before lease release')
+                      }
+                      return transactionTarget.put(write)
+                    }
+                  const methodValue = Reflect.get(transactionTarget, method, transactionTarget)
+                  return typeof methodValue === 'function'
+                    ? methodValue.bind(transactionTarget)
+                    : methodValue
+                },
+              })
+            )
+          )
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  let now = fixture.at
+  let operations = new LocalGraphToolOperations({
     api: fixture.api,
-    persistence: fixture.persistence,
+    persistence: receiptFailurePersistence,
     objectStore,
     prices: [
       {
@@ -940,7 +1282,7 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
         costMicrounits: 25,
       },
     ],
-    now: () => fixture.at,
+    now: () => now,
   })
   const graphRuntime = new ManagedLocalGraphRuntime(
     fixture.persistence,
@@ -996,9 +1338,21 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
     now: () => fixture.at,
   })
   let recoveryWorker = embedded
+  let submissionBarrier
+  const gatedDispatcher = {
+    submitRecovery: async (input, recovery) => {
+      await workflowDispatcher.submitRecovery(input, recovery)
+      const barrier = submissionBarrier
+      if (barrier !== undefined) {
+        submissionBarrier = undefined
+        barrier.markEnqueued()
+        await barrier.released
+      }
+    },
+  }
   operations.bindRecoveryRuntime({
     workflowJobs,
-    workflowDispatcher,
+    workflowDispatcher: gatedDispatcher,
     durableExecution: 'embedded-sqlite',
     executionLifecycleActivities: lifecycleActivities,
   })
@@ -1041,6 +1395,7 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
     kind: 'internal_service',
   }
   const originalRunKey = `${workflowInput.workflowId}:execution-lifecycle-v1:graph:run`
+  let recoveryApplication
 
   async function waitFor(predicate) {
     const deadline = Date.now() + 15_000
@@ -1062,28 +1417,21 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
   }
 
   async function recover(call, index) {
-    const payload = {
-      executionId: fixture.operation.executionId,
-      toolCallId: call.toolCallId,
-      expectedRevision: call.revision,
-      action: 'resume',
-    }
-    return await operations.reconcile(
-      {
-        operation: 'execution.tool-effect.reconcile',
-        workspaceId: fixture.operation.workspaceId,
-        projectId: fixture.plan.correlation.projectId,
-        caller: { servicePrincipalId: principal.principalId },
-        commandId: `cmd_01JABCDEF0123456789ABCDE${index}`,
-        idempotencyKey: `chained-recovery-operator-${index}`,
-        payloadHash: createHash('sha256').update(canonicalJsonStringify(payload)).digest('hex'),
-        payload,
-      },
-      principal
+    const response = await postRecoveryCommand(
+      recoveryApplication,
+      recoveryHttpCommand(fixture, principal, call, index)
     )
+    if (response.statusCode !== 202)
+      throw new Error(`LOCAL_GRAPH_RECOVERY_HTTP_FAILED:${response.statusCode}`)
+    return response.body
   }
 
   try {
+    recoveryApplication = await createRecoveryHttpApplication(operations, {
+      at: fixture.at,
+      principal,
+      projectId: fixture.plan.correlation.projectId,
+    })
     await embedded.start()
     await workflowDispatcher.submit(workflowInput)
     const original = await waitForJob(fixture.operation.executionId)
@@ -1096,9 +1444,78 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
     const firstCall = (await calls.listByExecution(fixture.operation.executionId))[0]
     expect(firstCall.status).toBe('reconciliation_required')
     await embedded.stop()
-    const firstScheduled = await recover(firstCall, '1')
+    let releaseFirstSubmission
+    let markFirstEnqueued
+    const firstEnqueued = new Promise((resolve) => {
+      markFirstEnqueued = resolve
+    })
+    const firstSubmissionReleased = new Promise((resolve) => {
+      releaseFirstSubmission = resolve
+    })
+    submissionBarrier = {
+      markEnqueued: markFirstEnqueued,
+      released: firstSubmissionReleased,
+    }
+    const firstCommand = recoveryHttpCommand(fixture, principal, firstCall, '1')
+    failReceiptCompletion = true
+    failReceiptRelease = true
+    const firstResponsePromise = postRecoveryCommand(recoveryApplication, firstCommand)
+    await firstEnqueued
+    const concurrentResponsePromise = postRecoveryCommand(recoveryApplication, firstCommand)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    releaseFirstSubmission()
+    const [acknowledgementFailure, concurrentResponse] = await Promise.all([
+      firstResponsePromise,
+      concurrentResponsePromise,
+    ])
+    expect(acknowledgementFailure.statusCode).toBe(503)
+    expect(concurrentResponse.statusCode).toBe(202)
+    expect(concurrentResponse.body).toMatchObject({
+      outcome: 'processing',
+      commandId: firstCommand.commandId,
+    })
+    const changedPayload = {
+      ...firstCommand,
+      payload: { ...firstCommand.payload, expectedRevision: firstCall.revision + 1 },
+    }
+    changedPayload.payloadHash = createHash('sha256')
+      .update(canonicalJsonStringify(changedPayload.payload))
+      .digest('hex')
+    const changedPayloadResponse = await postRecoveryCommand(recoveryApplication, changedPayload)
+    expect(changedPayloadResponse.statusCode).toBe(409)
+    expect(changedPayloadResponse.body.error.class).toBe('conflict')
+    const otherProjectId = 'prj_01JABCDEF0123456789ABCDEGH'
+    await expect(
+      operations.reconcile(
+        { ...firstCommand, projectId: otherProjectId },
+        { ...principal, projectIds: [...principal.projectIds, otherProjectId] }
+      )
+    ).rejects.toThrow('TOOL_EFFECT_RECONCILIATION_CONFLICT')
+    const transportRetry = {
+      ...firstCommand,
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFS',
+      requestId: 'req_01JABCDEF0123456789ABCDEFS',
+      issuedAt: new Date(Date.parse(fixture.at) + 1_000).toISOString(),
+    }
+    const transportRetryResponse = await postRecoveryCommand(recoveryApplication, transportRetry)
+    expect(transportRetryResponse.statusCode).toBe(202)
+    expect(transportRetryResponse.body).toMatchObject({ outcome: 'processing' })
+    const receiptRows = await fixture.persistence.transaction((transaction) =>
+      transaction.list(LOCAL_GRAPH_TOOL_RECONCILIATION_RECEIPTS)
+    )
+    const pendingReceipt = receiptRows.find(
+      (row) => row.value?.command?.idempotencyKey === firstCommand.idempotencyKey
+    )
+    expect(pendingReceipt?.value?.status).toBe('pending')
+    expect(pendingReceipt?.value?.command).toMatchObject({
+      commandId: firstCommand.commandId,
+      requestId: firstCommand.requestId,
+      issuedAt: firstCommand.issuedAt,
+    })
+    expect(pendingReceipt?.value?.lease).toBeDefined()
+    const firstScheduled = pendingReceipt.value.intent.response
     expect(firstScheduled).toMatchObject({ outcome: 'recovery_scheduled' })
-    const firstRecoveryKey = firstScheduled.workflowKey
+    const firstRecoveryKey = pendingReceipt.value.intent.workflowKey
     const firstRecoveryId = firstRecoveryKey.slice(
       `${fixture.operation.executionId}:graph-recovery:`.length
     )
@@ -1143,6 +1560,48 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
       await workflowJobs.getEffect(firstRecoveryKey, firstRecoveryEffectKey(firstRecovery))
     ).toBeDefined()
     expect(physicalCreates).toBe(2)
+
+    await recoveryApplication.close()
+    const restartedApi = new LocalControlApiComposition(
+      fixture.persistence,
+      'http://127.0.0.1:1',
+      undefined,
+      undefined,
+      workflowDispatcher
+    )
+    const restartedOperations = new LocalGraphToolOperations({
+      api: restartedApi,
+      persistence: fixture.persistence,
+      objectStore,
+      prices: [
+        {
+          pin: fixture.operation.toolPin,
+          currency: fixture.plan.constraints.limits.budget.currency,
+          costMicrounits: 25,
+        },
+      ],
+      now: () => now,
+    })
+    restartedOperations.bindRecoveryRuntime({
+      workflowJobs,
+      workflowDispatcher: gatedDispatcher,
+      durableExecution: 'embedded-sqlite',
+      executionLifecycleActivities: lifecycleActivities,
+    })
+    operations = restartedOperations
+    recoveryApplication = await createRecoveryHttpApplication(operations, {
+      at: fixture.at,
+      principal,
+      projectId: fixture.plan.correlation.projectId,
+    })
+    now = new Date(Date.parse(fixture.at) + 31_000).toISOString()
+    expect(Date.parse(now)).toBeLessThan(authoritativeDeadline)
+    const lostAcknowledgementRetry = await postRecoveryCommand(recoveryApplication, firstCommand)
+    expect(lostAcknowledgementRetry.statusCode).toBe(202)
+    expect(lostAcknowledgementRetry.body).toEqual(firstScheduled)
+    const completedTransportRetry = await postRecoveryCommand(recoveryApplication, transportRetry)
+    expect(completedTransportRetry.statusCode).toBe(202)
+    expect(completedTransportRetry.body).toEqual(firstScheduled)
 
     const secondCall = (await calls.listByExecution(fixture.operation.executionId)).find(
       (call) => call.toolCallId !== firstCall.toolCallId
@@ -1212,6 +1671,7 @@ test('follows successive embedded recovery jobs after two lost write receipts', 
     expect(summary).toMatchObject({ reservedMicrounits: 0, spentMicrounits: 50 })
     expect(physicalCreates).toBe(2)
   } finally {
+    await recoveryApplication?.close()
     await recoveryWorker.stop()
     storedObjects.close()
     await fixture.cleanup()
