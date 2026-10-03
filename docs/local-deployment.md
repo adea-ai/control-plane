@@ -168,7 +168,7 @@ non-secret. Native Pi authentication remains in the explicitly selected Pi confi
 The configured logical alias, declared model capabilities, provider class, provider deny-list, and
 data residency must satisfy the immutable ExecutionPlan model policy or materialization fails closed.
 
-The packaged process client currently accepts Pi `>=0.84.0 <0.85.0`, exposes streaming,
+The packaged process client currently accepts Pi `>=1.0.0 <1.1.0`, exposes streaming,
 cancellation, and degraded steering input, and does not claim approval interactions, native tools,
 or in-flight process recovery. Plans requiring those unsupported capabilities remain ineligible.
 The historical injected client certification remains `>=0.52.0 <0.53.0`; the two ranges are not

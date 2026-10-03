@@ -67,8 +67,8 @@ export function createLocalManagedPiRuntime(
       new ManagedPiDriver({
         client,
         adapterVersion: '1.2.0',
-        minimumRuntimeVersion: '0.84.0',
-        maximumRuntimeVersionExclusive: '0.85.0',
+        minimumRuntimeVersion: '1.0.0',
+        maximumRuntimeVersionExclusive: '1.1.0',
       })
     ),
   })

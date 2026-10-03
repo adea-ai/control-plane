@@ -685,7 +685,8 @@ describe('M11 standalone execution composition', () => {
       const ports = realPiDurableExecution === 'restate' ? await isolatedLocalPorts() : undefined
       const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
       const promptRecord = join(directory, 'prompt-record.json')
-      if (!realExecutable) await writeManagedPiRpcFixture(executablePath)
+      if (!realExecutable)
+        await writeManagedPiRpcFixture(executablePath, { runtimeVersion: '1.0.0' })
       const localOptions = {
         dataDirectory: directory,
         runtimeFactory: (repositories) => {

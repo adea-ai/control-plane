@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.2"
+    "@earendil-works/pi-coding-agent": "1.0.0"
   },
   "overrides": {
     "undici": "8.10.2"

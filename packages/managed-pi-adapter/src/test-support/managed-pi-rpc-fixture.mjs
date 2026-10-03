@@ -1,14 +1,14 @@
 import { chmod, writeFile } from 'node:fs/promises'
 
-export async function writeManagedPiRpcFixture(executablePath) {
-  await writeFile(executablePath, managedPiRpcFixtureSource, { mode: 0o700 })
+export async function writeManagedPiRpcFixture(executablePath, { runtimeVersion = '0.84.2' } = {}) {
+  await writeFile(executablePath, managedPiRpcFixtureSource(runtimeVersion), { mode: 0o700 })
   await chmod(executablePath, 0o700)
 }
 
-const managedPiRpcFixtureSource = `#!/usr/bin/env node
+const managedPiRpcFixtureSource = (runtimeVersion) => `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs'
 if (process.argv.includes('--version')) {
-  process.stdout.write('0.84.2\\n')
+  process.stdout.write(${JSON.stringify(`${runtimeVersion}\n`)})
   process.exit(0)
 }
 let input = ''

@@ -64,7 +64,7 @@ test('Simple managed Pi packaging is opt-in, pinned, and keeps credentials exter
     managedPiBlock,
     /target:\s*\/run\/control-plane\/pi-agent-config\s*\n\s+read_only:\s*true/
   )
-  assert.equal(packageManifest.dependencies['@earendil-works/pi-coding-agent'], '0.84.2')
+  assert.equal(packageManifest.dependencies['@earendil-works/pi-coding-agent'], '1.0.0')
   assert.equal(packageManifest.overrides.undici, '8.10.2')
   assert.match(
     dockerfile,
@@ -117,7 +117,7 @@ test('Simple managed Pi packaging is opt-in, pinned, and keeps credentials exter
         managedPiEntrypoint.indexOf('exec /usr/local/bin/control-plane-entrypoint'),
     'startup must sync config, preflight Pi, then start Control Plane'
   )
-  assert.match(managedPiVersionPreflight, /PINNED_PI_VERSION = '0\.84\.2'/)
+  assert.match(managedPiVersionPreflight, /PINNED_PI_VERSION = '1\.0\.0'/)
   assert.match(managedPiVersionPreflight, /PI_VERSION_PREFLIGHT_TIMEOUT_MS = 30_000/)
   assert.match(managedPiVersionPreflight, /PI_VERSION_PREFLIGHT_MAX_OUTPUT_BYTES = 16_384/)
   assert.match(managedPiVersionPreflight, /PI_CODING_AGENT_DIR: agentDirectory/)

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const PINNED_PI_VERSION = '0.84.2'
+export const PINNED_PI_VERSION = '1.0.0'
 export const PI_VERSION_PREFLIGHT_TIMEOUT_MS = 30_000
 export const PI_VERSION_PREFLIGHT_MAX_OUTPUT_BYTES = 16_384
 
