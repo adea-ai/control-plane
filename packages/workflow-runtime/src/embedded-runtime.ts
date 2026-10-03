@@ -250,7 +250,7 @@ export class EmbeddedWorkflowRuntime {
     > => {
       const cancellation = await store.getCancellation(workflowKey)
       if (cancellation !== undefined) return { cancelled: true }
-      if (Date.now() >= deadlineMs) return { deadlineReached: true }
+      if (Date.parse(now()) >= deadlineMs) return { deadlineReached: true }
       return {}
     })()
     return {
@@ -284,7 +284,7 @@ export class EmbeddedWorkflowRuntime {
             if (cancellation !== undefined) {
               return { type: 'terminal', control: { cancelled: true } satisfies TerminalControl }
             }
-            if (Date.now() >= deadlineMs) {
+            if (Date.parse(now()) >= deadlineMs) {
               return {
                 type: 'terminal',
                 control: { deadlineReached: true } satisfies TerminalControl,
@@ -305,7 +305,7 @@ export class EmbeddedWorkflowRuntime {
       checkTerminal: async (): Promise<TerminalControl | undefined> => {
         const cancellation = await store.getCancellation(workflowKey)
         if (cancellation !== undefined) return { cancelled: true }
-        if (Date.now() >= deadlineMs) return { deadlineReached: true }
+        if (Date.parse(now()) >= deadlineMs) return { deadlineReached: true }
         return undefined
       },
     }

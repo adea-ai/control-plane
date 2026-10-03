@@ -60,7 +60,9 @@ export async function createLocalGraphToolFixture({
       executor: { type: 'internal', reference: 'local.object-store-json.v1' },
       inputSchema: { type: 'object' },
       outputSchema: { type: 'object' },
-      limits: { maxInputBytes: 4096, maxOutputBytes: 4096, timeoutMs: 1000 },
+      // These tests verify durable effects, not timeout policy. Match the
+      // supported launcher's bounded budget for real filesystem writes.
+      limits: { maxInputBytes: 4096, maxOutputBytes: 4096, timeoutMs: 30_000 },
       createdAt: at,
       publishedAt: at,
     })
