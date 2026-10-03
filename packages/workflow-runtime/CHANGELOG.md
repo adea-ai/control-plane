@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.8.0...workflow-runtime-v1.9.0) (2026-10-03)
+
+
+### Features
+
+* **local:** recover graph tool effects without duplicate work ([#858](https://github.com/adea-ai/control-plane/issues/858)) ([d1518fb](https://github.com/adea-ai/control-plane/commit/d1518fb061cce6af67a76f47a4796810cfa6fb35))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/workflow-runtime-v1.7.0...workflow-runtime-v1.8.0) (2026-10-03)
 
 
