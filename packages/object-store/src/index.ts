@@ -17,6 +17,7 @@ import {
 } from '@aws-sdk/client-s3'
 
 export * from './filesystem.js'
+export * from './json-tool-executor.js'
 
 const MAX_KEY_BYTES = 1_024
 const MAX_CONTENT_TYPE_BYTES = 255

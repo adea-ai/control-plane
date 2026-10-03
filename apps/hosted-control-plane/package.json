@@ -20,18 +20,25 @@
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/config": "workspace:*",
     "@control-plane/context": "workspace:*",
+    "@control-plane/contracts": "workspace:*",
     "@control-plane/control-api": "workspace:*",
     "@control-plane/database": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/langgraph-adapter": "workspace:*",
     "@control-plane/object-store": "workspace:*",
+    "@control-plane/orchestration": "workspace:*",
     "@control-plane/remote-control-relay": "workspace:*",
     "@control-plane/restate-runtime": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
+    "@control-plane/tool-sdk": "workspace:*",
+    "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
-    "@control-plane/workflow-worker": "workspace:*"
+    "@control-plane/workflow-worker": "workspace:*",
+    "semver": "7.8.5"
   },
   "engines": {
     "node": "24.21.0"

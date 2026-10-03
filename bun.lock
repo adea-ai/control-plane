@@ -43,7 +43,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.17.0",
+      "version": "1.17.3",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -76,28 +76,35 @@
     },
     "apps/hosted-control-plane": {
       "name": "@control-plane/hosted-control-plane",
-      "version": "1.15.0",
+      "version": "1.16.1",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
+        "@control-plane/contracts": "workspace:*",
         "@control-plane/control-api": "workspace:*",
         "@control-plane/database": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
+        "@control-plane/langgraph-adapter": "workspace:*",
         "@control-plane/object-store": "workspace:*",
+        "@control-plane/orchestration": "workspace:*",
         "@control-plane/remote-control-relay": "workspace:*",
         "@control-plane/restate-runtime": "workspace:*",
         "@control-plane/secrets": "workspace:*",
         "@control-plane/telemetry": "workspace:*",
+        "@control-plane/tool-execution": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
+        "@control-plane/usage-ledger": "workspace:*",
         "@control-plane/workflow-runtime": "workspace:*",
         "@control-plane/workflow-worker": "workspace:*",
+        "semver": "7.8.5",
       },
     },
     "apps/local-control-plane": {
       "name": "@control-plane/local-control-plane",
-      "version": "1.21.1",
+      "version": "1.23.0",
       "dependencies": {
         "@control-plane/acp-adapter": "workspace:*",
         "@control-plane/bootstrap": "workspace:*",
@@ -178,7 +185,7 @@
     },
     "apps/workflow-worker": {
       "name": "@control-plane/workflow-worker",
-      "version": "1.12.0",
+      "version": "1.13.2",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -240,14 +247,14 @@
     },
     "packages/contracts": {
       "name": "@control-plane/contracts",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "dependencies": {
         "zod": "4.6.5",
       },
     },
     "packages/control-sdk": {
       "name": "@control-plane/sdk",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:^",
       },
@@ -276,7 +283,7 @@
     },
     "packages/database": {
       "name": "@control-plane/database",
-      "version": "1.38.0",
+      "version": "1.39.2",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
@@ -335,7 +342,7 @@
     },
     "packages/langgraph-adapter": {
       "name": "@control-plane/langgraph-adapter",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
@@ -389,15 +396,17 @@
     },
     "packages/object-store": {
       "name": "@control-plane/object-store",
-      "version": "1.5.3",
+      "version": "1.5.4",
       "dependencies": {
         "@aws-sdk/client-s3": "3.1146.0",
+        "@control-plane/contracts": "workspace:*",
         "@control-plane/deployment": "workspace:*",
+        "@control-plane/tool-sdk": "workspace:*",
       },
     },
     "packages/orchestration": {
       "name": "@control-plane/orchestration",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -517,7 +526,7 @@
     },
     "packages/telemetry": {
       "name": "@control-plane/telemetry",
-      "version": "1.5.5",
+      "version": "1.5.6",
       "devDependencies": {
         "@opentelemetry/api": "1.9.1",
         "@sentry/node": "11.4.0",
@@ -533,7 +542,7 @@
     },
     "packages/testing": {
       "name": "@control-plane/testing",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/database": "workspace:*",
@@ -541,7 +550,7 @@
     },
     "packages/tool-execution": {
       "name": "@control-plane/tool-execution",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/contracts": "workspace:*",
@@ -569,7 +578,7 @@
     },
     "packages/workflow-runtime": {
       "name": "@control-plane/workflow-runtime",
-      "version": "1.6.0",
+      "version": "1.8.0",
       "dependencies": {
         "@control-plane/config": "workspace:*",
         "@control-plane/contracts": "workspace:*",

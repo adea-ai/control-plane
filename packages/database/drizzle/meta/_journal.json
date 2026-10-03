@@ -407,6 +407,27 @@
       "when": 1790828797374,
       "tag": "0057_low_mentallo",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1790998024696,
+      "tag": "0058_ancient_karnak",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1790998248501,
+      "tag": "0059_steep_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1791001493827,
+      "tag": "0060_ambiguous_silver_sable",
+      "breakpoints": true
     }
   ]
 }
