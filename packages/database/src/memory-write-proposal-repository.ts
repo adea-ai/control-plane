@@ -1,5 +1,12 @@
 import { MemoryWriteProposalSchema, type MemoryWriteProposal } from '@control-plane/contracts'
-import type { MemoryWriteProposalRepository } from '@control-plane/memory-writeback'
+import {
+  parseMemoryWriteApproval,
+  MemoryWriteError,
+  type MemoryWriteProposalRepository,
+} from '@control-plane/memory-writeback'
+import type { InteractionRequest } from '@control-plane/domain'
+import { insertPostgresInteraction } from './interaction-repository.js'
+import { executions } from './schema/executions.js'
 import { and, asc, eq } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { memoryWriteProposals } from './schema/memory-write-proposals.js'
@@ -15,6 +22,33 @@ export class PostgresMemoryWriteProposalRepository implements MemoryWriteProposa
       .onConflictDoNothing()
       .returning({ proposalId: memoryWriteProposals.proposalId })
     return rows.length === 1
+  }
+
+  async insertWithApproval(
+    proposal: MemoryWriteProposal,
+    approval: InteractionRequest
+  ): Promise<boolean> {
+    const parsed = MemoryWriteProposalSchema.parse(proposal)
+    const interaction = parseMemoryWriteApproval(parsed, approval)
+    return this.database.transaction(async (transaction) => {
+      const inserted = await transaction
+        .insert(memoryWriteProposals)
+        .values(toRow(parsed))
+        .onConflictDoNothing()
+        .returning({ proposalId: memoryWriteProposals.proposalId })
+      if (inserted.length === 0) return false
+      const [owner] = await transaction
+        .select({ workspaceId: executions.workspaceId })
+        .from(executions)
+        .where(eq(executions.executionId, parsed.provenance.sourceExecutionId))
+        .for('key share')
+        .limit(1)
+      if (owner?.workspaceId !== parsed.workspaceId)
+        throw new Error('MEMORY_PROPOSAL_SCOPE_MISMATCH')
+      if (!(await insertPostgresInteraction(transaction, interaction)))
+        throw new MemoryWriteError('MEMORY_PROPOSAL_CONFLICT')
+      return true
+    })
   }
 
   async get(proposalId: string): Promise<MemoryWriteProposal | undefined> {

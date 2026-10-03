@@ -86,6 +86,10 @@ export interface InteractionRepository {
 export class InMemoryInteractionRepository implements InteractionRepository {
   readonly #requests = new Map<string, InteractionRequest>()
   async insert(request: InteractionRequest) {
+    return this.insertSynchronously(request)
+  }
+  /** In-memory composition can publish a linked pair without yielding between records. */
+  insertSynchronously(request: InteractionRequest): boolean {
     if (this.#requests.has(request.interactionId)) return false
     this.#requests.set(request.interactionId, clone(request))
     return true

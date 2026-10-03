@@ -6981,6 +6981,109 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
     expect(await repository.list(second.workspaceId, first.executionId)).toEqual([])
   })
 
+  test('atomically persists one proposal approval under concurrent dedupe and rolls back conflicts', async () => {
+    const input = atomicMemoryProposal()
+    const acceptance = ControlApiFixtures.executionAcceptance.request
+    await createExecutionOwner(
+      isolated.application,
+      { ...acceptance, issuedAt: input.createdAt },
+      input.provenance.sourceExecutionId,
+      input.provenance.sourceAttemptId
+    )
+    input.workspaceId = acceptance.workspaceId
+    const repository = new PostgresMemoryWriteProposalRepository(isolated.application)
+    const interactionRepository = new PostgresInteractionRepository(isolated.application)
+    const pending = (proposalId, interactionId) => ({
+      ...input,
+      proposalId,
+      state: 'awaiting_approval',
+      approvalInteractionId: interactionId,
+    })
+    const approval = (proposalId, interactionId) => ({
+      interactionId,
+      executionId: input.provenance.sourceExecutionId,
+      attemptId: input.provenance.sourceAttemptId,
+      kind: 'approval',
+      prompt: {
+        title: 'Approve memory fixture',
+        detailsReference: `memory-write://proposal/${proposalId}`,
+      },
+      allowedActions: ['approve', 'deny'],
+      allowedPrincipalIds: ['svc_agent-hq'],
+      state: 'pending',
+      version: 1,
+      requestedAt: input.createdAt,
+      expiresAt: '2026-08-25T13:00:00.000Z',
+    })
+    const otherId = 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+    const firstInteraction = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    const secondInteraction = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW'
+    const results = await Promise.all([
+      repository.insertWithApproval(
+        pending(input.proposalId, firstInteraction),
+        approval(input.proposalId, firstInteraction)
+      ),
+      repository.insertWithApproval(
+        pending(otherId, secondInteraction),
+        approval(otherId, secondInteraction)
+      ),
+    ])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    expect(await repository.list()).toHaveLength(1)
+    const requests = await isolated.application.select().from(interactionRequests)
+    expect(requests).toHaveLength(1)
+    const [stored] = await repository.list()
+    expect(stored.approvalInteractionId).toBe(requests[0].interactionId)
+    const collisionId = 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAX'
+    await expect(
+      repository.insertWithApproval(
+        { ...pending(collisionId, stored.approvalInteractionId), dedupeHint: 'collision' },
+        approval(collisionId, stored.approvalInteractionId)
+      )
+    ).rejects.toMatchObject({ code: 'MEMORY_PROPOSAL_CONFLICT' })
+    expect(await repository.get(collisionId)).toBeUndefined()
+    expect(await interactionRepository.get(stored.approvalInteractionId)).toMatchObject({
+      state: 'pending',
+    })
+    const mismatchId = 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAY'
+    const mismatchInteraction = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAY'
+    await expect(
+      repository.insertWithApproval(
+        {
+          ...pending(mismatchId, mismatchInteraction),
+          workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+          dedupeHint: 'cross-workspace',
+        },
+        approval(mismatchId, mismatchInteraction)
+      )
+    ).rejects.toThrow('MEMORY_PROPOSAL_SCOPE_MISMATCH')
+    expect(await repository.get(mismatchId)).toBeUndefined()
+    expect(await interactionRepository.get(mismatchInteraction)).toBeUndefined()
+    const interruptedId = 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAZ'
+    const interruptedInteraction = 'int_01ARZ3NDEKTSV4RRFFQ69G5FAZ'
+    const interrupted = new PostgresMemoryWriteProposalRepository({
+      transaction: (operation) =>
+        isolated.application.transaction(async (transaction) => {
+          await operation(transaction)
+          throw new Error('injected-before-commit')
+        }),
+    })
+    await expect(
+      interrupted.insertWithApproval(
+        { ...pending(interruptedId, interruptedInteraction), dedupeHint: 'interrupted' },
+        approval(interruptedId, interruptedInteraction)
+      )
+    ).rejects.toThrow('injected-before-commit')
+    expect(await repository.get(interruptedId)).toBeUndefined()
+    expect(await interactionRepository.get(interruptedInteraction)).toBeUndefined()
+    await isolated.withMigrationDatabase(async (fresh) => {
+      expect(await new PostgresMemoryWriteProposalRepository(fresh).list()).toEqual([stored])
+      expect(
+        await new PostgresInteractionRepository(fresh).get(stored.approvalInteractionId)
+      ).toMatchObject({ state: 'pending' })
+    })
+  })
+
   test('persists memory proposals with workspace dedupe and optimistic transitions', async () => {
     await isolated.migrate()
     const repository = new PostgresMemoryWriteProposalRepository(isolated.application)
@@ -7133,5 +7236,33 @@ function externalSessionDiscoveryProjection() {
       },
     },
     limitations: [],
+  }
+}
+
+function atomicMemoryProposal() {
+  return {
+    proposalId: 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    providerId: 'ctp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    connectionId: 'ctc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    scopeDigest: `sha256:${'a'.repeat(64)}`,
+    memoryType: 'fact',
+    content: 'Durable proposal fixture',
+    retention: 'project',
+    provenance: {
+      sourceExecutionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      sourceAttemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      confidence: 0.9,
+      importance: 0.8,
+      sensitivity: 'internal',
+      evidenceRefs: [],
+      artifactRefs: [],
+    },
+    dedupeHint: 'integration:memory-proposal',
+    contentDigest: `sha256:${'b'.repeat(64)}`,
+    state: 'proposed',
+    version: 1,
+    createdAt: '2026-08-25T12:00:00.000Z',
+    updatedAt: '2026-08-25T12:00:00.000Z',
   }
 }
