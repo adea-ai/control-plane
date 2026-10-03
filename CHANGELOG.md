@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.69.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.68.0...workspace-v1.69.0) (2026-10-03)
+
+
+### Features
+
+* **local:** add offline operator catalog setup ([#862](https://github.com/adea-ai/control-plane/issues/862)) ([ecf24af](https://github.com/adea-ai/control-plane/commit/ecf24af42b47eff1362d312450f63b8b7a58a5cb))
+
 ## [1.68.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.67.0...workspace-v1.68.0) (2026-10-03)
 
 
