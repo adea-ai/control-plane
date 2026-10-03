@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.1...workspace-v1.71.2) (2026-10-03)
+
+
+### Maintenance
+
+* **requirements:** reconcile current canonical source text ([#880](https://github.com/adea-ai/control-plane/issues/880)) ([c594517](https://github.com/adea-ai/control-plane/commit/c594517e69bd5c0d6d5434a295006e416ddbd0f7))
+
 ## [1.71.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.0...workspace-v1.71.1) (2026-10-03)
 
 
