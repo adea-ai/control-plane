@@ -4,7 +4,11 @@ import { basename, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
-import { validateAtomicClauseRegister } from './atomic-clause-ledger.mjs'
+import {
+  collectAtomicCrosswalk,
+  validateAtomicClauseRegister,
+  validateAtomicCrosswalk,
+} from './atomic-clause-ledger.mjs'
 
 function formatMarkdown(text) {
   const result = spawnSync(
@@ -213,6 +217,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   }
 
   errors.push(...(await validateAtomicClauseRegister(ledger.sources ?? [], root)))
+  errors.push(...(await validateAtomicCrosswalk(ledger, root)))
 
   const expectedProfiles = ['cloud', 'hosted-server', 'hosted-simple', 'local']
   const actualProfiles = (ledger.deploymentProfiles ?? []).map(({ id }) => id).toSorted()
@@ -443,6 +448,9 @@ export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues 
 }
 
 export async function renderRequirementsReport(ledger) {
+  const crosswalk = await collectAtomicCrosswalk(ledger, repositoryRoot)
+  if (crosswalk.errors.length > 0) throw new Error(crosswalk.errors.join('\n'))
+  const linked = crosswalk.register.summary
   const counts = countBy(ledger.requirements, 'classification')
   const auditCounts = countBy(ledger.priorMilestoneAudits, 'classification')
   const lines = [
@@ -464,6 +472,7 @@ export async function renderRequirementsReport(ledger) {
     '',
     `- ${ledger.requirements.length} bounded normative requirement rows: ${formatCounts(counts)}.`,
     `- ${ledger.sources.reduce((count, source) => count + (source.atomicInventory?.atoms ?? 0), 0)} captured source clauses in the [machine-readable atomic clause register](./control-plane-atomic-clauses.v1.json). These include obligations, definitions, fields, and explicit source dispositions; full atom-to-requirement mapping and candidate acceptance remain incomplete.`,
+    `- ${linked.linkCount} explicit existing requirement-to-atom links in the [machine-readable crosswalk](./control-plane-atomic-crosswalk.v1.json), covering ${linked.mappedRequirementCount} bounded requirement rows and ${linked.mappedAtomCount} distinct atoms. ${linked.unmappedAtomCount} atoms and ${linked.unlinkedRequirementCount} bounded rows have no explicit link. Links preserve recorded crosswalk qualifications and do not establish implementation, profile coverage, passing evidence or acceptance.`,
     `- ${ledger.priorMilestoneAudits.length} M1–M10 issue audits: ${formatCounts(auditCounts)}.`,
     `- ${ledger.contradictions.length} explicit contradictions or supersessions.`,
     '',
