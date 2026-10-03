@@ -11,6 +11,10 @@ through this same composition with `durableExecution: 'restate'`).
 
 ## Packaging contract
 
+For initial immutable profile/skill publication and ProjectState setup without test-only database
+seeding, use the [offline operator setup command](local-operator-bootstrap.md). Context authoring,
+catalog approval, credentials and runtime bindings retain their separate authority checks.
+
 The desktop host supplies a private data directory and starts `@control-plane/local-control-plane`.
 It must supervise the parent process and send a graceful termination signal before desktop exit or
 upgrade. Accepted executions are enqueued durably before the HTTP response, claims are leased with
