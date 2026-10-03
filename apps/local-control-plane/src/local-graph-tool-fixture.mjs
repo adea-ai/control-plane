@@ -60,8 +60,8 @@ export async function createLocalGraphToolFixture({
       executor: { type: 'internal', reference: 'local.object-store-json.v1' },
       inputSchema: { type: 'object' },
       outputSchema: { type: 'object' },
-      // These tests verify durable effects, not timeout policy. Match the
-      // supported launcher's bounded budget for real filesystem writes.
+      // These tests verify durable effects, not timeout policy. Allow a bounded
+      // budget for real filesystem writes on loaded test hosts.
       limits: { maxInputBytes: 4096, maxOutputBytes: 4096, timeoutMs: 30_000 },
       createdAt: at,
       publishedAt: at,

@@ -52,9 +52,10 @@ failed three tests with seed `1104`. Two durable graph happy paths used a one-se
 tool budget around real filesystem writes; their ToolCalls reported `TIMEOUT` and
 correctly held the outcome for reconciliation. A bounded reproduction delayed a
 committed write receipt by 1.5 seconds and reproduced that classification. The
-durable-effect fixture now uses the supported launcher's 30-second tool budget;
-the same delayed write returns its verified Artifact. Dedicated timeout-policy
-tests retain their short intentional deadlines.
+durable-effect fixture now has a bounded 30-second tool budget, and the same
+delayed write returns its verified Artifact. The supported launcher's five-second
+tool budget is unchanged. Dedicated timeout-policy tests retain their short
+intentional deadlines.
 
 The embedded deadline test used a 750-millisecond wall-clock deadline and a
 500-millisecond lease, making its intended in-flight cancellation depend on host
