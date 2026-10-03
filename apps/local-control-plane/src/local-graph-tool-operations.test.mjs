@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { InteractionService } from '@control-plane/domain'
 import { FilesystemObjectStore } from '@control-plane/object-store'
 import {
@@ -30,17 +31,11 @@ test('Local graph tools require persisted approval, then write and charge once a
       prices: [{ pin: fixture.operation.toolPin, currency: 'USD', costMicrounits: 25 }],
       now: () => fixture.at,
     }
-    const objectKey = [
-      'tool-effects',
+    const objectKey = artifactRef(
       fixture.operation.workspaceId,
       fixture.operation.executionId,
-      'req_' +
-        createHash('sha256')
-          .update(fixture.operation.idempotencyKey)
-          .digest('hex')
-          .slice(0, 26)
-          .toUpperCase(),
-    ].join('/')
+      fixture.operation.idempotencyKey
+    )
     let port = new LocalGraphToolOperations(options)
     let approval
     try {
@@ -82,6 +77,7 @@ test('Local graph tools require persisted approval, then write and charge once a
     })
     const output = await port.invoke(fixture.operation)
     expect(output).toMatchObject({
+      artifactRef: objectKey,
       contentDigest: expect.stringMatching(/^sha256:/),
       size: expect.any(Number),
     })
@@ -208,6 +204,7 @@ for (const lostReceipt of [false, true])
       expect(recordedCalls[0].status).toBe(lostReceipt ? 'reconciliation_required' : 'succeeded')
       if (!lostReceipt)
         expect(recordedCalls[0].result.output).toMatchObject({
+          artifactRef: expect.stringMatching(/^art_[0-9A-HJKMNP-TV-Z]{26}$/),
           contentDigest: expect.stringMatching(/^sha256:/),
           size: expect.any(Number),
         })
@@ -491,20 +488,28 @@ for (const value of [null, false, 0, ''])
         transaction.put({ namespace: 'graph-tool-rate-limits', id, value })
       )
       await expect(port.invoke(fixture.operation)).rejects.toThrow('GRAPH_TOOL_RATE_STATE_INVALID')
-      const key = [
-        'tool-effects',
+      const key = artifactRef(
         fixture.operation.workspaceId,
         fixture.operation.executionId,
-        'req_' +
-          createHash('sha256')
-            .update(fixture.operation.idempotencyKey)
-            .digest('hex')
-            .slice(0, 26)
-            .toUpperCase(),
-      ].join('/')
+        fixture.operation.idempotencyKey
+      )
       await expect(store.head(key)).rejects.toThrow()
     } finally {
       store.close()
       await fixture.cleanup()
     }
   })
+
+function artifactRef(workspaceId, executionId, idempotencyKey) {
+  const requestId = `req_${createHash('sha256')
+    .update(idempotencyKey)
+    .digest('hex')
+    .slice(0, 26)
+    .toUpperCase()}`
+  const suffix = createHash('sha256')
+    .update(canonicalJsonStringify([workspaceId, executionId, requestId]))
+    .digest('hex')
+    .slice(0, 26)
+    .toUpperCase()
+  return `art_${suffix}`
+}

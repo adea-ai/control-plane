@@ -502,17 +502,21 @@ describe('EmbeddedWorkflowRuntime', () => {
 
   test('a passed deadline finishes a hung workflow as timed_out', async () => {
     await withRuntime(async ({ provider }) => {
+      // Advance the injected clock only after dispatch starts, so queue latency
+      // cannot turn this into the separate pre-start deadline case.
+      let clock = Date.now() + 24 * 60 * 60_000
       const { activities } = fakeActivities(() => new Promise(() => {}))
-      const { store, runtime, dispatcher } = startedRuntime(provider, activities)
+      const { store, runtime, dispatcher } = startedRuntime(provider, activities, {
+        now: () => new Date(clock).toISOString(),
+        leaseMs: 60_000,
+      })
       await runtime.start()
       await dispatcher.submit({
         ...workflowInput,
-        // Long enough that the runner claims the job and creates the attempt
-        // first (even on a loaded CI host); the deadline then interrupts the
-        // hung dispatch activity mid-flight.
-        deadlineAt: new Date(Date.now() + 750).toISOString(),
+        deadlineAt: new Date(clock + 1_000).toISOString(),
       })
       await waitFor(async () => activities.calls.some(([name]) => name === 'dispatch'), 5_000)
+      clock += 1_000
       await waitFor(async () => (await store.get(executionId))?.status === 'succeeded', 15_000)
       const job = await store.get(executionId)
       expect(job.outcome.status).toBe('timed_out')

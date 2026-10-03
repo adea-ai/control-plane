@@ -34,6 +34,7 @@ export async function authorizeLocalGraphTool(
     !attempt ||
     !command ||
     execution.correlation.workspaceId !== operation.workspaceId ||
+    execution.correlation.projectId !== command.projectId ||
     command.workspaceId !== operation.workspaceId ||
     operation.workflowId !== 'wfl_' + execution.executionId.slice(4) ||
     operation.threadId !== 'graph:' + execution.executionId ||
@@ -55,16 +56,16 @@ export async function authorizeLocalGraphTool(
   )
   if (!isDeepStrictEqual(graph.reference, plan.graph.reference))
     throw new Error('GRAPH_TOOL_PIN_MISMATCH')
-  const node = graph.content.nodes.find(({ node }) => node === operation.node)
+  const graphNode = graph.content.nodes.find(({ node: name }) => name === operation.node)
   if (
-    !node ||
-    node.operation.kind !== 'tool' ||
-    node.operation.name !== operation.name ||
-    !node.operation.toolPin
+    !graphNode ||
+    graphNode.operation.kind !== 'tool' ||
+    graphNode.operation.name !== operation.name ||
+    !graphNode.operation.toolPin
   ) {
     throw new Error('GRAPH_TOOL_NODE_MISMATCH')
   }
-  const pin = GraphToolPinSchema.parse(node.operation.toolPin)
+  const pin = GraphToolPinSchema.parse(graphNode.operation.toolPin)
   if ('toolPin' in operation && !isDeepStrictEqual(operation.toolPin, pin))
     throw new Error('GRAPH_TOOL_PIN_MISMATCH')
   const definition = await options.registry.readDefinition(

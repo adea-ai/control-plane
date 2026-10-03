@@ -270,6 +270,7 @@ export class LocalControlPlaneComposition {
   readonly #endpointFactory: RestateEndpointFactory | undefined
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
   readonly #retentionSweep: RetentionSweep | undefined
+  readonly #initializeGraphRuntime: (() => Promise<void>) | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
 
@@ -392,6 +393,8 @@ export class LocalControlPlaneComposition {
       options.catalogApprovalPolicy,
       graphRuntime?.authority
     )
+    this.#initializeGraphRuntime =
+      graphRuntime === undefined ? undefined : () => graphRuntime.initialize(controlApi)
     const runtimeTransport =
       options.runtimeTransport ??
       options.runtimeFactory?.({
@@ -613,6 +616,7 @@ export class LocalControlPlaneComposition {
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
     await this.persistence.migrate()
     try {
+      await this.#initializeGraphRuntime?.()
       await this.runtimeTransport?.open?.()
       if (this.#endpointFactory !== undefined) {
         this.#endpoint = await this.#endpointFactory.create()
