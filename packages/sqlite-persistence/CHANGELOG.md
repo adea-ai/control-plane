@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.31.0...sqlite-persistence-v1.32.0) (2026-10-03)
+
+
+### Features
+
+* **local:** recover graph tool effects without duplicate work ([#858](https://github.com/adea-ai/control-plane/issues/858)) ([d1518fb](https://github.com/adea-ai/control-plane/commit/d1518fb061cce6af67a76f47a4796810cfa6fb35))
+
 ## [1.31.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.30.0...sqlite-persistence-v1.31.0) (2026-10-01)
 
 

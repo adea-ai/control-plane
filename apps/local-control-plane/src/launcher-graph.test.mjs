@@ -231,6 +231,38 @@ test('supported start launcher bootstraps the pinned JSON tool and resumes an au
       contentDigest: expectedDigest,
       size: expectedBytes.byteLength,
     })
+    const inspectionRequest = {
+      caller: { servicePrincipalId: 'svc_agent-hq' },
+      contractVersion: { major: 3, minor: 0 },
+      requestId: 'req_01JABCDEF0123456789ABCDEFR',
+      workspaceId,
+      projectId: inputs.correlation.projectId,
+      correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+      operation: 'execution.tool-effect.inspect',
+      requestedAt: new Date().toISOString(),
+      parameters: { executionId, toolCallId: successfulCall.toolCallId },
+    }
+    const inspectedEffect = await post(
+      baseUrl,
+      '/v1/executions/tool-effects/inspect',
+      inspectionRequest,
+      token
+    )
+    expect(inspectedEffect.status).toBe(200)
+    expect(inspectedEffect.body).toMatchObject({
+      executionId,
+      workspaceId,
+      projectId: inputs.correlation.projectId,
+      calls: [
+        {
+          toolCallId: successfulCall.toolCallId,
+          status: 'succeeded',
+          artifact: { state: 'verified' },
+          accounting: { charged: true, settled: true },
+        },
+      ],
+    })
+    expect(JSON.stringify(inspectedEffect.body)).not.toContain('authorized after cold restart')
     expect(
       (await new SqliteExecutionRepository(observer).getExecution(executionId)).terminalResultRef
     ).toBe(objectKey)

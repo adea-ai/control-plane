@@ -380,9 +380,20 @@ export class LangGraphOrchestrationAdapter implements OrchestrationPort {
       })
     } catch (error) {
       if (error instanceof GraphNodeEffectUnconfirmedError) {
+        let checkpointId: string | undefined
+        try {
+          checkpointId = (
+            await this.#checkpointer.getTuple({
+              configurable: { thread_id: storageThreadId(request) },
+            })
+          )?.checkpoint.id
+        } catch {
+          // A damaged/unavailable checkpoint stays held for operator review.
+        }
         return GraphSegmentResultSchema.parse({
           status: 'reconciliation_required',
           state: {},
+          ...(typeof checkpointId === 'string' ? { checkpointId } : {}),
           events: emitted,
         })
       }
@@ -836,16 +847,37 @@ function graphOperationIdempotencyKey(
   node: string,
   visitOrdinal: number
 ): string {
-  const identity = JSON.stringify([
-    'control-plane.graph-operation.v1',
-    request.workspaceId,
-    request.executionId,
-    request.threadId,
-    request.graph.graphDefinitionId,
-    request.graph.graphVersion,
-    request.graph.contentDigest,
+  return graphOperationIdempotencyKeyFor({
+    workspaceId: request.workspaceId,
+    executionId: request.executionId,
+    threadId: request.threadId,
+    graph: request.graph,
     node,
     visitOrdinal,
+  })
+}
+
+export function graphOperationIdempotencyKeyFor(input: {
+  readonly workspaceId: string
+  readonly executionId: string
+  readonly threadId: string
+  readonly graph: GraphReference
+  readonly node: string
+  readonly visitOrdinal: number
+}): string {
+  if (!Number.isSafeInteger(input.visitOrdinal) || input.visitOrdinal < 0) {
+    throw new OrchestrationError('GRAPH_FAILED', false)
+  }
+  const identity = JSON.stringify([
+    'control-plane.graph-operation.v1',
+    input.workspaceId,
+    input.executionId,
+    input.threadId,
+    input.graph.graphDefinitionId,
+    input.graph.graphVersion,
+    input.graph.contentDigest,
+    input.node,
+    input.visitOrdinal,
   ])
   const digest = createHash('sha256').update(identity).digest('hex')
   return `graph-op-v1:${digest}`

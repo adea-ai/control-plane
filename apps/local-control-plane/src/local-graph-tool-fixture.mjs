@@ -20,6 +20,10 @@ export async function createLocalGraphToolFixture({
   requiredCapabilities = [],
   grantedCapabilities = [],
   activate = true,
+  sharedPinNodes = false,
+  approvalMode = 'always',
+  toolNodeCount = 1,
+  graphInput = { message: 'execute' },
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'm11-graph-tool-authority-'))
   const persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
@@ -33,6 +37,10 @@ export async function createLocalGraphToolFixture({
     ]) {
       constraints.tools.grants[0].operations = ['store-json']
       constraints.tools.grants[0].requiredCapabilities = grantedCapabilities
+      if (approvalMode === 'never') {
+        constraints.tools.grants[0].approval = 'none'
+        constraints.interaction.approvals = 'allowed'
+      }
     }
     const workspaceId = inputs.correlation.workspaceId
     const registry = new ToolRegistry(new SqliteToolRegistryRepository(persistence, workspaceId))
@@ -52,7 +60,7 @@ export async function createLocalGraphToolFixture({
         {
           name: 'store-json',
           riskClass: 'medium',
-          approvalMode: 'always',
+          approvalMode,
           idempotency: 'inherent',
           requiredCapabilities,
         },
@@ -72,6 +80,12 @@ export async function createLocalGraphToolFixture({
       contentDigest: version.contentDigest,
       operation: 'store-json',
     }
+    const graphNodeCount = sharedPinNodes ? Math.max(2, toolNodeCount) : toolNodeCount
+    const toolNodeNames = Array.from({ length: graphNodeCount }, (_, index) => {
+      if (index === 0) return 'store'
+      if (sharedPinNodes && index === 1) return 'store_later'
+      return `store_${index + 1}`
+    })
     const graph = await new GraphDefinitionCatalog(
       new SqliteGraphDefinitionRepository(persistence, workspaceId)
     ).publish({
@@ -79,10 +93,17 @@ export async function createLocalGraphToolFixture({
         graphDefinitionId: 'graph:tool-authority',
         graphVersion: '1.0.0',
         schemaVersion: 1,
-        nodes: [{ node: 'store', operation: { kind: 'tool', name: 'store', toolPin } }],
+        nodes: toolNodeNames.map((node) => ({
+          node,
+          operation: { kind: 'tool', name: 'store', toolPin },
+        })),
         edges: [
-          { from: '__start__', to: 'store' },
-          { from: 'store', to: '__end__' },
+          { from: '__start__', to: toolNodeNames[0] },
+          ...toolNodeNames.slice(0, -1).map((node, index) => ({
+            from: node,
+            to: toolNodeNames[index + 1],
+          })),
+          { from: toolNodeNames.at(-1), to: '__end__' },
         ],
         schemas: { input: 'schema:json', state: 'schema:json', output: 'schema:json' },
         requiredCapabilities: ['graph.tool-pins.v1'],
@@ -96,7 +117,7 @@ export async function createLocalGraphToolFixture({
     })
     const plan = new ExecutionPlanCompiler('1.0.0').compile({
       ...inputs,
-      graph: { reference: graph.reference, input: { message: 'execute' } },
+      graph: { reference: graph.reference, input: graphInput },
     })
     await api.contextPackages.put(inputs.contextPackage)
     const reference = { ...(await api.executionPlans.put(plan)), schemaVersion: 1 }
@@ -161,7 +182,7 @@ export async function createLocalGraphToolFixture({
       node: 'store',
       kind: 'tool',
       name: 'store',
-      input: { message: 'execute' },
+      input: graphInput,
       idempotencyKey: 'graph-op-v1:' + 'b'.repeat(64),
       toolPin,
     }

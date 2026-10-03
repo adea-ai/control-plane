@@ -23,6 +23,8 @@ export async function authorizeLocalGraphTool(
       workspaceId: string,
       reference: GraphSelection
     ) => Promise<PublishedGraphDefinition>
+    /** Reconstruct persisted effect identity without granting a new delivery. */
+    readonly historicalVerification?: boolean
   }
 ) {
   const execution = await options.api.executions.getExecution(operation.executionId)
@@ -41,8 +43,9 @@ export async function authorizeLocalGraphTool(
     execution.latestAttemptId !== operation.attemptId ||
     attempt.executionId !== execution.executionId ||
     !isDeepStrictEqual(command.executionPlan, execution.executionPlan) ||
-    !['running', 'awaiting_input'].includes(execution.state) ||
-    !['running', 'awaiting_input'].includes(attempt.state)
+    (!options.historicalVerification &&
+      (!['running', 'awaiting_input'].includes(execution.state) ||
+        !['running', 'awaiting_input'].includes(attempt.state)))
   )
     throw new Error('GRAPH_TOOL_EXECUTION_AUTHORITY_MISMATCH')
   const stored = await options.api.executionPlans.get(execution.executionPlan)
@@ -76,7 +79,7 @@ export async function authorizeLocalGraphTool(
   if (
     version.toolDefinitionId !== pin.toolDefinitionId ||
     version.contentDigest !== pin.contentDigest ||
-    !['published', 'deprecated'].includes(version.lifecycle)
+    (!options.historicalVerification && !['published', 'deprecated'].includes(version.lifecycle))
   ) {
     throw new Error('GRAPH_TOOL_VERSION_MISMATCH')
   }
