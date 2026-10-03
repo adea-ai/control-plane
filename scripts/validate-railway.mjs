@@ -14,7 +14,13 @@ const environment = JSON.parse(
 const costPolicy = JSON.parse(
   await readFile(`${repositoryRoot}/infrastructure/railway/cost-policy.json`, 'utf8')
 )
+const packageManifest = JSON.parse(await readFile(`${repositoryRoot}/package.json`, 'utf8'))
 const railwayIac = await readFile(`${repositoryRoot}/.railway/railway.ts`, 'utf8')
+const productionSource = await readFile(`${repositoryRoot}/.railway/production-source.js`, 'utf8')
+const productionPlan = await readFile(
+  `${repositoryRoot}/scripts/railway-production-plan.mjs`,
+  'utf8'
+)
 const standbyScript = await readFile(`${repositoryRoot}/scripts/railway-standby.mjs`, 'utf8')
 
 if (manifest.schemaVersion !== 1 || manifest.provider !== 'railway') {
@@ -195,7 +201,13 @@ for (const [environmentName, posture] of Object.entries(expectedCostPosture)) {
 }
 if (
   !railwayIac.includes('const desiredReplicas = 1') ||
-  !railwayIac.includes('const applicationSource = production ? undefined : github') ||
+  !railwayIac.includes('resolveApplicationSource') ||
+  !railwayIac.includes('process.env.CONTROL_PLANE_PRODUCTION_IMAGE') ||
+  !productionSource.includes('productionImagePattern') ||
+  !productionPlan.includes('resolvePromotedProductionState') ||
+  !productionPlan.includes("RAILWAY_CALLER: env.RAILWAY_CALLER ?? 'skill:use-railway@1.5.5'") ||
+  packageManifest.scripts?.['railway:production-plan'] !==
+    'bun scripts/railway-production-plan.mjs' ||
   !standbyScript.includes('deploymentRemove') ||
   !standbyScript.includes('disconnect-source')
 ) {
