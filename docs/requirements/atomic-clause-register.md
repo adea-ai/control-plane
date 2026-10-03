@@ -3,7 +3,8 @@
 The [machine-readable register](control-plane-atomic-clauses.v1.json) preserves all
 6,093 clause entries from the fifteen checked-in source inventories. Each entry
 retains its stable atom ID, inventory line, heading and original Markdown table
-columns. Each source records its captured revision, file modification time,
+columns. Each source records its provider, captured revision and recorded
+provenance uncertainty, file modification time,
 captured-text SHA-256, inventory path and a separate SHA-256 of the inventory
 Markdown. These two hashes identify different artifacts.
 

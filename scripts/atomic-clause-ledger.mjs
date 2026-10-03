@@ -113,10 +113,12 @@ export async function collectAtomicClauses(sources, root) {
       capturedSources.push({
         sourceId: source.id,
         sourceTitle: source.title,
+        sourceProvider: source.provider,
         sourceDocumentId: source.sourceId,
         sourceUri: source.uri,
         retrievalStatus: source.retrievalStatus,
         sourceRevision: inventory.sourceRevision,
+        sourceRevisionMetadataStatus: source.revisionMetadataStatus,
         sourceRevisionModifiedAt: source.revisionModifiedAt,
         sourceModifiedAt: source.fileModifiedAt ?? source.updatedAt,
         sourceCapturedAt: source.retrievedAt,

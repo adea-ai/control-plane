@@ -22,6 +22,8 @@ const table = `## Accepted source clauses
 `
 const source = {
   id: 'test-source',
+  provider: 'work-drive',
+  revisionMetadataStatus: 'Revision verified separately; exact fetch instant unavailable.',
   retrievalStatus: 'retrieved',
   currentRevision: 2,
   fileModifiedAt: '2026-09-29T02:15:40.033Z',
@@ -51,6 +53,17 @@ async function fixture(run, document = table) {
 }
 
 describe('atomic clause ledger', () => {
+  test('preserves provider identity and provenance uncertainty in the standalone register', async () => {
+    await fixture(async (root) => {
+      const captured = await collectAtomicClauses([source], root)
+      expect(captured.sources[0]).toMatchObject({
+        sourceProvider: 'work-drive',
+        sourceRevisionMetadataStatus:
+          'Revision verified separately; exact fetch instant unavailable.',
+      })
+    })
+  })
+
   test('rejects empty or malformed inventory metadata before producing a register', async () => {
     await fixture(async (root) => {
       const changed = structuredClone(source)
