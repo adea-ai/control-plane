@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.1...workspace-v1.70.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **audit:** guard full atomic clause source traceability ([#867](https://github.com/adea-ai/control-plane/issues/867)) ([13c60c3](https://github.com/adea-ai/control-plane/commit/13c60c3bb93518367ea0e2185b090196b993ce59))
+
 ## [1.70.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.70.0...workspace-v1.70.1) (2026-10-03)
 
 
