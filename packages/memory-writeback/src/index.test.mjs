@@ -108,6 +108,17 @@ describe('provider-neutral memory write proposals', () => {
     expect(await conflicting.repository.list()).toHaveLength(1)
   })
 
+  test('concurrent identical delivery converges on the inserted dedupe winner', async () => {
+    const context = harness(provider())
+    const outcomes = await Promise.all([
+      context.service.propose(proposal(), policy()),
+      context.service.propose(proposal({ proposalId: 'mwp_01JBBCDEF0123456789ABCDEFG' }), policy()),
+    ])
+
+    expect(outcomes[0]).toEqual(outcomes[1])
+    expect(await context.repository.list()).toEqual([outcomes[0]])
+  })
+
   test('uses durable approval, denial, expiry, and revocation lifecycles', async () => {
     const approved = harness(provider())
     const pending = await approved.service.propose(
@@ -332,6 +343,52 @@ describe('provider-neutral memory write proposals', () => {
     })
     expect(statusCount).toBe(1)
     expect(writeCount).toBe(0)
+  })
+
+  test('status-only recovery works for a read-only matching provider', async () => {
+    for (const state of ['committing', 'reconciliation_required']) {
+      const context = harness(provider())
+      const prepared = await prepareApproved(context)
+      await seedInFlight(context, prepared, state)
+      context.provider.capabilities.writeCommit = false
+      let statusCount = 0
+      let writeCount = 0
+      context.provider.status = async () => {
+        statusCount += 1
+        return { status: 'committed', providerMemoryRef: `memory://recovered-${state}` }
+      }
+      context.provider.write = async () => {
+        writeCount += 1
+        return { status: 'committed', providerMemoryRef: 'memory://unsafe-replay' }
+      }
+
+      await expect(context.service.commit(prepared.proposalId, later)).resolves.toMatchObject({
+        state: 'committed',
+        outcome: { code: 'reconciled', providerMemoryRef: `memory://recovered-${state}` },
+      })
+      expect(statusCount).toBe(1)
+      expect(writeCount).toBe(0)
+    }
+
+    const readOnlyProvider = provider('success', { writeCommit: false, idempotentStatus: true })
+    const proposalContext = harness(readOnlyProvider)
+    await expect(proposalContext.service.propose(proposal(), policy())).rejects.toMatchObject({
+      code: 'MEMORY_PROVIDER_READ_ONLY',
+    })
+
+    const approvedContext = harness(provider())
+    const approved = await prepareApproved(approvedContext)
+    approvedContext.provider.capabilities.writeCommit = false
+    let freshWriteCount = 0
+    approvedContext.provider.write = async () => {
+      freshWriteCount += 1
+      return { status: 'committed', providerMemoryRef: 'memory://not-allowed' }
+    }
+    await expect(approvedContext.service.commit(approved.proposalId, later)).rejects.toMatchObject({
+      code: 'MEMORY_PROVIDER_READ_ONLY',
+    })
+    expect(await approvedContext.repository.get(approved.proposalId)).toEqual(approved)
+    expect(freshWriteCount).toBe(0)
   })
 
   test('parks unknown, unavailable, and unsupported status for persisted commits without replay', async () => {
@@ -670,6 +727,20 @@ async function seedCommitting(context, approved) {
   }
   expect(await context.repository.compareAndSet(approved.version, committing)).toBe(true)
   return committing
+}
+
+async function seedInFlight(context, approved, state) {
+  const inFlight = {
+    ...approved,
+    state,
+    version: approved.version + 1,
+    updatedAt: later,
+    ...(state === 'reconciliation_required'
+      ? { outcome: { code: 'ambiguous', observedAt: later } }
+      : {}),
+  }
+  expect(await context.repository.compareAndSet(approved.version, inFlight)).toBe(true)
+  return inFlight
 }
 
 function proposal(overrides = {}) {

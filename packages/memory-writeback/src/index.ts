@@ -215,7 +215,11 @@ export class MemoryWriteService {
         approvalInteractionId: approval.interactionId,
       })
     }
-    if (!(await this.#repository.insert(proposal))) fail('MEMORY_PROPOSAL_CONFLICT')
+    if (!(await this.#repository.insert(proposal))) {
+      const winner = await this.#repository.getByDedupe(parsed.workspaceId, parsed.dedupeHint)
+      if (winner && sameProposalInput(winner, parsed)) return winner
+      fail('MEMORY_PROPOSAL_CONFLICT')
+    }
     return proposal
   }
 
@@ -270,7 +274,7 @@ export class MemoryWriteService {
       Date.parse(observedAt) >= Date.parse(proposal.provenance.expiresAt)
     )
       return this.#transition(proposal, 'expired', observedAt, 'expired')
-    const provider = this.#assertProvider()
+    const provider = this.#assertProvider(proposal.state === 'approved')
     this.#assertScope(proposal, provider)
     const request = toWriteRequest(proposal)
     if (proposal.state === 'committing' || proposal.state === 'reconciliation_required') {
@@ -368,9 +372,10 @@ export class MemoryWriteService {
     return proposal
   }
 
-  #assertProvider(): MemoryProviderWriter {
+  #assertProvider(requireWriteCommit = true): MemoryProviderWriter {
     if (!this.#provider) fail('MEMORY_PROVIDER_ABSENT')
-    if (!this.#provider.capabilities.writeCommit) fail('MEMORY_PROVIDER_READ_ONLY')
+    if (requireWriteCommit && !this.#provider.capabilities.writeCommit)
+      fail('MEMORY_PROVIDER_READ_ONLY')
     return this.#provider
   }
 

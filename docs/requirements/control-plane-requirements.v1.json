@@ -2272,7 +2272,7 @@
         {
           "kind": "test",
           "path": "packages/memory-writeback/src/index.test.mjs",
-          "scope": "Library fixtures: 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'reconciles a persisted committing proposal after expiry using provider status only'; 'parks unknown, unavailable, and unsupported status for persisted commits without replay'; 'concurrent committing recovery uses status and rejects a stale compare-and-set'; 'commit does not expire unapproved or terminal proposals'; 'fails a status-rejected reconciliation without replaying the write'; 'keeps proposals non-canonical and deduplicates duplicate delivery'. These cases do not establish composed deployment-profile recovery."
+          "scope": "Library fixtures: 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'reconciles a persisted committing proposal after expiry using provider status only'; 'parks unknown, unavailable, and unsupported status for persisted commits without replay'; 'concurrent committing recovery uses status and rejects a stale compare-and-set'; 'commit does not expire unapproved or terminal proposals'; 'status-only recovery works for a read-only matching provider'; 'concurrent identical delivery converges on the inserted dedupe winner'; 'fails a status-rejected reconciliation without replaying the write'; 'keeps proposals non-canonical and deduplicates duplicate delivery'. These cases do not establish composed deployment-profile recovery."
         },
         {
           "kind": "test",
@@ -2284,7 +2284,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Adjudicated 2026-10-03: partially verified. The memory-writeback library now covers persisted committing and ambiguous-outcome status reconciliation without replaying writes, including expiry and concurrent compare-and-set races. MemoryWriteService has no non-test composition consumer in apps or packages. Remaining: exercise the authoritative provider reconciliation through a durable application composition and crash/restart recovery in each required deployment profile. Library fixtures do not establish that acceptance."
+        "disposition": "Adjudicated 2026-10-03: partially verified. Library tests cover persisted status reconciliation without write replay, including expiry, concurrency, and read-only status access. MemoryWriteService has no non-test composition consumer. Approval-required proposal creation persists an Interaction before the proposal insert, so an insert-losing dedupe race can leave an unreferenced pending Interaction. The repositories expose no cross-store transaction or delete/compensation operation; #194 must choose composition-level atomic persistence or authorized lifecycle cleanup. Remaining: prove durable crash/restart status reconciliation across required deployment profiles. Library fixtures do not establish acceptance."
       }
     },
     {
