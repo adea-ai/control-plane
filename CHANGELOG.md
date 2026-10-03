@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.2...workspace-v1.71.3) (2026-10-03)
+
+
+### Performance
+
+* **ci:** skip the trusted-main Neon verify without migration-relevant changes ([#878](https://github.com/adea-ai/control-plane/issues/878)) ([7a64147](https://github.com/adea-ai/control-plane/commit/7a641470652b1b5a80103a09d77bfbec46967097))
+
 ## [1.71.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.1...workspace-v1.71.2) (2026-10-03)
 
 
