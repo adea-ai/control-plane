@@ -86,12 +86,13 @@ same isolated execution owner.
 - PostgreSQL contention, both orderings, alternate event/CAS writer rejection and
   explicit settlement are covered by a new case using the existing isolated
   fixture. This case has not executed locally; actual current-head CI is required.
-- Local/Simple composition execution was attempted with fresh small source
-  bundles and cached dependencies, but stale cached memory/SQLite exports stopped
-  module loading before cases ran. Those attempts are not passes. Source
-  bundles, links and fixture roots were removed. No further local composition
-  attempts or dependency installs are used; current-head remote CI must execute
-  the updated composition tests after a complete current build.
+- Earlier Local/Simple composition attempts stopped at stale cached package
+  exports before cases ran; those attempts are not passes. After the normal hook
+  built every current package, the affected composition file passed all 14 cases
+  and 44 assertions in 0.737s helper elapsed time. Each valid profile checks its
+  committed reservation inside the direct runtime callback. These are real
+  composition/storage tests with a recording transport, not deployed daemon,
+  HTTP, container or provider acceptance. No dependencies were installed.
 
 Scoped formatting, lint and cached Code Foundry doctor checks passed. Independent
 Standards review identified the cross-store claim above; this evidence now states
@@ -103,9 +104,18 @@ GitHub-backed requirements validation. Its peak checkout was 47,476KiB; outputs
 and links were removed. The full type-check/hook is not a pass, and no commit was
 created. Those reviews identified the post-read/pre-dispatch gap and prompted the shared
 fence above. Fresh source reviews of the expanded candidate found the surviving
-receipt gap; its repair and native test relocation are under final review. No
-commit/PR exists yet. PostgreSQL/profile execution, full hook/type-check and broad
-acceptance remain unverified; local Docker remains untouched.
+receipt gap. After its repair and native test relocation, both independent source
+axes reported no actionable findings in the final 16-file candidate. Neither
+reviewer executed checks or certified whole-profile acceptance.
+
+The final normal commit hook passed on the implementation in 43.887s under a
+60-second guard, one build worker and a 60MiB total checkout cap. All 44 build
+tasks, OpenAPI, migration-schema, compatibility, current GitHub requirements,
+architecture and infrastructure type checks passed. Peak checkout was
+47,496KiB. The subsequent affected composition run used those fresh exports;
+all generated outputs and dependency links were then removed in `finally`.
+PostgreSQL execution and broad/deployed profile acceptance still require
+current-head CI and independent evidence. Local Docker remains untouched.
 
 ## Remaining gates
 
