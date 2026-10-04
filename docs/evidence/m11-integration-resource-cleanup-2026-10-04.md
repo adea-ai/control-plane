@@ -55,6 +55,24 @@ runner with bounded fake Docker/Bun executables.
 - Full `bun test tests/neon-workflow.test.mjs`: 34 passed, 0 failed,
   270 assertions, 12.67 seconds (before the final error-propagation lint repair).
 
+## CodeQL follow-up
+
+At `f34e71996784e9c73c0c402b65e3fe4fbbec3f71`, CodeQL analysis
+`1887848804` found environment-derived `COMPOSE_PROJECT_NAME` in a startup log
+(`js/clear-text-logging`, alert 4). A new regression reproduced the disclosure
+with a synthetic marker. Startup now logs only the freshly generated fixture
+identity; explicit caller projects get a static message. The runner-authored startup
+message no longer prints the caller value. Docker/Bun child diagnostics retain
+their existing inherited streams and can include resource names; the regression
+explicitly exercises that distinction rather than claiming general output
+redaction. No alert suppression or credential mutation is used. The previous head's
+PostgreSQL CI run `37179259177` passed with its owned-fixture cleanup step;
+those results do not substitute for validation at the repaired head.
+
+The repaired focused suite passed 17 cases with 57 assertions in 6.96 seconds.
+Scoped formatting and Oxlint with denied warnings passed; current-head CodeQL
+and the full remote gates remain pending until separately verified.
+
 ## Limits
 
 No local Docker command contacted the engine, and no database, package install,

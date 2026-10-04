@@ -26,6 +26,7 @@ if (program === 'docker') {
   if (process.env.FAKE_DOCKER_DISABLED === 'true') process.exit(90)
   if (args.includes('ps') && process.env.FAKE_POSTGRES_RUNNING === 'true') console.log('postgres')
   if (args.includes('exec')) console.log('1')
+  if (args.includes('up') && process.env.FAKE_DOCKER_ECHO_PROJECT === 'true') console.log('Created ' + process.env.COMPOSE_PROJECT_NAME + '-postgres')
   if (args.includes(process.env.FAKE_DOCKER_FAIL_ON)) process.exit(7)
 } else if (process.env.FAKE_BUN_FAIL === 'true') process.exit(9)
 `
@@ -57,7 +58,7 @@ if (program === 'docker') {
     const calls = existsSync(commands)
       ? readFileSync(commands, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
       : []
-    return { status: result.status, stderr: result.stderr, calls }
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls }
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -99,6 +100,7 @@ describe('integration runner resource ownership', () => {
       ({ program, args }) => program === 'docker' && args.includes('up')
     )
     expect(start.project).toMatch(/^control-plane-integration-/)
+    expect(result.stdout).toContain(start.project)
     const cleanup = destructiveCalls(result)
     expect(cleanup).toHaveLength(1)
     expect(cleanup[0].project).toBe(start.project)
@@ -151,6 +153,20 @@ describe('integration runner resource ownership', () => {
     expect(
       result.calls.some(({ program, args }) => program === 'docker' && args.includes('up'))
     ).toBe(false)
+  })
+
+  test('caller project is omitted from the startup receipt while command diagnostics stay visible', () => {
+    const result = executeRunner({
+      COMPOSE_PROJECT_NAME: 'caller-project-private-marker',
+      FAKE_DOCKER_ECHO_PROJECT: 'true',
+    })
+    expect(result.status).toBe(0)
+    const startup = result.stdout.split('\n').filter((line) => line.startsWith('Starting'))
+    expect(startup).toHaveLength(1)
+    expect(startup[0]).not.toContain('caller-project-private-marker')
+    // Docker/Bun diagnostics retain their existing stream behavior. This is
+    // intentionally not a claim that arbitrary child output is redacted.
+    expect(result.stdout).toContain('Created caller-project-private-marker-postgres')
   })
 
   test('an explicit caller project retains its volume and original project identity', () => {

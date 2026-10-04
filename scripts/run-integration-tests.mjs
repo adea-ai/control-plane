@@ -133,11 +133,12 @@ try {
       // deletion; never sweep another project or the shared Docker cache.
       if (!runnerEnvironment.COMPOSE_PROJECT_NAME) {
         ownsComposeProject = true
-        runnerEnvironment.COMPOSE_PROJECT_NAME = `control-plane-integration-${process.pid}-${randomUUID()}`
+        const project = `control-plane-integration-${process.pid}-${randomUUID()}`
+        runnerEnvironment.COMPOSE_PROJECT_NAME = project
+        console.log(`Starting isolated integration PostgreSQL in project ${project}.`)
+      } else {
+        console.log('Starting integration PostgreSQL in the caller-owned project.')
       }
-      console.log(
-        `Starting integration PostgreSQL in project ${runnerEnvironment.COMPOSE_PROJECT_NAME ?? 'caller-default'}.`
-      )
       startupAttempted = true
       run('docker', ['compose', 'up', '-d', '--wait', 'postgres'])
     }
