@@ -151,6 +151,14 @@ not a product timeout, resource budget or measured acceptance SLO.
 
 ## M11 test architecture
 
+The M10 Hosted Compose CI lane uses `scripts/run-hosted-compose-acceptance.sh`
+with one exclusive runner-temp fixture and an explicit unique project. Cleanup
+starts before setup and reports failures; only a successfully stopped owned
+project permits ownership-checked fixture removal. Local fake-CLI lifecycle
+tests exercise failure, signals and caller-data preservation without Docker.
+Actual service behavior remains a separate remote CI requirement. See
+[the Hosted Compose cleanup evidence](evidence/m11-hosted-compose-cleanup-2026-10-04.md).
+
 Standard RuntimeAdapter dispatch and interaction resume use an atomic attempt
 reservation through `DurableRuntimeBudgetAdmission.reserve()`. The read-only
 `authorize()` preflight remains separate for graph effects, whose operations own

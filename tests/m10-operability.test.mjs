@@ -81,28 +81,24 @@ test('publishes checkpoint, incident, rollback, and host-loss operator contracts
 
 test('launches both Hosted profiles on a fresh Linux CI host', async () => {
   const workflow = await read('.github/workflows/m10-operability.yml')
+  const script = await read('scripts/run-hosted-compose-acceptance.sh')
+  assert.match(workflow, /bash \.\.\/\.\.\/scripts\/run-hosted-compose-acceptance\.sh/)
   assert.match(workflow, /runs-on: ubuntu-latest/)
-  assert.match(workflow, /docker compose --profile simple up --build -d/)
-  assert.match(workflow, /docker compose --profile server up --build -d/)
-  assert.match(workflow, /sudo chown -R 1000:1000/)
-  assert.match(workflow, /logs --no-color/)
-  assert.match(workflow, /applied_migrations.*expected_migrations/s)
-  assert.match(workflow, /current_user.*control_plane_migrator/s)
-  assert.match(workflow, /current_user.*control_plane_app/s)
-  assert.match(workflow, /legacy_role_upgrade_probe/)
-  assert.match(workflow, /pg_auth_members/)
-  assert.match(workflow, /unexpectedly accepted duplicate passwords/)
-  assert.match(workflow, /runtime_role_must_not_create_objects/)
-  assert.match(workflow, /docker compose --profile server stop restate/)
-  assert.match(
-    workflow,
-    /docker compose --profile server up --detach --wait --wait-timeout 120 restate/
-  )
-  assert.match(workflow, /docker compose --profile server stop postgres/)
-  assert.match(
-    workflow,
-    /docker compose --profile server up --detach --wait --wait-timeout 120 postgres/
-  )
-  assert.match(workflow, /write-out '%\{http_code\}'.*503/s)
-  assert.equal((workflow.match(/test "\$server_status" = 200/g) ?? []).length, 3)
+  assert.match(script, /compose --profile simple up --build -d/)
+  assert.match(script, /compose --profile server up --build -d/)
+  assert.match(script, /sudo chown -R 1000:1000/)
+  assert.match(script, /logs --no-color/)
+  assert.match(script, /applied_migrations.*expected_migrations/s)
+  assert.match(script, /current_user.*control_plane_migrator/s)
+  assert.match(script, /current_user.*control_plane_app/s)
+  assert.match(script, /legacy_role_upgrade_probe/)
+  assert.match(script, /pg_auth_members/)
+  assert.match(script, /unexpectedly accepted duplicate passwords/)
+  assert.match(script, /runtime_role_must_not_create_objects/)
+  assert.match(script, /compose --profile server stop restate/)
+  assert.match(script, /compose --profile server up --detach --wait --wait-timeout 120 restate/)
+  assert.match(script, /compose --profile server stop postgres/)
+  assert.match(script, /compose --profile server up --detach --wait --wait-timeout 120 postgres/)
+  assert.match(script, /write-out '%\{http_code\}'.*503/s)
+  assert.equal((script.match(/test "\$server_status" = 200/g) ?? []).length, 3)
 })
