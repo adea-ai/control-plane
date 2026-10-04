@@ -7,22 +7,35 @@
 // isolated per-case databases, and each shard provisions its own disposable
 // Neon branch so no two shards ever share a compute instance.
 //
-// Assignments come from measured per-file durations (run 36823018055,
-// 2026-10-01): packages/database/src/integration.test.mjs alone is 995s, so it
-// anchors shard 1 together with the cross-profile conformance matrix and the
-// cloud remote drill; the remaining files split into two ~650s shards. When a
-// new integration file is added, assign it explicitly below — the partition
-// test in tests/integration-shards.test.mjs fails otherwise, which keeps shard
-// balance a reviewed decision instead of silent drift.
+// Run 37155172856 (2026-10-03) spent 2,339s on 55 of 65 foundation cases before
+// shard 1 reached its 45-minute job limit. Recovery and evidence cases share shard 2's
+// spare capacity. Complementary name filters keep every case in one slice;
+// tests/integration-shards.test.mjs checks actual Bun selection against all
+// static case names and bounds both slices. Per-case database isolation,
+// serial execution and the existing three branch owners remain unchanged.
+
+const foundationCasesForShard2 =
+  'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
 
 export const INTEGRATION_SHARDS = [
   {
     shard: 1,
-    groups: [{ package: 'packages/database', files: ['src/integration.test.mjs'] }],
+    groups: [
+      {
+        package: 'packages/database',
+        files: ['src/integration.test.mjs'],
+        testNamePattern: `^(?!.*(?:${foundationCasesForShard2})).*$`,
+      },
+    ],
   },
   {
     shard: 2,
     groups: [
+      {
+        package: 'packages/database',
+        files: ['src/integration.test.mjs'],
+        testNamePattern: foundationCasesForShard2,
+      },
       {
         package: 'packages/database',
         files: [
@@ -86,6 +99,16 @@ export const INTEGRATION_SHARDS = [
 ]
 
 export const INTEGRATION_SHARD_IDS = INTEGRATION_SHARDS.map((entry) => entry.shard)
+
+export function integrationFileArguments(group, file, timeoutMs) {
+  return [
+    'test',
+    '--timeout',
+    timeoutMs,
+    ...(group.testNamePattern === undefined ? [] : ['--test-name-pattern', group.testNamePattern]),
+    file,
+  ]
+}
 
 export function parseIntegrationShard(token) {
   if (token === undefined || token === null || token === '') return null

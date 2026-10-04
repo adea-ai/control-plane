@@ -1,6 +1,10 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
-import { parseIntegrationShard, selectIntegrationShard } from './integration-shards.mjs'
+import {
+  integrationFileArguments,
+  parseIntegrationShard,
+  selectIntegrationShard,
+} from './integration-shards.mjs'
 
 // Keep the documented production-like command visible to repository policy tests.
 const COMPOSE_COMMAND = 'docker compose'
@@ -141,14 +145,15 @@ try {
     const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
     for (const group of selectIntegrationShard(integrationShard)) {
       for (const file of group.files) {
+        const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
         try {
-          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+          run('bun', testArguments, {
             cwd: group.package,
             environment: integrationEnvironment,
           })
         } catch {
           console.log(`Integration file ${file} failed; retrying once before failing the shard.`)
-          run('bun', ['test', '--timeout', perTestTimeoutMs, file], {
+          run('bun', testArguments, {
             cwd: group.package,
             environment: integrationEnvironment,
           })
