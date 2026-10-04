@@ -37,6 +37,7 @@ const repositoryGroups = {
     'tests/foundation.test.mjs',
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',
+    'tests/integration-runner-lifecycle.test.mjs',
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',

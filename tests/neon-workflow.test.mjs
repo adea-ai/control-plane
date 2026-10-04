@@ -326,6 +326,13 @@ describe('Neon preview cleanup lookup', () => {
     expect(pullRequestWorkflow.indexOf('docker compose up -d --wait postgres')).toBeLessThan(
       pullRequestWorkflow.indexOf('bun --cwd=packages/database run db:migrate')
     )
+    expect(pullRequestWorkflow).toContain(
+      'COMPOSE_PROJECT_NAME: control-plane-pr-${{ github.run_id }}-${{ github.run_attempt }}'
+    )
+    const cleanup = pullRequestWorkflow.split('      - name: Remove owned PostgreSQL fixture')[1]
+    expect(cleanup).toContain('if: always()')
+    expect(cleanup).toContain('timeout-minutes: 3')
+    expect(cleanup).toContain('docker compose down --volumes --remove-orphans --timeout 60')
     expect(pullRequestWorkflow).not.toMatch(/\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
   })
 

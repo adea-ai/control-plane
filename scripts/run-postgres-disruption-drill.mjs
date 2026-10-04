@@ -25,6 +25,7 @@ function docker(arguments_, options = {}) {
     cwd: process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
+    timeout: 90_000,
   })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`docker compose exited with ${String(result.status)}`)
@@ -34,6 +35,8 @@ function docker(arguments_, options = {}) {
 async function waitForPostgres() {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
     const result = spawnSync(
       'docker',
       [
@@ -51,10 +54,13 @@ async function waitForPostgres() {
         '--command',
         'SELECT 1',
       ],
-      { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe' }
+      { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe', timeout: Math.min(5000, remaining) }
     )
+    if (result.error) throw result.error
     if (result.status === 0 && result.stdout.trim() === '1') return
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now())))
+    )
   }
   throw new Error('PostgreSQL did not recover within 30 seconds')
 }
