@@ -1,3 +1,4 @@
+import { exerciseMemoryRootProcessLoss } from '../../../tests/fixtures/memory-root-process-loss.mjs'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -942,6 +943,27 @@ test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     } finally {
       await Promise.all(openedConnections.map((connection) => connection.close()))
     }
+  },
+  integrationTestTimeout()
+)
+
+test.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
+  'Cloud recovers a memory effect after SIGKILL with durable committing intent',
+  async () => {
+    const url = new URL(process.env.DATABASE_URL)
+    url.pathname = `/${database.name}`
+    expect(await exerciseMemoryRootProcessLoss('cloud', url.toString())).toEqual({
+      profile: 'cloud',
+      signal: 'SIGKILL',
+      persistedState: 'committing',
+      recoveredState: 'committed',
+      writeCalls: 1,
+      statusCalls: 1,
+      records: 1,
+      operations: ['status'],
+      fixtureRemoved: true,
+      childReaped: true,
+    })
   },
   integrationTestTimeout()
 )

@@ -13,7 +13,8 @@
     "start": "bun src/start.ts",
     "dev": "bun --watch src/start.ts",
     "lint": "oxlint src",
-    "test": "bun test src/*.test.mjs"
+    "test": "bun test src/*.test.mjs",
+    "test:integration": "bun test --timeout 30000 src/*.integration.test.mjs"
   },
   "dependencies": {
     "@control-plane/acp-adapter": "workspace:*",

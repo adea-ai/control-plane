@@ -112,6 +112,7 @@ describe('integration shard partition', () => {
       'packages/testing/src',
       'apps/workflow-worker/src',
       'apps/control-api/src',
+      'apps/local-control-plane/src',
       'apps/hosted-control-plane/src',
     ]
     const assigned = new Map()

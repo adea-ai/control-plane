@@ -1,3 +1,4 @@
+import { exerciseMemoryRootProcessLoss } from '../../../tests/fixtures/memory-root-process-loss.mjs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { FakeMemoryProviderWriter } from '@control-plane/memory-writeback'
@@ -285,6 +286,27 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       } finally {
         await Promise.all(openedConnections.map((connection) => connection.close()))
       }
+    },
+    integrationTestTimeout()
+  )
+
+  test(
+    'Hosted Server recovers a memory effect after SIGKILL with durable committing intent',
+    async () => {
+      const url = new URL(process.env.DATABASE_URL)
+      url.pathname = `/${isolated.name}`
+      expect(await exerciseMemoryRootProcessLoss('hosted-server', url.toString())).toEqual({
+        profile: 'hosted-server',
+        signal: 'SIGKILL',
+        persistedState: 'committing',
+        recoveredState: 'committed',
+        writeCalls: 1,
+        statusCalls: 1,
+        records: 1,
+        operations: ['status'],
+        fixtureRemoved: true,
+        childReaped: true,
+      })
     },
     integrationTestTimeout()
   )

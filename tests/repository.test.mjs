@@ -161,6 +161,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     !unit.includes('packages/database/src/memory-provenance-retention.integration.test.mjs')
   )
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
+  assert.ok(!unit.includes('apps/local-control-plane/src/memory-process-loss.integration.test.mjs'))
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
@@ -169,6 +170,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
+    'apps/local-control-plane/src/memory-process-loss.integration.test.mjs',
     'apps/workflow-worker/src/runtime-budget-admission.integration.test.mjs',
     'packages/database/src/admission-rollout-admin.integration.test.mjs',
     'packages/database/src/budget-admission.integration.test.mjs',
