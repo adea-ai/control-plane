@@ -324,6 +324,102 @@ describe('durable Cloud execution activities', () => {
     expect(graphCalls[2]).toBe(continueInput)
   })
 
+  test('funds native dispatch and interaction before invoking the runtime', async () => {
+    const fixture = await lifecycleFixture()
+    const calls = []
+    const runtime = runtimePort()
+    runtime.dispatch = async () => {
+      expect(calls.at(-1)).toBe('reserve')
+      calls.push('dispatch')
+      return { outcome: 'failed', failureCode: 'FIXTURE', retryable: false }
+    }
+    runtime.applyInteraction = async () => {
+      expect(calls.at(-1)).toBe('reserve')
+      calls.push('interaction')
+      return { outcome: 'failed', failureCode: 'FIXTURE', retryable: false }
+    }
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: {
+        authorize: async () => calls.push('authorize'),
+        reserve: async () => calls.push('reserve'),
+      },
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await activity.dispatch(dispatchInput(fixture.plan))
+    await activity.applyInteraction({
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      responseId: 'rsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      action: 'approve',
+      effectKey: 'reservation-interaction',
+    })
+    expect(calls).toEqual(['reserve', 'dispatch', 'reserve', 'interaction'])
+  })
+
+  test('a denied runtime reservation prevents external dispatch', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: {
+        authorize: async () => {},
+        reserve: async () => {
+          throw new Error('RUNTIME_BUDGET_ADMISSION_DENIED')
+        },
+      },
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await expect(activity.dispatch(dispatchInput(fixture.plan))).rejects.toThrow(
+      'RUNTIME_BUDGET_ADMISSION_DENIED'
+    )
+    expect(runtime.dispatches).toHaveLength(0)
+  })
+
+  for (const operation of ['dispatch', 'interaction']) {
+    test(`rejects ${operation} when reservation waits across attempt supersession`, async () => {
+      const fixture = await lifecycleFixture()
+      const runtime = runtimePort()
+      const activity = activities({
+        ...fixture,
+        runtime,
+        budgetAdmission: {
+          authorize: async () => {},
+          reserve: async () => {
+            const current = await fixture.lifecycle.getExecution(ids.executionId)
+            await fixture.lifecycle.createAttempt({
+              executionId: ids.executionId,
+              attemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+              expectedExecutionVersion: current.version,
+              queuedAt: '2026-08-28T12:00:01.000Z',
+            })
+          },
+        },
+      })
+      await activity.persistStatus(status('queued'))
+      await activity.ensureAttempt(attemptInput())
+      const result =
+        operation === 'dispatch'
+          ? activity.dispatch(dispatchInput(fixture.plan))
+          : activity.applyInteraction({
+              executionId: ids.executionId,
+              attemptId: ids.attemptId,
+              interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+              responseId: 'rsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+              action: 'approve',
+              effectKey: 'superseded-interaction',
+            })
+      await expect(result).rejects.toThrow('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+      expect(runtime.dispatches).toHaveLength(0)
+      expect(runtime.interactions).toHaveLength(0)
+    })
+  }
+
   test('rejects substituted graph authority before a node effect even without budget configuration', async () => {
     const fixture = await lifecycleFixture(graphExecutionPlan())
     const graphCalls = []

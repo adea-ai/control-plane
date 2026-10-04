@@ -151,6 +151,23 @@ not a product timeout, resource budget or measured acceptance SLO.
 
 ## M11 test architecture
 
+Standard RuntimeAdapter dispatch and interaction resume use an atomic attempt
+reservation through `DurableRuntimeBudgetAdmission.reserve()`. The read-only
+`authorize()` preflight remains separate for graph effects, whose operations own
+their funding. The supported Local, Simple, hosted PostgreSQL, and Cloud worker
+compositions already install this admission adapter. Focused regressions verify
+reservation before the runtime callback, immutable replay, remaining/clamped
+money and token authority, denied starts, supersession during reservation,
+rollback, and native SQLite reopen and concurrency. Open runtime reservations
+also fence attempt creation until explicit settlement; native regressions exercise
+both transaction orderings, contention, replay, corrupt-state rejection and
+alternate writer denial. PostgreSQL uses the same retention-mutex/workspace-lock
+order and has corresponding isolated-store contention coverage. Profile composition tests additionally inspect the committed
+reservation inside the actual runtime callback; PostgreSQL exercises concurrent
+rebuilds over the same isolated owner. This proves allocation where observed,
+not terminal charging, provider price provenance, or safe retention eligibility.
+See [the reservation evidence](evidence/m11-runtime-attempt-reservation-2026-10-04.md).
+
 M11 owns the final release validation layout. At minimum it must classify each suite as one primary lane:
 
 Failure-injection tests use recording or deliberately failing adapters and assert durable state,

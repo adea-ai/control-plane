@@ -19,6 +19,8 @@ export interface RuntimeBudgetAdmissionPort {
     readonly executionPlan: ExecutionPlan
     readonly attemptId: string
   }): Promise<void>
+  /** Validate and reserve the funded attempt envelope atomically before runtime work. */
+  reserve?(input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]): Promise<void>
 }
 
 export interface DurableRuntimeBudgetAdmissionOptions {
@@ -26,7 +28,9 @@ export interface DurableRuntimeBudgetAdmissionOptions {
   readonly commands: Pick<CommandAcceptanceRepository, 'getByExecutionId'>
 }
 
-/** Read-only preflight for the accepted plan allowance; it does not reserve or charge usage. */
+/** Read-only preflight and atomic attempt reservation over the accepted plan allowance.
+ * Reservation is allocation authority, not a charge or evidence of purchased funding.
+ */
 export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort {
   readonly #store: DurableUsageStore
   readonly #commands: Pick<CommandAcceptanceRepository, 'getByExecutionId'>
@@ -41,6 +45,17 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
     readonly executionPlan: ExecutionPlan
     readonly attemptId: string
   }): Promise<void> {
+    return this.#admit(input, false)
+  }
+
+  async reserve(input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]): Promise<void> {
+    return this.#admit(input, true)
+  }
+
+  async #admit(
+    input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0],
+    reserveAttempt: boolean
+  ): Promise<void> {
     try {
       if (
         !IdentifierSchemas.attemptId.safeParse(input.attemptId).success ||
@@ -127,6 +142,50 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
           summary.settled
         ) {
           denyAdmission()
+        }
+        if (reserveAttempt) {
+          const reservationKey = `runtime-attempt:${input.attemptId}`
+          const existing = budget.reservations.find(
+            (reservation) => reservation.reservationKey === reservationKey
+          )
+          if (
+            existing !== undefined &&
+            (existing.attemptId !== input.attemptId ||
+              existing.childExecutionId !== undefined ||
+              existing.status !== 'open')
+          ) {
+            denyAdmission()
+          }
+          if (
+            existing === undefined &&
+            ((budget.maximumMicrounits > 0 && summary.availableMicrounits === 0) ||
+              (budget.maximumTokens > 0 && summary.availableTokens === 0))
+          ) {
+            denyAdmission()
+          }
+          // Reserve remaining funded authority (children can be clamped), not
+          // an invented zero after another attempt reserved or spent it.
+          // Exact replay reuses the same envelope and immutable effect identity.
+          const mutationLedger = new DurableUsageLedger({
+            store: {
+              transaction: async (workspaceId, operation) => {
+                if (workspaceId !== allowance.workspaceId) denyAdmission()
+                return operation(transaction)
+              },
+            },
+          })
+          await mutationLedger.reserve({
+            workspaceId: allowance.workspaceId,
+            executionId: allowance.executionId,
+            attemptId: input.attemptId,
+            reservationKey,
+            maximumMicrounits: existing?.maximumMicrounits ?? summary.availableMicrounits,
+            maximumTokens: existing?.maximumTokens ?? summary.availableTokens,
+            source: {
+              sourceId: input.attemptId,
+              idempotencyKey: `${reservationKey}:reserve`,
+            },
+          })
         }
       })
     } catch {

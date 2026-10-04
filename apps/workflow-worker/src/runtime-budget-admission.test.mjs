@@ -16,6 +16,137 @@ const ids = {
 const acceptedAt = '2026-08-28T12:00:00.000Z'
 
 describe('durable runtime budget admission', () => {
+  test('reserves funded money and tokens once before an attempt, preserving read-only preflight', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    await guard.reserve(admissionInput(fixture))
+    const ledger = new DurableUsageLedger({ store })
+    const beforeReplay = await ledger.entries(allowance.workspaceId, allowance.executionId)
+    expect(beforeReplay.filter((entry) => entry.kind === 'reservation')).toHaveLength(1)
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      reservedMicrounits: allowance.maximumMicrounits,
+      reservedTokens: allowance.maximumTokens,
+      availableMicrounits: 0,
+      availableTokens: 0,
+      spentMicrounits: 0,
+      spentTokens: 0,
+    })
+    await guard.reserve(admissionInput(fixture))
+    expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toEqual(beforeReplay)
+    store.writeCalls = 0
+    await guard.authorize(admissionInput(fixture))
+    expect(store.writeCalls).toBe(0)
+  })
+
+  test('denies another attempt when its full funded envelope is already reserved', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    await guard.reserve(admissionInput(fixture))
+    const input = admissionInput(fixture)
+    input.attemptId = ids.wrongAttemptId
+    input.execution.latestAttemptId = ids.wrongAttemptId
+    await expect(guard.reserve(input)).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
+    const entries = await new DurableUsageLedger({ store }).entries(
+      allowance.workspaceId,
+      allowance.executionId
+    )
+    expect(entries.filter((entry) => entry.kind === 'reservation')).toHaveLength(1)
+  })
+
+  test('reserves remaining funded authority after another consumer and replays that same envelope', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    await ledger.reserve({
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      reservationKey: 'other-consumer',
+      maximumMicrounits: allowance.maximumMicrounits - 1,
+      maximumTokens: allowance.maximumTokens - 1,
+      source: { sourceId: 'other-consumer', idempotencyKey: 'other-consumer' },
+    })
+    const guard = makeAdmission(store, fixture.repository)
+    await guard.reserve(admissionInput(fixture))
+    const reservation = store.workspaces
+      .get(allowance.workspaceId)
+      .budgets.get(ids.executionId)
+      .reservations.find((value) => value.attemptId === ids.attemptId)
+    expect(reservation).toMatchObject({ maximumMicrounits: 1, maximumTokens: 1 })
+    const entries = await ledger.entries(allowance.workspaceId, allowance.executionId)
+    await guard.reserve(admissionInput(fixture))
+    expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toEqual(entries)
+  })
+
+  test('a settled attempt cannot regain released runtime authority through reservation replay', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    await guard.reserve(admissionInput(fixture))
+    const reservation = store.workspaces.get(allowance.workspaceId).budgets.get(ids.executionId)
+      .reservations[0]
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    await ledger.settle({
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      reservationKey: reservation.reservationKey,
+      source: { sourceId: 'fixture:settle', idempotencyKey: 'fixture:settle' },
+    })
+    const entries = await ledger.entries(allowance.workspaceId, allowance.executionId)
+    await expect(guard.reserve(admissionInput(fixture))).rejects.toThrow(
+      'RUNTIME_BUDGET_ADMISSION_DENIED'
+    )
+    expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toEqual(entries)
+  })
+
+  test('uses the actual funded child envelope rather than the requested plan ceiling', async () => {
+    const store = new TransactionalMemoryStore()
+    const parent = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, parent)
+    const ledger = new DurableUsageLedger({ store, now: () => acceptedAt })
+    await ledger.reserve({
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      reservationKey: 'parent-hold',
+      maximumMicrounits: allowance.maximumMicrounits - 1,
+      maximumTokens: allowance.maximumTokens - 1,
+      source: { sourceId: 'parent-hold', idempotencyKey: 'parent-hold' },
+    })
+    const child = await acceptedExecution(store, ids.childExecutionId, {
+      parentExecutionId: parent.execution.executionId,
+    })
+    await openAcceptedBudget(store, child)
+    await makeAdmission(store, child.repository).reserve(admissionInput(child))
+    expect(await ledger.summary(allowance.workspaceId, child.execution.executionId)).toMatchObject({
+      maximumMicrounits: 1,
+      maximumTokens: 1,
+      reservedMicrounits: 1,
+      reservedTokens: 1,
+      availableMicrounits: 0,
+      availableTokens: 0,
+    })
+  })
+
+  test('reservation writes roll back together when their replay receipt cannot persist', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    store.failEffectWrites = true
+    await expect(
+      makeAdmission(store, fixture.repository).reserve(admissionInput(fixture))
+    ).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
+    const ledger = new DurableUsageLedger({ store })
+    expect(await ledger.summary(allowance.workspaceId, allowance.executionId)).toMatchObject({
+      reservedMicrounits: 0,
+      reservedTokens: 0,
+    })
+    expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toHaveLength(1)
+  })
   test('allows a matching root allowance using one read-only store transaction', async () => {
     const store = new TransactionalMemoryStore()
     const fixture = await acceptedExecution(store, ids.executionId)
@@ -227,6 +358,7 @@ class TransactionalMemoryStore {
       },
       getEffect: async (idempotencyKey) => clone(draft.effects.get(idempotencyKey)),
       putEffect: async (effect) => {
+        if (this.failEffectWrites) throw new Error('FIXTURE_RECEIPT_WRITE_FAILED')
         this.writeCalls += 1
         draft.effects.set(effect.idempotencyKey, clone(effect))
       },

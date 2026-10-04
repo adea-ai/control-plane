@@ -320,6 +320,25 @@ if (enabled) {
     }
     currentFixture.runtime = {
       async dispatch(input) {
+        const store = new PostgresDurableUsageStore(
+          currentFixture.firstComposition.connection.database
+        )
+        const execution = await new PostgresExecutionRepository(
+          currentFixture.firstComposition.connection.database
+        ).getExecution(input.executionId)
+        expect(execution).toBeDefined()
+        const budget = await store.transaction(execution.correlation.workspaceId, (transaction) =>
+          transaction.getBudget(input.executionId)
+        )
+        expect(budget.reservations).toContainEqual({
+          reservationKey: `runtime-attempt:${input.attemptId}`,
+          attemptId: input.attemptId,
+          maximumMicrounits: budget.maximumMicrounits,
+          maximumTokens: budget.maximumTokens,
+          chargedMicrounits: 0,
+          chargedTokens: 0,
+          status: 'open',
+        })
         currentFixture.callbacks.dispatch.push(input)
         return { outcome: 'completed', resultReference: 'art_01ARZ3NDEKTSV4RRFFQ69G5FAV' }
       },
@@ -412,7 +431,7 @@ if (enabled) {
 }
 
 registerAdmissionTest(
-  'actual Cloud worker composition allows read-only runtime admission and replays across rebuilds',
+  'actual Cloud worker composition funds runtime admission once and replays across rebuilds',
   async ({ callbacks, firstComposition, owner }) => {
     const database = firstComposition.connection.database
     const initialSnapshot = await snapshotAdmission(database, owner.accepted.execution.executionId)
@@ -423,20 +442,28 @@ registerAdmissionTest(
       effectKey: `runtime-dispatch:${owner.accepted.execution.executionId}:first`,
     })
     expect(callbacks.dispatch).toHaveLength(1)
-    expect(await snapshotAdmission(database, owner.accepted.execution.executionId)).toEqual(
-      initialSnapshot
-    )
+    const reservedSnapshot = await snapshotAdmission(database, owner.accepted.execution.executionId)
+    expect(reservedSnapshot.commandRows).toEqual(initialSnapshot.commandRows)
+    expect(reservedSnapshot.executionRows).toEqual(initialSnapshot.executionRows)
+    expect(reservedSnapshot.attemptRows).toEqual(initialSnapshot.attemptRows)
+    expect(reservedSnapshot.entries).toHaveLength(initialSnapshot.entries.length + 1)
+    expect(reservedSnapshot.receipts).toHaveLength(initialSnapshot.receipts.length + 1)
 
     const rebuiltComposition = openComposition()
-    await rebuiltComposition.activities.dispatch({
-      executionId: owner.accepted.execution.executionId,
-      attemptId: owner.attempt.attemptId,
-      executionPlan: owner.executionPlan,
-      effectKey: `runtime-dispatch:${owner.accepted.execution.executionId}:replay`,
-    })
-    expect(callbacks.dispatch).toHaveLength(2)
+    const concurrentComposition = openComposition()
+    await Promise.all(
+      [rebuiltComposition, concurrentComposition].map((composition) =>
+        composition.activities.dispatch({
+          executionId: owner.accepted.execution.executionId,
+          attemptId: owner.attempt.attemptId,
+          executionPlan: owner.executionPlan,
+          effectKey: `runtime-dispatch:${owner.accepted.execution.executionId}:replay`,
+        })
+      )
+    )
+    expect(callbacks.dispatch).toHaveLength(3)
     expect(await snapshotAdmission(database, owner.accepted.execution.executionId)).toEqual(
-      initialSnapshot
+      reservedSnapshot
     )
   }
 )
