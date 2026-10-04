@@ -38,11 +38,30 @@ Formatting, denied-warning lint and Node 24 syntax checks passed for the affecte
 An initial malformed test invocation selected the workspace script and stopped after 2.859 seconds
 on a missing dependency; that attempt is not regression evidence and was not repeated.
 
-No local Docker command or dependency installation was used. PostgreSQL behavioral and concurrency
-proof and full build/type/coverage validation remain pending for this candidate. Independent
-standards and spec source reviews completed; their attempt-reference, identity-parity, query-result
-alignment and full-state coverage findings were addressed before the ready-for-review transition. The authored PostgreSQL suite covers both transaction orderings and fresh connections;
-its presence is not a passing runtime result.
+No local Docker command or dependency installation was used. Independent standards and spec
+source reviews completed; their attempt-reference, identity-parity, query-result alignment and
+full-state coverage findings were addressed before the ready-for-review transition.
+
+The [PostgreSQL CI run 37168042195](https://github.com/adea-ai/control-plane/actions/runs/37168042195)
+passed on exact head `48f6980a79505a66cc2c39396f72f0340f1dde01`. All seven new provenance cases
+passed on 2026-10-04 at 01:28:03–01:28:06 UTC, including both transaction orderings, all ten proposal
+states through fresh connections, damaged attempt provenance and mixed usage/delegation references.
+The database package passed 184 tests with zero failures; the PostgreSQL conformance lane also
+passed 11 cases. This is ephemeral PostgreSQL CI proof, not real-provider or deployed-profile
+acceptance.
+
+The first full validation and Foundation Core runs failed because `tests/repository.test.mjs`
+still expected the integration inventory without the new file. Actual discovery included the file
+correctly. On 2026-10-04 at 01:30:45 UTC the focused native inventory test reproduced that failure;
+after adding the filename to the exact expected integration list and explicitly excluding it from
+unit discovery, the same command passed one case in 544 ms:
+
+```sh
+bun test ./tests/repository.test.mjs --test-name-pattern 'discovers disjoint Bun test groups'
+```
+
+The inventory repair changes no PostgreSQL production code or case body. The final publishing head
+still requires full CI after this repair; the failed earlier aggregates are not passing evidence.
 
 ## Review repairs and reproducible candidate
 
@@ -54,7 +73,7 @@ The updated PostgreSQL damaged-provenance case covers both surviving-attempt for
 The independent standards review then caught a missing result slot in the new PostgreSQL reference
 query fanout. The repaired mapping retains the separate memory-attempt result and preserves the
 usage/delegation slots. A seventh PostgreSQL case checks memory, usage funding parent and both
-delegation endpoint references together; its runtime result remains pending. The final spec
+delegation endpoint references together; its runtime result passed in the CI run above. The final spec
 follow-up expanded the PostgreSQL lifecycle loop to all ten proposal states within its existing
 case budgets; no per-case deadline or product behavior was changed.
 
@@ -80,7 +99,7 @@ Each process had a 20-second outer ceiling. The second command also proves the u
 PostgreSQL file. Shared local Acorn is 8.18.0; exact-head CI will use locked Acorn 8.16.0.
 
 The source/test working candidate (documentation excluded) is identified by the SHA-256
-`acc5c139f1a2e0961e8ccc9c1922bb12269dc0ff9c9f7d1bfb16e201cc08c104` over the following sorted filename-to-SHA-256 map;
+`421d3dec8f597d440935afd799e0af2e520d5826b456c5de1423be15f07dd8d6` over the following sorted filename-to-SHA-256 map;
 the publishing commit and its exact-head CI are separate evidence gates.
 
 | Source or test                                                           | SHA-256                                                            |
@@ -95,6 +114,7 @@ the publishing commit and its exact-head CI are separate evidence gates.
 | `packages/sqlite-persistence/src/repositories.ts`                        | `aeca851c0cf60d8a90865cc5b078ea3b0bd7dff2d535492f5c37b7a72e567d01` |
 | `packages/sqlite-persistence/src/retention-executions-deletion.test.mjs` | `187ccd7fecafaf95f9c2d47d89dfc895e53b689139fea9698ae0d20e75917b3f` |
 | `scripts/integration-shards.mjs`                                         | `c5459028489f0966bb464b8149df9327af797a0711e541a8d0c300324d722e9f` |
+| `tests/repository.test.mjs`                                              | `49404aed1d4f23052848d4541c3aa44670c8f2f3380df697663ba8a34ee96fe3` |
 
 ## Remaining acceptance
 

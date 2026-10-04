@@ -157,6 +157,9 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(unit.includes('packages/production-readiness/src/deployment.test.mjs'))
   assert.ok(unit.includes('packages/production-readiness/src/load-testing.test.mjs'))
   assert.ok(!unit.includes('packages/database/src/integration.test.mjs'))
+  assert.ok(
+    !unit.includes('packages/database/src/memory-provenance-retention.integration.test.mjs')
+  )
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
@@ -173,6 +176,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/graph-definition-repository.integration.test.mjs',
     'packages/database/src/hosted-graph-operations.integration.test.mjs',
     'packages/database/src/integration.test.mjs',
+    'packages/database/src/memory-provenance-retention.integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
     'packages/database/src/retention-claim-lock-order.integration.test.mjs',
