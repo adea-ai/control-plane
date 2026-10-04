@@ -204,9 +204,11 @@ function workflowEvents(source) {
   return source.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
 }
 
-async function findCleanupBranch(responses, overrides = {}) {
+async function findCleanupBranch(responses, overrides = {}, observed = {}) {
   const requests = []
   const writes = []
+  const waits = []
+  Object.assign(observed, { requests, writes, waits })
   let index = 0
   await runInNewContext(cleanupScript, {
     URL,
@@ -225,13 +227,23 @@ async function findCleanupBranch(responses, overrides = {}) {
     require: () => ({ appendFileSync: (path, value) => writes.push({ path, value }) }),
     fetch: async (url, options) => {
       requests.push({ url: String(url), options })
-      const response = responses[index++]
+      const response = responses[Math.min(index++, responses.length - 1)]
       if (response instanceof Error) throw response
-      return { status: response.status ?? 200, json: async () => response.body }
+      return {
+        status: response.status ?? 200,
+        json: async () => {
+          if (response.jsonError) throw response.jsonError
+          return response.body
+        },
+      }
+    },
+    setTimeout: (callback, milliseconds) => {
+      waits.push(milliseconds)
+      callback()
     },
     console: { log: () => {} },
   })
-  return { requests, writes }
+  return { requests, writes, waits }
 }
 
 const previewBranch = {
@@ -358,6 +370,113 @@ describe('Neon preview cleanup lookup', () => {
       expect(request.options.redirect).toBe('error')
       expect(request.options.headers.Authorization).toBe('Bearer synthetic-key')
     }
+  })
+
+  test('recovers a transient connection reset with bounded retries of the same lookup', async () => {
+    const result = await findCleanupBranch([
+      new TypeError('fetch failed: synthetic reset'),
+      new TypeError('fetch failed: synthetic reset'),
+      { body: { branches: [previewBranch] } },
+    ])
+    expect(result.requests).toHaveLength(3)
+    expect(new Set(result.requests.map(({ url }) => url)).size).toBe(1)
+    expect(result.waits).toEqual([500, 1000])
+    expect(result.writes).toEqual([
+      { path: '/synthetic/output', value: 'branch_id=br-synthetic-preview\n' },
+    ])
+  })
+
+  test('retries a connection reset while reading the response body', async () => {
+    const result = await findCleanupBranch([
+      { jsonError: new TypeError('response body terminated') },
+      { body: { branches: [previewBranch] } },
+    ])
+    expect(result.requests).toHaveLength(2)
+    expect(result.requests[0].url).toBe(result.requests[1].url)
+    expect(result.waits).toEqual([500])
+    expect(result.writes).toHaveLength(1)
+  })
+
+  test('refuses to retry malformed JSON even if a later response would be valid', async () => {
+    const observed = {}
+    await expect(
+      findCleanupBranch(
+        [
+          { jsonError: new SyntaxError('synthetic malformed JSON') },
+          { body: { branches: [previewBranch] } },
+        ],
+        {},
+        observed
+      )
+    ).rejects.toThrow('Invalid Neon branch listing')
+    expect(observed.requests).toHaveLength(1)
+    expect(observed.waits).toEqual([])
+    expect(observed.writes).toEqual([])
+  })
+
+  test('retries only transient HTTP responses without treating them as absence', async () => {
+    for (const status of [408, 429, 500, 502, 503, 504]) {
+      const result = await findCleanupBranch([{ status }, { body: { branches: [previewBranch] } }])
+      expect(result.requests).toHaveLength(2)
+      expect(result.waits).toEqual([500])
+      expect(result.writes).toHaveLength(1)
+    }
+    for (const status of [400, 401, 403, 404]) {
+      const observed = {}
+      await expect(findCleanupBranch([{ status }], {}, observed)).rejects.toThrow(
+        `Neon cleanup lookup failed: HTTP ${status}`
+      )
+      expect(observed.requests).toHaveLength(1)
+      expect(observed.waits).toEqual([])
+      expect(observed.writes).toEqual([])
+    }
+  })
+
+  test('fails closed after three transport failures without exposing the underlying error', async () => {
+    const observed = {}
+    await expect(
+      findCleanupBranch([new TypeError('synthetic private transport detail')], {}, observed)
+    ).rejects.toThrow('Neon cleanup lookup failed: transport error')
+    expect(observed.requests).toHaveLength(3)
+    expect(observed.waits).toEqual([500, 1000])
+    expect(observed.writes).toEqual([])
+  })
+
+  test('bounds repeated server errors and refuses to retry invalid branch metadata', async () => {
+    const exhausted = {}
+    await expect(findCleanupBranch([{ status: 503 }], {}, exhausted)).rejects.toThrow(
+      'Neon cleanup lookup failed: HTTP 503'
+    )
+    expect(exhausted.requests).toHaveLength(3)
+    expect(exhausted.waits).toEqual([500, 1000])
+    expect(exhausted.writes).toEqual([])
+    const invalid = {}
+    await expect(
+      findCleanupBranch(
+        [
+          { body: { branches: [{ ...previewBranch, protected: true }] } },
+          { body: { branches: [previewBranch] } },
+        ],
+        {},
+        invalid
+      )
+    ).rejects.toThrow('Unsafe or ambiguous Neon cleanup target')
+    expect(invalid.requests).toHaveLength(1)
+    expect(invalid.waits).toEqual([])
+    expect(invalid.writes).toEqual([])
+    expect(workflow).toContain('timeout-minutes: 12')
+  })
+
+  test('retries the current pagination page without discarding previously validated entries', async () => {
+    const result = await findCleanupBranch([
+      { body: { branches: [previewBranch], pagination: { next: 'next/page' } } },
+      new TypeError('fetch failed'),
+      { body: { branches: [] } },
+    ])
+    expect(result.requests).toHaveLength(3)
+    expect(result.requests[1].url).toBe(result.requests[2].url)
+    expect(new URL(result.requests[2].url).searchParams.get('cursor')).toBe('next/page')
+    expect(result.writes).toHaveLength(1)
   })
 
   test('does not turn API failures or malformed listings into successful absence', async () => {
