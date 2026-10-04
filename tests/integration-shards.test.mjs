@@ -172,9 +172,16 @@ describe('integration shard partition', () => {
     const directory = mkdtempSync(join(tmpdir(), 'cp-shard-selection-'))
     try {
       const file = join(directory, 'selection.test.mjs')
+      writeFileSync(join(directory, 'names.json'), JSON.stringify(names))
       writeFileSync(
         file,
-        `import { describe, test } from 'bun:test'\ndescribe('PostgreSQL persistence foundation', () => {\n${names.map((name) => `test(${JSON.stringify(name)}, () => console.log('CASE:' + ${JSON.stringify(name)}))`).join('\n')}\n})\n`
+        `import { describe, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+const names = JSON.parse(readFileSync(new URL('./names.json', import.meta.url), 'utf8'))
+describe('PostgreSQL persistence foundation', () => {
+  for (const name of names) test(name, () => console.log('CASE:' + name))
+})
+`
       )
       const seen = []
       for (const entry of INTEGRATION_SHARDS) {
