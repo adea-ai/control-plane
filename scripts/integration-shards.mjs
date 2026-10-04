@@ -13,6 +13,10 @@
 // tests/integration-shards.test.mjs checks actual Bun selection against all
 // static case names and bounds both slices. Per-case database isolation,
 // serial execution and the existing three branch owners remain unchanged.
+// Run 37177353771 (2026-10-04) then spent 2,602s on shard 2's integration step,
+// with no retry. Its budget-admission file took 955.20s; shard 1's integration
+// step took 763s. Move that complete file to shard 1 rather than adding another
+// branch or splitting its cases. See the dated evidence for scope and limits.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -25,6 +29,10 @@ export const INTEGRATION_SHARDS = [
         package: 'packages/database',
         files: ['src/integration.test.mjs'],
         testNamePattern: `^(?!.*(?:${foundationCasesForShard2})).*$`,
+      },
+      {
+        package: 'packages/database',
+        files: ['src/budget-admission.integration.test.mjs'],
       },
     ],
   },
@@ -39,7 +47,6 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/database',
         files: [
-          'src/budget-admission.integration.test.mjs',
           'src/retention-reference-windows.integration.test.mjs',
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',

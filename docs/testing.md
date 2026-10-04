@@ -119,6 +119,12 @@ case filters on shards 1 and 2. The partition check uses the development-only Ac
 parser (independent of the TypeScript compiler API) to inventory its literal test names, bounds each
 slice, and executes those names through Bun using the runner's actual arguments to reject missing
 or duplicate selection. Unsharded local runs still execute the full file without filters.
+The complete database budget-admission file runs on shard 1. In trusted-main run
+`37177353771`, that file took 955.20 seconds on shard 2, whose integration step took
+2,602 seconds without retries. Moving the file uses shard 1's spare capacity while
+keeping three branch owners and every case. This addresses imbalance near the job
+deadline; actual runner billing and Neon cost savings remain unmeasured. See
+[the timing evidence](evidence/m11-neon-budget-balance-2026-10-04.md).
 Preview cleanup resolves the exact run/attempt/shard name and validates the project, parent,
 protection flags, and complete listing before exporting a branch ID for deletion. Each listing
 page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
