@@ -33,3 +33,11 @@ across database reopen for Local and Hosted Simple persistence. Durable source-e
 checked during atomic approval creation. These adapters do not automatically enable memory writes in
 application compositions or supply a provider transport. Profile crash/restart acceptance and complete
 proposal/interaction retention remain tracked in M11; the new adapter does not authorize deletion.
+
+Proposal transitions preserve the full proposed effect: provider/connection/workspace/scope,
+content and digest, type, retention, every provenance field, dedupe identity, creation time,
+and approval interaction link. All three repository adapters reject any mutation of those
+fields before writing. Only lifecycle state, version, update time, and recorded outcome may
+change. Reopening a SQLite database therefore preserves the exact intent the principal
+approved. This guard does not audit or repair previously modified records, supply provider
+authority, or certify a deployed profile. See the [intent evidence](./evidence/m11-memory-approved-intent-2026-10-04.md).

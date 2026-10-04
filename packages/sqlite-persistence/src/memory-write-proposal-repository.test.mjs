@@ -289,3 +289,84 @@ test('SQLite reopened committing proposals use status without repeating the prov
     }
   })
 })
+
+test('SQLite preserves the approved memory intent across rejected mutations and reopen', async () => {
+  await fixture(async (provider, path) => {
+    const context = service(provider)
+    const pending = await context.service.propose(proposal, policy, approval)
+    await new InteractionService(context.interactions).respond({
+      interactionId: pending.approvalInteractionId,
+      executionId: proposal.provenance.sourceExecutionId,
+      attemptId: proposal.provenance.sourceAttemptId,
+      responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      action: 'approve',
+      respondingPrincipalId: 'svc_agent-hq',
+      expectedVersion: 1,
+      respondedAt: later,
+    })
+    const approved = await context.service.applyApproval(pending.proposalId, later)
+    for (const change of [
+      { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { dedupeHint: 'moved' },
+      { providerId: 'ctp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { connectionId: 'ctc_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      { scopeDigest: `sha256:${'d'.repeat(64)}` },
+      { memoryType: 'fact' },
+      { content: 'Changed after approval' },
+      { contentDigest: `sha256:${'d'.repeat(64)}` },
+      { retention: 'session' },
+      { createdAt: later },
+      { approvalInteractionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      {
+        provenance: { ...approved.provenance, sourceExecutionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      },
+      { provenance: { ...approved.provenance, sourceAttemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW' } },
+      { provenance: { ...approved.provenance, confidence: 0.1 } },
+      { provenance: { ...approved.provenance, importance: 0.1 } },
+      { provenance: { ...approved.provenance, sensitivity: 'public' } },
+      { provenance: { ...approved.provenance, expiresAt: later } },
+      { provenance: { ...approved.provenance, evidenceRefs: ['artifact://changed'] } },
+      { provenance: { ...approved.provenance, artifactRefs: ['art_01ARZ3NDEKTSV4RRFFQ69G5FAW'] } },
+    ]) {
+      await expect(
+        context.repository.compareAndSet(approved.version, {
+          ...approved,
+          ...change,
+          version: approved.version + 1,
+        })
+      ).rejects.toThrow('MEMORY_PROPOSAL_IDENTITY_MISMATCH')
+      expect(await context.repository.get(approved.proposalId)).toEqual(approved)
+    }
+    provider.close()
+    const reopened = new SqlitePersistenceProvider({ path })
+    try {
+      await reopened.migrate()
+      const recovered = service(reopened)
+      expect(await recovered.repository.get(approved.proposalId)).toEqual(approved)
+      const writes = []
+      const write = recovered.writer.write.bind(recovered.writer)
+      recovered.writer.write = async (request) => {
+        writes.push(request)
+        return write(request)
+      }
+      const committed = await recovered.service.commit(approved.proposalId, later)
+      expect(committed.state).toBe('committed')
+      expect(writes).toEqual([
+        {
+          providerId: proposal.providerId,
+          connectionId: proposal.connectionId,
+          workspaceId: proposal.workspaceId,
+          scopeDigest: proposal.scopeDigest,
+          idempotencyKey: `memory:${proposal.proposalId}:${proposal.contentDigest}`,
+          memoryType: proposal.memoryType,
+          content: proposal.content,
+          contentDigest: proposal.contentDigest,
+          retention: proposal.retention,
+          provenance: proposal.provenance,
+        },
+      ])
+    } finally {
+      reopened.close()
+    }
+  })
+})

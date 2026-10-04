@@ -252,11 +252,31 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     })
     test('proposal transitions cannot move immutable source ownership or dedupe identity', async () => {
       const repository = new PostgresMemoryWriteProposalRepository(isolated.application)
-      const proposal = memoryProposal()
+      const proposal = {
+        ...memoryProposal('approved'),
+        approvalInteractionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      }
       await repository.insert(proposal)
       for (const change of [
         { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
         { dedupeHint: 'moved' },
+        { providerId: 'ctp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        { connectionId: 'ctc_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        { scopeDigest: `sha256:${'d'.repeat(64)}` },
+        { memoryType: 'preference' },
+        { content: 'Changed after approval' },
+        { contentDigest: `sha256:${'d'.repeat(64)}` },
+        { retention: 'session' },
+        { createdAt: terminalAt },
+        { approvalInteractionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        { provenance: { ...proposal.provenance, confidence: 0.1 } },
+        { provenance: { ...proposal.provenance, importance: 0.1 } },
+        { provenance: { ...proposal.provenance, sensitivity: 'public' } },
+        { provenance: { ...proposal.provenance, expiresAt: terminalAt } },
+        { provenance: { ...proposal.provenance, evidenceRefs: ['artifact://changed'] } },
+        {
+          provenance: { ...proposal.provenance, artifactRefs: ['art_01ARZ3NDEKTSV4RRFFQ69G5FAW'] },
+        },
         {
           provenance: {
             ...proposal.provenance,

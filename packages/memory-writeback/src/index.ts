@@ -41,16 +41,15 @@ export interface MemoryWriteProposalRepository {
   list(): Promise<MemoryWriteProposal[]>
 }
 
-/** Retention and deduplication rely on this identity remaining stable across transitions. */
+/** A transition may change lifecycle fields, never the proposed effect or approval binding. */
 export function assertMemoryWriteProposalIdentity(
   current: MemoryWriteProposal,
   next: MemoryWriteProposal
 ): void {
   if (
-    current.workspaceId !== next.workspaceId ||
-    current.dedupeHint !== next.dedupeHint ||
-    current.provenance.sourceExecutionId !== next.provenance.sourceExecutionId ||
-    current.provenance.sourceAttemptId !== next.provenance.sourceAttemptId
+    !isDeepStrictEqual(ProposalInputSchema.parse(current), ProposalInputSchema.parse(next)) ||
+    current.createdAt !== next.createdAt ||
+    current.approvalInteractionId !== next.approvalInteractionId
   )
     throw new Error('MEMORY_PROPOSAL_IDENTITY_MISMATCH')
 }
