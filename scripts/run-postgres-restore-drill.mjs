@@ -28,6 +28,7 @@ function dockerPostgres(arguments_, options = {}) {
     encoding: options.binary ? null : 'utf8',
     input: options.input,
     maxBuffer: 64 * 1024 * 1024,
+    timeout: 90_000,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   if (result.error) throw result.error

@@ -31,6 +31,7 @@ jobs:
       DATABASE_MIGRATION_URL: postgresql://control_plane_migrator:local-migration-only@127.0.0.1:54329/control_plane
       DATABASE_URL: postgresql://control_plane_app:local-application-only@127.0.0.1:54329/control_plane
       DATABASE_URL_UNPOOLED: postgresql://control_plane_app:local-application-only@127.0.0.1:54329/control_plane
+      COMPOSE_PROJECT_NAME: control-plane-pr-${{ github.run_id }}-${{ github.run_attempt }}
       RUN_M10_POSTGRES_CONFORMANCE: 'true'
     steps:
       - name: Checkout pull request
@@ -62,3 +63,8 @@ jobs:
 
       - name: Verify integration and recovery behavior
         run: bun run test:integration
+
+      - name: Remove owned PostgreSQL fixture
+        if: always()
+        timeout-minutes: 3
+        run: docker compose down --volumes --remove-orphans --timeout 60

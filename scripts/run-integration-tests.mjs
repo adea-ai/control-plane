@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import {
   integrationFileArguments,
@@ -26,7 +27,8 @@ function run(command, arguments_, options = {}) {
     cwd: options.cwd ?? process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
-    env: options.environment ?? process.env,
+    env: options.environment ?? runnerEnvironment,
+    timeout: options.timeout ?? (command === 'docker' ? 90_000 : undefined),
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
@@ -55,28 +57,28 @@ async function waitForPostgres() {
   ]
 
   while (Date.now() < deadline) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
     const result = spawnSync('docker', readinessCommand, {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: 'pipe',
+      env: runnerEnvironment,
+      timeout: Math.min(5000, remaining),
     })
     if (result.error) throw result.error
     if (result.status === 0 && result.stdout.trim() === '1') {
       console.log('PostgreSQL database system is accepting SQL connections')
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now())))
+    )
   }
 
   throw new Error('PostgreSQL did not accept SQL connections within 30 seconds')
 }
 
-const runningServices = run('docker', ['compose', 'ps', '--status', 'running', '--services'], {
-  capture: true,
-})
-  .split('\n')
-  .filter(Boolean)
-const postgresWasRunning = runningServices.includes('postgres')
 // A remote target (Neon preview branch or similar) replaces the local Docker
 // Postgres lane entirely: no container to boot or probe, and the
 // Docker-lifecycle drills below do not apply to it. Loopback URLs still take
@@ -92,25 +94,59 @@ function databaseHostname(value) {
 }
 function isLoopbackHostname(hostname) {
   return (
-    hostname === '' || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    hostname === '' ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
   )
 }
 const remoteDatabase = [process.env.DATABASE_URL, process.env.DATABASE_MIGRATION_URL]
   .filter((value) => value !== undefined)
   .some((value) => !isLoopbackHostname(databaseHostname(value)))
 
+// Resolve and validate the remote lane before any Docker query. Remote CI and
+// developer runs must work with no local engine installed or running.
+if (remoteDatabase && !process.env.DATABASE_ADMIN_URL) {
+  throw new Error(
+    'Remote integration requires an explicit DATABASE_ADMIN_URL for isolated test databases'
+  )
+}
+const runnerEnvironment = { ...process.env }
+let postgresWasRunning = false
+let ownsComposeProject = false
+let startupAttempted = false
+let verificationError
+let cleanupError
+
 try {
-  if (remoteDatabase && !process.env.DATABASE_ADMIN_URL) {
-    throw new Error(
-      'Remote integration requires an explicit DATABASE_ADMIN_URL for isolated test databases'
-    )
+  if (!remoteDatabase) {
+    const runningServices = run('docker', ['compose', 'ps', '--status', 'running', '--services'], {
+      capture: true,
+    })
+      .split('\n')
+      .filter(Boolean)
+    postgresWasRunning = runningServices.includes('postgres')
+    if (!postgresWasRunning) {
+      // A caller's explicit project belongs to that caller (for example the
+      // recovery matrix). Only our freshly generated project permits volume
+      // deletion; never sweep another project or the shared Docker cache.
+      if (!runnerEnvironment.COMPOSE_PROJECT_NAME) {
+        ownsComposeProject = true
+        const project = `control-plane-integration-${process.pid}-${randomUUID()}`
+        runnerEnvironment.COMPOSE_PROJECT_NAME = project
+        console.log(`Starting isolated integration PostgreSQL in project ${project}.`)
+      } else {
+        console.log('Starting integration PostgreSQL in the caller-owned project.')
+      }
+      startupAttempted = true
+      run('docker', ['compose', 'up', '-d', '--wait', 'postgres'])
+    }
   }
-  if (!remoteDatabase && !postgresWasRunning)
-    run('docker', ['compose', 'up', '-d', '--wait', 'postgres'])
   if (!remoteDatabase) await waitForPostgres()
   else console.log('Using remote database target from the environment.')
   const integrationEnvironment = {
-    ...process.env,
+    ...runnerEnvironment,
     DATABASE_ADMIN_URL:
       process.env.DATABASE_ADMIN_URL ??
       'postgresql://control_plane_admin:local-admin-only@127.0.0.1:54329/postgres',
@@ -195,10 +231,27 @@ try {
       environment: integrationEnvironment,
     })
   }
+} catch (error) {
+  verificationError = error
 } finally {
-  if (!remoteDatabase && !postgresWasRunning) {
-    run('docker', ['compose', 'stop', '--timeout', '60', 'postgres'])
+  if (startupAttempted) {
+    try {
+      if (ownsComposeProject) {
+        run('docker', ['compose', 'down', '--volumes', '--remove-orphans', '--timeout', '60'])
+      } else {
+        run('docker', ['compose', 'stop', '--timeout', '60', 'postgres'])
+      }
+    } catch (error) {
+      cleanupError = error
+    }
   }
 }
+if (verificationError && cleanupError) {
+  throw new AggregateError([verificationError, cleanupError], 'Integration and cleanup failed', {
+    cause: verificationError,
+  })
+}
+if (cleanupError) throw cleanupError
+if (verificationError) throw verificationError
 
 void COMPOSE_COMMAND

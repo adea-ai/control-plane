@@ -180,6 +180,31 @@ a flaky failure green. The per-test budget is 30 seconds for normal groups and
 resource limit, and mutable PostgreSQL, Compose, process, port, and filesystem
 fixtures own their cleanup in the lane that created them.
 
+## Integration fixture ownership
+
+A remote integration target is classified and validated before any Docker command;
+Neon verification does not require a local Docker engine. Local runs preserve an
+already running PostgreSQL service. When the runner starts its own fixture and no
+`COMPOSE_PROJECT_NAME` was supplied, it records a unique project name before startup
+and removes that project's containers, network and volume in `finally`, including
+partial startup and test failures. The runner's Docker commands and the nested
+PostgreSQL disruption/restore Docker calls have a 90-second process bound;
+SQL readiness probes have a five-second bound within the 30-second readiness window.
+Cleanup failure fails verification and preserves any original failure alongside it.
+
+An explicit caller project remains caller-owned: the runner may stop the PostgreSQL
+service it started, but does not delete that project's volume. The recovery matrix
+removes its own project in its outer cleanup. Pull-request PostgreSQL CI likewise
+uses a run/attempt-specific project and an `always()` cleanup step. These paths never
+prune unrelated resources or shared build caches. `SIGKILL`, daemon loss and machine
+shutdown cannot execute JavaScript `finally`. Explicit `SIGINT`/`SIGTERM` cleanup
+handlers are not implemented either; interrupted runs still need follow-up using
+the recorded project identity. Once the engine is available, the owning operator
+can use that exact `COMPOSE_PROJECT_NAME` with `docker compose down --volumes
+--remove-orphans --timeout 60` from this repository; never substitute a shared
+project or global prune. No disk reclamation or full Docker acceptance is implied
+by the command-double lifecycle regression suite.
+
 ## Current PostgreSQL integration fixture
 
 The repository currently starts a pinned local PostgreSQL service for integration testing. That remains useful for:
