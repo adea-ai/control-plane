@@ -9,9 +9,14 @@ import type {
   PersistenceProvider,
   PersistenceTransaction,
 } from '@control-plane/deployment'
-import { ExecutionSchema, type InteractionRequest } from '@control-plane/domain'
+import {
+  ExecutionAttemptSchema,
+  ExecutionSchema,
+  type InteractionRequest,
+} from '@control-plane/domain'
 import {
   MemoryWriteError,
+  assertMemoryWriteProposalIdentity,
   parseMemoryWriteApproval,
   type MemoryWriteProposalRepository,
 } from '@control-plane/memory-writeback'
@@ -39,15 +44,6 @@ export class SqliteMemoryWriteProposalRepository implements MemoryWriteProposalR
     const interaction = parseMemoryWriteApproval(proposal, approval)
     return this.provider.transaction(async (transaction) => {
       if (!(await this.#insert(transaction, proposal))) return false
-      const owner = await transaction.get(
-        'executions',
-        recordId(proposal.provenance.sourceExecutionId)
-      )
-      if (
-        !owner ||
-        ExecutionSchema.parse(owner.value).correlation.workspaceId !== proposal.workspaceId
-      )
-        throw new Error('MEMORY_PROPOSAL_SCOPE_MISMATCH')
       const interactions = new SqliteInteractionRepository(this.provider)
       if (!(await interactions.insertInTransaction(transaction, interaction)))
         throw new MemoryWriteError('MEMORY_PROPOSAL_CONFLICT')
@@ -63,6 +59,25 @@ export class SqliteMemoryWriteProposalRepository implements MemoryWriteProposalR
     const dedupe = dedupeId(proposal.workspaceId, proposal.dedupeHint)
     if ((await transaction.get(namespace, id)) || (await transaction.get(dedupeNamespace, dedupe)))
       return false
+    // The same serialized write transaction claims the owner against retention.
+    const owner = await transaction.get(
+      'executions',
+      recordId(proposal.provenance.sourceExecutionId)
+    )
+    const attempt = await transaction.get(
+      'execution-attempts',
+      recordId(proposal.provenance.sourceAttemptId)
+    )
+    if (!owner || !attempt) throw new Error('MEMORY_PROPOSAL_SCOPE_MISMATCH')
+    const execution = ExecutionSchema.parse(owner.value)
+    const sourceAttempt = ExecutionAttemptSchema.parse(attempt.value)
+    if (
+      execution.executionId !== proposal.provenance.sourceExecutionId ||
+      execution.correlation.workspaceId !== proposal.workspaceId ||
+      sourceAttempt.attemptId !== proposal.provenance.sourceAttemptId ||
+      sourceAttempt.executionId !== execution.executionId
+    )
+      throw new Error('MEMORY_PROPOSAL_SCOPE_MISMATCH')
     await transaction.put({ namespace, id, value: json(proposal) })
     await transaction.put({
       namespace: dedupeNamespace,
@@ -102,8 +117,10 @@ export class SqliteMemoryWriteProposalRepository implements MemoryWriteProposalR
     return this.provider.transaction(async (transaction) => {
       const id = recordId(proposal.proposalId)
       const row = await transaction.get(namespace, id)
-      if (!row || MemoryWriteProposalSchema.parse(row.value).version !== expectedVersion)
-        return false
+      if (!row) return false
+      const current = MemoryWriteProposalSchema.parse(row.value)
+      if (current.version !== expectedVersion) return false
+      assertMemoryWriteProposalIdentity(current, proposal)
       await transaction.put({
         namespace,
         id,

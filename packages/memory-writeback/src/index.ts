@@ -41,6 +41,20 @@ export interface MemoryWriteProposalRepository {
   list(): Promise<MemoryWriteProposal[]>
 }
 
+/** Retention and deduplication rely on this identity remaining stable across transitions. */
+export function assertMemoryWriteProposalIdentity(
+  current: MemoryWriteProposal,
+  next: MemoryWriteProposal
+): void {
+  if (
+    current.workspaceId !== next.workspaceId ||
+    current.dedupeHint !== next.dedupeHint ||
+    current.provenance.sourceExecutionId !== next.provenance.sourceExecutionId ||
+    current.provenance.sourceAttemptId !== next.provenance.sourceAttemptId
+  )
+    throw new Error('MEMORY_PROPOSAL_IDENTITY_MISMATCH')
+}
+
 export class InMemoryMemoryWriteProposalRepository implements MemoryWriteProposalRepository {
   readonly #proposals = new Map<string, MemoryWriteProposal>()
   #insertTail: Promise<void> = Promise.resolve()
@@ -88,7 +102,9 @@ export class InMemoryMemoryWriteProposalRepository implements MemoryWriteProposa
   }
   async compareAndSet(expectedVersion: number, proposal: MemoryWriteProposal): Promise<boolean> {
     const parsed = MemoryWriteProposalSchema.parse(proposal)
-    if (this.#proposals.get(parsed.proposalId)?.version !== expectedVersion) return false
+    const current = this.#proposals.get(parsed.proposalId)
+    if (!current || current.version !== expectedVersion) return false
+    assertMemoryWriteProposalIdentity(current, parsed)
     this.#proposals.set(parsed.proposalId, structuredClone(parsed))
     return true
   }

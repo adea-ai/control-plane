@@ -29,6 +29,7 @@ import { reconciliationCheckpoints } from './schema/reconciliation.js'
 import { lockExecutionPlanReference } from './execution-plan-repository.js'
 import { usageLedgerEntries } from './schema/usage-ledger.js'
 import { usageBudgetStates, usageOperationReceipts } from './schema/usage-budget-state.js'
+import { memoryWriteProposals } from './schema/memory-write-proposals.js'
 import { retiredCommandKeys } from './schema/retired-command-keys.js'
 import {
   acquirePostgresRetentionHoldClassMutex,
@@ -207,6 +208,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
             references.cancellationReceipts.has(owner.executionId) ||
             references.interactionReceipts.has(owner.executionId) ||
             references.interactionRequests.has(owner.executionId) ||
+            references.memoryProposals.has(owner.executionId) ||
             references.usageLedger.has(owner.executionId) ||
             references.delegations.has(owner.executionId) ||
             !attemptsComplete
@@ -273,6 +275,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     cancellationReceipts: Set<string>
     interactionReceipts: Set<string>
     interactionRequests: Set<string>
+    memoryProposals: Set<string>
     usageLedger: Set<string>
     delegations: Set<string>
   }> {
@@ -287,6 +290,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         cancellationReceipts: new Set(),
         interactionReceipts: new Set(),
         interactionRequests: new Set(),
+        memoryProposals: new Set(),
         usageLedger: new Set(),
         delegations: new Set(),
       }
@@ -303,6 +307,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       interactionPayloadRefs,
       interactionRequestRefs,
       directInteractionRequests,
+      memoryProposalRefs,
+      memoryAttemptRefs,
       usageLedgerRefs,
       usageStateRefs,
       delegationRefs,
@@ -374,6 +380,31 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         .select({ executionId: interactionRequests.executionId })
         .from(interactionRequests)
         .where(inArray(interactionRequests.executionId, ids)),
+      // No FK exists for JSON provenance. Retain every positively identified source.
+      database
+        .select({
+          executionId: sql<string>`${memoryWriteProposals.proposal}->'provenance'->>'sourceExecutionId'`,
+        })
+        .from(memoryWriteProposals)
+        .where(
+          inArray(
+            sql<string>`${memoryWriteProposals.proposal}->'provenance'->>'sourceExecutionId'`,
+            ids
+          )
+        ),
+      // A surviving attempt identity independently pins its owner when the
+      // proposal's execution identity has been lost or damaged.
+      database
+        .select({ executionId: executionAttempts.executionId })
+        .from(memoryWriteProposals)
+        .innerJoin(
+          executionAttempts,
+          eq(
+            executionAttempts.attemptId,
+            sql<string>`${memoryWriteProposals.proposal}->'provenance'->>'sourceAttemptId'`
+          )
+        )
+        .where(inArray(executionAttempts.executionId, ids)),
       database
         .select({
           executionId: usageLedgerEntries.executionId,
@@ -446,6 +477,10 @@ export class PostgresExecutionRepository implements ExecutionRepository {
         ...interactionRequestRefs.map((row) => row.executionId),
       ]),
       interactionRequests: new Set(directInteractionRequests.map((row) => row.executionId)),
+      memoryProposals: new Set([
+        ...memoryProposalRefs.map((row) => row.executionId),
+        ...memoryAttemptRefs.map((row) => row.executionId),
+      ]),
       usageLedger: new Set([
         ...usageLedgerRefs.flatMap((row) =>
           row.parentExecutionId === null
