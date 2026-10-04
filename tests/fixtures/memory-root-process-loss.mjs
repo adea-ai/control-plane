@@ -13,6 +13,7 @@ import {
   executions,
   executionAttempts,
 } from '@control-plane/database'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 import { SqliteMemoryWriteProposalRepository } from '@control-plane/sqlite-persistence'
 
 const marker = 'M11_MEMORY_EFFECT_COMMITTED'
@@ -45,6 +46,14 @@ const policy = {
   maximumBytes: 1024,
   allowedSensitivities: ['internal'],
   approvalPrincipalIds: ['svc_agent-hq'],
+}
+
+export function memoryProcessLossDeadlines(profile) {
+  const budget =
+    profile === 'local' || profile === 'hosted-simple'
+      ? 12_000
+      : Math.min(integrationTestTimeout(), 120_000)
+  return { readyMs: Math.floor((budget * 2) / 3), childMs: Math.floor((budget * 5) / 6) }
 }
 
 async function readLedger(directory) {
@@ -250,7 +259,10 @@ async function seedOwner(root) {
 }
 async function runChild() {
   // A bounded timer keeps the interrupted write alive; the parent kills this exact PID.
-  const deadline = setTimeout(() => process.exit(2), 10_000)
+  const deadline = setTimeout(
+    () => process.exit(2),
+    memoryProcessLossDeadlines(process.env.MEMORY_LOSS_PROFILE).childMs
+  )
   try {
     const root = await openRoot(
       process.env.MEMORY_LOSS_PROFILE,
@@ -319,6 +331,7 @@ export async function exerciseMemoryRootProcessLoss(profile, databaseUrl) {
         directory,
         cwd: repositoryRoot,
         port: null,
+        deadlines: memoryProcessLossDeadlines(profile),
       })
     )
     child = spawn(process.execPath, [fixturePath], {
@@ -347,7 +360,10 @@ export async function exerciseMemoryRootProcessLoss(profile, databaseUrl) {
     await new Promise((resolve, reject) => {
       let stdout = ''
       let stderr = ''
-      readyTimer = setTimeout(() => reject(new Error('MEMORY_FIXTURE_READY_TIMEOUT')), 8_000)
+      readyTimer = setTimeout(
+        () => reject(new Error('MEMORY_FIXTURE_READY_TIMEOUT')),
+        memoryProcessLossDeadlines(profile).readyMs
+      )
       child.stdout.on('data', (data) => {
         stdout = (stdout + data).slice(-8192)
         if (stdout.includes(marker)) resolve()

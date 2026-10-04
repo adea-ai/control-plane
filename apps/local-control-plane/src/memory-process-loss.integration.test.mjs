@@ -6,7 +6,26 @@ import { join } from 'node:path'
 import {
   disposeMemoryRootProcessLoss,
   exerciseMemoryRootProcessLoss,
+  memoryProcessLossDeadlines,
 } from '../../../tests/fixtures/memory-root-process-loss.mjs'
+
+test('process fixture reserves recovery time within a capped PostgreSQL budget', () => {
+  const original = process.env.INTEGRATION_TEST_TIMEOUT_MS
+  try {
+    delete process.env.INTEGRATION_TEST_TIMEOUT_MS
+    expect(memoryProcessLossDeadlines('cloud')).toEqual({ readyMs: 20_000, childMs: 25_000 })
+    process.env.INTEGRATION_TEST_TIMEOUT_MS = '120000'
+    for (const profile of ['cloud', 'hosted-server'])
+      expect(memoryProcessLossDeadlines(profile)).toEqual({ readyMs: 80_000, childMs: 100_000 })
+    for (const profile of ['local', 'hosted-simple'])
+      expect(memoryProcessLossDeadlines(profile)).toEqual({ readyMs: 8_000, childMs: 10_000 })
+    process.env.INTEGRATION_TEST_TIMEOUT_MS = '900000'
+    expect(memoryProcessLossDeadlines('cloud')).toEqual({ readyMs: 80_000, childMs: 100_000 })
+  } finally {
+    if (original === undefined) delete process.env.INTEGRATION_TEST_TIMEOUT_MS
+    else process.env.INTEGRATION_TEST_TIMEOUT_MS = original
+  }
+})
 
 for (const failure of ['persistence', 'connection']) {
   test(`memory process fixture removes its directory when ${failure} close fails`, async () => {
