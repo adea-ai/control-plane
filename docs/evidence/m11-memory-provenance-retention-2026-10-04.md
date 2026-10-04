@@ -39,8 +39,9 @@ An initial malformed test invocation selected the workspace script and stopped a
 on a missing dependency; that attempt is not regression evidence and was not repeated.
 
 No local Docker command or dependency installation was used. PostgreSQL behavioral and concurrency
-proof, full build/type/coverage validation, and independent source re-review remain pending for this
-candidate. The authored PostgreSQL suite covers both transaction orderings and fresh connections;
+proof and full build/type/coverage validation remain pending for this candidate. Independent
+standards and spec source reviews completed; their attempt-reference, identity-parity, query-result
+alignment and full-state coverage findings were addressed before the ready-for-review transition. The authored PostgreSQL suite covers both transaction orderings and fresh connections;
 its presence is not a passing runtime result.
 
 ## Review repairs and reproducible candidate
@@ -53,7 +54,9 @@ The updated PostgreSQL damaged-provenance case covers both surviving-attempt for
 The independent standards review then caught a missing result slot in the new PostgreSQL reference
 query fanout. The repaired mapping retains the separate memory-attempt result and preserves the
 usage/delegation slots. A seventh PostgreSQL case checks memory, usage funding parent and both
-delegation endpoint references together; its runtime result remains pending.
+delegation endpoint references together; its runtime result remains pending. The final spec
+follow-up expanded the PostgreSQL lifecycle loop to all ten proposal states within its existing
+case budgets; no per-case deadline or product behavior was changed.
 
 Fresh source validation ran on 2026-10-04 01:15:39 UTC, from baseline
 `3d066a32ebfa56f5ab04675ae7e2484cde99ab68`. Bun 1.4.2 and Node 24.21.0 were selected.
@@ -77,14 +80,14 @@ Each process had a 20-second outer ceiling. The second command also proves the u
 PostgreSQL file. Shared local Acorn is 8.18.0; exact-head CI will use locked Acorn 8.16.0.
 
 The source/test working candidate (documentation excluded) is identified by the SHA-256
-`871ac6ab810b2f84e663c44ad60ee2a5630bca2e0d24ee4f3029b1e0a9203acf` over the following sorted filename-to-SHA-256 map;
+`acc5c139f1a2e0961e8ccc9c1922bb12269dc0ff9c9f7d1bfb16e201cc08c104` over the following sorted filename-to-SHA-256 map;
 the publishing commit and its exact-head CI are separate evidence gates.
 
 | Source or test                                                           | SHA-256                                                            |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
 | `packages/database/src/execution-repository.ts`                          | `480d26dd8e1c05bcd56f1c4644156aac956412c6ac88fd5157ee1f6246c2a758` |
 | `packages/database/src/integration.test.mjs`                             | `db76323f8761ad28e9bf7fa99c681bce489c56188ee8c10a14c1c73a1f2bad8c` |
-| `packages/database/src/memory-provenance-retention.integration.test.mjs` | `4ce85590617da6002f94886d555d0eef882481d39e54459e6f2bb3a20c4b8297` |
+| `packages/database/src/memory-provenance-retention.integration.test.mjs` | `bd366990b646f4cea27e1fe74a6e7ba19a3d87251a3de4f41b157992605b14fe` |
 | `packages/database/src/memory-write-proposal-repository.ts`              | `7662a9051a30ea82fcdadf2158336bace41fa60d6e61440f9e27a4235fbc0d5d` |
 | `packages/memory-writeback/src/index.test.mjs`                           | `f9e2a140d9cd31a5f00c4c9b0dfe08d204bae480d26036654d80b28133cef313` |
 | `packages/memory-writeback/src/index.ts`                                 | `04aa8a85670b3a0b016788e48185a53cba3371ce8dbdeedc2669adfe18bb544f` |

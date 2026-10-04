@@ -116,7 +116,18 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       const proposals = new PostgresMemoryWriteProposalRepository(isolated.application)
       let proposal = memoryProposal()
       await proposals.insert(proposal)
-      for (const state of ['proposed', 'committing', 'reconciliation_required', 'committed']) {
+      for (const state of [
+        'proposed',
+        'awaiting_approval',
+        'approved',
+        'denied',
+        'expired',
+        'revoked',
+        'committing',
+        'committed',
+        'failed',
+        'reconciliation_required',
+      ]) {
         const changed = { ...proposal, state, version: proposal.version + 1 }
         expect(await proposals.compareAndSet(proposal.version, changed)).toBe(true)
         proposal = changed
