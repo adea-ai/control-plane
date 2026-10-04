@@ -1161,6 +1161,20 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               )
             }
           )
+          // Preserve positively identified provenance even if another proposal field is damaged.
+          const memoryProposalReference = (await transaction.list('memory-write-proposals')).some(
+            (record) => {
+              const provenance = (
+                record.value as {
+                  provenance?: { sourceExecutionId?: unknown; sourceAttemptId?: unknown }
+                } | null
+              )?.provenance
+              return (
+                provenance?.sourceExecutionId === execution.executionId ||
+                attempts.some((attempt) => attempt.attemptId === provenance?.sourceAttemptId)
+              )
+            }
+          )
           const activeAttempts = attempts.filter(
             (attempt) => !terminalExecutionStates.has(attempt.state)
           )
@@ -1203,6 +1217,7 @@ export class SqliteExecutionRepository implements ExecutionRepository {
               cancellationReceipts ||
               interactionReceiptReference ||
               interactionRequestReference ||
+              memoryProposalReference ||
               activeAttempts.length > 0 ||
               !attemptsComplete
                 ? 1

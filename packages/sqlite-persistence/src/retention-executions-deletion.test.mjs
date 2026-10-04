@@ -10,6 +10,7 @@ import {
   SqliteCommandAcceptanceRepository,
   SqliteExecutionRepository,
   SqliteInteractionRepository,
+  SqliteMemoryWriteProposalRepository,
   SqlitePersistenceProvider,
 } from './index.js'
 
@@ -97,7 +98,201 @@ async function withProvider(run) {
   }
 }
 
+function memoryProposal(state = 'proposed') {
+  return {
+    proposalId: 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    providerId: 'ctp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    connectionId: 'ctc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    workspaceId,
+    scopeDigest: `sha256:${'a'.repeat(64)}`,
+    memoryType: 'fact',
+    content: 'Retention provenance',
+    retention: 'project',
+    provenance: {
+      sourceExecutionId: executionId,
+      sourceAttemptId: attemptId,
+      confidence: 0.9,
+      importance: 0.8,
+      sensitivity: 'internal',
+      evidenceRefs: [],
+      artifactRefs: [],
+    },
+    dedupeHint: 'retention-provenance',
+    contentDigest: `sha256:${'b'.repeat(64)}`,
+    state,
+    version: 1,
+    createdAt: acceptedAt,
+    updatedAt: terminalAt,
+  }
+}
+const retentionNow = new Date(Date.parse(terminalAt) + ninetyDaysMs + 1_000)
+const retentionOptions = { policyRetainMs: ninetyDaysMs, dryRun: false }
+
 describe('SQLite execution retention deletion (#194)', () => {
+  for (const state of [
+    'proposed',
+    'awaiting_approval',
+    'approved',
+    'denied',
+    'expired',
+    'revoked',
+    'committing',
+    'committed',
+    'failed',
+    'reconciliation_required',
+  ]) {
+    test(`memory proposal provenance retains its execution and attempt in ${state}`, async () => {
+      await withProvider(async (provider) => {
+        await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+        await seedAttempt(provider, 'completed')
+        const proposals = new SqliteMemoryWriteProposalRepository(provider)
+        const proposal = memoryProposal(state)
+        expect(await proposals.insert(proposal)).toBe(true)
+        const executions = new SqliteExecutionRepository(provider)
+        const result = await executions.deleteEligibleExecutions(retentionNow, retentionOptions)
+        expect(result.deleted).toBe(0)
+        expect(result.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(await executions.getExecution(executionId)).toBeDefined()
+        expect(await executions.getAttempt(attemptId)).toBeDefined()
+        expect(await proposals.get(proposal.proposalId)).toEqual(proposal)
+      })
+    })
+  }
+
+  test('damaged memory provenance pins its identified source while unrelated proposals do not', async () => {
+    for (const source of [executionId, 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW']) {
+      await withProvider(async (provider) => {
+        await seedExecution(provider)
+        await provider.transaction((transaction) =>
+          transaction.put({
+            namespace: 'memory-write-proposals',
+            id: 'damaged-proposal',
+            value: { provenance: { sourceExecutionId: source } },
+          })
+        )
+        const result = await new SqliteExecutionRepository(provider).deleteEligibleExecutions(
+          retentionNow,
+          retentionOptions
+        )
+        expect(result.deleted).toBe(source === executionId ? 0 : 1)
+      })
+    }
+  })
+
+  test('a surviving memory source attempt pins its owner despite absent or mismatched execution provenance', async () => {
+    for (const sourceExecutionId of [undefined, 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW']) {
+      await withProvider(async (provider) => {
+        await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+        await seedAttempt(provider, 'completed')
+        await provider.transaction((transaction) =>
+          transaction.put({
+            namespace: 'memory-write-proposals',
+            id: 'damaged-attempt-proposal',
+            value: {
+              provenance: {
+                ...(sourceExecutionId ? { sourceExecutionId } : {}),
+                sourceAttemptId: attemptId,
+              },
+            },
+          })
+        )
+        const repository = new SqliteExecutionRepository(provider)
+        const result = await repository.deleteEligibleExecutions(retentionNow, retentionOptions)
+        expect(result.retainedByReason).toEqual({ reference_pending: 1 })
+        expect(await repository.getExecution(executionId)).toBeDefined()
+        expect(await repository.getAttempt(attemptId)).toBeDefined()
+      })
+    }
+  })
+
+  test('ordinary memory proposals reject absent or mismatched source ownership without a dedupe residue', async () => {
+    for (const change of [
+      { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+      {
+        provenance: {
+          ...memoryProposal().provenance,
+          sourceExecutionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        },
+      },
+      {
+        provenance: {
+          ...memoryProposal().provenance,
+          sourceAttemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        },
+      },
+    ]) {
+      await withProvider(async (provider) => {
+        await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+        await seedAttempt(provider, 'completed')
+        const repository = new SqliteMemoryWriteProposalRepository(provider)
+        const proposal = { ...memoryProposal(), ...change }
+        await expect(repository.insert(proposal)).rejects.toThrow('MEMORY_PROPOSAL_SCOPE_MISMATCH')
+        expect(await repository.list()).toEqual([])
+        expect(
+          await repository.getByDedupe(proposal.workspaceId, proposal.dedupeHint)
+        ).toBeUndefined()
+      })
+    }
+  })
+
+  test('a proposal started behind a retention claim cannot recreate orphan provenance', async () => {
+    await withProvider(async (provider) => {
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+      await seedAttempt(provider, 'completed')
+      const entered = Promise.withResolvers()
+      const release = Promise.withResolvers()
+      const retention = new SqliteExecutionRepository(provider).deleteEligibleExecutions(
+        retentionNow,
+        {
+          ...retentionOptions,
+          journal: async () => {
+            entered.resolve()
+            await release.promise
+          },
+        }
+      )
+      await entered.promise
+      const repository = new SqliteMemoryWriteProposalRepository(provider)
+      const insertion = repository.insert(memoryProposal()).then(
+        () => undefined,
+        (error) => error
+      )
+      release.resolve()
+      expect((await retention).deleted).toBe(1)
+      expect((await insertion)?.message).toBe('MEMORY_PROPOSAL_SCOPE_MISMATCH')
+      expect(await repository.list()).toEqual([])
+      expect(await repository.getByDedupe(workspaceId, memoryProposal().dedupeHint)).toBeUndefined()
+    })
+  })
+
+  test('memory proposal transitions cannot move the immutable source or dedupe identity', async () => {
+    await withProvider(async (provider) => {
+      await seedExecution(provider, { attemptCount: 1, latestAttemptId: attemptId })
+      await seedAttempt(provider, 'completed')
+      const repository = new SqliteMemoryWriteProposalRepository(provider)
+      const proposal = memoryProposal()
+      await repository.insert(proposal)
+      for (const change of [
+        { workspaceId: 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        { dedupeHint: 'moved' },
+        {
+          provenance: {
+            ...proposal.provenance,
+            sourceExecutionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW',
+          },
+        },
+        {
+          provenance: { ...proposal.provenance, sourceAttemptId: 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        },
+      ]) {
+        await expect(
+          repository.compareAndSet(1, { ...proposal, ...change, version: 2 })
+        ).rejects.toThrow('MEMORY_PROPOSAL_IDENTITY_MISMATCH')
+        expect(await repository.get(proposal.proposalId)).toEqual(proposal)
+      }
+    })
+  })
+
   test('durable usage budgets, receipts, entries and child funding pin execution owners', async () => {
     const childExecutionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW'
     for (const [namespace, value] of [

@@ -15,6 +15,30 @@ const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const scopeDigest = `sha256:${'a'.repeat(64)}`
 
 describe('provider-neutral memory write proposals', () => {
+  test('in-memory transitions preserve durable proposal identity and reject stale versions', async () => {
+    const context = harness(provider())
+    const stored = await context.service.propose(proposal(), policy())
+    for (const change of [
+      { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+      { dedupeHint: 'moved' },
+      { provenance: { ...stored.provenance, sourceExecutionId: 'exe_01JBBCDEF0123456789ABCDEFG' } },
+      { provenance: { ...stored.provenance, sourceAttemptId: 'att_01JBBCDEF0123456789ABCDEFG' } },
+    ]) {
+      await expect(
+        context.repository.compareAndSet(stored.version, {
+          ...stored,
+          ...change,
+          version: stored.version + 1,
+        })
+      ).rejects.toThrow('MEMORY_PROPOSAL_IDENTITY_MISMATCH')
+      expect(await context.repository.get(stored.proposalId)).toEqual(stored)
+    }
+    const changed = { ...stored, state: 'approved', version: stored.version + 1 }
+    expect(await context.repository.compareAndSet(stored.version, changed)).toBe(true)
+    expect(await context.repository.compareAndSet(stored.version, stored)).toBe(false)
+    expect(await context.repository.get(stored.proposalId)).toEqual(changed)
+  })
+
   test('concurrent readers never observe an approval without its proposal', async () => {
     const context = harness(provider())
     const creation = context.service.propose(

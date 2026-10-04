@@ -7112,6 +7112,16 @@ describe.skipIf(!integrationEnabled)('PostgreSQL persistence foundation', () => 
       createdAt: '2026-08-25T12:00:00.000Z',
       updatedAt: '2026-08-25T12:00:00.000Z',
     }
+    await createExecutionOwner(
+      isolated.application,
+      {
+        ...ControlApiFixtures.executionAcceptance.request,
+        workspaceId: proposed.workspaceId,
+        issuedAt: proposed.createdAt,
+      },
+      proposed.provenance.sourceExecutionId,
+      proposed.provenance.sourceAttemptId
+    )
     expect(await repository.insert(proposed)).toBe(true)
     expect(await repository.insert(proposed)).toBe(false)
     expect(await repository.getByDedupe(proposed.workspaceId, proposed.dedupeHint)).toEqual(
