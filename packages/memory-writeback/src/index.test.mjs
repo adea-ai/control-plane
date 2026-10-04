@@ -17,10 +17,29 @@ const scopeDigest = `sha256:${'a'.repeat(64)}`
 describe('provider-neutral memory write proposals', () => {
   test('in-memory transitions preserve durable proposal identity and reject stale versions', async () => {
     const context = harness(provider())
-    const stored = await context.service.propose(proposal(), policy())
+    const stored = await context.service.propose(
+      proposal(),
+      policy({ mode: 'approval_required' }),
+      approval()
+    )
     for (const change of [
       { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
       { dedupeHint: 'moved' },
+      { providerId: 'ctp_01JBBCDEF0123456789ABCDEFG' },
+      { connectionId: 'ctc_01JBBCDEF0123456789ABCDEFG' },
+      { scopeDigest: `sha256:${'d'.repeat(64)}` },
+      { memoryType: 'fact' },
+      { content: 'Changed after approval' },
+      { contentDigest: `sha256:${'d'.repeat(64)}` },
+      { retention: 'session' },
+      { createdAt: later },
+      { approvalInteractionId: 'int_01JBBCDEF0123456789ABCDEFG' },
+      { provenance: { ...stored.provenance, confidence: 0.1 } },
+      { provenance: { ...stored.provenance, importance: 0.1 } },
+      { provenance: { ...stored.provenance, sensitivity: 'public' } },
+      { provenance: { ...stored.provenance, expiresAt: later } },
+      { provenance: { ...stored.provenance, evidenceRefs: ['artifact://changed'] } },
+      { provenance: { ...stored.provenance, artifactRefs: ['art_01JBBCDEF0123456789ABCDEFG'] } },
       { provenance: { ...stored.provenance, sourceExecutionId: 'exe_01JBBCDEF0123456789ABCDEFG' } },
       { provenance: { ...stored.provenance, sourceAttemptId: 'att_01JBBCDEF0123456789ABCDEFG' } },
     ]) {
