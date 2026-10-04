@@ -22,8 +22,10 @@ name recorded before startup; `finally` removes only that project's containers,
 network and volumes after success, test failure or partial startup failure.
 Explicit caller projects preserve their volume and retain the original stop-only
 behavior when the runner started PostgreSQL. The recovery matrix retains its
-outer project cleanup. The runner and its nested PostgreSQL disruption/restore Docker calls have a
-90-second process ceiling; each SQL
+outer project cleanup. Docker subprocesses launched directly by the integration runner and its nested
+PostgreSQL disruption/restore drills have a 90-second process ceiling. That
+ceiling does not bound the whole Bun integration invocation; the CI job timeout
+remains its outer limit. Each SQL
 readiness probe is capped by both five seconds and the remaining 30-second readiness
 window; polling sleeps use the remaining budget too.
 Cleanup failure fails the run; simultaneous verification and cleanup failures
