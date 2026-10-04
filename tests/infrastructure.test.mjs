@@ -511,14 +511,16 @@ test('packages the hosted simple profile as one hardened user-owned composition'
 
 test('checks hosted credential persistence without weakening owner-only file permissions', async () => {
   const workflow = await readRepositoryFile('.github/workflows/m10-operability.yml')
+  const acceptance = await readRepositoryFile('scripts/run-hosted-compose-acceptance.sh')
 
+  assert.match(workflow, /bash \.\.\/\.\.\/scripts\/run-hosted-compose-acceptance\.sh/)
   assert.match(
-    workflow,
-    /docker compose exec -T control-plane-simple sha256sum \/var\/lib\/control-plane\/auth\/local-api\.token/g
+    acceptance,
+    /compose exec -T control-plane-simple sha256sum \/var\/lib\/control-plane\/auth\/local-api\.token/g
   )
-  assert.doesNotMatch(workflow, /sha256sum "\$compose_root\/simple\/auth\/local-api\.token"/)
-  assert.match(workflow, /sudo chown -R 70:70 "\$compose_root\/server\/postgres"/)
-  assert.match(workflow, /sudo chown -R 0:0 "\$compose_root\/server\/restate"/)
+  assert.doesNotMatch(acceptance, /sha256sum "\$compose_root\/simple\/auth\/local-api\.token"/)
+  assert.match(acceptance, /sudo chown -R 70:70 "\$compose_root\/server\/postgres"/)
+  assert.match(acceptance, /sudo chown -R 0:0 "\$compose_root\/server\/restate"/)
 })
 
 test('does not retain the former AWS deployment tree', async () => {
