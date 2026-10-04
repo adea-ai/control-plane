@@ -1,4 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { FakeMemoryProviderWriter } from '@control-plane/memory-writeback'
+import { InteractionService } from '@control-plane/domain'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -21,6 +24,10 @@ import {
 } from '@control-plane/execution-plan'
 import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import {
+  PostgresInteractionRepository,
+  createPostgresConnection,
+  executions,
+  executionAttempts,
   PostgresCatalogRepository,
   PostgresCommandAcceptanceRepository,
   PostgresContextPackageRepository,
@@ -142,6 +149,145 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       throw new AggregateError(cleanupErrors, 'HOSTED_HTTP_INTEGRATION_CLEANUP_FAILED')
     }
   })
+
+  test(
+    'Hosted Server composed memory approval recovers after PostgreSQL connection reopen without another write',
+    async () => {
+      const openedConnections = []
+      const observedAt = new Date().toISOString()
+      const workspaceId = 'wsp_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      const executionId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      const attemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      await isolated.application.insert(executions).values({
+        executionId,
+        state: 'completed',
+        version: 2,
+        workspaceId,
+        projectId: 'prj_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        taskId: 'tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        agentId: 'agt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        requestId: 'req_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        executionPlanId: 'pln_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        executionPlanDigest: `sha256:${'b'.repeat(64)}`,
+        executionPlanSchemaVersion: 1,
+        attemptCount: 1,
+        latestAttemptId: attemptId,
+        acceptedAt: new Date(observedAt),
+        terminalAt: new Date(observedAt),
+        createdAt: new Date(observedAt),
+        updatedAt: new Date(observedAt),
+      })
+      await isolated.application.insert(executionAttempts).values({
+        attemptId,
+        executionId,
+        sequence: 1,
+        state: 'completed',
+        version: 1,
+        acceptedAt: new Date(observedAt),
+        terminalAt: new Date(observedAt),
+        createdAt: new Date(observedAt),
+        updatedAt: new Date(observedAt),
+      })
+      const content = 'A bounded composed preference'
+      const input = {
+        proposalId: 'mwp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        providerId: 'ctp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        connectionId: 'ctc_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        workspaceId,
+        scopeDigest: `sha256:${'a'.repeat(64)}`,
+        memoryType: 'preference',
+        content,
+        contentDigest: `sha256:${createHash('sha256').update(content).digest('hex')}`,
+        retention: 'project',
+        dedupeHint: 'composed-memory-recovery',
+        provenance: {
+          sourceExecutionId: executionId,
+          sourceAttemptId: attemptId,
+          confidence: 0.9,
+          importance: 0.8,
+          sensitivity: 'internal',
+          evidenceRefs: [],
+          artifactRefs: [],
+        },
+      }
+      const provider = new FakeMemoryProviderWriter(
+        input.providerId,
+        input.connectionId,
+        workspaceId,
+        input.scopeDigest,
+        { writeCommit: true, idempotentStatus: false },
+        'timeout_after'
+      )
+      let writes = 0
+      const write = provider.write.bind(provider)
+      provider.write = async (request) => {
+        writes++
+        return write(request)
+      }
+      const operations = []
+      const authority = { authorize: async (_scope, operation) => operations.push(operation) }
+      const policy = {
+        mode: 'approval_required',
+        maximumBytes: 1024,
+        allowedSensitivities: ['internal'],
+        approvalPrincipalIds: ['svc_agent-hq'],
+      }
+      const url = new URL(process.env.DATABASE_URL)
+      url.pathname = `/${isolated.name}`
+      function open(currentPolicy) {
+        const connection = createPostgresConnection({ role: 'application', url: url.toString() })
+        openedConnections.push(connection)
+        return new HostedServerControlPlaneComposition({
+          dataDirectory,
+          databaseUrl: url.toString(),
+          connection,
+          endpointFactory: {
+            create: async () => {
+              throw new Error('UNEXPECTED_ENDPOINT')
+            },
+          },
+          memoryWriteback: { policy: currentPolicy, provider, authority },
+        })
+      }
+      try {
+        const first = open(policy)
+        const pending = await first.memoryWrites.propose(input, {
+          interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          requestedAt: observedAt,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        })
+        const interactions = new PostgresInteractionRepository(isolated.application)
+        expect((await interactions.get(pending.approvalInteractionId)).state).toBe('pending')
+        await new InteractionService(interactions).respond({
+          interactionId: pending.approvalInteractionId,
+          executionId,
+          attemptId,
+          responseId: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          action: 'approve',
+          respondingPrincipalId: 'svc_agent-hq',
+          expectedVersion: 1,
+          respondedAt: new Date().toISOString(),
+        })
+        await first.memoryWrites.applyApproval(pending.proposalId)
+        await expect(first.memoryWrites.commit(pending.proposalId)).rejects.toMatchObject({
+          code: 'MEMORY_WRITE_AMBIGUOUS',
+        })
+        await first.connection.close()
+        provider.capabilities.writeCommit = false
+        provider.capabilities.idempotentStatus = true
+        const reopened = open({ ...policy, mode: 'disabled' })
+        expect((await reopened.memoryWrites.commit(pending.proposalId)).outcome.code).toBe(
+          'reconciled'
+        )
+        expect(writes).toBe(1)
+        expect(provider.records.size).toBe(1)
+        expect(operations).toEqual(['proposal', 'write', 'status'])
+      } finally {
+        await Promise.all(openedConnections.map((connection) => connection.close()))
+      }
+    },
+    integrationTestTimeout()
+  )
 
   test('readiness is database-aware and green over the real composition', async () => {
     const ready = await application.inject({ method: 'GET', url: '/ready' })

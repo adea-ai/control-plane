@@ -1,3 +1,8 @@
+import {
+  resolveMemoryWriteConfiguration,
+  type MemoryWriteApplication,
+  type MemoryWriteApplicationConfiguration,
+} from '@control-plane/memory-writeback'
 import { createRequire } from 'node:module'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -172,6 +177,7 @@ export interface LocalControlPlaneCompositionOptions {
    * catalog pins. Absent leaves approval enforcement unchanged.
    */
   readonly catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string }
+  readonly memoryWriteback?: MemoryWriteApplicationConfiguration
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly profile?: 'local' | 'hosted-simple'
@@ -225,6 +231,7 @@ export interface LocalControlPlaneCompositionOptions {
 export class LocalControlPlaneComposition {
   readonly interactionCommandService: LocalControlApiComposition['interactionCommandService']
   readonly executionCancellationService: LocalControlApiComposition['executionCancellationService']
+  readonly memoryWrites: MemoryWriteApplication
   readonly dataDirectory: string
   readonly profile: 'local' | 'hosted-simple'
   readonly durableExecution: 'embedded-sqlite' | 'restate'
@@ -275,6 +282,7 @@ export class LocalControlPlaneComposition {
   #started = false
 
   constructor(options: LocalControlPlaneCompositionOptions) {
+    const memoryWriteback = resolveMemoryWriteConfiguration(options.memoryWriteback)
     if (
       options.graphRuntime !== undefined &&
       (options.graphActivities !== undefined ||
@@ -391,7 +399,9 @@ export class LocalControlPlaneComposition {
       consistencyMetrics,
       this.workflowDispatcher,
       options.catalogApprovalPolicy,
-      graphRuntime?.authority
+      graphRuntime?.authority,
+      memoryWriteback,
+      consistencyMetrics
     )
     this.#initializeGraphRuntime =
       graphRuntime === undefined ? undefined : () => graphRuntime.initialize(controlApi)
@@ -418,6 +428,7 @@ export class LocalControlPlaneComposition {
       options.activities === undefined && runtimeTransport === undefined
         ? new UnavailableExecutionAcceptanceService()
         : controlApi.executionAcceptanceService
+    this.memoryWrites = controlApi.memoryWrites
     this.graphAdministrationService = controlApi.graphAdministrationService
     this.executionValidationService = controlApi.executionValidationService
     this.interactionCommandService = controlApi.interactionCommandService

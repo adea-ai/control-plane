@@ -30,9 +30,26 @@ Cortana or Adea service.
 
 `SqliteMemoryWriteProposalRepository` persists workspace dedupe, proposal versions and approval links
 across database reopen for Local and Hosted Simple persistence. Durable source-execution ownership is
-checked during atomic approval creation. These adapters do not automatically enable memory writes in
-application compositions or supply a provider transport. Profile crash/restart acceptance and complete
-proposal/interaction retention remain tracked in M11; the new adapter does not authorize deletion.
+checked during atomic approval creation. Local, Hosted Simple, Managed Cloud and Hosted Server roots
+expose a `memoryWrites` application capability using their existing proposal and interaction stores.
+All roots default to disabled. Operators can inject `memoryWriteback` configuration with a parsed,
+fixed server policy, matching provider adapter and separate `MemoryWriteAuthority`. Managed Cloud
+`start` accepts that option directly; Local and Hosted Server accept it through `compositionOptions`.
+A configured provider without explicit authority fails before the root allocates storage or processes.
+The programmatic capability accepts proposal/approval inputs and proposal IDs; policy and lifecycle
+clock values come from the server. There is no automatic write mode or memory HTTP/IPC route.
+
+The authority port checks the exact provider, connection, workspace and scope for proposal creation,
+fresh writes and status recovery. Read grants do not implement this effect authority. Fresh writes
+recheck current content bounds, the current approver allowlist, the linked approval response and its
+expiry before persisting commit intent. Disabled or read-only writes can still recover an uncertain
+prior effect through separately authorized status lookup; they cannot retry the write. A pre-dispatch
+authority check is not an atomic transport revocation fence: the provider adapter must enforce current
+credentials and authorization at delivery.
+
+Profile crash/restart acceptance, real provider transport and complete proposal/interaction retention
+remain tracked in M11. The composition capability does not authorize deletion. See the
+[composition evidence](./evidence/m11-memory-composition-2026-10-04.md).
 
 Proposal transitions preserve the full proposed effect: provider/connection/workspace/scope,
 content and digest, type, retention, every provenance field, dedupe identity, creation time,

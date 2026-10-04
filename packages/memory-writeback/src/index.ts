@@ -149,6 +149,8 @@ export interface MemoryProviderWriter {
 
 export type MemoryWriteErrorCode =
   | 'MEMORY_WRITE_DISABLED'
+  | 'MEMORY_WRITE_AUTHORITY_UNAVAILABLE'
+  | 'MEMORY_WRITE_AUTHORITY_DENIED'
   | 'MEMORY_PROVIDER_ABSENT'
   | 'MEMORY_PROVIDER_READ_ONLY'
   | 'MEMORY_SCOPE_MISMATCH'
@@ -180,12 +182,54 @@ export interface MemoryWriteDecisionMetrics {
   recordApprovalDecision(decision: 'approved' | 'denied' | 'expired'): void
 }
 
+export type MemoryWriteAuthorityScope = Pick<
+  MemoryWriteProposal,
+  'providerId' | 'connectionId' | 'workspaceId' | 'scopeDigest'
+>
+
+/** Separate current effect authority; a retrieval grant never implements this port. */
+export interface MemoryWriteAuthority {
+  authorize(
+    scope: MemoryWriteAuthorityScope,
+    operation: 'proposal' | 'write' | 'status'
+  ): Promise<void>
+}
+
+export interface MemoryWriteApplicationConfiguration {
+  readonly policy: MemoryWritePolicy
+  readonly provider?: MemoryProviderWriter
+  readonly authority?: MemoryWriteAuthority
+}
+
+/** Validate trusted configuration before a composition allocates storage or processes. */
+export function resolveMemoryWriteConfiguration(
+  configuration?: MemoryWriteApplicationConfiguration
+): MemoryWriteApplicationConfiguration {
+  const policy = MemoryWritePolicySchema.parse(
+    configuration?.policy ?? {
+      mode: 'disabled',
+      maximumBytes: 65_536,
+      allowedSensitivities: [],
+      approvalPrincipalIds: [],
+    }
+  )
+  if (
+    configuration?.provider !== undefined &&
+    typeof configuration.authority?.authorize !== 'function'
+  )
+    fail('MEMORY_WRITE_AUTHORITY_UNAVAILABLE')
+  return { ...configuration, policy }
+}
+
 export interface MemoryWriteServiceOptions {
   repository: MemoryWriteProposalRepository
   provider?: MemoryProviderWriter
   interactionRepository: InteractionRepository
   now?: () => string
   metrics?: MemoryWriteDecisionMetrics
+  /** Trusted application policy; when present, caller policy is never authoritative. */
+  policy?: MemoryWritePolicy
+  authority?: MemoryWriteAuthority
 }
 
 export class MemoryWriteService {
@@ -194,8 +238,19 @@ export class MemoryWriteService {
   readonly #interactionRepository: InteractionRepository
   readonly #now: () => string
   readonly #metrics: MemoryWriteDecisionMetrics | undefined
+  readonly #configuredPolicy: MemoryWritePolicy | undefined
+  readonly #authority: MemoryWriteAuthority | undefined
 
   constructor(options: MemoryWriteServiceOptions) {
+    if (
+      options.policy !== undefined &&
+      options.provider !== undefined &&
+      typeof options.authority?.authorize !== 'function'
+    )
+      fail('MEMORY_WRITE_AUTHORITY_UNAVAILABLE')
+    this.#configuredPolicy =
+      options.policy === undefined ? undefined : MemoryWritePolicySchema.parse(options.policy)
+    this.#authority = options.authority
     this.#repository = options.repository
     this.#provider = options.provider
     this.#interactionRepository = options.interactionRepository
@@ -215,15 +270,16 @@ export class MemoryWriteService {
 
   async propose(
     input: unknown,
-    policyInput: unknown,
+    policyInput?: unknown,
     approvalInput?: unknown
   ): Promise<MemoryWriteProposal> {
-    const policy = MemoryWritePolicySchema.parse(policyInput)
+    const policy = this.#configuredPolicy ?? MemoryWritePolicySchema.parse(policyInput)
     if (policy.mode === 'disabled') fail('MEMORY_WRITE_DISABLED')
     const provider = this.#assertProvider()
     const parsed = ProposalInputSchema.parse(input)
     this.#assertScope(parsed, provider)
     this.#assertContent(parsed, policy)
+    await this.#authorize(parsed, 'proposal')
     const existing = await this.#repository.getByDedupe(parsed.workspaceId, parsed.dedupeHint)
     if (existing) {
       if (sameProposalInput(existing, parsed)) return existing
@@ -294,6 +350,14 @@ export class MemoryWriteService {
       return this.#transition(proposal, 'expired', observedAt, 'expired')
     }
     if (interaction.state !== 'responded' || !interaction.response) fail('MEMORY_APPROVAL_STALE')
+    if (
+      this.#configuredPolicy !== undefined &&
+      (this.#configuredPolicy.mode !== 'approval_required' ||
+        !this.#configuredPolicy.approvalPrincipalIds.includes(
+          interaction.response.respondingPrincipalId
+        ))
+    )
+      fail('MEMORY_APPROVAL_REQUIRED')
     if (interaction.response.action === 'deny') {
       this.#emitApprovalDecision('denied')
       return this.#transition(proposal, 'denied', observedAt, 'denied')
@@ -325,8 +389,15 @@ export class MemoryWriteService {
       Date.parse(observedAt) >= Date.parse(proposal.provenance.expiresAt)
     )
       return this.#transition(proposal, 'expired', observedAt, 'expired')
+    if (proposal.state === 'approved' && this.#configuredPolicy !== undefined) {
+      if (this.#configuredPolicy.mode === 'disabled') fail('MEMORY_WRITE_DISABLED')
+      if (this.#configuredPolicy.mode !== 'approval_required') fail('MEMORY_APPROVAL_REQUIRED')
+      this.#assertContent(ProposalInputSchema.parse(proposal), this.#configuredPolicy)
+      await this.#assertConfiguredApproval(proposal, observedAt)
+    }
     const provider = this.#assertProvider(proposal.state === 'approved')
     this.#assertScope(proposal, provider)
+    await this.#authorize(proposal, proposal.state === 'approved' ? 'write' : 'status')
     const request = toWriteRequest(proposal)
     if (proposal.state === 'committing' || proposal.state === 'reconciliation_required') {
       if (!provider.capabilities.idempotentStatus) {
@@ -368,6 +439,7 @@ export class MemoryWriteService {
     }
     if (result.status === 'unknown' && provider.capabilities.idempotentStatus) {
       try {
+        await this.#authorize(proposal, 'status')
         result = await provider.status(request.idempotencyKey)
         reconciled = result.status === 'committed'
       } catch {
@@ -388,6 +460,49 @@ export class MemoryWriteService {
     }
     await this.#transition(proposal, 'reconciliation_required', observedAt, 'ambiguous')
     fail('MEMORY_WRITE_AMBIGUOUS')
+  }
+
+  async #authorize(
+    scope: MemoryWriteAuthorityScope,
+    operation: 'proposal' | 'write' | 'status'
+  ): Promise<void> {
+    await this.#authority?.authorize(
+      {
+        providerId: scope.providerId,
+        connectionId: scope.connectionId,
+        workspaceId: scope.workspaceId,
+        scopeDigest: scope.scopeDigest,
+      },
+      operation
+    )
+  }
+
+  async #assertConfiguredApproval(
+    proposal: MemoryWriteProposal,
+    observedAt: string
+  ): Promise<void> {
+    if (!proposal.approvalInteractionId) fail('MEMORY_APPROVAL_REQUIRED')
+    const interaction = await this.#interactionRepository.get(proposal.approvalInteractionId)
+    if (
+      !interaction ||
+      interaction.interactionId !== proposal.approvalInteractionId ||
+      interaction.executionId !== proposal.provenance.sourceExecutionId ||
+      interaction.attemptId !== proposal.provenance.sourceAttemptId ||
+      interaction.kind !== 'approval' ||
+      interaction.prompt.detailsReference !== `memory-write://proposal/${proposal.proposalId}` ||
+      interaction.state !== 'responded' ||
+      interaction.response?.action !== 'approve' ||
+      !interaction.allowedActions.includes('approve') ||
+      !interaction.allowedPrincipalIds.includes(interaction.response.respondingPrincipalId) ||
+      !this.#configuredPolicy?.approvalPrincipalIds.includes(
+        interaction.response.respondingPrincipalId
+      ) ||
+      Date.parse(interaction.response.respondedAt) < Date.parse(interaction.requestedAt) ||
+      Date.parse(interaction.response.respondedAt) >= Date.parse(interaction.expiresAt) ||
+      Date.parse(observedAt) < Date.parse(interaction.response.respondedAt) ||
+      Date.parse(observedAt) >= Date.parse(interaction.expiresAt)
+    )
+      fail('MEMORY_APPROVAL_REQUIRED')
   }
 
   async #transition(
@@ -420,6 +535,8 @@ export class MemoryWriteService {
   async #get(proposalId: string): Promise<MemoryWriteProposal> {
     const proposal = await this.#repository.get(proposalId)
     if (!proposal) fail('MEMORY_PROPOSAL_MISSING')
+    if (this.#configuredPolicy !== undefined)
+      this.#assertScope(proposal, this.#assertProvider(false))
     return proposal
   }
 
@@ -549,3 +666,30 @@ function fail(code: MemoryWriteErrorCode): never {
 }
 
 export const packageName = 'memory-writeback'
+
+export interface MemoryWriteApplication {
+  propose(input: unknown, approvalInput?: unknown): Promise<MemoryWriteProposal>
+  applyApproval(proposalId: string): Promise<MemoryWriteProposal>
+  revoke(proposalId: string): Promise<MemoryWriteProposal>
+  commit(proposalId: string): Promise<MemoryWriteProposal>
+}
+
+/** Application capability uses trusted policy and clock, with no caller overrides. */
+export function createMemoryWriteApplication(
+  options: Omit<MemoryWriteServiceOptions, 'policy' | 'provider' | 'authority'> & {
+    readonly configuration?: MemoryWriteApplicationConfiguration
+  }
+): MemoryWriteApplication {
+  const { configuration, ...serviceOptions } = options
+  const now = serviceOptions.now ?? (() => new Date().toISOString())
+  const service = new MemoryWriteService({
+    ...serviceOptions,
+    ...resolveMemoryWriteConfiguration(configuration),
+  })
+  return {
+    propose: (input, approval) => service.propose(input, undefined, approval),
+    applyApproval: (proposalId) => service.applyApproval(proposalId, now()),
+    revoke: (proposalId) => service.revoke(proposalId, now()),
+    commit: (proposalId) => service.commit(proposalId, now()),
+  }
+}

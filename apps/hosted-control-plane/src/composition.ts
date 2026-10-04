@@ -1,3 +1,9 @@
+import {
+  createMemoryWriteApplication,
+  resolveMemoryWriteConfiguration,
+  type MemoryWriteApplication,
+  type MemoryWriteApplicationConfiguration,
+} from '@control-plane/memory-writeback'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
@@ -32,6 +38,7 @@ import {
   PostgresExecutionValidationCommandRepository,
   PostgresExecutionRepository,
   PostgresInteractionRepository,
+  PostgresMemoryWriteProposalRepository,
   PostgresInteractionCommandRepository,
   PostgresExecutionCancellationRepository,
   PostgresProjectStateRepository,
@@ -177,6 +184,7 @@ export interface HostedReconciliationConfiguration {
 }
 
 export interface HostedServerCompositionOptions {
+  readonly memoryWriteback?: MemoryWriteApplicationConfiguration
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly dataDirectory: string
   readonly databaseUrl: string
@@ -220,6 +228,7 @@ export interface HostedServerCompositionOptions {
 }
 
 export class HostedServerControlPlaneComposition {
+  readonly memoryWrites: MemoryWriteApplication
   readonly dataDirectory: string
   readonly connection: PostgresConnection
   readonly objectStore: ObjectStore
@@ -255,6 +264,7 @@ export class HostedServerControlPlaneComposition {
   #started = false
 
   constructor(options: HostedServerCompositionOptions) {
+    const memoryWriteback = resolveMemoryWriteConfiguration(options.memoryWriteback)
     if (
       options.endpointFactory === undefined &&
       !/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(options.requestIdentityPublicKey ?? '')
@@ -422,6 +432,12 @@ export class HostedServerControlPlaneComposition {
     const runtimeCommands = new PostgresRuntimeCommandRepository(this.connection.database)
     const executionEvents = new PostgresExecutionEventRepository(this.connection.database)
     const interactions = new PostgresInteractionRepository(this.connection.database)
+    this.memoryWrites = createMemoryWriteApplication({
+      repository: new PostgresMemoryWriteProposalRepository(this.connection.database),
+      interactionRepository: interactions,
+      configuration: memoryWriteback,
+      ...(consistencyMetrics === undefined ? {} : { metrics: consistencyMetrics }),
+    })
     this.interactionCommandService = new DurableInteractionCommandService(
       new PostgresInteractionCommandRepository(this.connection.database),
       new DurableInteractionDeliveryService(

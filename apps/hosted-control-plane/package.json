@@ -27,6 +27,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/langgraph-adapter": "workspace:*",
+    "@control-plane/memory-writeback": "workspace:*",
     "@control-plane/object-store": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/remote-control-relay": "workspace:*",
