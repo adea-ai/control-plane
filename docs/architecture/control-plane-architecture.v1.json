@@ -104,6 +104,7 @@
         "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/execution-plan",
+        "@control-plane/memory-writeback",
         "@control-plane/orchestration",
         "@control-plane/telemetry",
         "@control-plane/usage-ledger"
@@ -290,6 +291,7 @@
         "@control-plane/domain",
         "@control-plane/execution-plan",
         "@control-plane/langgraph-adapter",
+        "@control-plane/memory-writeback",
         "@control-plane/object-store",
         "@control-plane/orchestration",
         "@control-plane/remote-control-relay",
@@ -359,6 +361,7 @@
         "@control-plane/execution-plan",
         "@control-plane/langgraph-adapter",
         "@control-plane/managed-pi-adapter",
+        "@control-plane/memory-writeback",
         "@control-plane/object-store",
         "@control-plane/orchestration",
         "@control-plane/remote-control-relay",
@@ -1681,7 +1684,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:ad48e841a84eaa6869684602ea57875deb9e7299156fc37cc48d8bc5e4097175"
+      "sourceDigest": "sha256:87969b2a96099657df74675fa8c5f0de71d11d08f4f017f6049ac98a2ad2e2ad"
     },
     {
       "id": "hosted-server",
@@ -1720,7 +1723,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:2618cb77f0dec1310a0bebfcada838fb07d815737097025db6482bdb640c5c82"
+      "sourceDigest": "sha256:590d10328c1021e79e4ca797b99fac62eb4755d4f3714e0d231d76c365e10505"
     },
     {
       "id": "hosted-simple",
@@ -1759,7 +1762,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3520fdaf85091ee0cd2ffe7409eae90757db78c052a103ed4f27f1dcd1611248"
+      "sourceDigest": "sha256:79242a614df5d5afeb4668b95ed0cbbe274d694502fb5503d8d967a5df3f174d"
     },
     {
       "id": "local",
@@ -1802,7 +1805,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:3520fdaf85091ee0cd2ffe7409eae90757db78c052a103ed4f27f1dcd1611248"
+      "sourceDigest": "sha256:79242a614df5d5afeb4668b95ed0cbbe274d694502fb5503d8d967a5df3f174d"
     }
   ],
   "ownership": [

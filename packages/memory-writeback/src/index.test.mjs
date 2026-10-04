@@ -1,3 +1,4 @@
+import * as memoryWriteback from './index.ts'
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { InMemoryInteractionRepository, InteractionService } from '@control-plane/domain'
@@ -899,3 +900,241 @@ function approval(overrides = {}) {
 function digest(content) {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`
 }
+
+describe('configured application memory writes', () => {
+  test('configured approval, revocation and replay cannot access another provider scope', async () => {
+    const context = harness(provider())
+    const otherWorkspace = 'wsp_01JBBCDEF0123456789ABCDEFG'
+    context.provider.workspaceId = otherWorkspace
+    const foreign = await context.service.propose(
+      proposal({ workspaceId: otherWorkspace }),
+      policy({ mode: 'approval_required' }),
+      approval()
+    )
+    context.provider.workspaceId = workspaceId
+    const application = configuredApplication(context, policy({ mode: 'approval_required' }))
+    for (const method of ['applyApproval', 'revoke', 'commit']) {
+      await expect(application[method](foreign.proposalId, later)).rejects.toMatchObject({
+        code: 'MEMORY_SCOPE_MISMATCH',
+      })
+      expect(await context.repository.get(foreign.proposalId)).toEqual(foreign)
+    }
+  })
+
+  test('defaults disabled without touching authority, provider or persistence', async () => {
+    const context = harness(provider())
+    const application = memoryWriteback.createMemoryWriteApplication({
+      repository: context.repository,
+      interactionRepository: context.interactions,
+    })
+    await expect(application.propose(proposal())).rejects.toMatchObject({
+      code: 'MEMORY_WRITE_DISABLED',
+    })
+    expect(await context.repository.list()).toEqual([])
+    expect(context.provider.records.size).toBe(0)
+  })
+
+  test('configured providers require an explicit write authority', () => {
+    const context = harness(provider())
+    expect(() =>
+      memoryWriteback.createMemoryWriteApplication({
+        repository: context.repository,
+        interactionRepository: context.interactions,
+        configuration: { policy: policy(), provider: context.provider },
+      })
+    ).toThrow('MEMORY_WRITE_AUTHORITY_UNAVAILABLE')
+  })
+
+  test('pins the server policy instead of accepting caller write policy', async () => {
+    const context = harness(provider())
+    const operations = []
+    const application = configuredApplication(context, policy(), async (scope, operation) =>
+      operations.push({ scope, operation })
+    )
+    const stored = await application.propose(proposal(), {
+      ...approval(),
+      mode: 'approval_required',
+      approvalPrincipalIds: ['principal:forged'],
+    })
+    expect(stored.state).toBe('proposed')
+    await expect(application.commit(stored.proposalId, later)).rejects.toMatchObject({
+      code: 'MEMORY_APPROVAL_REQUIRED',
+    })
+    expect(context.provider.records.size).toBe(0)
+    expect(operations).toEqual([
+      { scope: { providerId, connectionId, workspaceId, scopeDigest }, operation: 'proposal' },
+    ])
+  })
+
+  test('rechecks current write authority after a durable approval and before intent or effect', async () => {
+    const context = harness(provider())
+    let enabled = true
+    const operations = []
+    const application = configuredApplication(
+      context,
+      policy({ mode: 'approval_required' }),
+      async (_scope, operation) => {
+        operations.push(operation)
+        if (!enabled) throw new memoryWriteback.MemoryWriteError('MEMORY_WRITE_AUTHORITY_DENIED')
+      }
+    )
+    const stored = await approveApplication(context, application)
+    enabled = false
+    await expect(application.commit(stored.proposalId, later)).rejects.toMatchObject({
+      code: 'MEMORY_WRITE_AUTHORITY_DENIED',
+    })
+    expect(await context.repository.get(stored.proposalId)).toEqual(stored)
+    expect(context.provider.records.size).toBe(0)
+    expect(operations).toEqual(['proposal', 'write'])
+  })
+
+  test('current principal and content policy can deny a previously approved fresh write', async () => {
+    const context = harness(provider())
+    const approved = await approveApplication(
+      context,
+      configuredApplication(context, policy({ mode: 'approval_required' }))
+    )
+    const changedPrincipal = configuredApplication(
+      context,
+      policy({ mode: 'approval_required', approvalPrincipalIds: ['principal:other'] })
+    )
+    await expect(changedPrincipal.commit(approved.proposalId, later)).rejects.toMatchObject({
+      code: 'MEMORY_APPROVAL_REQUIRED',
+    })
+    const changedContent = configuredApplication(
+      context,
+      policy({ mode: 'approval_required', maximumBytes: 1 })
+    )
+    await expect(changedContent.commit(approved.proposalId, later)).rejects.toMatchObject({
+      code: 'MEMORY_CONTENT_NOT_ALLOWED',
+    })
+    expect(await context.repository.get(approved.proposalId)).toEqual(approved)
+    expect(context.provider.records.size).toBe(0)
+  })
+
+  test('disabled writes still permit separately authorized status-only recovery', async () => {
+    const context = harness(provider())
+    const approved = await approveApplication(
+      context,
+      configuredApplication(context, policy({ mode: 'approval_required' }))
+    )
+    await seedCommitting(context, approved)
+    const operations = []
+    context.provider.write = async () => {
+      throw new Error('write must not run')
+    }
+    context.provider.status = async () => ({
+      status: 'committed',
+      providerMemoryRef: 'memory://recovered',
+    })
+    const recovered = configuredApplication(
+      context,
+      policy({ mode: 'disabled' }),
+      async (_scope, operation) => operations.push(operation)
+    )
+    expect((await recovered.commit(approved.proposalId, later)).outcome.code).toBe('reconciled')
+    expect(operations).toEqual(['status'])
+  })
+
+  test('unavailable authority leaves durable work unchanged without provider activity', async () => {
+    const context = harness(provider())
+    const application = configuredApplication(
+      context,
+      policy({ mode: 'approval_required' }),
+      async () => {
+        throw new Error('authority unavailable')
+      }
+    )
+    await expect(application.propose(proposal(), approval())).rejects.toThrow(
+      'authority unavailable'
+    )
+    expect(await context.repository.list()).toEqual([])
+    expect(await context.interactions.get(approval().interactionId)).toBeUndefined()
+    expect(context.provider.records.size).toBe(0)
+  })
+})
+
+function configuredApplication(context, configuredPolicy, authorize = async () => {}) {
+  return memoryWriteback.createMemoryWriteApplication({
+    repository: context.repository,
+    interactionRepository: context.interactions,
+    now: () => later,
+    configuration: {
+      policy: configuredPolicy,
+      provider: context.provider,
+      authority: { authorize },
+    },
+  })
+}
+
+async function approveApplication(context, application) {
+  const pending = await application.propose(proposal(), approval())
+  await new InteractionService(context.interactions).respond({
+    interactionId: pending.approvalInteractionId,
+    executionId: pending.provenance.sourceExecutionId,
+    attemptId: pending.provenance.sourceAttemptId,
+    responseId: 'cmd_01JABCDEF0123456789ABCDEFG',
+    action: 'approve',
+    respondingPrincipalId: 'principal:test:approver',
+    expectedVersion: 1,
+    respondedAt: later,
+  })
+  return application.applyApproval(pending.proposalId, later)
+}
+
+test('application cannot rewind approval expiry with a caller timestamp', async () => {
+  const context = harness(provider())
+  const approved = await approveApplication(
+    context,
+    configuredApplication(context, policy({ mode: 'approval_required' }))
+  )
+  const expiredApplication = memoryWriteback.createMemoryWriteApplication({
+    repository: context.repository,
+    interactionRepository: context.interactions,
+    now: () => approval().expiresAt,
+    configuration: {
+      policy: policy({ mode: 'approval_required' }),
+      provider: context.provider,
+      authority: { authorize: async () => {} },
+    },
+  })
+  await expect(expiredApplication.commit(approved.proposalId, later)).rejects.toMatchObject({
+    code: 'MEMORY_APPROVAL_REQUIRED',
+  })
+  expect(context.provider.records.size).toBe(0)
+  expect(await context.repository.get(approved.proposalId)).toEqual(approved)
+})
+
+test('automatic ambiguity recovery must separately authorize status', async () => {
+  for (const failure of [
+    new memoryWriteback.MemoryWriteError('MEMORY_WRITE_AUTHORITY_DENIED'),
+    new Error('authority unavailable'),
+  ]) {
+    const context = harness(provider('timeout_after'))
+    let probes = 0
+    const status = context.provider.status.bind(context.provider)
+    context.provider.status = async (key) => {
+      probes++
+      return status(key)
+    }
+    const operations = []
+    const application = configuredApplication(
+      context,
+      policy({ mode: 'approval_required' }),
+      async (_scope, operation) => {
+        operations.push(operation)
+        if (operation === 'status') throw failure
+      }
+    )
+    const approved = await approveApplication(context, application)
+    await expect(application.commit(approved.proposalId)).rejects.toMatchObject({
+      code: 'MEMORY_WRITE_AMBIGUOUS',
+    })
+    expect((await context.repository.get(approved.proposalId)).state).toBe(
+      'reconciliation_required'
+    )
+    expect(context.provider.records.size).toBe(1)
+    expect(probes).toBe(0)
+    expect(operations).toEqual(['proposal', 'write', 'status'])
+  }
+})

@@ -27,6 +27,13 @@ import {
   type ExecutionGraphAuthority,
 } from '@control-plane/execution-plan'
 import {
+  createMemoryWriteApplication,
+  type MemoryWriteApplication,
+  type MemoryWriteApplicationConfiguration,
+  type MemoryWriteDecisionMetrics,
+} from '@control-plane/memory-writeback'
+import {
+  SqliteMemoryWriteProposalRepository,
   SqliteCommandAcceptanceRepository,
   SqliteGraphDefinitionRepository,
   SqliteContextPackageRepository,
@@ -68,6 +75,7 @@ export class LocalControlApiComposition {
   readonly contextPackages: SqliteContextPackageRepository
   readonly executionPlans: SqliteExecutionPlanRepository
   readonly executions: SqliteExecutionRepository
+  readonly memoryWrites: MemoryWriteApplication
   readonly interactions: SqliteInteractionRepository
   readonly executionEvents: SqliteExecutionEventRepository
   readonly projectStates: SqliteProjectStateRepository
@@ -90,7 +98,9 @@ export class LocalControlApiComposition {
     inboxMetrics?: CommandInboxMetrics,
     workflowDispatcher?: LocalWorkflowDispatcher,
     catalogApprovalPolicy?: { readonly required: boolean; readonly requiredSince?: string },
-    graphs?: ExecutionGraphAuthority
+    graphs?: ExecutionGraphAuthority,
+    memoryWriteback?: MemoryWriteApplicationConfiguration,
+    memoryWriteMetrics?: MemoryWriteDecisionMetrics
   ) {
     const dispatcher: LocalWorkflowDispatcher =
       workflowDispatcher ??
@@ -111,6 +121,12 @@ export class LocalControlApiComposition {
     this.executionPlans = new SqliteExecutionPlanRepository(persistence)
     this.executions = new SqliteExecutionRepository(persistence)
     this.interactions = new SqliteInteractionRepository(persistence)
+    this.memoryWrites = createMemoryWriteApplication({
+      repository: new SqliteMemoryWriteProposalRepository(persistence),
+      interactionRepository: this.interactions,
+      ...(memoryWriteback === undefined ? {} : { configuration: memoryWriteback }),
+      ...(memoryWriteMetrics === undefined ? {} : { metrics: memoryWriteMetrics }),
+    })
     this.interactionCommandService = new DurableInteractionCommandService(
       new SqliteInteractionCommandRepository(persistence),
       new DurableInteractionDeliveryService(this.interactions, this.commandRepository, dispatcher)

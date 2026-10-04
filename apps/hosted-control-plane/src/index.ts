@@ -150,6 +150,7 @@ export function resolveHostedCompositionConfiguration(
     ...optional('runtimeActivityPort'),
     ...optional('graphActivities'),
     ...optional('contextAuthoring'),
+    ...optional('memoryWriteback'),
   }
 }
 

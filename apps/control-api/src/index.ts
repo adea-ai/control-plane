@@ -28,12 +28,18 @@ import type { MarketplaceInstallationAuthority } from './marketplace/installatio
 import type { MarketplaceHarnessProfileAuthority } from './marketplace/agent-plugins.js'
 import type { MarketplaceRegistryService } from './marketplace/registry.js'
 
+import type {
+  MemoryWriteApplication,
+  MemoryWriteApplicationConfiguration,
+} from '@control-plane/memory-writeback'
+
 export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
   readonly graphAdministrationService?: GraphAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
+  readonly memoryWriteback?: MemoryWriteApplicationConfiguration
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
   readonly cwd?: string
   readonly environment?: RawEnvironment
@@ -54,6 +60,7 @@ export interface ControlApiStartOptions {
 }
 
 export interface StartedControlApi {
+  readonly memoryWrites?: MemoryWriteApplication
   readonly application: NestFastifyApplication
   readonly runtime: ServiceRuntime<'control-api'>
 }
@@ -61,6 +68,7 @@ export interface StartedControlApi {
 export async function start(options: ControlApiStartOptions = {}): Promise<StartedControlApi> {
   const logger = options.logger ?? jsonLogger
   let application: NestFastifyApplication | undefined
+  let memoryWrites: MemoryWriteApplication | undefined
   const runtime = await bootstrapService({
     serviceName,
     logger,
@@ -84,8 +92,10 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
               logger,
               options.postgresConnectionFactory,
               options.contextAuthoring,
-              options.marketplaceHarnessProfileAuthority
+              options.marketplaceHarnessProfileAuthority,
+              options.memoryWriteback
             )
+      memoryWrites = cloudComposition?.memoryWrites
       if (cloudComposition !== undefined) {
         registerResource('control-api-postgres', () => cloudComposition.connection.close())
         registerResource('control-api-retention-sweep', () =>
@@ -149,7 +159,7 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
     },
   })
   if (!application) throw new Error('Control API application did not initialize')
-  return { application, runtime }
+  return { application, runtime, ...(memoryWrites === undefined ? {} : { memoryWrites }) }
 }
 
 export { createControlApiApplication, createOpenApiDocument } from './application.js'

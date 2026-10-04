@@ -1,3 +1,9 @@
+import {
+  createMemoryWriteApplication,
+  resolveMemoryWriteConfiguration,
+  type MemoryWriteApplication,
+  type MemoryWriteApplicationConfiguration,
+} from '@control-plane/memory-writeback'
 import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
@@ -18,6 +24,7 @@ import {
   PostgresCommandAcceptanceRepository,
   PostgresExecutionEventRepository,
   PostgresInteractionRepository,
+  PostgresMemoryWriteProposalRepository,
   PostgresInteractionCommandRepository,
   PostgresExecutionCancellationRepository,
   PostgresContextPackageRepository,
@@ -77,6 +84,7 @@ function resolveRetentionSweepIntervalMs(environment: RawEnvironment): number {
 export type PostgresConnectionFactory = typeof createPostgresConnection
 
 export interface ManagedCloudControlApiComposition {
+  readonly memoryWrites: MemoryWriteApplication
   readonly interactionCommandService: DurableInteractionCommandService
   readonly executionCancellationService: DurableExecutionCancellationService
   readonly connection: PostgresConnection
@@ -105,8 +113,10 @@ export function createManagedCloudControlApiComposition(
   logger: StructuredLogger,
   connectionFactory: PostgresConnectionFactory = createPostgresConnection,
   contextAuthoring?: ContextAuthoringCompositionOptions,
-  marketplaceHarnessProfileAuthority?: MarketplaceHarnessProfileAuthority
+  marketplaceHarnessProfileAuthority?: MarketplaceHarnessProfileAuthority,
+  memoryWriteback?: MemoryWriteApplicationConfiguration
 ): ManagedCloudControlApiComposition {
+  const memoryConfiguration = resolveMemoryWriteConfiguration(memoryWriteback)
   if (
     configuration.service !== 'control-api' ||
     configuration.database === undefined ||
@@ -180,6 +190,11 @@ export function createManagedCloudControlApiComposition(
   })
 
   return {
+    memoryWrites: createMemoryWriteApplication({
+      repository: new PostgresMemoryWriteProposalRepository(connection.database),
+      interactionRepository: new PostgresInteractionRepository(connection.database),
+      configuration: memoryConfiguration,
+    }),
     connection,
     retentionSweep,
     executionCancellationService: new DurableExecutionCancellationService(
