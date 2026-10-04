@@ -45,8 +45,8 @@ The [hard-stop fixture evidence](../evidence/m11-memory-process-loss-2026-10-04.
 child-process `SIGKILL` after a durable synthetic provider effect, before the root stores its
 outcome. Local and Hosted Simple reopen actual SQLite with fresh writes disabled and only
 current status authority, preserve the entire approved intent, and recover exactly one effect.
-Cloud and Hosted Server cases are wired into their existing isolated PostgreSQL integration
-files; candidate PostgreSQL results remain pending. All new process cases belong to integration,
+Cloud and Hosted Server cases use separate isolated PostgreSQL databases in the repository-owned
+process-loss integration suite; PostgreSQL results for the relocated suite remain pending. All new process cases belong to integration,
 with explicit shard ownership and fixture cleanup even when storage close fails.
 
 The 2026-10-04 native Docs read also observes source metadata modified on 2026-10-01. It supports

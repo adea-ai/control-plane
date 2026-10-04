@@ -2303,18 +2303,18 @@
         },
         {
           "kind": "test",
-          "path": "apps/local-control-plane/src/memory-process-loss.integration.test.mjs",
-          "scope": "Actual Local/Hosted Simple SQLite application-root child SIGKILL after a durable synthetic provider effect, then disabled/read-only status recovery with one effect and preserved intent; cleanup-close failures remove owned fixtures. Does not start a daemon or real provider."
+          "path": "tests/memory-process-loss.integration.test.mjs",
+          "scope": "All four actual application roots: Local/Hosted Simple SQLite and Cloud/Hosted Server isolated PostgreSQL child SIGKILL after a durable synthetic provider effect, then disabled/read-only status recovery with one effect and preserved intent; cleanup-close failures remove owned fixtures. Relocated repository suite requires current-head PostgreSQL CI. Does not start a daemon or real provider."
         },
         {
           "kind": "test",
           "path": "apps/control-api/src/validation-replay.integration.test.mjs",
-          "scope": "Cloud actual PostgreSQL root reconstruction passed in PR891; added child-SIGKILL memory status-recovery case requires candidate PostgreSQL CI. Synthetic provider ledger, no live provider/daemon acceptance."
+          "scope": "Cloud actual PostgreSQL root reconstruction passed in PR891; child-SIGKILL cases live in tests/memory-process-loss.integration.test.mjs. Synthetic provider ledger, no live provider/daemon acceptance."
         },
         {
           "kind": "test",
           "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs",
-          "scope": "Hosted Server actual PostgreSQL root reconstruction passed in PR891; added child-SIGKILL memory status-recovery case requires candidate PostgreSQL CI. Synthetic provider ledger, no live provider/daemon acceptance."
+          "scope": "Hosted Server actual PostgreSQL root reconstruction passed in PR891; child-SIGKILL cases live in tests/memory-process-loss.integration.test.mjs. Synthetic provider ledger, no live provider/daemon acceptance."
         }
       ],
       "gap": {

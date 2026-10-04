@@ -86,8 +86,8 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
-        package: 'apps/local-control-plane',
-        files: ['src/memory-process-loss.integration.test.mjs'],
+        package: '.',
+        files: ['./tests/memory-process-loss.integration.test.mjs'],
       },
       {
         package: 'apps/hosted-control-plane',

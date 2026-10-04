@@ -133,6 +133,20 @@ try {
     run('bun', ['x', 'turbo', 'run', 'test:integration', '--concurrency=1', '--log-order=stream'], {
       environment: integrationEnvironment,
     })
+    // Repository-owned scenarios span composition roots without importing
+    // repository fixtures from inside an application package.
+    run(
+      'bun',
+      [
+        'test',
+        '--timeout',
+        remoteDatabase ? '120000' : '30000',
+        './tests/memory-process-loss.integration.test.mjs',
+      ],
+      {
+        environment: integrationEnvironment,
+      }
+    )
   } else {
     // A remote branch stretches tests that finish in seconds locally to
     // 30-70 seconds each, and its pooler occasionally severs a pooled

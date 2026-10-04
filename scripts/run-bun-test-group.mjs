@@ -92,7 +92,11 @@ export async function discoverTestFiles(group) {
   }
 
   const files = (
-    await Promise.all(sourceRoots.map((directory) => walk(resolve(repositoryRoot, directory))))
+    await Promise.all(
+      (group === 'integration' ? testRoots : sourceRoots).map((directory) =>
+        walk(resolve(repositoryRoot, directory))
+      )
+    )
   )
     .flat()
     .filter(

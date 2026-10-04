@@ -1,4 +1,6 @@
-import { expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createIsolatedPostgres } from '@control-plane/testing/postgres'
+import { integrationTestTimeout } from '@control-plane/database/testing'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,7 +9,7 @@ import {
   disposeMemoryRootProcessLoss,
   exerciseMemoryRootProcessLoss,
   memoryProcessLossDeadlines,
-} from '../../../tests/fixtures/memory-root-process-loss.mjs'
+} from './fixtures/memory-root-process-loss.mjs'
 
 test('process fixture reserves recovery time within a capped PostgreSQL budget', () => {
   const original = process.env.INTEGRATION_TEST_TIMEOUT_MS
@@ -69,4 +71,40 @@ for (const profile of ['local', 'hosted-simple']) {
       childReaped: true,
     })
   }, 12_000)
+}
+
+for (const profile of ['cloud', 'hosted-server']) {
+  describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
+    `${profile} memory process recovery`,
+    () => {
+      let database
+      beforeAll(async () => {
+        database = await createIsolatedPostgres({ migrate: false })
+        await database.migrate()
+      }, integrationTestTimeout())
+      afterAll(async () => {
+        await database?.dispose()
+      }, integrationTestTimeout())
+      test(
+        `${profile} recovers a memory effect after SIGKILL with durable committing intent`,
+        async () => {
+          const url = new URL(process.env.DATABASE_URL)
+          url.pathname = `/${database.name}`
+          expect(await exerciseMemoryRootProcessLoss(profile, url.toString())).toEqual({
+            profile,
+            signal: 'SIGKILL',
+            persistedState: 'committing',
+            recoveredState: 'committed',
+            writeCalls: 1,
+            statusCalls: 1,
+            records: 1,
+            operations: ['status'],
+            fixtureRemoved: true,
+            childReaped: true,
+          })
+        },
+        integrationTestTimeout()
+      )
+    }
+  )
 }

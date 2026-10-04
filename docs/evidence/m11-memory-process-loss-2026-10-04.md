@@ -14,7 +14,7 @@ that result adds no provider write, status lookup, or authority call. The durabl
 contains exactly one write call, one status call, and one record.
 
 Local and Hosted Simple use actual SQLite files. Cloud and Hosted Server cases use their
-existing isolated PostgreSQL integration databases. All four cases call the actual composition
+separate isolated PostgreSQL integration databases. All four cases call the actual composition
 factory, but never start its workflow runtime or HTTP endpoint.
 
 This follows section 8 of the accepted [Execution Consistency specification](https://docs.google.com/document/d/1hba0jHco891TK4BHXZUZo07L3LZN8yDJ9Qw9UtzsIf4/edit)
@@ -44,10 +44,16 @@ within that budget (25/100 seconds for local/remote PostgreSQL). A regression re
 old fixed PostgreSQL limits and verifies the scaled deadlines, hard cap and unchanged Local limits. Planned/started/reaped/removed
 receipts record the exact PID and directory without database URLs or credentials.
 
-Process/SQLite cases are assigned to the integration lane, explicitly to Neon shard 3, and
-selected by the Local package's `test:integration` command. The repository's actual discovery
-and package-command checks reproduced the missing lane registration, then passed after repair.
-The unit discovery excludes the new integration file.
+All four scenarios belong to `tests/memory-process-loss.integration.test.mjs`, a repository-owned
+integration suite because it spans application roots. Both unsharded integration and Neon shard 3
+select it; unit discovery excludes it. The first ready head passed all four SIGKILL cases in
+PostgreSQL CI run 37176101531, but failed `turbo boundaries` on three imports from application
+packages to repository fixtures. Moving the scenarios to the repository suite preserves the
+package boundary policy. The relocated suite still requires PostgreSQL CI for its current head. A bounded focused check
+of the relocated suite, shard inventory and repository discovery passed 13 cases (144 Bun
+assertions), with two PostgreSQL cases skipped, in 1.382 seconds (1.43 seconds including the
+bounded runner). `turbo boundaries` checks
+768 files in 42 packages with no issues; scoped lint and formatting also pass.
 
 ## Limits
 
