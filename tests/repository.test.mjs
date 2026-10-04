@@ -1,3 +1,4 @@
+import { parse } from 'acorn'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -113,9 +114,24 @@ test('defines root quality and build commands', async () => {
   assert.match(manifest.scripts.test, /--parallel/)
 })
 
-test('schedules every discovered integration file through a package command', async () => {
+test('schedules every discovered integration file through a package or repository command', async () => {
   const integration = await discoverTestFiles('integration')
   for (const path of integration) {
+    if (path.startsWith('tests/')) {
+      const runner = await readFile(
+        new URL('../scripts/run-integration-tests.mjs', import.meta.url),
+        'utf8'
+      )
+      const unsharded = runner.slice(
+        runner.indexOf('if (integrationShard === null) {'),
+        runner.indexOf('} else {', runner.indexOf('if (integrationShard === null) {'))
+      )
+      assert.ok(
+        unsharded.includes(`'./${path}'`),
+        `${path} is not selected by the unsharded repository runner`
+      )
+      continue
+    }
     const [kind, name, ...relativeParts] = path.split('/')
     const manifest = await readJson(`${kind}/${name}/package.json`)
     const command = manifest.scripts['test:integration']
@@ -127,6 +143,30 @@ test('schedules every discovered integration file through a package command', as
       patterns.some((pattern) => new Glob(pattern).match(relativeParts.join('/'))),
       `${path} is not selected by its package integration command`
     )
+  }
+})
+
+test('repository memory fixtures use declared workspace dependencies', async () => {
+  const manifest = await readJson('package.json')
+  const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
+  for (const path of [
+    'tests/memory-process-loss.integration.test.mjs',
+    'tests/fixtures/memory-root-process-loss.mjs',
+  ]) {
+    const source = parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+    })
+    for (const declaration of source.body.filter((node) => node.type === 'ImportDeclaration')) {
+      const name = declaration.source.value
+      if (!name.startsWith('@control-plane/')) continue
+      const packageName = name.split('/').slice(0, 2).join('/')
+      assert.equal(
+        dependencies[packageName],
+        'workspace:*',
+        `${path} imports undeclared ${packageName}`
+      )
+    }
   }
 })
 
@@ -161,6 +201,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     !unit.includes('packages/database/src/memory-provenance-retention.integration.test.mjs')
   )
   assert.ok(!unit.includes('packages/testing/src/postgres.integration.test.mjs'))
+  assert.ok(!unit.includes('tests/memory-process-loss.integration.test.mjs'))
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
@@ -191,6 +232,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/langgraph-adapter/src/postgres-checkpointer.integration.test.mjs',
     'packages/profile-portability/src/postgres.integration.test.mjs',
     'packages/testing/src/postgres.integration.test.mjs',
+    'tests/memory-process-loss.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
   assert.match(

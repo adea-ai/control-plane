@@ -86,6 +86,10 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
+        package: '.',
+        files: ['./tests/memory-process-loss.integration.test.mjs'],
+      },
+      {
         package: 'apps/hosted-control-plane',
         files: [
           'src/hosted-graph-cancellation.integration.test.mjs',

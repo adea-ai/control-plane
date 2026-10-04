@@ -2292,13 +2292,36 @@
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs",
           "scope": "'atomically persists one proposal approval under concurrent dedupe and rolls back conflicts': actual PostgreSQL transaction, concurrent winner, scope denial, injected rollback, and a fresh connection readback. The focused Docker case is not the complete PostgreSQL integration suite."
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-memory-composition-2026-10-04.md"
+        },
+        {
+          "kind": "document",
+          "path": "docs/evidence/m11-memory-process-loss-2026-10-04.md"
+        },
+        {
+          "kind": "test",
+          "path": "tests/memory-process-loss.integration.test.mjs",
+          "scope": "All four actual application roots: Local/Hosted Simple SQLite and Cloud/Hosted Server isolated PostgreSQL child SIGKILL after a durable synthetic provider effect, then disabled/read-only status recovery with one effect and preserved intent; cleanup-close failures remove owned fixtures. Relocated repository suite requires current-head PostgreSQL CI. Does not start a daemon or real provider."
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/validation-replay.integration.test.mjs",
+          "scope": "Cloud actual PostgreSQL root reconstruction passed in PR891; child-SIGKILL cases live in tests/memory-process-loss.integration.test.mjs. Synthetic provider ledger, no live provider/daemon acceptance."
+        },
+        {
+          "kind": "test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs",
+          "scope": "Hosted Server actual PostgreSQL root reconstruction passed in PR891; child-SIGKILL cases live in tests/memory-process-loss.integration.test.mjs. Synthetic provider ledger, no live provider/daemon acceptance."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "context-provider",
-        "disposition": "Adjudicated 2026-10-03: partially verified. Library and actual SQLite/PostgreSQL fixtures cover atomic approval/proposal creation, dedupe, rollback and reopen/readback; status recovery remains bounded fixture evidence. MemoryWriteService has no non-test application-composition consumer. Remaining: integrate the durable service and provider authority into supported application compositions; prove process-loss recovery across required deployment profiles; audit complete proposal/interaction retention. No canonical memory promotion or profile acceptance is inferred."
+        "disposition": "Updated 2026-10-04: partially verified. PR891 supplies disabled-by-default programmatic memory-write consumers in all four application roots with fixed policy and a separate current effect-authority port; exact-head required gates and PostgreSQL root reconstruction passed. Actual Local/Hosted Simple process-loss fixtures now preserve durable commit intent and reconcile one synthetic provider effect after SIGKILL; Cloud/Hosted Server hard-stop cases are wired for candidate PostgreSQL CI. Remaining: real provider transport and delivery-authority fencing, running-profile restart acceptance across required deployment profiles, and complete proposal/interaction retention. No canonical memory promotion, whole-profile acceptance or frozen-candidate promotion is inferred."
       }
     },
     {

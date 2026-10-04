@@ -112,13 +112,15 @@ describe('integration shard partition', () => {
       'packages/testing/src',
       'apps/workflow-worker/src',
       'apps/control-api/src',
+      'apps/local-control-plane/src',
+      'tests',
       'apps/hosted-control-plane/src',
     ]
     const assigned = new Map()
     for (const entry of INTEGRATION_SHARDS) {
       for (const group of entry.groups) {
         for (const file of group.files) {
-          const key = `${group.package}/${file}`
+          const key = group.package === '.' ? file.replace(/^\.\//, '') : `${group.package}/${file}`
           const owners = assigned.get(key) ?? []
           owners.push({ shard: entry.shard, pattern: group.testNamePattern })
           assigned.set(key, owners)

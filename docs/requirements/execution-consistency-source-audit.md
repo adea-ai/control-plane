@@ -30,7 +30,7 @@ The machine ledger links this document through source ID `execution-consistency-
 
 The 2026-10-03 memory-writeback correction adds library regressions for immutable proposal identity, terminal approval replay and persisted `committing` reconciliation. Authoritative provider status can settle an interrupted write after expiry; unknown or unavailable status remains parked and never triggers another write. Concurrent recovery retains the repository compare-and-set boundary.
 
-CP-CONS-026 is partially verified. PostgreSQL and SQLite now create an approval-required proposal and its Interaction in a single database transaction. Concurrent dedupe creates one linked pair; interaction conflict or injected failure before commit rolls back the proposal and approval. The new SQLite adapter preserves the pair and versioned status reconciliation across database reopen, with no provider write replay in the fixture. The [memory application composition follow-up](../evidence/m11-memory-composition-2026-10-04.md) adds disabled-by-default programmatic consumers in all four roots with server policy and a separate current effect-authority port. Bounded SQLite root reconstruction passed; actual PostgreSQL root evidence and full candidate CI remain pending. No memory HTTP/local IPC surface or real provider transport is supplied. Actual provider transport, process-loss crash/restart acceptance through provider authority across all required profiles, and complete proposal/interaction retention remain tracked in #194. The bounded transactional evidence does not certify whole-profile or whole-milestone acceptance. The follow-up [memory provenance retention evidence](../evidence/m11-memory-provenance-retention-2026-10-04.md) records source-reference retention in SQLite, transactional source-scope validation and immutable source/dedupe identity, plus the PostgreSQL race suite that passed on `48f6980a` in [CI run 37168042195](https://github.com/adea-ai/control-plane/actions/runs/37168042195). The later integration-inventory repair still requires final-head full CI.
+CP-CONS-026 is partially verified. PostgreSQL and SQLite now create an approval-required proposal and its Interaction in a single database transaction. Concurrent dedupe creates one linked pair; interaction conflict or injected failure before commit rolls back the proposal and approval. The new SQLite adapter preserves the pair and versioned status reconciliation across database reopen, with no provider write replay in the fixture. The [memory application composition follow-up](../evidence/m11-memory-composition-2026-10-04.md) adds disabled-by-default programmatic consumers in all four roots with server policy and a separate current effect-authority port. PR #891 passed all five required gates and actual PostgreSQL integration at `a903256111d5bec56d9a7a06587ee5b6fc5d8971`. Its Cloud and Hosted Server root-reconstruction cases passed in [run 37172437678](https://github.com/adea-ai/control-plane/actions/runs/37172437678); this is synthetic-provider root evidence, not live-profile acceptance. No memory HTTP/local IPC surface or real provider transport is supplied. Actual provider transport, process-loss crash/restart acceptance through provider authority across all required profiles, and complete proposal/interaction retention remain tracked in #194. The bounded transactional evidence does not certify whole-profile or whole-milestone acceptance. The follow-up [memory provenance retention evidence](../evidence/m11-memory-provenance-retention-2026-10-04.md) records source-reference retention in SQLite, transactional source-scope validation and immutable source/dedupe identity, plus the PostgreSQL race suite that passed on `48f6980a` in [CI run 37168042195](https://github.com/adea-ai/control-plane/actions/runs/37168042195). The later integration-inventory repair still requires final-head full CI.
 
 The 2026-10-04 [approved-intent follow-up](../evidence/m11-memory-approved-intent-2026-10-04.md)
 pins every effect input and the approval link during all three repository CAS transitions.
@@ -38,3 +38,20 @@ Focused in-memory/SQLite tests include rejected input changes and reopen/commit 
 original approved payload. PostgreSQL and full CI proof are pending. Existing stored data,
 real provider authority/transport and application composition remain outside this source
 proof; no historical ledger classification is promoted.
+
+## Memory process-loss follow-up
+
+The [hard-stop fixture evidence](../evidence/m11-memory-process-loss-2026-10-04.md) adds actual
+child-process `SIGKILL` after a durable synthetic provider effect, before the root stores its
+outcome. Local and Hosted Simple reopen actual SQLite with fresh writes disabled and only
+current status authority, preserve the entire approved intent, and recover exactly one effect.
+Cloud and Hosted Server cases use separate isolated PostgreSQL databases in the repository-owned
+process-loss integration suite; PostgreSQL results for the relocated suite remain pending. All new process cases belong to integration,
+with explicit shard ownership and fixture cleanup even when storage close fails.
+
+The 2026-10-04 native Docs read also observes source metadata modified on 2026-10-01. It supports
+the existing interrupted-proposal status and durable-identity obligations; accepted invariants
+are unchanged. Some implementation-gap annotations in that newer capture lag the merged
+memory repairs. Complete source reconciliation and remaining scenario mapping still belong
+to #186/#195. This records scoped current evidence without relabelling the historical frozen
+candidate, claiming live-provider authority, or promoting CP-CONS-026 beyond partially verified.
