@@ -322,7 +322,10 @@ function observePostgresUsageOperation<Result>(promise: Promise<Result>): Promis
 }
 
 class PostgresDurableUsageTransaction implements DurableUsageTransaction {
-  readonly #owners = new Map<string, { workspaceId: string; parentExecutionId?: string } | null>()
+  readonly #owners = new Map<
+    string,
+    { workspaceId: string; parentExecutionId?: string; latestAttemptId?: string } | null
+  >()
   readonly #transaction: DomainTransaction
   readonly #workspaceId: string
 
@@ -467,6 +470,13 @@ class PostgresDurableUsageTransaction implements DurableUsageTransaction {
 
     const owner = await this.#readOwner(entry.executionId)
     if (!owner || owner.workspaceId !== this.#workspaceId) throw scopeMismatch()
+    if (
+      entry.kind === 'reservation' &&
+      entry.attemptId !== undefined &&
+      entry.reservationKey === `runtime-attempt:${entry.attemptId}` &&
+      owner.latestAttemptId !== entry.attemptId
+    )
+      throw scopeMismatch()
     if ((entry.parentExecutionId ?? null) !== (owner.parentExecutionId ?? null)) {
       throw scopeMismatch()
     }
@@ -546,7 +556,9 @@ class PostgresDurableUsageTransaction implements DurableUsageTransaction {
 
   async #readOwner(
     executionId: string
-  ): Promise<{ workspaceId: string; parentExecutionId?: string } | undefined> {
+  ): Promise<
+    { workspaceId: string; parentExecutionId?: string; latestAttemptId?: string } | undefined
+  > {
     const cached = this.#owners.get(executionId)
     if (cached !== undefined) return cached ?? undefined
     const [row] = await this.#transaction
@@ -567,6 +579,7 @@ class PostgresDurableUsageTransaction implements DurableUsageTransaction {
     }
     const result = {
       workspaceId: owner.correlation.workspaceId,
+      ...(owner.latestAttemptId === undefined ? {} : { latestAttemptId: owner.latestAttemptId }),
       ...(owner.parentExecutionId === undefined
         ? {}
         : { parentExecutionId: owner.parentExecutionId }),
@@ -600,7 +613,7 @@ class PostgresDurableUsageTransaction implements DurableUsageTransaction {
 
   #assertBudgetOwner(
     budget: DurableUsageBudget,
-    owner: { workspaceId: string; parentExecutionId?: string }
+    owner: { workspaceId: string; parentExecutionId?: string; latestAttemptId?: string }
   ): void {
     if (
       budget.workspaceId !== owner.workspaceId ||

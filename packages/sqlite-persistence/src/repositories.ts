@@ -1305,7 +1305,11 @@ export class SqliteExecutionRepository implements ExecutionRepository {
       const record = await transaction.get(namespaces.executions, id)
       if (record === undefined) return false
       const current = ExecutionSchema.parse(record.value)
-      if (current.version !== expectedVersion || !sameImmutableExecution(current, execution))
+      if (
+        current.version !== expectedVersion ||
+        !sameImmutableExecution(current, execution) ||
+        current.latestAttemptId !== execution.latestAttemptId
+      )
         return false
       await transaction.put({
         namespace: namespaces.executions,
@@ -1336,6 +1340,19 @@ export class SqliteExecutionRepository implements ExecutionRepository {
         (await transaction.get(namespaces.attempts, recordId(attempt.attemptId))) !== undefined
       ) {
         return false
+      }
+      const latestAttemptId = current.latestAttemptId
+      if (latestAttemptId !== undefined) {
+        await SqliteDurableUsageStore.withTransaction(
+          transaction,
+          current.correlation.workspaceId,
+          (store) =>
+            new DurableUsageLedger({ store }).assertRuntimeAttemptReleased(
+              current.correlation.workspaceId,
+              current.executionId,
+              latestAttemptId
+            )
+        )
       }
       await transaction.put({
         namespace: namespaces.executions,

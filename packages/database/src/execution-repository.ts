@@ -13,6 +13,8 @@ import {
 } from '@control-plane/domain'
 import { and, asc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
+import { PostgresDurableUsageStore } from './usage-store.js'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { commandInbox } from './schema/commands.js'
 import { delegations } from './schema/delegations.js'
 import { executionEvents } from './schema/events.js'
@@ -577,7 +579,12 @@ export class PostgresExecutionRepository implements ExecutionRepository {
   async compareAndSetExecution(expectedVersion: number, execution: Execution): Promise<boolean> {
     const parsed = ExecutionSchema.parse(execution)
     const current = await this.getExecution(parsed.executionId)
-    if (!current || !hasSameImmutableExecutionIdentity(current, parsed)) return false
+    if (
+      !current ||
+      !hasSameImmutableExecutionIdentity(current, parsed) ||
+      current.latestAttemptId !== parsed.latestAttemptId
+    )
+      return false
     const updated = await this.database
       .update(executions)
       .set(toExecutionUpdate(parsed))
@@ -596,37 +603,56 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const parsedExecution = ExecutionSchema.parse(execution)
     const parsedAttempt = ExecutionAttemptSchema.parse(attempt)
     return this.database
-      .transaction(async (transaction) => {
-        const [currentRow] = await transaction
-          .select()
-          .from(executions)
-          .where(eq(executions.executionId, parsedExecution.executionId))
-          .limit(1)
-        if (
-          !currentRow ||
-          !hasSameImmutableExecutionIdentity(fromExecutionRow(currentRow), parsedExecution)
-        ) {
-          return false
-        }
-        const updated = await transaction
-          .update(executions)
-          .set(toExecutionUpdate(parsedExecution))
-          .where(
-            and(
-              eq(executions.executionId, parsedExecution.executionId),
-              eq(executions.version, expectedExecutionVersion)
+      .transaction((transaction) =>
+        PostgresDurableUsageStore.withTransaction(
+          transaction,
+          parsedExecution.correlation.workspaceId,
+          async (store) => {
+            const [currentRow] = await transaction
+              .select()
+              .from(executions)
+              .where(eq(executions.executionId, parsedExecution.executionId))
+              .limit(1)
+            if (
+              !currentRow ||
+              !hasSameImmutableExecutionIdentity(fromExecutionRow(currentRow), parsedExecution)
+            ) {
+              return false
+            }
+            const current = fromExecutionRow(currentRow)
+            if (
+              current.version !== expectedExecutionVersion ||
+              parsedAttempt.executionId !== current.executionId
             )
-          )
-          .returning({ executionId: executions.executionId })
-        if (updated.length !== 1) return false
-        const inserted = await transaction
-          .insert(executionAttempts)
-          .values(toAttemptRow(parsedAttempt))
-          .onConflictDoNothing()
-          .returning({ attemptId: executionAttempts.attemptId })
-        if (inserted.length !== 1) throw new AttemptInsertConflict()
-        return true
-      })
+              return false
+            if (current.latestAttemptId !== undefined) {
+              await new DurableUsageLedger({ store }).assertRuntimeAttemptReleased(
+                current.correlation.workspaceId,
+                current.executionId,
+                current.latestAttemptId
+              )
+            }
+            const updated = await transaction
+              .update(executions)
+              .set(toExecutionUpdate(parsedExecution))
+              .where(
+                and(
+                  eq(executions.executionId, parsedExecution.executionId),
+                  eq(executions.version, expectedExecutionVersion)
+                )
+              )
+              .returning({ executionId: executions.executionId })
+            if (updated.length !== 1) return false
+            const inserted = await transaction
+              .insert(executionAttempts)
+              .values(toAttemptRow(parsedAttempt))
+              .onConflictDoNothing()
+              .returning({ attemptId: executionAttempts.attemptId })
+            if (inserted.length !== 1) throw new AttemptInsertConflict()
+            return true
+          }
+        )
+      )
       .catch((error: unknown) => {
         if (error instanceof AttemptInsertConflict) return false
         throw error

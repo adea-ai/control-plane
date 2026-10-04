@@ -274,7 +274,10 @@ export class PostgresExecutionEventRepository implements ExecutionEventRepositor
           .where(
             and(
               eq(executions.executionId, parsed.executionId),
-              eq(executions.version, expectedVersion)
+              eq(executions.version, expectedVersion),
+              parsed.latestAttemptId === undefined
+                ? isNull(executions.latestAttemptId)
+                : eq(executions.latestAttemptId, parsed.latestAttemptId)
             )
           )
           .returning({ executionId: executions.executionId })

@@ -14,6 +14,7 @@ import { ExecutionLifecycleService } from '@control-plane/domain'
 import { PostgresContextPackageRepository } from './context-package-repository.ts'
 import { PostgresExecutionPlanRepository } from './execution-plan-repository.ts'
 import { PostgresExecutionRepository } from './execution-repository.ts'
+import { PostgresExecutionEventRepository } from './execution-event-repository.ts'
 import { createPostgresConnection } from './connection.ts'
 import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts'
 import { PostgresDurableUsageStore } from './usage-store.ts'
@@ -726,6 +727,113 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
     await expect(service.entries(workspaceId, parent.execution.executionId)).resolves.toEqual(
       parentEntriesAfterRollup
     )
+  })
+
+  test('runtime reservations fence attempt creation across both transaction orderings and contention', async () => {
+    const { isolated } = await createDatabase()
+    for (const ordering of ['reservation-first', 'attempt-first', 'concurrent']) {
+      const owner = await createOwner(isolated.application)
+      const executionId = owner.execution.executionId
+      const workspaceId = owner.execution.correlation.workspaceId
+      const attemptId = owner.attempt.attemptId
+      const nextAttemptId = nextId('att')
+      const repository = new PostgresExecutionRepository(isolated.application)
+      const lifecycle = new ExecutionLifecycleService(repository)
+      const service = ledger(isolated.application)
+      await service.openBudget({
+        workspaceId,
+        executionId,
+        currency: 'USD',
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        source: source(`${ordering}:open`),
+      })
+      const reserve = () =>
+        ledger(isolated.application).reserve({
+          workspaceId,
+          executionId,
+          attemptId,
+          reservationKey: `runtime-attempt:${attemptId}`,
+          maximumMicrounits: 100,
+          maximumTokens: 100,
+          source: source(`${ordering}:reserve`),
+        })
+      const supersede = async () => {
+        const current = await lifecycle.getExecution(executionId)
+        return new ExecutionLifecycleService(
+          new PostgresExecutionRepository(isolated.application)
+        ).createAttempt({
+          executionId,
+          attemptId: nextAttemptId,
+          expectedExecutionVersion: current.version,
+          queuedAt,
+        })
+      }
+      if (ordering === 'reservation-first') {
+        await reserve()
+        await expect(supersede()).rejects.toThrow('SETTLEMENT_INCOMPLETE')
+        expect(await repository.getAttempt(nextAttemptId)).toBeUndefined()
+        const current = await lifecycle.getExecution(executionId)
+        expect(
+          await repository.compareAndSetExecution(current.version, {
+            ...current,
+            version: current.version + 1,
+            latestAttemptId: nextAttemptId,
+          })
+        ).toBe(false)
+        expect(
+          await new PostgresExecutionEventRepository(isolated.application).transitionExecution(
+            current.version,
+            {
+              ...current,
+              state: 'queued',
+              version: current.version + 1,
+              latestAttemptId: nextAttemptId,
+            },
+            {
+              eventId: nextId('evt'),
+              executionId,
+              type: 'execution.queued',
+              schemaVersion: 1,
+              correlation: { ...current.correlation, traceId: nextId('trc') },
+              payload: { state: 'queued' },
+              occurredAt: queuedAt,
+              recordedAt: queuedAt,
+              retentionExpiresAt: '2026-10-20T10:00:01.000Z',
+            }
+          )
+        ).toBeUndefined()
+        await reserve()
+        expect(
+          (await service.entries(workspaceId, executionId)).filter(
+            (entry) => entry.kind === 'reservation'
+          )
+        ).toHaveLength(1)
+        // Explicit synthetic known-no-effect reconciliation, never automatic release.
+        await service.settle({
+          workspaceId,
+          executionId,
+          reservationKey: `runtime-attempt:${attemptId}`,
+          source: source(`${ordering}:known-no-effect:settle`),
+        })
+        await supersede()
+      } else if (ordering === 'attempt-first') {
+        await supersede()
+        await expect(reserve()).rejects.toThrow('USAGE_LEDGER_SCOPE_MISMATCH')
+      } else {
+        const results = await Promise.allSettled([reserve(), supersede()])
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      }
+      const current = await lifecycle.getExecution(executionId)
+      expect((await repository.listAttempts(executionId)).length).toBe(current.attemptCount)
+      if (current.latestAttemptId === nextAttemptId && ordering !== 'reservation-first') {
+        expect(
+          (await service.entries(workspaceId, executionId)).filter(
+            (entry) => entry.kind === 'reservation'
+          )
+        ).toHaveLength(0)
+      }
+    }
   })
 
   test('rejects cross-workspace owners, incorrect parent attribution, and foreign attempts', async () => {

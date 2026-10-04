@@ -177,7 +177,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     if (plan === undefined || plan.schemaVersion !== input.executionPlan.schemaVersion) {
       throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
     }
-    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId)
+    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId, true)
     return this.#runtime.dispatch({ ...input, executionPlan: plan })
   }
 
@@ -193,7 +193,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
       throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
     }
-    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId)
+    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId, true)
     return this.#runtime.applyInteraction(input)
   }
 
@@ -300,7 +300,8 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
   async #authorizeBudgetAdmission(
     execution: Execution,
     executionPlan: ExecutionPlan,
-    attemptId: string
+    attemptId: string,
+    reserveAttempt = false
   ): Promise<void> {
     if (this.#budgetAdmission === undefined) return
     if (execution.latestAttemptId !== attemptId) {
@@ -314,7 +315,19 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     if (attempt.attemptId !== attemptId || attempt.executionId !== execution.executionId) {
       throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
     }
-    await this.#budgetAdmission.authorize({ execution, executionPlan, attemptId })
+    const input = { execution, executionPlan, attemptId }
+    if (reserveAttempt && this.#budgetAdmission.reserve !== undefined) {
+      await this.#budgetAdmission.reserve(input)
+      // Reservation may wait on the usage store while another lifecycle writer
+      // supersedes this attempt. Keep its allocation for reconciliation, but
+      // reject the stale effect before delegating to the runtime.
+      const current = await this.#lifecycle.getExecution(execution.executionId)
+      if (current.latestAttemptId !== attemptId) {
+        throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+      }
+    } else {
+      await this.#budgetAdmission.authorize(input)
+    }
   }
 
   async #existingAttempt(

@@ -41,6 +41,20 @@ for (const profile of ['local', 'hosted-simple']) {
         runtimeTransport: {
           transportKind: 'direct-local',
           start: async ({ attemptId }) => {
+            const store = new SqliteDurableUsageStore(composition.persistence)
+            const budget = await store.transaction(
+              createExecutionPlanTestFixture().correlation.workspaceId,
+              (transaction) => transaction.getBudget(executionId)
+            )
+            expect(budget.reservations).toContainEqual({
+              reservationKey: `runtime-attempt:${attemptId}`,
+              attemptId,
+              maximumMicrounits: budget.maximumMicrounits,
+              maximumTokens: budget.maximumTokens,
+              chargedMicrounits: 0,
+              chargedTokens: 0,
+              status: 'open',
+            })
             starts++
             handle = { handleId: 'native:admission-test', attemptId, startedAt: at }
             return handle
@@ -166,12 +180,18 @@ for (const profile of ['local', 'hosted-simple']) {
         if (scenario === 'valid') {
           expect((await outcome).outcome).toBe('completed')
           expect(starts).toBe(1)
+          const ledger = new DurableUsageLedger({
+            store: new SqliteDurableUsageStore(composition.persistence),
+          })
+          const entries = await ledger.entries(plan.correlation.workspaceId, executionId)
+          expect(entries.filter((entry) => entry.kind === 'reservation')).toHaveLength(1)
           composition.persistence.close({ checkpoint: true })
           await composition.persistence.migrate()
           expect(
             (await composition.executionLifecycleActivities.dispatch(dispatchInput)).outcome
           ).toBe('completed')
           expect(starts).toBe(1)
+          expect(await ledger.entries(plan.correlation.workspaceId, executionId)).toEqual(entries)
         } else {
           await expect(outcome).rejects.toThrow('RUNTIME_BUDGET_ADMISSION_DENIED')
           expect(starts).toBe(0)

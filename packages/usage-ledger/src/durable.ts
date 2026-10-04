@@ -572,6 +572,52 @@ export class DurableUsageLedger {
     })
   }
 
+  /** Called inside the attempt writer's existing store transaction. An open
+   * runtime allocation is a durable dispatch fence until explicit reconciliation.
+   */
+  async assertRuntimeAttemptReleased(
+    workspaceId: string,
+    executionId: string,
+    attemptId: string
+  ): Promise<void> {
+    if (
+      !IdentifierSchemas.workspaceId.safeParse(workspaceId).success ||
+      !IdentifierSchemas.executionId.safeParse(executionId).success ||
+      !IdentifierSchemas.attemptId.safeParse(attemptId).success
+    )
+      throw usageError('INVALID_ENTRY')
+    await this.#store.transaction(workspaceId, async (transaction) => {
+      // Legacy owners may not have an allocation; runtime admission separately
+      // refuses to dispatch them. Never create funding as part of this read.
+      if ((await transaction.getBudget(executionId)) === undefined) {
+        if (
+          (await transaction.listEntries(executionId)).length !== 0 ||
+          (await transaction.getEffect(`runtime-attempt:${attemptId}:reserve`)) !== undefined
+        ) {
+          throw usageError('STORE_STATE_INVALID')
+        }
+        return
+      }
+      const loaded = await this.#loadValidatedTree(transaction, workspaceId, executionId)
+      const reservation = loaded.budget.reservations.find(
+        (value) => value.reservationKey === `runtime-attempt:${attemptId}`
+      )
+      if (
+        reservation === undefined &&
+        (await transaction.getEffect(`runtime-attempt:${attemptId}:reserve`)) !== undefined
+      ) {
+        throw usageError('STORE_STATE_INVALID')
+      }
+      if (
+        reservation !== undefined &&
+        (reservation.attemptId !== attemptId || reservation.childExecutionId !== undefined)
+      ) {
+        throw usageError('STORE_STATE_INVALID')
+      }
+      if (reservation?.status === 'open') throw usageError('SETTLEMENT_INCOMPLETE')
+    })
+  }
+
   async summary(workspaceId: string, executionId: string): Promise<DurableUsageBudgetSummary> {
     const parsed = z
       .object({

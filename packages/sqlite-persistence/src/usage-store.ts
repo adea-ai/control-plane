@@ -1,5 +1,5 @@
 import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contracts'
-import { ExecutionSchema, ExecutionAttemptSchema } from '@control-plane/domain'
+import { ExecutionSchema, ExecutionAttemptSchema, type Execution } from '@control-plane/domain'
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
 import {
   DurableUsageBudgetSchema,
@@ -148,7 +148,20 @@ class SqliteUsageTransaction implements DurableUsageTransaction {
 
   async appendEntry(value: UsageLedgerEntry): Promise<void> {
     const entry = UsageLedgerEntrySchema.parse(value)
-    await this.#owner(entry.executionId, entry.workspaceId, entry.parentExecutionId, true)
+    const owner = await this.#owner(
+      entry.executionId,
+      entry.workspaceId,
+      entry.parentExecutionId,
+      true
+    )
+    if (
+      entry.kind === 'reservation' &&
+      entry.attemptId !== undefined &&
+      entry.reservationKey === `runtime-attempt:${entry.attemptId}` &&
+      owner.latestAttemptId !== entry.attemptId
+    ) {
+      throw new DurableUsageError('USAGE_LEDGER_SCOPE_MISMATCH')
+    }
     if (entry.attemptId !== undefined) {
       const stored = await this.transaction.get('execution-attempts', recordId(entry.attemptId))
       const attempt = ExecutionAttemptSchema.safeParse(stored?.value)
@@ -283,7 +296,7 @@ class SqliteUsageTransaction implements DurableUsageTransaction {
     workspaceId: string,
     parentExecutionId?: string,
     exactParent = false
-  ): Promise<void> {
+  ): Promise<Execution> {
     if (workspaceId !== this.workspaceId) throw new DurableUsageError('USAGE_LEDGER_SCOPE_MISMATCH')
     const record = await this.transaction.get('executions', recordId(executionId))
     const parsed = ExecutionSchema.safeParse(record?.value)
@@ -298,6 +311,7 @@ class SqliteUsageTransaction implements DurableUsageTransaction {
       parsed.data.parentExecutionId !== parentExecutionId
     )
       throw new DurableUsageError('USAGE_LEDGER_SCOPE_MISMATCH')
+    return parsed.data
   }
 }
 
