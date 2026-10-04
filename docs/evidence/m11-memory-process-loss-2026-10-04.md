@@ -55,6 +55,12 @@ assertions), with two PostgreSQL cases skipped, in 1.382 seconds (1.43 seconds i
 bounded runner). `turbo boundaries` checks
 768 files in 42 packages with no issues; scoped lint and formatting also pass.
 
+CI on the relocated head exposed an undeclared root import of `@control-plane/testing`;
+the source-alias runner had hidden it. A parsed-import regression first reproduced the missing
+manifest dependency. The suite now uses `createIsolatedTestDatabase` and credential loading
+from existing root dependencies, with the same isolated setup/migration/disposal lifecycle.
+No dependency or lockfile change is needed. Current-head PostgreSQL CI remains required.
+
 ## Limits
 
 This kills a process owning the application memory boundary. It does not restart a running

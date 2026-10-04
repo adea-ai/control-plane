@@ -1,3 +1,4 @@
+import { parse } from 'acorn'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -142,6 +143,30 @@ test('schedules every discovered integration file through a package or repositor
       patterns.some((pattern) => new Glob(pattern).match(relativeParts.join('/'))),
       `${path} is not selected by its package integration command`
     )
+  }
+})
+
+test('repository memory fixtures use declared workspace dependencies', async () => {
+  const manifest = await readJson('package.json')
+  const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
+  for (const path of [
+    'tests/memory-process-loss.integration.test.mjs',
+    'tests/fixtures/memory-root-process-loss.mjs',
+  ]) {
+    const source = parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+    })
+    for (const declaration of source.body.filter((node) => node.type === 'ImportDeclaration')) {
+      const name = declaration.source.value
+      if (!name.startsWith('@control-plane/')) continue
+      const packageName = name.split('/').slice(0, 2).join('/')
+      assert.equal(
+        dependencies[packageName],
+        'workspace:*',
+        `${path} imports undeclared ${packageName}`
+      )
+    }
   }
 })
 

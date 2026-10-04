@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createIsolatedPostgres } from '@control-plane/testing/postgres'
-import { integrationTestTimeout } from '@control-plane/database/testing'
+import { loadDatabaseCredentials } from '@control-plane/config'
+import { createIsolatedTestDatabase, integrationTestTimeout } from '@control-plane/database/testing'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -79,7 +79,11 @@ for (const profile of ['cloud', 'hosted-server']) {
     () => {
       let database
       beforeAll(async () => {
-        database = await createIsolatedPostgres({ migrate: false })
+        database = await createIsolatedTestDatabase({
+          administration: loadDatabaseCredentials(process.env, 'administration'),
+          application: loadDatabaseCredentials(process.env, 'application'),
+          migration: loadDatabaseCredentials(process.env, 'migration'),
+        })
         await database.migrate()
       }, integrationTestTimeout())
       afterAll(async () => {
