@@ -119,6 +119,13 @@ case filters on shards 1 and 2. The partition check uses the development-only Ac
 parser (independent of the TypeScript compiler API) to inventory its literal test names, bounds each
 slice, and executes those names through Bun using the runner's actual arguments to reject missing
 or duplicate selection. Unsharded local runs still execute the full file without filters.
+Preview cleanup resolves the exact run/attempt/shard name and validates the project, parent,
+protection flags, and complete listing before exporting a branch ID for deletion. Each listing
+page allows three attempts for transport failures or HTTP 408/429/500/502/503/504, with ten-second
+request deadlines and 500/1000 ms backoff. Other HTTP failures and invalid metadata fail closed.
+The lookup step has a twelve-minute ceiling, including the existing twenty-page limit; exhausting
+retries leaves the workflow failed and requires follow-up cleanup. The one-day branch expiration
+is a fallback, not evidence that deletion succeeded. Cleanup retries do not repeat integration tests.
 A remote branch stretches tests that finish in
 seconds locally to tens of seconds and its pooler occasionally severs pooled connections, so the
 remote lane raises the per-test ceiling to 120 seconds and retries each file once in a fresh

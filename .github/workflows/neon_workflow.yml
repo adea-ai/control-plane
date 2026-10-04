@@ -239,6 +239,7 @@ jobs:
       - name: Find exact preview branch for cleanup
         if: always() && steps.create_neon_branch.outcome == 'success'
         id: cleanup_branch
+        timeout-minutes: 12
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
@@ -275,13 +276,34 @@ jobs:
               url.searchParams.set('search', targetName);
               url.searchParams.set('limit', '1000');
               if (cursor) url.searchParams.set('cursor', cursor);
-              const response = await fetch(url, {
-                headers: { Authorization: 'Bearer ' + NEON_API_KEY },
-                redirect: 'error',
-                signal: AbortSignal.timeout(10000),
-              });
-              if (response.status !== 200) throw new Error('Neon cleanup lookup failed: HTTP ' + response.status);
-              const result = await response.json();
+              let response;
+              let result;
+              for (let attempt = 0; attempt < 3; attempt += 1) {
+                try {
+                  response = await fetch(url, {
+                    headers: { Authorization: 'Bearer ' + NEON_API_KEY },
+                    redirect: 'error',
+                    signal: AbortSignal.timeout(10000),
+                  });
+                } catch {
+                  response = undefined;
+                }
+                if (response?.status === 200) {
+                  try {
+                    result = await response.json();
+                    break;
+                  } catch (error) {
+                    if (error?.name === 'SyntaxError') throw new Error('Invalid Neon branch listing');
+                    response = undefined;
+                  }
+                }
+                const retryable = !response || [408, 429, 500, 502, 503, 504].includes(response.status);
+                if (!retryable || attempt === 2) {
+                  throw new Error('Neon cleanup lookup failed: ' + (response ? 'HTTP ' + response.status : 'transport error'));
+                }
+                if (response?.body) await response.body.cancel().catch(() => {});
+                await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+              }
               if (!Array.isArray(result?.branches)) throw new Error('Invalid Neon branch listing');
               for (const branch of result.branches) {
                 if (!branch || typeof branch.name !== 'string') throw new Error('Invalid Neon branch entry');
