@@ -467,9 +467,12 @@ test('configures the Code Foundry CI baseline for the public direct-workflow rep
   assert.doesNotMatch(config, /^opencode_security:/m)
   assert.doesNotMatch(config, /^staging_validation_mode:/m)
   assert.match(config, /^runtime_ref: v\d+\.\d+\.\d+$/m)
-  for (const runner of ['runner', 'ci_runner', 'security_runner', 'pr_runner', 'release_runner']) {
+  for (const runner of ['runner', 'security_runner', 'pr_runner', 'release_runner']) {
     assert.match(config, new RegExp(`^${runner}: ubuntu-slim$`, 'm'))
   }
+  // The CI lane carries the oxlint step, whose allocator pool aborts on
+  // ubuntu-slim; it pins a standard runner instead.
+  assert.match(config, /^ci_runner: ubuntu-latest$/m)
   assert.match(config, /^test_runner: ubuntu-latest$/m)
   assert.match(config, /^unit_runner: ubuntu-latest$/m)
   assert.match(config, /^codeql_runner: ubuntu-latest$/m)
@@ -531,7 +534,9 @@ test('generates the direct-workflow Code Foundry callers with parallel validatio
     )
   )
   assert.equal((validation.match(/vars\.CI_BILLING_PAUSED != 'true'/g) ?? []).length, 3)
-  assert.match(validation, /cancel-in-progress: true/)
+  // v1.44.x cancels only superseded pull-request runs; push runs queue so a
+  // cancellation can never drop default-branch analysis.
+  assert.match(validation, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/)
   assert.match(validation, /codeql-runner: ubuntu-latest/)
   assert.match(validation, /unit-runner: ubuntu-latest/)
   const audit = await readFile(
