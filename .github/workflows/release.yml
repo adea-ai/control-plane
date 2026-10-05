@@ -41,6 +41,3 @@ jobs:
       pull-requests: write
       # Required by the reusable legacy workflow's declared npm job, which is disabled here.
       id-token: write
-    secrets:
-      CODE_FOUNDRY_TOKEN: ${{ secrets.CODE_FOUNDRY_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
