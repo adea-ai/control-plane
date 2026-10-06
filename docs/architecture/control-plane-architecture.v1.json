@@ -222,6 +222,7 @@
         ".",
         "./catalog-approval",
         "./catalog-models",
+        "./catalog-ownership",
         "./context-command-grant",
         "./context-provider-administration",
         "./context-provider-registration"
@@ -905,6 +906,456 @@
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-CATALOG-PROFILE-DEPRECATE",
+      "name": "deprecateWorkspaceProfile",
+      "operation": "catalog.profile.deprecate",
+      "method": "POST",
+      "path": "/v1/catalog/profiles/deprecate",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:manage scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceAgentProfileCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "exact-version or item-wide lifecycle transition with revision compare-and-set",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-profile-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.profile.deprecate",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-PROFILE-GET",
+      "name": "getWorkspaceProfile",
+      "operation": "catalog.profile.get",
+      "method": "POST",
+      "path": "/v1/catalog/profiles/get",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:read scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceAgentProfileCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL versioned catalog repository with workspace visibility filtering",
+        "execution": "visible record, non-draft version summaries and one exact version",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-profile-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.profile.get",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-PROFILE-LIST",
+      "name": "listWorkspaceProfiles",
+      "operation": "catalog.profile.list",
+      "method": "POST",
+      "path": "/v1/catalog/profiles/list",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:read scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceAgentProfileCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL versioned catalog repository with workspace visibility filtering",
+        "execution": "visible system and exact-workspace records in ascending stable-ID pages",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-profile-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.profile.list",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-PROFILE-PUBLISH",
+      "name": "publishWorkspaceProfile",
+      "operation": "catalog.profile.publish",
+      "method": "POST",
+      "path": "/v1/catalog/profiles/publish",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:publish scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceAgentProfileCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "VersionedCatalog draft-then-publish with content digest and version uniqueness",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-profile-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.profile.publish",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-PROFILE-REVOKE",
+      "name": "revokeWorkspaceProfile",
+      "operation": "catalog.profile.revoke",
+      "method": "POST",
+      "path": "/v1/catalog/profiles/revoke",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:manage scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceAgentProfileCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "exact-version or item-wide lifecycle transition with revision compare-and-set",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-profile-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.profile.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-SKILL-DEPRECATE",
+      "name": "deprecateWorkspaceSkill",
+      "operation": "catalog.skill.deprecate",
+      "method": "POST",
+      "path": "/v1/catalog/skills/deprecate",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:manage scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceSkillCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "exact-version or item-wide lifecycle transition with revision compare-and-set",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-skill-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.skill.deprecate",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-SKILL-GET",
+      "name": "getWorkspaceSkill",
+      "operation": "catalog.skill.get",
+      "method": "POST",
+      "path": "/v1/catalog/skills/get",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:read scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceSkillCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL versioned catalog repository with workspace visibility filtering",
+        "execution": "visible record, non-draft version summaries and one exact version",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-skill-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.skill.get",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-SKILL-LIST",
+      "name": "listWorkspaceSkills",
+      "operation": "catalog.skill.list",
+      "method": "POST",
+      "path": "/v1/catalog/skills/list",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:read scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceSkillCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL versioned catalog repository with workspace visibility filtering",
+        "execution": "visible system and exact-workspace records in ascending stable-ID pages",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-skill-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.skill.list",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-SKILL-PUBLISH",
+      "name": "publishWorkspaceSkill",
+      "operation": "catalog.skill.publish",
+      "method": "POST",
+      "path": "/v1/catalog/skills/publish",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:publish scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceSkillCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "VersionedCatalog draft-then-publish with content digest and version uniqueness",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-skill-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.skill.publish",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CATALOG-SKILL-REVOKE",
+      "name": "revokeWorkspaceSkill",
+      "operation": "catalog.skill.revoke",
+      "method": "POST",
+      "path": "/v1/catalog/skills/revoke",
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with catalog:manage scope; authenticated caller and envelope workspace binding",
+        "service": "WorkspaceSkillCatalogController -> RepositoryWorkspaceCatalogService -> WorkspaceCatalog",
+        "persistence": "SQLite or PostgreSQL WorkspaceCatalogCommandRepository; catalog mutation and original receipt in one per-workspace serialized transaction",
+        "execution": "exact-version or item-wide lifecycle transition with revision compare-and-set",
+        "delivery": "strict workspace catalog contract (major 3); current request response identity; structured audit event without content",
+        "cleanup": "composition-owned provider shutdown; failed mutations roll back without a receipt"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud, Hosted Server, Hosted Simple and Local bind the same service over their catalog persistence. SQLite service/HTTP deny tests and focused PostgreSQL receipt and hosted HTTP integration cover source behavior.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/catalog/workspace-skill-catalog.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/catalog/workspace-catalog.service.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/workspace-catalog.integration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "apps/hosted-control-plane/src/hosted-http.integration.test.mjs"
+        }
+      ],
+      "inOpenApi": true,
+      "openApiOperationId": "catalog.skill.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
     },
     {
       "id": "OP-CONTEXT-RESOLVE",
@@ -1811,7 +2262,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:52d4e8c2044cd488003b03bfafbfbe731c17a4940b751ab95293b51fdb3dbdd9"
+      "sourceDigest": "sha256:f89f266c9b677235f58b79937cd92029871c0093c216a4263af9a99374c4feca"
     },
     {
       "id": "hosted-server",
@@ -1850,7 +2301,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:72a623551b72b6fbb4147e87ae854c9f322b68be02a96be2b4de105c486eabe2"
+      "sourceDigest": "sha256:6036c288ce03e2d3038e25ddaff20d3100ba023b052d2f63ff21f30262cdcefa"
     },
     {
       "id": "hosted-simple",
@@ -1889,7 +2340,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:ef3194c4c22eb5b540a14180f426684447cfcb9d5d87854f4f12a74bacb4ad26"
+      "sourceDigest": "sha256:42fabfdc0d67ed9f0f283e4728d5cd08ba479fe94e0943ddf7536e0769ddeb6c"
     },
     {
       "id": "local",
@@ -1932,7 +2383,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:ef3194c4c22eb5b540a14180f426684447cfcb9d5d87854f4f12a74bacb4ad26"
+      "sourceDigest": "sha256:42fabfdc0d67ed9f0f283e4728d5cd08ba479fe94e0943ddf7536e0769ddeb6c"
     }
   ],
   "ownership": [

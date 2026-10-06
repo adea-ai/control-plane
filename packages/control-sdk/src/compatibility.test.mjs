@@ -17,6 +17,16 @@ describe('Control API generated contract', () => {
     expect(generated).toEqual(committed)
     expect(Object.keys(generated.paths).toSorted()).toEqual([
       '/v1/authentication/verify',
+      '/v1/catalog/profiles/deprecate',
+      '/v1/catalog/profiles/get',
+      '/v1/catalog/profiles/list',
+      '/v1/catalog/profiles/publish',
+      '/v1/catalog/profiles/revoke',
+      '/v1/catalog/skills/deprecate',
+      '/v1/catalog/skills/get',
+      '/v1/catalog/skills/list',
+      '/v1/catalog/skills/publish',
+      '/v1/catalog/skills/revoke',
       '/v1/context-packages/resolve',
       '/v1/executions/accept',
       '/v1/executions/cancel',

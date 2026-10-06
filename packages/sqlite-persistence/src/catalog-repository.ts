@@ -15,7 +15,13 @@ import {
   type CatalogApprovalRepository,
   type CatalogVersionKind,
 } from '@control-plane/domain/catalog-approval'
-import type { AgentProfileRepository, SkillRepository } from '@control-plane/domain'
+import type {
+  AgentProfileRepository,
+  SkillRepository,
+  WorkspaceCatalogPageQuery,
+  WorkspaceCatalogReader,
+} from '@control-plane/domain'
+import { visiblePage } from '@control-plane/domain/catalog-ownership'
 import { insert, get, list, recordId, json } from './record-storage.js'
 
 const namespaces = {
@@ -26,8 +32,28 @@ const namespaces = {
   catalogApprovals: 'catalog-approvals',
 } as const
 
-export class SqliteVersionedCatalogRepository implements AgentProfileRepository, SkillRepository {
+export class SqliteVersionedCatalogRepository
+  implements AgentProfileRepository, SkillRepository, WorkspaceCatalogReader
+{
   constructor(readonly provider: PersistenceProvider) {}
+
+  async listWorkspaceSkills(query: WorkspaceCatalogPageQuery): Promise<readonly Skill[]> {
+    return visiblePage(
+      await list(this.provider, namespaces.skills, SkillSchema.parse),
+      (skill) => skill.skillId,
+      query
+    )
+  }
+
+  async listWorkspaceAgentProfiles(
+    query: WorkspaceCatalogPageQuery
+  ): Promise<readonly AgentProfile[]> {
+    return visiblePage(
+      await list(this.provider, namespaces.profiles, AgentProfileSchema.parse),
+      (profile) => profile.profileId,
+      query
+    )
+  }
 
   insertAgentProfile(input: AgentProfile): Promise<boolean> {
     const profile = AgentProfileSchema.parse(input)

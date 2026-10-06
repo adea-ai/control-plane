@@ -1,4 +1,5 @@
-import { and, eq, asc } from 'drizzle-orm'
+import { and, eq, asc, or, sql, type SQL } from 'drizzle-orm'
+import type { PgColumn } from 'drizzle-orm/pg-core'
 import type {
   AgentProfile,
   AgentProfileRepository,
@@ -6,12 +7,44 @@ import type {
   Skill,
   SkillRepository,
   SkillVersion,
+  WorkspaceCatalogPageQuery,
+  WorkspaceCatalogReader,
 } from '@control-plane/domain'
 import type { ControlPlaneDatabase } from './connection.js'
 import { agentProfileVersions, agentProfiles, skillVersions, skills } from './schema/catalog.js'
 
-export class PostgresCatalogRepository implements AgentProfileRepository, SkillRepository {
-  constructor(private readonly database: ControlPlaneDatabase) {}
+type CatalogTransaction = Parameters<Parameters<ControlPlaneDatabase['transaction']>[0]>[0]
+export type CatalogDatabase = ControlPlaneDatabase | CatalogTransaction
+
+export class PostgresCatalogRepository
+  implements AgentProfileRepository, SkillRepository, WorkspaceCatalogReader
+{
+  constructor(private readonly database: CatalogDatabase) {}
+
+  /** System and exact-workspace Skills, ascending by ID; never organization or private. */
+  async listWorkspaceSkills(query: WorkspaceCatalogPageQuery): Promise<readonly Skill[]> {
+    const rows = await this.database
+      .select()
+      .from(skills)
+      .where(visibleTo(skills.ownership, skills.skillId, query))
+      .orderBy(sql`${skills.skillId} collate "C"`)
+      .limit(query.limit)
+    return rows.map((row) => parse<Skill>({ ...row, createdAt: row.createdAt.toISOString() }))
+  }
+
+  async listWorkspaceAgentProfiles(
+    query: WorkspaceCatalogPageQuery
+  ): Promise<readonly AgentProfile[]> {
+    const rows = await this.database
+      .select()
+      .from(agentProfiles)
+      .where(visibleTo(agentProfiles.ownership, agentProfiles.profileId, query))
+      .orderBy(sql`${agentProfiles.profileId} collate "C"`)
+      .limit(query.limit)
+    return rows.map((row) =>
+      parse<AgentProfile>({ ...row, createdAt: row.createdAt.toISOString() })
+    )
+  }
 
   async insertAgentProfile(profile: AgentProfile): Promise<boolean> {
     const result = await this.database
@@ -132,6 +165,22 @@ export class PostgresCatalogRepository implements AgentProfileRepository, SkillR
       .returning({ id: skillVersions.skillVersionId })
     return result.length === 1
   }
+}
+
+function visibleTo(
+  ownership: PgColumn,
+  id: PgColumn,
+  query: WorkspaceCatalogPageQuery
+): SQL | undefined {
+  // Exact-shape matches mirror workspaceCatalogVisibility(): extra keys are never visible.
+  const visible = or(
+    sql`${ownership} = '{"scope":"system"}'::jsonb`,
+    sql`${ownership} = jsonb_build_object('scope', 'workspace', 'workspaceId', ${query.workspaceId}::text)`
+  )
+  // Binary collation keeps page order identical to the SQLite and in-memory adapters.
+  return query.after === undefined
+    ? visible
+    : and(visible, sql`${id} collate "C" > ${query.after}::text collate "C"`)
 }
 
 function profileVersionRow(version: AgentProfileVersion) {

@@ -5,6 +5,7 @@ import {
   type MemoryWriteApplicationConfiguration,
 } from '@control-plane/memory-writeback'
 import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
+import { RepositoryWorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   decidedRetentionPolicy,
@@ -21,6 +22,7 @@ import {
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresGraphDefinitionRepository,
+  PostgresWorkspaceCatalogCommandRepository,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionEventRepository,
   PostgresInteractionRepository,
@@ -91,6 +93,7 @@ export interface ManagedCloudControlApiComposition {
   readonly connection: PostgresConnection
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly graphAdministrationService: RepositoryGraphAdministrationService
+  readonly workspaceCatalogService: RepositoryWorkspaceCatalogService
   readonly executionValidationService: DurableExecutionValidationService
   readonly serviceAuthenticator: PolicyServiceAuthenticator
   readonly profileResolutionService: RepositoryProfileResolutionService
@@ -238,6 +241,11 @@ export function createManagedCloudControlApiComposition(
     graphAdministrationService: new RepositoryGraphAdministrationService({
       repository: (workspaceId) =>
         new PostgresGraphDefinitionRepository(connection.database, workspaceId),
+    }),
+    workspaceCatalogService: new RepositoryWorkspaceCatalogService({
+      catalog,
+      commands: new PostgresWorkspaceCatalogCommandRepository(connection.database),
+      logger,
     }),
     executionValidationService: new DurableExecutionValidationService({
       compilerVersion: executionPlanCompilerVersion,

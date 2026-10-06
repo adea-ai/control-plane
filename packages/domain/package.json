@@ -19,6 +19,11 @@
       "node": "./dist/catalog-models.js",
       "default": "./dist/catalog-models.js"
     },
+    "./catalog-ownership": {
+      "types": "./dist/catalog-ownership.d.ts",
+      "node": "./dist/catalog-ownership.js",
+      "default": "./dist/catalog-ownership.js"
+    },
     "./catalog-approval": {
       "types": "./dist/catalog-approval.d.ts",
       "node": "./dist/catalog-approval.js",

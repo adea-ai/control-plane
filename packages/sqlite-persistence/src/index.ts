@@ -21,3 +21,4 @@ export { assertSqliteWorkflowExecutionReference } from './workflow-reference-gua
 export * from './graph-definition-repository.js'
 export * from './tool-repositories.js'
 export * from './memory-write-proposal-repository.js'
+export * from './workspace-catalog-command-repository.js'

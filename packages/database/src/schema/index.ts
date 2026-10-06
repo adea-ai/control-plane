@@ -8,6 +8,7 @@ export {
   catalogVersionLifecycle,
   skillVersions,
   skills,
+  workspaceCatalogCommands,
 } from './catalog.js'
 export { credentialSecrets } from './credential-secrets.js'
 export { contextPackages } from './context-packages.js'

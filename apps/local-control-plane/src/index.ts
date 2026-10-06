@@ -147,6 +147,9 @@ export const start = (options: LocalControlPlaneStartOptions = {}) =>
         executionAcceptanceService: composition.executionAcceptanceService,
         executionValidationService: composition.executionValidationService,
         graphAdministrationService: composition.graphAdministrationService,
+        workspaceCatalogService: composition.createWorkspaceCatalogService(
+          options.logger ?? jsonLogger
+        ),
         profileResolutionService: composition.profileResolutionService,
         projectStateResolutionService: composition.projectStateResolutionService,
         projectStateInitializationService: composition.projectStateInitializationService,

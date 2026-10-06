@@ -62,3 +62,34 @@ compilation; the resolver never silently replaces an exact profile pin.
 historical versions, return defensive snapshots, and implement revision compare-and-set plus published
 version uniqueness in one transaction. A concurrent publish has exactly one winner; losers receive an
 explicit revision or version conflict and must reload before retrying.
+
+## Workspace catalog API
+
+Adea manages workspace-owned Skills and AgentProfiles through the authenticated Control API
+(ADR 0013 in Adea; routes and envelopes in [`api.md`](api.md#workspace-catalog-administration)).
+Ownership is always `workspace{workspaceId}` for the envelope workspace; the API never creates or
+reveals organization or private entries. System entries are listed and readable but never
+writable by a workspace. An item owned by another workspace is indistinguishable from a missing
+one, for reads and writes alike.
+
+Publication follows the same path as the [operator bootstrap](local-operator-bootstrap.md):
+`VersionedCatalog.publishNewSkillVersion` and `publishNewAgentProfileVersion` create a draft and
+publish it with one timestamp, so digests, immutability and version-number or semantic-version
+uniqueness are identical. The first publish of a new stable ID creates its record (display name
+required; Skills receive `workspace-authorized` provenance). Later publishes add immutable
+versions; a supplied display name must match the record because records are not renamed.
+AgentProfile definitions may pin only `published` Skill versions that are visible to the
+workspace (owned or system) and whose content digest matches exactly.
+
+Lifecycle changes reuse the transitions above. A version target names the exact version and its
+`expectedRevision`; an item target applies to every eligible version at its current revision, in
+creation order: `published` versions for deprecation, `published` or `deprecated` versions for
+revocation. Revoked versions keep their content for provenance and remain readable. Drafts are
+never exposed.
+
+Every publish or lifecycle command commits its catalog mutation and an original result receipt
+atomically (Local and Hosted `simple`: SQLite `workspace-catalog-commands`; Cloud and Hosted
+`server`: PostgreSQL `workspace_catalog_commands`, migration `0063`). Commands for one workspace
+are serialized, so concurrent publishes of the same version number or semantic version have
+exactly one winner. Receipts are idempotency state, not logical catalog state: profile
+portability moves the catalog records and versions and omits receipts.

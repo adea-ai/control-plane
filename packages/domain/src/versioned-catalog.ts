@@ -15,6 +15,7 @@ import {
   type SkillManifest,
   type SkillVersion,
 } from './catalog-models.js'
+import { visiblePage } from './catalog-ownership.js'
 
 export type CatalogErrorCode =
   | 'CATALOG_RECORD_EXISTS'
@@ -132,6 +133,25 @@ export class InMemoryVersionedCatalogRepository implements AgentProfileRepositor
     return [...this.#skillVersions.values()]
       .filter((version) => version.skillId === skillId)
       .map(clone)
+  }
+
+  /** Workspace catalog listing: system and exact-workspace records, ascending by ID. */
+  async listWorkspaceSkills(query: {
+    readonly workspaceId: string
+    readonly after?: string | undefined
+    readonly limit: number
+  }): Promise<readonly Skill[]> {
+    return visiblePage([...this.#skills.values()], (skill) => skill.skillId, query).map(clone)
+  }
+
+  async listWorkspaceAgentProfiles(query: {
+    readonly workspaceId: string
+    readonly after?: string | undefined
+    readonly limit: number
+  }): Promise<readonly AgentProfile[]> {
+    return visiblePage([...this.#profiles.values()], (profile) => profile.profileId, query).map(
+      clone
+    )
   }
 
   async compareAndSetSkillVersion(
@@ -322,6 +342,54 @@ export class VersionedCatalog {
     })
     await this.#saveSkillVersion(input.expectedRevision, next)
     return next
+  }
+
+  /**
+   * Creates a draft and publishes it with the same timestamp: the single publication path
+   * shared by the operator bootstrap and the workspace catalog API. The manifest omits its
+   * digest; it is computed from validated content.
+   */
+  async publishNewSkillVersion(input: {
+    readonly skillVersionId: string
+    readonly skillId: string
+    readonly manifest: unknown
+    readonly content: unknown
+    readonly at: string
+  }): Promise<SkillVersion> {
+    const draft = await this.createSkillDraft({
+      skillVersionId: input.skillVersionId,
+      skillId: input.skillId,
+      manifest: SkillManifestSchema.omit({ contentDigest: true }).parse(input.manifest),
+      content: input.content,
+      createdAt: input.at,
+    })
+    return this.publishSkillVersion({
+      skillVersionId: draft.skillVersionId,
+      expectedRevision: draft.revision,
+      publishedAt: input.at,
+    })
+  }
+
+  /** Draft-then-publish counterpart of {@link publishNewSkillVersion} for AgentProfiles. */
+  async publishNewAgentProfileVersion(input: {
+    readonly profileVersionId: string
+    readonly profileId: string
+    readonly version: number
+    readonly definition: unknown
+    readonly at: string
+  }): Promise<AgentProfileVersion> {
+    const draft = await this.createAgentProfileDraft({
+      profileVersionId: input.profileVersionId,
+      profileId: input.profileId,
+      version: input.version,
+      definition: input.definition,
+      createdAt: input.at,
+    })
+    return this.publishAgentProfileVersion({
+      profileVersionId: draft.profileVersionId,
+      expectedRevision: draft.revision,
+      publishedAt: input.at,
+    })
   }
 
   deprecateAgentProfileVersion = (id: string, revision: number, at: string, reason: string) =>
