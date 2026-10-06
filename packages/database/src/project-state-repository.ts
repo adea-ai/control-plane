@@ -2,10 +2,15 @@ import { isDeepStrictEqual } from 'node:util'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   AppliedStateMutationSchema,
+  ProjectStateInitializationReceiptSchema,
   ProjectStateSchema,
   StatePromotionProposalSchema,
+  parseInitialization,
   type AppliedStateMutation,
   type ProjectState,
+  type ProjectStateInitializationOutcome,
+  type ProjectStateInitializationReceipt,
+  type ProjectStateInitializationRepository,
   type ProjectStateRepository,
   type StatePromotionProposal,
   type StatePromotionProposalRepository,
@@ -14,14 +19,78 @@ import { and, asc, eq } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { outboxEvents } from './schema/messaging.js'
 import {
+  projectStateInitializations,
   projectStateMutations,
   projectStateRevisions,
   projectStates,
   statePromotionProposals,
 } from './schema/project-state.js'
 
-export class PostgresProjectStateRepository implements ProjectStateRepository {
+export class PostgresProjectStateRepository
+  implements ProjectStateRepository, ProjectStateInitializationRepository
+{
   constructor(readonly database: ControlPlaneDatabase) {}
+
+  async initializeWithReceipt(
+    stateInput: ProjectState,
+    receiptInput: ProjectStateInitializationReceipt
+  ): Promise<ProjectStateInitializationOutcome> {
+    const { state, receipt } = parseInitialization(stateInput, receiptInput)
+    const created = await this.database.transaction(async (transaction) => {
+      const inserted = await transaction
+        .insert(projectStates)
+        .values(toCurrentRow(state))
+        .onConflictDoNothing()
+        .returning({ projectId: projectStates.projectId })
+      if (inserted.length === 0) return false
+      await transaction.insert(projectStateRevisions).values(toRevisionRow(state))
+      await transaction.insert(projectStateInitializations).values({
+        ...receipt,
+        initializedAt: new Date(receipt.initializedAt),
+      })
+      // Initialization is not a CAS mutation, so it emits its own event rather than
+      // project_state.updated; it exists exactly when revision zero commits.
+      await transaction.insert(outboxEvents).values({
+        aggregateType: 'project_state',
+        aggregateId: `${state.workspaceId}:${state.projectId}`,
+        eventType: 'project_state.initialized',
+        payload: {
+          workspaceId: state.workspaceId,
+          projectId: state.projectId,
+          revision: 0,
+          commandId: receipt.commandId,
+          initializedAt: receipt.initializedAt,
+        },
+      })
+      return true
+    })
+    if (created) return { outcome: 'initialized' }
+    const existing = await this.getInitializationReceipt(state.workspaceId, state.projectId)
+    return existing === undefined ? { outcome: 'exists' } : { outcome: 'exists', receipt: existing }
+  }
+
+  async getInitializationReceipt(
+    workspaceId: string,
+    projectId: string
+  ): Promise<ProjectStateInitializationReceipt | undefined> {
+    const scope = parseScope(workspaceId, projectId)
+    const [row] = await this.database
+      .select()
+      .from(projectStateInitializations)
+      .where(
+        and(
+          eq(projectStateInitializations.workspaceId, scope.workspaceId),
+          eq(projectStateInitializations.projectId, scope.projectId)
+        )
+      )
+      .limit(1)
+    return row === undefined
+      ? undefined
+      : ProjectStateInitializationReceiptSchema.parse({
+          ...row,
+          initializedAt: row.initializedAt.toISOString(),
+        })
+  }
 
   async create(input: ProjectState): Promise<boolean> {
     const state = ProjectStateSchema.parse(input)

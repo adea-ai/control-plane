@@ -9,6 +9,12 @@ an empty ProjectState at revision zero. Publication and initial state commit in 
 transaction. Exact replay returns the same references; conflicting ownership, content, version
 numbers or initial state fails without partial writes. Existing state revisions are preserved.
 
+A running deployment can instead initialize a project's revision-zero ProjectState through the
+authenticated `project-state.initialize` route (see [ProjectState](project-state.md)). The two
+paths do not share receipts: the route rejects a scope the command created as already
+initialized, and the command accepts an existing revision zero only when it exactly matches its
+own input (including `at`).
+
 This command has database-owner authority. It creates no HTTP route, service credential, catalog
 approval, context grant, tool tariff, provider credential or runtime binding. Configure those through
 their existing operator procedures. Catalog approval, when enabled, still requires a separate

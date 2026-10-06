@@ -16,6 +16,8 @@ import {
   ExecutionRequestValidationResponseSchema,
   ProfileResolutionRequestSchema,
   ProfileResolutionResponseSchema,
+  ProjectStateInitializationRequestSchema,
+  ProjectStateInitializationResponseSchema,
   ProjectStateResolutionRequestSchema,
   ProjectStateResolutionResponseSchema,
   RuntimeListRequestSchema,
@@ -107,6 +109,13 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/project-states/resolve',
     requestSchema: ProjectStateResolutionRequestSchema,
     responseSchema: ProjectStateResolutionResponseSchema,
+  },
+  initializeProjectState: {
+    operation: 'project-state.initialize',
+    method: 'POST',
+    path: '/v1/project-states/initialize',
+    requestSchema: ProjectStateInitializationRequestSchema,
+    responseSchema: ProjectStateInitializationResponseSchema,
   },
   resolveContextPackage: {
     operation: 'context-package.resolve',

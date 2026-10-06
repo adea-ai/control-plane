@@ -1592,6 +1592,51 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-PROJECT-STATE-INITIALIZE",
+      "name": "initializeProjectState",
+      "operation": "project-state.initialize",
+      "method": "POST",
+      "path": "/v1/project-states/initialize",
+      "inOpenApi": true,
+      "controllerReachable": true,
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with project-state:initialize scope; required envelope project within workspace/project grants; caller assertion bound to the verified principal",
+        "service": "ProjectStateInitializationController -> RepositoryProjectStateInitializationService -> initializeProjectStateOnce",
+        "persistence": "PostgreSQL or SQLite ProjectState repository selected by the active composition; revision zero, history snapshot, initialization receipt and initialized event in one transaction",
+        "execution": "empty revision-zero creation once per scope; exact retry replays the original receipt; other commands conflict",
+        "delivery": "revision-zero ProjectState reference with the original command and initialization time",
+        "cleanup": "failed initialization rolls back without a receipt or event"
+      },
+      "assessment": "Every supported profile composes the initializer over its concrete ProjectState repository. HTTP deny-by-default, SQLite restart/concurrency/parity and focused PostgreSQL integration tests cover the semantics.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/project-states/project-state-initialization.service.ts"
+        },
+        {
+          "kind": "controller",
+          "path": "apps/control-api/src/project-states/project-state-initialization.controller.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/project-states/project-state-initialization.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/project-state-initialization.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/project-state-initialization.integration.test.mjs"
+        }
+      ],
+      "openApiOperationId": "project-state.initialize",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true
+    },
+    {
       "id": "OP-PROJECT-STATE-RESOLVE",
       "name": "resolveProjectState",
       "operation": "project-state.resolve",
@@ -1766,7 +1811,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:205556e186e0ffff6f0a186a8fb281eb9adbc1c47e32150716b5d39a074d94b2"
+      "sourceDigest": "sha256:52d4e8c2044cd488003b03bfafbfbe731c17a4940b751ab95293b51fdb3dbdd9"
     },
     {
       "id": "hosted-server",
@@ -1805,7 +1850,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:590d10328c1021e79e4ca797b99fac62eb4755d4f3714e0d231d76c365e10505"
+      "sourceDigest": "sha256:72a623551b72b6fbb4147e87ae854c9f322b68be02a96be2b4de105c486eabe2"
     },
     {
       "id": "hosted-simple",
@@ -1844,7 +1889,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:79242a614df5d5afeb4668b95ed0cbbe274d694502fb5503d8d967a5df3f174d"
+      "sourceDigest": "sha256:ef3194c4c22eb5b540a14180f426684447cfcb9d5d87854f4f12a74bacb4ad26"
     },
     {
       "id": "local",
@@ -1887,7 +1932,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:79242a614df5d5afeb4668b95ed0cbbe274d694502fb5503d8d967a5df3f174d"
+      "sourceDigest": "sha256:ef3194c4c22eb5b540a14180f426684447cfcb9d5d87854f4f12a74bacb4ad26"
     }
   ],
   "ownership": [
@@ -2422,10 +2467,10 @@
     },
     {
       "id": "PERSIST-PROJECT-STATE",
-      "postgresql": "Project state, revisions, mutations, and promotion proposal tables",
-      "sqlite": "Revisioned project state/history/mutation namespaces and StatePromotionProposal CAS repository",
+      "postgresql": "Project state, revisions, mutations, initialization receipts, and promotion proposal tables",
+      "sqlite": "Revisioned project state/history/mutation/initialization-receipt namespaces and StatePromotionProposal CAS repository",
       "classification": "verified",
-      "assessment": "Both adapters cover revision history, mutation replay, immutable proposal identity, concurrent review CAS, merge, reject, expire, and supersede transitions across restart or reopen.",
+      "assessment": "Both adapters cover revision history, mutation replay, once-per-scope initialization receipts, immutable proposal identity, concurrent review CAS, merge, reject, expire, and supersede transitions across restart or reopen.",
       "evidence": [
         {
           "kind": "source",
@@ -2438,6 +2483,14 @@
         {
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/sqlite-persistence/src/project-state-initialization.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/database/src/project-state-initialization.integration.test.mjs"
         }
       ]
     },

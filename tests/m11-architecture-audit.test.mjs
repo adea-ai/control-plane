@@ -45,6 +45,7 @@ const publicOperations = [
   'marketplace.installation.get',
   'marketplace.installation.uninstall',
   'profile.resolve',
+  'project-state.initialize',
   'project-state.resolve',
   'runtime-connection.get',
   'runtime-connection.list',

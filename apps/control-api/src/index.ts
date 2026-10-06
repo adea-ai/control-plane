@@ -23,6 +23,7 @@ import type { ExecutionCancellationService } from './executions/execution-cancel
 import type { RuntimeDiscoveryRepository } from './runtime-discovery/runtime-discovery.repository.js'
 import type { ProfileResolutionService } from './queries/profile-resolution.service.js'
 import type { ProjectStateResolutionService } from './queries/project-state-resolution.service.js'
+import type { ProjectStateInitializationService } from './project-states/project-state-initialization.service.js'
 import type { ContextPackageResolutionService } from './queries/context-package-resolution.service.js'
 import type { MarketplaceInstallationAuthority } from './marketplace/installation.js'
 import type { MarketplaceHarnessProfileAuthority } from './marketplace/agent-plugins.js'
@@ -52,6 +53,7 @@ export interface ControlApiStartOptions {
   readonly runtimeDiscoveryRepository?: RuntimeDiscoveryRepository
   readonly profileResolutionService?: ProfileResolutionService
   readonly projectStateResolutionService?: ProjectStateResolutionService
+  readonly projectStateInitializationService?: ProjectStateInitializationService
   readonly contextPackageResolutionService?: ContextPackageResolutionService
   readonly serviceAuthenticator?: ServiceAuthenticator
   readonly marketplaceRegistryService?: MarketplaceRegistryService
@@ -120,6 +122,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.profileResolutionService ?? cloudComposition?.profileResolutionService
       const projectStateResolutionService =
         options.projectStateResolutionService ?? cloudComposition?.projectStateResolutionService
+      const projectStateInitializationService =
+        options.projectStateInitializationService ??
+        cloudComposition?.projectStateInitializationService
       const contextPackageResolutionService =
         options.contextPackageResolutionService ?? cloudComposition?.contextPackageResolutionService
       const runtimeDiscoveryRepository =
@@ -143,6 +148,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           : { dependencyReadiness: () => databaseReadinessProbe(cloudComposition.connection) }),
         ...(profileResolutionService === undefined ? {} : { profileResolutionService }),
         ...(projectStateResolutionService === undefined ? {} : { projectStateResolutionService }),
+        ...(projectStateInitializationService === undefined
+          ? {}
+          : { projectStateInitializationService }),
         ...(contextPackageResolutionService === undefined
           ? {}
           : { contextPackageResolutionService }),
@@ -181,6 +189,11 @@ export {
   RepositoryProjectStateResolutionService,
   type ProjectStateResolutionService,
 } from './queries/project-state-resolution.service.js'
+export {
+  RepositoryProjectStateInitializationService,
+  UnavailableProjectStateInitializationService,
+  type ProjectStateInitializationService,
+} from './project-states/project-state-initialization.service.js'
 export {
   RepositoryContextPackageResolutionService,
   type ContextPackageResolutionService,

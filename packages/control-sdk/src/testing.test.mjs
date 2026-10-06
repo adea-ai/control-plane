@@ -43,6 +43,9 @@ describe('deterministic Control Plane stub', () => {
       await client.resolveProjectState(ControlApiFixtures.projectStateResolution.request)
     ).toEqual(ControlApiFixtures.projectStateResolution.response)
     expect(
+      await client.initializeProjectState(ControlApiFixtures.projectStateInitialization.request)
+    ).toEqual(ControlApiFixtures.projectStateInitialization.response)
+    expect(
       await client.resolveContextPackage(ControlApiFixtures.contextPackageResolution.request)
     ).toEqual(ControlApiFixtures.contextPackageResolution.response)
     expect(await client.listRuntimes(ControlApiFixtures.runtimeList.request)).toEqual(
@@ -62,6 +65,7 @@ describe('deterministic Control Plane stub', () => {
       'authentication.verify',
       'profile.resolve',
       'project-state.resolve',
+      'project-state.initialize',
       'context-package.resolve',
       'runtime.list',
       'execution.validate',

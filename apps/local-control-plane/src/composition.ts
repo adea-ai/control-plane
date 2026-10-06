@@ -250,6 +250,7 @@ export class LocalControlPlaneComposition {
   readonly executionValidationService: LocalControlApiComposition['executionValidationService']
   readonly profileResolutionService: LocalControlApiComposition['profileResolutionService']
   readonly projectStateResolutionService: LocalControlApiComposition['projectStateResolutionService']
+  readonly projectStateInitializationService: LocalControlApiComposition['projectStateInitializationService']
   readonly contextPackageResolutionService: LocalControlApiComposition['contextPackageResolutionService']
   readonly executionEvents: LocalControlApiComposition['executionEvents']
   readonly statePromotionProposals: LocalControlApiComposition['statePromotionProposals']
@@ -435,6 +436,7 @@ export class LocalControlPlaneComposition {
     this.executionCancellationService = controlApi.executionCancellationService
     this.profileResolutionService = controlApi.profileResolutionService
     this.projectStateResolutionService = controlApi.projectStateResolutionService
+    this.projectStateInitializationService = controlApi.projectStateInitializationService
     this.contextPackageResolutionService = controlApi.contextPackageResolutionService
     this.executionEvents = controlApi.executionEvents
     this.statePromotionProposals = controlApi.statePromotionProposals

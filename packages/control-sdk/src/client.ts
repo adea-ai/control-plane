@@ -21,6 +21,8 @@ import {
   type ExecutionRequestValidationResponse,
   type ProfileResolutionRequest,
   type ProfileResolutionResponse,
+  type ProjectStateInitializationRequest,
+  type ProjectStateInitializationResponse,
   type ProjectStateResolutionRequest,
   type ProjectStateResolutionResponse,
   type RuntimeListRequest,
@@ -153,6 +155,13 @@ export class ControlPlaneClient {
     input: ProjectStateResolutionRequest
   ): Promise<ProjectStateResolutionResponse> {
     return this.#request(ControlApiOperations.resolveProjectState, input)
+  }
+
+  /** Idempotently create the empty revision-zero ProjectState for a project. */
+  initializeProjectState(
+    input: ProjectStateInitializationRequest
+  ): Promise<ProjectStateInitializationResponse> {
+    return this.#request(ControlApiOperations.initializeProjectState, input)
   }
 
   resolveContextPackage(

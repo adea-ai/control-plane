@@ -19,6 +19,7 @@ import {
   RestateExecutionWorkflowDispatcher,
   RepositoryProfileResolutionService,
   RepositoryProjectStateResolutionService,
+  RepositoryProjectStateInitializationService,
   RepositoryContextPackageResolutionService,
   createExecutionId,
 } from '@control-plane/control-api'
@@ -245,6 +246,7 @@ export class HostedServerControlPlaneComposition {
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
+  readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
@@ -422,6 +424,9 @@ export class HostedServerControlPlaneComposition {
           }
     )
     this.projectStateResolutionService = new RepositoryProjectStateResolutionService(projectStates)
+    this.projectStateInitializationService = new RepositoryProjectStateInitializationService(
+      projectStates
+    )
     this.contextPackageResolutionService = new RepositoryContextPackageResolutionService(
       contextPackages
     )

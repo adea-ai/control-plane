@@ -90,6 +90,12 @@ import {
   UnavailableProjectStateResolutionService,
   type ProjectStateResolutionService,
 } from './queries/project-state-resolution.service.js'
+import { ProjectStateInitializationController } from './project-states/project-state-initialization.controller.js'
+import {
+  PROJECT_STATE_INITIALIZATION_SERVICE,
+  UnavailableProjectStateInitializationService,
+  type ProjectStateInitializationService,
+} from './project-states/project-state-initialization.service.js'
 import { ContextPackageResolutionController } from './queries/context-package-resolution.controller.js'
 import {
   CONTEXT_PACKAGE_RESOLUTION_SERVICE,
@@ -109,6 +115,7 @@ export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly componentManifest?: () => Promise<unknown>
   readonly profileResolutionService?: ProfileResolutionService
   readonly projectStateResolutionService?: ProjectStateResolutionService
+  readonly projectStateInitializationService?: ProjectStateInitializationService
   readonly contextPackageResolutionService?: ContextPackageResolutionService
   readonly marketplaceRegistryService?: MarketplaceRegistryService
   readonly marketplaceInstallationService?: MarketplaceInstallationAuthority
@@ -144,6 +151,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       HealthController,
       ProfileResolutionController,
       ProjectStateResolutionController,
+      ProjectStateInitializationController,
       RuntimeDiscoveryController,
       MarketplaceController,
       SystemController,
@@ -201,6 +209,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
         provide: PROJECT_STATE_RESOLUTION_SERVICE,
         useValue:
           options.projectStateResolutionService ?? new UnavailableProjectStateResolutionService(),
+      },
+      {
+        provide: PROJECT_STATE_INITIALIZATION_SERVICE,
+        useValue:
+          options.projectStateInitializationService ??
+          new UnavailableProjectStateInitializationService(),
       },
       {
         provide: RUNTIME_DISCOVERY_REPOSITORY,

@@ -14,7 +14,9 @@ a whole-manifest SHA-256 digest. Stable logical IDs and semantic revisions are p
 The provider-neutral subset includes:
 
 - AgentProfile and Skill records and versions;
-- ProjectState and selected ProjectState history;
+- ProjectState and selected ProjectState history (initialization receipts are command-replay
+  metadata and stay behind; an imported scope rejects a new initialization command as already
+  initialized);
 - safe ContextPackage and immutable ExecutionPlan metadata;
 - policy, runtime, tool, model, and provider configuration references supplied by a composition;
 - selected retained execution history only when explicitly requested.

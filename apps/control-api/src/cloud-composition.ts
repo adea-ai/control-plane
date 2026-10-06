@@ -56,6 +56,7 @@ import {
 } from './executions/execution-acceptance.service.js'
 import { RepositoryProfileResolutionService } from './queries/profile-resolution.service.js'
 import { RepositoryProjectStateResolutionService } from './queries/project-state-resolution.service.js'
+import { RepositoryProjectStateInitializationService } from './project-states/project-state-initialization.service.js'
 import { RepositoryContextPackageResolutionService } from './queries/context-package-resolution.service.js'
 import { GithubReleaseVerifier } from './marketplace/github-release-verifier.js'
 import {
@@ -94,6 +95,7 @@ export interface ManagedCloudControlApiComposition {
   readonly serviceAuthenticator: PolicyServiceAuthenticator
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
+  readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly marketplaceRegistryService: MarketplaceRegistryService
@@ -278,6 +280,9 @@ export function createManagedCloudControlApiComposition(
           }
     ),
     projectStateResolutionService: new RepositoryProjectStateResolutionService(projectStates),
+    projectStateInitializationService: new RepositoryProjectStateInitializationService(
+      projectStates
+    ),
     contextPackageResolutionService: new RepositoryContextPackageResolutionService(contextPackages),
     runtimeDiscoveryRepository: new PostgresRuntimeDiscoveryRepository(connection.database),
     serviceAuthenticator,

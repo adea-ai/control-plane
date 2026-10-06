@@ -34,6 +34,7 @@ describe('Control API generated contract', () => {
       '/v1/marketplace/installations/get',
       '/v1/marketplace/installations/uninstall',
       '/v1/profiles/resolve',
+      '/v1/project-states/initialize',
       '/v1/project-states/resolve',
       '/v1/runtime-connections/get',
       '/v1/runtime-connections/list',
