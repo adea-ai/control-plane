@@ -90,6 +90,7 @@ export const INTEGRATION_SHARDS = [
         files: [
           'src/validation-replay.integration.test.mjs',
           'src/budget-admission.integration.test.mjs',
+          'src/marketplace-installation.integration.test.mjs',
         ],
       },
       {

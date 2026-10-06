@@ -204,6 +204,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.ok(!unit.includes('tests/memory-process-loss.integration.test.mjs'))
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
+    'apps/control-api/src/marketplace-installation.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-cancellation.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
