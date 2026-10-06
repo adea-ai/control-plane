@@ -3,6 +3,7 @@ import { compareCodePointOrder } from '@control-plane/domain'
 import { DeploymentProfiles, type JsonValue } from '@control-plane/deployment'
 import { z } from 'zod'
 import { EvalRunSchema } from '@control-plane/production-readiness'
+import { PortableCredentialMetadataSchema } from '@control-plane/credential-vault'
 import {
   ContextAuthoringCommandRecordSchema,
   assertContextPackageIntegrity,
@@ -49,6 +50,7 @@ export const PortableRecordCategorySchema = z.enum([
   'tool-configuration',
   'model-configuration',
   'selected-history',
+  'credential-metadata',
 ])
 
 export const PortableRecordSchema = z
@@ -147,6 +149,15 @@ export function assertPortableManifest(input: unknown): PortableExportManifest {
     const { contentDigest: recordDigest, ...recordUnsigned } = record
     if (digestJson(recordUnsigned) !== recordDigest) {
       throw new Error('PORTABLE_RECORD_DIGEST_INVALID')
+    }
+    if (record.category === 'credential-metadata') {
+      // Strict parsing rejects any secret value, secret reference or status in the manifest.
+      const credential = PortableCredentialMetadataSchema.parse(record.value)
+      if (
+        record.logicalId !== `credentials/${credential.credentialId}` ||
+        record.revision !== credential.revision
+      )
+        throw new Error('PORTABLE_CREDENTIAL_IDENTITY_INVALID')
     }
     if (record.category === 'evaluation-run') {
       const run = EvalRunSchema.parse(record.value)

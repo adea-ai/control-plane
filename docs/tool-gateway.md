@@ -82,3 +82,25 @@ removed tools, protocol errors, timeouts, invalid output, and oversized output a
 bounded error codes. The server's vault or lease reference stays inside the adapter and is supplied
 only to the server-side MCP client; it is excluded from registry records, runtime requests, durable
 tool calls, audit results, and public APIs.
+
+## Vault-leased connector credentials
+
+An `McpServerRegistration` may name a workspace `connectorRef`. The adapter then requires a
+`credentialBroker` (`VaultToolCredentialBroker` from `@control-plane/credential-vault`) and, for
+every call, obtains a fresh lease for the execution's workspace and that connector through the
+`credential:lease` policy decision. The resource reference is `mcp/<serverId>/<toolName>` and the
+operation is the canonical tool operation. The secret is passed to `McpClientPort.invoke` as
+`credential` only inside the lease callback.
+
+- A request whose workspace differs from the adapter's workspace fails with
+  `MCP_CREDENTIAL_SCOPE_MISMATCH` before any lease.
+- Missing, revoked, expired, re-entry-pending or policy-denied credentials fail with bounded codes
+  (`MCP_CREDENTIAL_MISSING`, `_REVOKED`, `_EXPIRED`, `_POLICY_DENIED`, `_UNAVAILABLE`) and effect
+  state `none`; the remote tool is not called.
+- Transport errors cross the lease boundary as a bounded code only, because their messages may
+  echo the credential. Output that contains the secret, or a sensitive key such as `token`, is
+  rejected as `MCP_CREDENTIAL_EGRESS_BLOCKED` with effect state `unknown`.
+- Rotation and revocation apply to the next call, since every call takes a new lease.
+
+No deployed composition registers a connector-backed MCP server yet; the path is exercised by the
+tool-gateway fixture-connector tests.

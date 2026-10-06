@@ -17,7 +17,9 @@ The provider-neutral subset includes:
 - ProjectState and selected ProjectState history;
 - safe ContextPackage and immutable ExecutionPlan metadata;
 - policy, runtime, tool, model, and provider configuration references supplied by a composition;
-- selected retained execution history only when explicitly requested.
+- selected retained execution history only when explicitly requested;
+- connector credential metadata (`credential-metadata`) without status, secret references or
+  secret values.
 
 The generic persistence adapter currently maps the catalog, project-state, context-package, and
 execution-plan namespaces. A profile composition may supply additional safe records through the same
@@ -38,6 +40,12 @@ keys, tokens, provider credentials, or private absolute host paths. Secret ident
 `provider + key + purpose` references and must resolve through a configured destination
 `SecretsProvider`. Secret-canary values supplied by the composition are scanned before a manifest is
 created.
+
+Credential metadata never carries secret material, so it needs no destination `SecretsProvider`.
+Strict manifest validation rejects a credential record with any extra field. Import writes each
+credential as `secret_required` (revoked credentials stay revoked) and records a
+`credential.imported` audit event; the credential cannot be leased until an operator re-enters its
+secret through `POST /v1/credentials/rotate` with the imported revision as `expectedRevision`.
 
 Export fails while an execution is accepted, queued, running, waiting, or cancelling. The operator
 must quiesce or checkpoint work explicitly; the migration layer never guesses how to move an

@@ -41,6 +41,17 @@ Arbitrary user-scoped OAuth refresh tokens, API keys, and connector credentials 
 
 M10 adds Local/Hosted secret-provider adapters while preserving credential identity, lease, scope, rotation, revocation, and audit semantics.
 
+The workspace credential Control API (ADR 0013) accepts a connector secret once per create or
+rotate under `credential:write`, returns metadata only under `credential:read`, and treats a
+credential in another workspace as missing. Secrets are excluded from request logs, telemetry
+spans, validation errors, idempotency hashes and receipts, audit events, profile exports and the
+durable metadata/lease tables; tests scan captured logs, responses, audit records and SQLite files
+for canaries. Tool executors obtain a single-use, revision-pinned lease of at most 300 seconds per
+call through the `credential:lease` policy decision. Residual risks: the Control API process holds
+plaintext transiently while encrypting; leased secrets are visible to the server-side connector
+client; prior secret revisions are retained until revocation; and the Cloud encryption key is a
+single Railway secret without in-band key rotation.
+
 ## Persistence and workflow security
 
 - M9 managed cloud uses separate Control Plane Neon PostgreSQL; Adea uses a different database.

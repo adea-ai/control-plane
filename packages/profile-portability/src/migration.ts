@@ -31,8 +31,17 @@ import type {
 import { compareCodePointOrder } from '@control-plane/domain'
 import {
   REFERENCE_RETENTION_NAMESPACES,
+  appendSqliteCredentialAudit,
   assertSqliteStoredPlanReference,
+  listSqliteCredentials,
+  readSqliteCredential,
+  writeSqliteCredential,
 } from '@control-plane/sqlite-persistence'
+import {
+  PortableCredentialMetadataSchema,
+  importedCredential,
+  toPortableCredentialMetadata,
+} from '@control-plane/credential-vault'
 import {
   PORTABLE_CONTRACT_VERSION,
   PORTABLE_EXPORT_SCHEMA_VERSION,
@@ -495,6 +504,10 @@ export class PersistencePortableStateSource implements PortableStateSource {
           })
         }
       }
+      // Credential metadata is projected: secret references and status never leave the source.
+      for (const credential of await listSqliteCredentials(transaction)) {
+        records.push(portableCredentialRecord(toPortableCredentialMetadata(credential)))
+      }
     })
     return {
       records,
@@ -530,6 +543,20 @@ export class PersistencePortableStateDestination implements PortableStateDestina
     return this.#provider.transaction(async (transaction) =>
       Promise.all(
         records.map(async (record) => {
+          if (record.category === 'credential-metadata') {
+            const credentialId = credentialLogicalId(record)
+            const existing = await readSqliteCredential(transaction, credentialId)
+            if (existing === undefined) return { record, state: 'missing' as const }
+            return {
+              record,
+              state:
+                createPortableRecord(
+                  portableCredentialRecord(toPortableCredentialMetadata(existing))
+                ).contentDigest === record.contentDigest
+                  ? ('equivalent' as const)
+                  : ('conflict' as const),
+            }
+          }
           const identity = persistenceIdentity(record)
           const existing = await transaction.get(identity.namespace, identity.id)
           if (existing === undefined) return { record, state: 'missing' as const }
@@ -569,6 +596,23 @@ export class PersistencePortableStateDestination implements PortableStateDestina
         const committedProvenance = provenance
         await this.#provider.transaction(async (transaction) => {
           for (const record of staged) {
+            if (record.category === 'credential-metadata') {
+              credentialLogicalId(record)
+              const credential = importedCredential(record.value)
+              const written = await writeSqliteCredential(transaction, credential)
+              if (written !== 'inserted') {
+                throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
+              }
+              await appendSqliteCredentialAudit(transaction, {
+                action: 'credential.imported',
+                credentialId: credential.metadata.credentialId,
+                workspaceId: credential.metadata.workspaceId,
+                revision: credential.metadata.revision,
+                reasonCode: 'SECRET_REENTRY_REQUIRED',
+                at: committedProvenance.appliedAt,
+              })
+              continue
+            }
             const identity = persistenceIdentity(record)
             if ((await transaction.get(identity.namespace, identity.id)) !== undefined) {
               throw new PortableMigrationError('PORTABLE_PLAN_STALE', [record.logicalId])
@@ -1008,6 +1052,30 @@ function portableIdentity(
     return value['executionPlanId']
   }
   return fallback
+}
+
+export function portableCredentialRecord(
+  credential: unknown
+): Omit<PortableRecord, 'contentDigest'> {
+  const parsed = PortableCredentialMetadataSchema.parse(credential)
+  return {
+    category: 'credential-metadata',
+    logicalId: `credentials/${parsed.credentialId}`,
+    revision: parsed.revision,
+    value: portableJson(parsed),
+  }
+}
+
+function credentialLogicalId(record: PortableRecord): string {
+  const parsed = PortableCredentialMetadataSchema.safeParse(record.value)
+  if (
+    !parsed.success ||
+    record.logicalId !== `credentials/${parsed.data.credentialId}` ||
+    record.revision !== parsed.data.revision
+  ) {
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+  }
+  return parsed.data.credentialId
 }
 
 function sqliteRecordId(value: string): string {

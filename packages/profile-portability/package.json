@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@control-plane/context": "workspace:*",
+    "@control-plane/credential-vault": "workspace:*",
     "@control-plane/database": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",

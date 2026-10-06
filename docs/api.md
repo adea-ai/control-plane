@@ -164,3 +164,40 @@ version catalog. Local/Simple restart tests verify both original receipt replay
 and independent lifecycle changes for identical pins in different workspaces.
 Production graph execution admission stays fail closed until the compiler and
 policy-controlled operation bindings are configured.
+
+## Workspace connector credentials
+
+ADR 0013 cloud connections store connector secrets in the credential vault under the envelope
+workspace. All routes accept versioned envelopes without `projectId`; the workspace is the only
+authority scope and must be in the service credential's workspace claims.
+
+| Route                         | Scope              | Envelope / payload                                                                      |
+| ----------------------------- | ------------------ | --------------------------------------------------------------------------------------- |
+| `POST /v1/credentials/create` | `credential:write` | command `credential.create`: `connectorRef`, `provider`, `secret`, optional `expiresAt` |
+| `POST /v1/credentials/rotate` | `credential:write` | command `credential.rotate`: `credentialId`, `expectedRevision`, `secret`               |
+| `POST /v1/credentials/revoke` | `credential:write` | command `credential.revoke`: `credentialId`                                             |
+| `POST /v1/credentials/get`    | `credential:read`  | read `credential.get`: `credentialId`                                                   |
+| `POST /v1/credentials/list`   | `credential:read`  | read `credential.list`: optional `limit` (1–100, default 50), `cursor`                  |
+
+Responses return `{ credential }` or `{ credentials, nextCursor? }` metadata: `credentialId`,
+`workspaceId`, `connectorRef`, `provider`, `status` (`active`, `revoked`, `expired`,
+`secret_required`), `revision`, `createdAt`, `createdBy`, and optional `rotatedAt`, `expiresAt`,
+`revokedAt`. Response schemas are strict and cannot carry secret material or references.
+
+`secret` is write-only: 8–65,536 characters without control characters, accepted once, encrypted
+by the secret provider and never echoed, logged, hashed into receipts or returned. Validation
+errors carry issue codes and field paths only. Request logging records method, route, status,
+duration and context IDs, never bodies.
+
+Create and rotate are idempotent per workspace, caller, operation and idempotency key. The server
+computes the receipt hash over non-secret fields only, so a retry with a different secret returns
+the original result and the new secret is discarded unstored; a changed non-secret payload returns
+`409 CREDENTIAL_COMMAND_CONFLICT`. Clients should compute the envelope `payloadHash` with the
+secret excluded; the server neither verifies nor persists it. Revocation is naturally idempotent.
+
+A credential in another workspace is reported as `404 CREDENTIAL_NOT_FOUND`. Conflicts
+(`CREDENTIAL_CONNECTOR_IN_USE`, `CREDENTIAL_REVISION_CONFLICT`, `CREDENTIAL_REVOKED`,
+`CREDENTIAL_EXPIRED`) return `409`; an unavailable secret provider returns `503
+CREDENTIAL_PROVIDER_UNAVAILABLE`; an unconfigured vault returns `503
+CREDENTIAL_VAULT_NOT_CONFIGURED`. The Control SDK exposes `createCredential`, `rotateCredential`,
+`revokeCredential`, `getCredential` and `listCredentials`. Leases are not exposed over HTTP.
