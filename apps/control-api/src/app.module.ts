@@ -4,6 +4,12 @@ import {
   UnavailableGraphAdministrationService,
   type GraphAdministrationService,
 } from './graphs/graph-administration.service.js'
+import { CredentialAdministrationController } from './credentials/credential-administration.controller.js'
+import {
+  CREDENTIAL_ADMINISTRATION_SERVICE,
+  UnavailableCredentialAdministrationService,
+  type CredentialAdministrationService,
+} from './credentials/credential-administration.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
 import {
   createOpenTelemetryMetricAdapter,
@@ -99,6 +105,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
@@ -135,6 +142,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     controllers: [
       AuthenticationController,
       GraphAdministrationController,
+      CredentialAdministrationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
@@ -152,6 +160,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: GRAPH_ADMINISTRATION_SERVICE,
         useValue: options.graphAdministrationService ?? new UnavailableGraphAdministrationService(),
+      },
+      {
+        provide: CREDENTIAL_ADMINISTRATION_SERVICE,
+        useValue:
+          options.credentialAdministrationService ??
+          new UnavailableCredentialAdministrationService(),
       },
       {
         provide: INTERACTION_COMMAND_SERVICE,

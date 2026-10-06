@@ -100,6 +100,7 @@
         "@control-plane/config",
         "@control-plane/context",
         "@control-plane/contracts",
+        "@control-plane/credential-vault",
         "@control-plane/database",
         "@control-plane/deployment",
         "@control-plane/domain",
@@ -157,7 +158,7 @@
       "kind": "package",
       "private": true,
       "browser": false,
-      "exports": ["."],
+      "exports": [".", "./conformance"],
       "workspaceDependencies": ["@control-plane/contracts", "@control-plane/policy"],
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [],
@@ -515,6 +516,7 @@
       "exports": ["."],
       "workspaceDependencies": [
         "@control-plane/context",
+        "@control-plane/credential-vault",
         "@control-plane/database",
         "@control-plane/deployment",
         "@control-plane/domain",
@@ -699,6 +701,7 @@
       "workspaceDependencies": [
         "@control-plane/context",
         "@control-plane/contracts",
+        "@control-plane/credential-vault",
         "@control-plane/deployment",
         "@control-plane/domain",
         "@control-plane/events",
@@ -778,7 +781,7 @@
       "exports": [],
       "workspaceDependencies": ["@control-plane/bootstrap", "@control-plane/tool-execution"],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": [],
+      "developmentWorkspaceDependencies": ["@control-plane/credential-vault"],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
@@ -942,6 +945,221 @@
       "openApiResponseStatuses": ["200", "default"],
       "openApiSecured": true,
       "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-CREDENTIAL-CREATE",
+      "name": "createCredential",
+      "operation": "credential.create",
+      "method": "POST",
+      "path": "/v1/credentials/create",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
+        "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "execution": "server-generated crd_ ID; secret stored once through the secret provider; one live credential per workspace connector",
+        "delivery": "strict metadata-only credential response; secrets never returned",
+        "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud composes the vault when the secret-encryption key is configured; Local and Hosted compositions leave the routes fail-closed until a secret provider is composed. SQLite HTTP tests and PostgreSQL repository integration cover source behavior; deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/credentials/credential-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/credentials/credential-administration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/credential-vault-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Compose Local and Hosted secret providers, verify authenticated credential administration and tool-gateway leasing from deployed frozen candidates in all profiles."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "credential.create",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CREDENTIAL-GET",
+      "name": "getCredential",
+      "operation": "credential.get",
+      "method": "POST",
+      "path": "/v1/credentials/get",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
+        "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "execution": "workspace-scoped metadata read; other workspaces report not found",
+        "delivery": "strict metadata-only credential response; secrets never returned",
+        "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud composes the vault when the secret-encryption key is configured; Local and Hosted compositions leave the routes fail-closed until a secret provider is composed. SQLite HTTP tests and PostgreSQL repository integration cover source behavior; deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/credentials/credential-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/credentials/credential-administration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/credential-vault-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Compose Local and Hosted secret providers, verify authenticated credential administration and tool-gateway leasing from deployed frozen candidates in all profiles."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "credential.get",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CREDENTIAL-LIST",
+      "name": "listCredentials",
+      "operation": "credential.list",
+      "method": "POST",
+      "path": "/v1/credentials/list",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
+        "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "execution": "workspace-scoped cursor page ordered by credential ID",
+        "delivery": "strict metadata-only credential response; secrets never returned",
+        "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud composes the vault when the secret-encryption key is configured; Local and Hosted compositions leave the routes fail-closed until a secret provider is composed. SQLite HTTP tests and PostgreSQL repository integration cover source behavior; deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/credentials/credential-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/credentials/credential-administration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/credential-vault-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Compose Local and Hosted secret providers, verify authenticated credential administration and tool-gateway leasing from deployed frozen candidates in all profiles."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "credential.list",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CREDENTIAL-REVOKE",
+      "name": "revokeCredential",
+      "operation": "credential.revoke",
+      "method": "POST",
+      "path": "/v1/credentials/revoke",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
+        "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "execution": "status revoked with active leases revoked atomically, then provider deletion of every secret revision",
+        "delivery": "strict metadata-only credential response; secrets never returned",
+        "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud composes the vault when the secret-encryption key is configured; Local and Hosted compositions leave the routes fail-closed until a secret provider is composed. SQLite HTTP tests and PostgreSQL repository integration cover source behavior; deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/credentials/credential-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/credentials/credential-administration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/credential-vault-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Compose Local and Hosted secret providers, verify authenticated credential administration and tool-gateway leasing from deployed frozen candidates in all profiles."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "credential.revoke",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
+      "id": "OP-CREDENTIAL-ROTATE",
+      "name": "rotateCredential",
+      "operation": "credential.rotate",
+      "method": "POST",
+      "path": "/v1/credentials/rotate",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
+        "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "execution": "expected-revision compare-and-set adding a secret revision; pinned leases keep their revision",
+        "delivery": "strict metadata-only credential response; secrets never returned",
+        "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
+      },
+      "assessment": "API, SDK and OpenAPI agree on the authenticated operation. Managed Cloud composes the vault when the secret-encryption key is configured; Local and Hosted compositions leave the routes fail-closed until a secret provider is composed. SQLite HTTP tests and PostgreSQL repository integration cover source behavior; deployed acceptance is not certified.",
+      "evidence": [
+        {
+          "kind": "service",
+          "path": "apps/control-api/src/credentials/credential-administration.service.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/credentials/credential-administration.test.mjs"
+        },
+        {
+          "kind": "integration-test",
+          "path": "packages/database/src/credential-vault-repository.integration.test.mjs"
+        }
+      ],
+      "gap": {
+        "issue": 188,
+        "severity": "high",
+        "owner": "execution-control",
+        "disposition": "Compose Local and Hosted secret providers, verify authenticated credential administration and tool-gateway leasing from deployed frozen candidates in all profiles."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "credential.rotate",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
     },
     {
       "id": "OP-EXECUTION-ACCEPT",
@@ -1684,7 +1902,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:87969b2a96099657df74675fa8c5f0de71d11d08f4f017f6049ac98a2ad2e2ad"
+      "sourceDigest": "sha256:a225713d3e58c63199f80e28bade578b4da683f8f7980e76d87248c8d1461b89"
     },
     {
       "id": "hosted-server",

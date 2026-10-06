@@ -29,6 +29,11 @@ const infrastructurePorts = [
 const publicOperations = [
   'authentication.verify',
   'context-package.resolve',
+  'credential.create',
+  'credential.get',
+  'credential.list',
+  'credential.revoke',
+  'credential.rotate',
   'execution.accept',
   'execution.cancel',
   'execution.validate',

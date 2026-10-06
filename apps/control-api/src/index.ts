@@ -1,4 +1,5 @@
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
+import type { CredentialAdministrationService } from './credentials/credential-administration.service.js'
 import {
   bootstrapService,
   jsonLogger,
@@ -37,6 +38,7 @@ export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly memoryWriteback?: MemoryWriteApplicationConfiguration
@@ -106,6 +108,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       }
       const graphAdministrationService =
         options.graphAdministrationService ?? cloudComposition?.graphAdministrationService
+      const credentialAdministrationService =
+        options.credentialAdministrationService ?? cloudComposition?.credentialAdministrationService
       const executionValidationService =
         options.executionValidationService ?? cloudComposition?.executionValidationService
       const executionAcceptanceService =
@@ -130,6 +134,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
+        ...(credentialAdministrationService === undefined
+          ? {}
+          : { credentialAdministrationService }),
         ...(interactionCommandService === undefined ? {} : { interactionCommandService }),
         ...(executionCancellationService === undefined ? {} : { executionCancellationService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),
