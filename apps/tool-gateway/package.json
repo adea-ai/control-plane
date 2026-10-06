@@ -16,6 +16,9 @@
     "@control-plane/bootstrap": "workspace:*",
     "@control-plane/tool-execution": "workspace:*"
   },
+  "devDependencies": {
+    "@control-plane/credential-vault": "workspace:*"
+  },
   "engines": {
     "node": "24.21.0"
   }
