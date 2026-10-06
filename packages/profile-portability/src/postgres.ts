@@ -10,6 +10,8 @@ import { compareCodePointOrder } from '@control-plane/domain'
 import {
   agentProfileVersions,
   agentProfiles,
+  credentialAuditEvents,
+  credentials,
   contextPackages,
   contextAuthoringCommands,
   executionPlans,
@@ -44,6 +46,10 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { EvalRunSchema } from '@control-plane/production-readiness'
 import {
+  PortableCredentialMetadataSchema,
+  importedCredential,
+} from '@control-plane/credential-vault'
+import {
   createPortableRecord,
   portableEvaluationRunKey,
   type PortableArtifactReference,
@@ -53,6 +59,7 @@ import {
 import {
   PortableMigrationError,
   collectImportedPortableReferenceClaims,
+  portableCredentialRecord,
   portableJson,
   type PortableReferenceLineageLookup,
   type PortableImportTransaction,
@@ -111,6 +118,7 @@ export class PostgresPortableStateSource implements PortableStateSource {
       validationRows,
       evaluationRows,
       executionRows,
+      credentialRows,
     ] = await Promise.all([
       this.#database.select().from(agentProfiles),
       this.#database.select().from(agentProfileVersions),
@@ -126,11 +134,40 @@ export class PostgresPortableStateSource implements PortableStateSource {
       this.#database
         .select({ executionId: executions.executionId, state: executions.state })
         .from(executions),
+      // Only non-secret columns are read; secret references stay in the source database.
+      this.#database
+        .select({
+          credentialId: credentials.credentialId,
+          workspaceId: credentials.workspaceId,
+          connectorRef: credentials.connectorRef,
+          provider: credentials.provider,
+          revision: credentials.revision,
+          createdAt: credentials.createdAt,
+          createdBy: credentials.createdBy,
+          rotatedAt: credentials.rotatedAt,
+          expiresAt: credentials.expiresAt,
+          revokedAt: credentials.revokedAt,
+        })
+        .from(credentials),
     ])
     const currentStateRevisions = new Map(
       stateRows.map((row) => [scopeId(row.workspaceId, row.projectId), row.revision])
     )
     const records: Array<Omit<PortableRecord, 'contentDigest'>> = [
+      ...credentialRows.map((row) =>
+        portableCredentialRecord({
+          credentialId: row.credentialId,
+          workspaceId: row.workspaceId,
+          connectorRef: row.connectorRef,
+          provider: row.provider,
+          revision: row.revision,
+          createdAt: row.createdAt.toISOString(),
+          ...(row.createdBy === null ? {} : { createdBy: row.createdBy }),
+          ...(row.rotatedAt === null ? {} : { rotatedAt: row.rotatedAt.toISOString() }),
+          ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt.toISOString() }),
+          ...(row.revokedAt === null ? {} : { revokedAt: row.revokedAt.toISOString() }),
+        })
+      ),
       ...evaluationRows.map((row) => {
         const run = fromEvaluationRunRow(row)
         return {
@@ -463,6 +500,47 @@ async function writeRecord(
   record: PortableRecord
 ): Promise<void> {
   const [namespace, id] = identity(record.logicalId)
+  if (namespace === 'credentials') {
+    const portable = PortableCredentialMetadataSchema.parse(record.value)
+    if (
+      record.category !== 'credential-metadata' ||
+      id !== portable.credentialId ||
+      record.revision !== portable.revision
+    )
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
+    // Imported metadata carries no secret: it waits in secret_required until a rotation.
+    const { metadata } = importedCredential(portable)
+    await inserted(
+      transaction
+        .insert(credentials)
+        .values({
+          credentialId: metadata.credentialId,
+          workspaceId: metadata.workspaceId,
+          connectorRef: metadata.connectorRef,
+          provider: metadata.provider,
+          status: metadata.status,
+          revision: metadata.revision,
+          createdBy: metadata.createdBy ?? null,
+          createdAt: new Date(metadata.createdAt),
+          rotatedAt: metadata.rotatedAt === undefined ? null : new Date(metadata.rotatedAt),
+          expiresAt: metadata.expiresAt === undefined ? null : new Date(metadata.expiresAt),
+          revokedAt: metadata.revokedAt === undefined ? null : new Date(metadata.revokedAt),
+          secretRevisions: [],
+        })
+        .onConflictDoNothing()
+        .returning({ id: credentials.credentialId }),
+      record
+    )
+    await transaction.insert(credentialAuditEvents).values({
+      action: 'credential.imported',
+      credentialId: metadata.credentialId,
+      workspaceId: metadata.workspaceId,
+      revision: metadata.revision,
+      reasonCode: 'SECRET_REENTRY_REQUIRED',
+      at: new Date(),
+    })
+    return
+  }
   if (namespace === 'evaluation-runs') {
     const run = EvalRunSchema.parse(record.value)
     if (
@@ -710,6 +788,7 @@ function byWriteOrder(left: PortableRecord, right: PortableRecord): number {
     'execution-plans',
     'execution-validation-commands',
     'evaluation-runs',
+    'credentials',
   ]
   return (
     order.indexOf(identity(left.logicalId)[0]) - order.indexOf(identity(right.logicalId)[0]) ||

@@ -1,5 +1,6 @@
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
 import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
+import type { CredentialAdministrationService } from './credentials/credential-administration.service.js'
 import {
   bootstrapService,
   jsonLogger,
@@ -40,6 +41,7 @@ export const serviceName = 'control-api'
 export interface ControlApiStartOptions {
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
+  readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly memoryWriteback?: MemoryWriteApplicationConfiguration
@@ -112,6 +114,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.graphAdministrationService ?? cloudComposition?.graphAdministrationService
       const workspaceCatalogService =
         options.workspaceCatalogService ?? cloudComposition?.workspaceCatalogService
+      const credentialAdministrationService =
+        options.credentialAdministrationService ?? cloudComposition?.credentialAdministrationService
       const executionValidationService =
         options.executionValidationService ?? cloudComposition?.executionValidationService
       const executionAcceptanceService =
@@ -140,6 +144,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       application = await createControlApiApplication({
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
         ...(workspaceCatalogService === undefined ? {} : { workspaceCatalogService }),
+        ...(credentialAdministrationService === undefined
+          ? {}
+          : { credentialAdministrationService }),
         ...(interactionCommandService === undefined ? {} : { interactionCommandService }),
         ...(executionCancellationService === undefined ? {} : { executionCancellationService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),

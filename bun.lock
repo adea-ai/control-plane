@@ -50,6 +50,7 @@
         "@control-plane/config": "workspace:*",
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
+        "@control-plane/credential-vault": "workspace:*",
         "@control-plane/database": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -188,6 +189,9 @@
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/tool-execution": "workspace:*",
+      },
+      "devDependencies": {
+        "@control-plane/credential-vault": "workspace:*",
       },
     },
     "apps/workflow-worker": {
@@ -446,6 +450,7 @@
       },
       "dependencies": {
         "@control-plane/context": "workspace:*",
+        "@control-plane/credential-vault": "workspace:*",
         "@control-plane/database": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
@@ -515,6 +520,7 @@
       "dependencies": {
         "@control-plane/context": "workspace:*",
         "@control-plane/contracts": "workspace:*",
+        "@control-plane/credential-vault": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/events": "workspace:*",

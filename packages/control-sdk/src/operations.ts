@@ -1,4 +1,11 @@
 import {
+  CredentialCreateRequestSchema,
+  CredentialGetRequestSchema,
+  CredentialListRequestSchema,
+  CredentialListResponseSchema,
+  CredentialResponseSchema,
+  CredentialRevokeRequestSchema,
+  CredentialRotateRequestSchema,
   GraphDefinitionPublishRequestSchema,
   GraphDefinitionDeprecationRequestSchema,
   GraphDefinitionRevocationRequestSchema,
@@ -63,6 +70,41 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  createCredential: {
+    operation: 'credential.create',
+    method: 'POST',
+    path: '/v1/credentials/create',
+    requestSchema: CredentialCreateRequestSchema,
+    responseSchema: CredentialResponseSchema,
+  },
+  rotateCredential: {
+    operation: 'credential.rotate',
+    method: 'POST',
+    path: '/v1/credentials/rotate',
+    requestSchema: CredentialRotateRequestSchema,
+    responseSchema: CredentialResponseSchema,
+  },
+  revokeCredential: {
+    operation: 'credential.revoke',
+    method: 'POST',
+    path: '/v1/credentials/revoke',
+    requestSchema: CredentialRevokeRequestSchema,
+    responseSchema: CredentialResponseSchema,
+  },
+  getCredential: {
+    operation: 'credential.get',
+    method: 'POST',
+    path: '/v1/credentials/get',
+    requestSchema: CredentialGetRequestSchema,
+    responseSchema: CredentialResponseSchema,
+  },
+  listCredentials: {
+    operation: 'credential.list',
+    method: 'POST',
+    path: '/v1/credentials/list',
+    requestSchema: CredentialListRequestSchema,
+    responseSchema: CredentialListResponseSchema,
+  },
   publishGraph: {
     operation: 'graph.publish',
     method: 'POST',

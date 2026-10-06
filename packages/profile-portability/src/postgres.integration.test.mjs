@@ -8,6 +8,7 @@ import { canonicalJsonStringify } from '@control-plane/domain'
 import { createIsolatedTestDatabase } from '@control-plane/database/testing'
 import {
   PostgresContextPackageRepository,
+  PostgresCredentialVaultRepository,
   PostgresContextAuthoringCommandRepository,
   PostgresExecutionPlanRepository,
   PostgresExecutionValidationCommandRepository,
@@ -21,7 +22,9 @@ import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/te
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import { VersionedCatalog, executionConstraintFixtures } from '@control-plane/domain'
 import { eq } from 'drizzle-orm'
+import { CredentialVault, InMemorySecretProvider } from '@control-plane/credential-vault'
 import {
+  SqliteCredentialVaultRepository,
   SqlitePersistenceProvider,
   SqliteVersionedCatalogRepository,
   SqliteContextAuthoringCommandRepository,
@@ -584,3 +587,69 @@ async function sqliteProvider(profile) {
   await provider.migrate()
   return provider
 }
+
+describe.skipIf(!enabled)('PostgreSQL credential metadata portability', () => {
+  test('moves credential metadata SQLite to PostgreSQL and back without secrets', async () => {
+    const canary = 'pg-portable-credential-SECRET-canary-8812'
+    const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
+    const credentialId = 'crd_01JABCDEF0123456789ABCDEFG'
+    const local = await sqliteProvider('local')
+    await new CredentialVault({
+      provider: new InMemorySecretProvider(),
+      repository: new SqliteCredentialVaultRepository(local),
+      now: () => createdAt,
+    }).create({
+      credentialId,
+      workspaceId,
+      connectorRef: 'connector:github',
+      provider: 'github',
+      secret: canary,
+      createdAt,
+      createdBy: 'svc_agent-hq',
+    })
+    const toCloud = await exportPortableState(
+      new PersistencePortableStateSource({ persistence: local, componentVersions: {} }),
+      { exportId: 'credentials-to-cloud', createdAt, sensitiveValues: [canary] }
+    )
+    const cloud = new PostgresPortableStateDestination({
+      database: database.application,
+      profile: 'cloud',
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    const plan = await planPortableImport(toCloud, cloud)
+    await expect(
+      applyPortableImport(toCloud, plan, cloud, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'applied' })
+    const cloudVault = new CredentialVault({
+      provider: new InMemorySecretProvider(),
+      repository: new PostgresCredentialVaultRepository(database.application),
+      now: () => createdAt,
+    })
+    expect(await cloudVault.metadata(credentialId, workspaceId)).toMatchObject({
+      status: 'secret_required',
+      revision: 1,
+      createdBy: 'svc_agent-hq',
+    })
+    const replay = await planPortableImport(toCloud, cloud)
+    expect(replay.records.every(({ state }) => state === 'equivalent')).toBe(true)
+
+    const back = await exportPortableState(
+      new PostgresPortableStateSource({
+        database: database.application,
+        profile: 'cloud',
+        objectStore: 's3-compatible',
+        componentVersions: {},
+      }),
+      { exportId: 'credentials-to-local', createdAt, sensitiveValues: [canary] }
+    )
+    const credentialRecords = back.records.filter(
+      ({ category }) => category === 'credential-metadata'
+    )
+    expect(credentialRecords).toEqual(
+      toCloud.records.filter(({ category }) => category === 'credential-metadata')
+    )
+    expect(JSON.stringify(back).includes(canary)).toBe(false)
+    expect(JSON.stringify(back).includes('secretRevisions')).toBe(false)
+  })
+})

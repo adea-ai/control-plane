@@ -11,6 +11,12 @@ export {
   workspaceCatalogCommands,
 } from './catalog.js'
 export { credentialSecrets } from './credential-secrets.js'
+export {
+  credentialAuditEvents,
+  credentialCommands,
+  credentialLeases,
+  credentials,
+} from './credential-vault.js'
 export { contextPackages } from './context-packages.js'
 export { contextAuthoringCommands } from './context-authoring-commands.js'
 export { delegations, delegationState } from './delegations.js'

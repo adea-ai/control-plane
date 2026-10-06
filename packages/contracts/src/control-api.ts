@@ -8,6 +8,7 @@ import {
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
+import { CursorSchema } from './pagination.js'
 import { ContractVersionSchema } from './versioning.js'
 
 const TimestampSchema = z.iso.datetime()
@@ -195,6 +196,121 @@ export type GraphDefinitionResolutionRequest = z.input<
   typeof GraphDefinitionResolutionRequestSchema
 >
 export type GraphDefinitionResponse = z.output<typeof GraphDefinitionResponseSchema>
+
+const CredentialReferenceSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
+
+/**
+ * Write-only secret value. It is accepted once per create or rotate command, is never echoed,
+ * persisted in plaintext, logged or returned, and rejects control characters so it cannot
+ * inject headers or log lines when a connector uses it.
+ */
+export const CredentialSecretValueSchema = z
+  .string()
+  .min(8)
+  .max(65_536)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const code = character.codePointAt(0) ?? 0
+        return code >= 0x20 && code !== 0x7f
+      }),
+    { message: 'Secret values cannot contain control characters' }
+  )
+  .meta({
+    writeOnly: true,
+    description: 'Write-only secret value; never returned, logged or persisted in plaintext',
+  })
+
+/** Public connector-credential metadata. It never contains secret material or references. */
+export const CredentialPublicMetadataSchema = z
+  .object({
+    credentialId: IdentifierSchemas.credentialId,
+    workspaceId: IdentifierSchemas.workspaceId,
+    connectorRef: CredentialReferenceSchema,
+    provider: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[a-z][a-z0-9.-]*$/),
+    status: z.enum(['active', 'revoked', 'expired', 'secret_required']),
+    revision: z.number().int().positive(),
+    createdAt: TimestampSchema,
+    createdBy: CredentialReferenceSchema.optional(),
+    rotatedAt: TimestampSchema.optional(),
+    expiresAt: TimestampSchema.optional(),
+    revokedAt: TimestampSchema.optional(),
+  })
+  .strict()
+export type CredentialPublicMetadata = z.output<typeof CredentialPublicMetadataSchema>
+
+const CredentialCommandContextSchema = CommandContextSchema.omit({ projectId: true })
+const CredentialReadContextSchema = RequestContextSchema.omit({ projectId: true })
+
+export const CredentialCreateRequestSchema = CredentialCommandContextSchema.extend({
+  operation: z.literal('credential.create'),
+  issuedAt: TimestampSchema,
+  payload: z
+    .object({
+      connectorRef: CredentialReferenceSchema,
+      provider: CredentialPublicMetadataSchema.shape.provider,
+      secret: CredentialSecretValueSchema,
+      expiresAt: TimestampSchema.optional(),
+    })
+    .strict(),
+}).strict()
+export const CredentialRotateRequestSchema = CredentialCommandContextSchema.extend({
+  operation: z.literal('credential.rotate'),
+  issuedAt: TimestampSchema,
+  payload: z
+    .object({
+      credentialId: IdentifierSchemas.credentialId,
+      expectedRevision: z.number().int().positive(),
+      secret: CredentialSecretValueSchema,
+    })
+    .strict(),
+}).strict()
+export const CredentialRevokeRequestSchema = CredentialCommandContextSchema.extend({
+  operation: z.literal('credential.revoke'),
+  issuedAt: TimestampSchema,
+  payload: z.object({ credentialId: IdentifierSchemas.credentialId }).strict(),
+}).strict()
+export const CredentialGetRequestSchema = CredentialReadContextSchema.extend({
+  operation: z.literal('credential.get'),
+  requestedAt: TimestampSchema,
+  parameters: z.object({ credentialId: IdentifierSchemas.credentialId }).strict(),
+}).strict()
+export const CredentialListRequestSchema = CredentialReadContextSchema.extend({
+  operation: z.literal('credential.list'),
+  requestedAt: TimestampSchema,
+  parameters: z
+    .object({
+      limit: z.number().int().min(1).max(100).optional(),
+      cursor: CursorSchema.optional(),
+    })
+    .strict(),
+}).strict()
+export const CredentialResponseSchema = successResponse(
+  z.object({ credential: CredentialPublicMetadataSchema }).strict()
+)
+export const CredentialListResponseSchema = successResponse(
+  z
+    .object({
+      credentials: z.array(CredentialPublicMetadataSchema).max(100),
+      nextCursor: CursorSchema.optional(),
+    })
+    .strict()
+)
+export type CredentialCreateRequest = z.input<typeof CredentialCreateRequestSchema>
+export type CredentialRotateRequest = z.input<typeof CredentialRotateRequestSchema>
+export type CredentialRevokeRequest = z.input<typeof CredentialRevokeRequestSchema>
+export type CredentialGetRequest = z.input<typeof CredentialGetRequestSchema>
+export type CredentialListRequest = z.input<typeof CredentialListRequestSchema>
+export type CredentialResponse = z.output<typeof CredentialResponseSchema>
+export type CredentialListResponse = z.output<typeof CredentialListResponseSchema>
 
 export const ProjectStateResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('project-state.resolve'),
@@ -1026,3 +1142,125 @@ export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
     },
   },
 } satisfies ControlApiFixtureSet)
+
+const credentialFixtureMetadata = {
+  credentialId: 'crd_01JABCDEF0123456789ABCDEFG',
+  workspaceId,
+  connectorRef: 'connector:github',
+  provider: 'github',
+  status: 'active',
+  revision: 1,
+  createdAt: '2026-10-06T12:00:00.000Z',
+  createdBy: 'svc_agent-hq',
+} as const
+const credentialCommandContext = {
+  caller,
+  contractVersion,
+  requestId,
+  workspaceId,
+  correlation: { traceId },
+  commandId,
+  payloadHash: 'f'.repeat(64),
+  issuedAt: '2026-10-06T12:00:00.000Z',
+}
+const credentialReadContext = {
+  caller,
+  contractVersion,
+  requestId,
+  workspaceId,
+  correlation: { traceId },
+  requestedAt: '2026-10-06T12:00:00.000Z',
+}
+
+/**
+ * Deterministic credential API fixtures. The secret values are inert placeholders that tests use
+ * as canaries; they are not real credentials.
+ */
+export const CredentialApiFixtures = Object.freeze({
+  create: {
+    request: {
+      ...credentialCommandContext,
+      idempotencyKey: 'credential-create-01JABCDEF0123456789ABCDEFG',
+      operation: 'credential.create',
+      payload: {
+        connectorRef: 'connector:github',
+        provider: 'github',
+        secret: 'fixture-placeholder-not-a-secret-0001',
+      },
+    },
+    response: { ...responseContext, data: { credential: credentialFixtureMetadata } },
+  },
+  rotate: {
+    request: {
+      ...credentialCommandContext,
+      idempotencyKey: 'credential-rotate-01JABCDEF0123456789ABCDEFG',
+      operation: 'credential.rotate',
+      payload: {
+        credentialId: credentialFixtureMetadata.credentialId,
+        expectedRevision: 1,
+        secret: 'fixture-placeholder-not-a-secret-0002',
+      },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        credential: {
+          ...credentialFixtureMetadata,
+          revision: 2,
+          rotatedAt: '2026-10-06T12:05:00.000Z',
+        },
+      },
+    },
+  },
+  revoke: {
+    request: {
+      ...credentialCommandContext,
+      idempotencyKey: 'credential-revoke-01JABCDEF0123456789ABCDEFG',
+      operation: 'credential.revoke',
+      payload: { credentialId: credentialFixtureMetadata.credentialId },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        credential: {
+          ...credentialFixtureMetadata,
+          status: 'revoked',
+          revokedAt: '2026-10-06T12:10:00.000Z',
+        },
+      },
+    },
+  },
+  get: {
+    request: {
+      ...credentialReadContext,
+      operation: 'credential.get',
+      parameters: { credentialId: credentialFixtureMetadata.credentialId },
+    },
+    response: { ...responseContext, data: { credential: credentialFixtureMetadata } },
+  },
+  list: {
+    request: { ...credentialReadContext, operation: 'credential.list', parameters: { limit: 50 } },
+    response: { ...responseContext, data: { credentials: [credentialFixtureMetadata] } },
+  },
+} satisfies {
+  readonly create: {
+    readonly request: CredentialCreateRequest
+    readonly response: z.input<typeof CredentialResponseSchema>
+  }
+  readonly rotate: {
+    readonly request: CredentialRotateRequest
+    readonly response: z.input<typeof CredentialResponseSchema>
+  }
+  readonly revoke: {
+    readonly request: CredentialRevokeRequest
+    readonly response: z.input<typeof CredentialResponseSchema>
+  }
+  readonly get: {
+    readonly request: CredentialGetRequest
+    readonly response: z.input<typeof CredentialResponseSchema>
+  }
+  readonly list: {
+    readonly request: CredentialListRequest
+    readonly response: z.input<typeof CredentialListResponseSchema>
+  }
+})

@@ -188,6 +188,16 @@ for the installer filter. The Local and Hosted profiles do not compose
 marketplace installation, so SQLite has no equivalent table; see
 [the marketplace consumer guide](marketplace-consumer.md#installation-lifecycle).
 
+## Connector credential vault persistence
+
+Migration `0064` adds `credentials` (metadata plus opaque secret references, with a partial unique
+index allowing one non-revoked credential per workspace connector), `credential_leases` (single-use,
+revision-pinned, lifetime bounded to 300 seconds by a check constraint), `credential_audit_events`
+(append-only by trigger) and `credential_commands` (create/rotate idempotency receipts whose hash
+excludes the secret). Ciphertext remains in `credential_secrets`. SQLite stores the same logical
+records in `credential-*` namespaces of `control_plane_records`; no SQLite schema migration is
+required. Both adapters pass the shared vault conformance sequence.
+
 ## ExecutionEvent persistence
 
 Execution events are durable, ordered, redacted records. Required state transitions and their durable event/outbox records must commit atomically within the owning persistence adapter's transaction semantics. Raw prompt, credential, file, provider, or unrestricted runtime payloads are not event-log content.

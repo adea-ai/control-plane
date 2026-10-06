@@ -15,6 +15,32 @@ export interface McpServerRegistration {
   readonly serverId: string
   /** Server-side vault or lease reference. Never copied into canonical tool records. */
   readonly credentialRef: string
+  /**
+   * Workspace connector whose vault credential each call leases. When set, the adapter requires
+   * a `credentialBroker` and obtains a fresh short-lived lease for every invocation.
+   */
+  readonly connectorRef?: string
+}
+
+/** Scope of one MCP call's credential lease. Structurally matches the vault tool broker. */
+export interface McpCredentialLeaseRequest {
+  readonly workspaceId: string
+  readonly connectorRef: string
+  readonly requestId: string
+  readonly principalRef: string
+  readonly operation: string
+  readonly resourceRef: string
+}
+
+/**
+ * Server-side credential lease port (implemented by `VaultToolCredentialBroker`). The secret is
+ * available only inside `operation` and must never be returned, logged or persisted.
+ */
+export interface McpCredentialBroker {
+  withCredential<Result>(
+    request: McpCredentialLeaseRequest,
+    operation: (secret: string) => Result | Promise<Result>
+  ): Promise<Result>
 }
 
 export interface McpDiscoveredTool {
@@ -40,6 +66,8 @@ export interface McpClientPort {
       readonly toolName: string
       readonly input: unknown
       readonly credentialRef: string
+      /** Leased secret for this call only; never log, persist or return it. */
+      readonly credential?: string
     },
     signal: AbortSignal
   ): Promise<unknown>
@@ -47,7 +75,11 @@ export interface McpClientPort {
 
 export class McpAdapterError extends Error {
   constructor(
-    readonly code: 'MCP_DISCOVERY_FAILED' | 'MCP_INVALID_REGISTRATION' | 'MCP_UNBOUNDED_CLIENT'
+    readonly code:
+      | 'MCP_DISCOVERY_FAILED'
+      | 'MCP_INVALID_REGISTRATION'
+      | 'MCP_UNBOUNDED_CLIENT'
+      | 'MCP_CREDENTIAL_BROKER_REQUIRED'
   ) {
     super(code)
     this.name = 'McpAdapterError'
@@ -77,6 +109,7 @@ export class McpAdapter implements ToolExecutor {
   readonly #registration: McpServerRegistration
   readonly #workspaceId: string
   readonly #client: McpClientPort
+  readonly #credentialBroker: McpCredentialBroker | undefined
   readonly #registry: ToolRegistry
   readonly #ids: { definition(): string; version(): string }
   readonly #now: () => string
@@ -91,6 +124,8 @@ export class McpAdapter implements ToolExecutor {
     readonly registration: McpServerRegistration
     readonly workspaceId: string
     readonly client: McpClientPort
+    /** Required when the registration names a `connectorRef`. */
+    readonly credentialBroker?: McpCredentialBroker
     readonly registry: ToolRegistry
     readonly gateway: ToolGateway
     readonly ids: { definition(): string; version(): string }
@@ -107,12 +142,22 @@ export class McpAdapter implements ToolExecutor {
     ) {
       throw new McpAdapterError('MCP_INVALID_REGISTRATION')
     }
+    if (
+      options.registration.connectorRef !== undefined &&
+      !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(options.registration.connectorRef)
+    ) {
+      throw new McpAdapterError('MCP_INVALID_REGISTRATION')
+    }
     if (options.client.enforcesRawDiscoveryLimit !== true) {
       throw new McpAdapterError('MCP_UNBOUNDED_CLIENT')
+    }
+    if (options.registration.connectorRef !== undefined && options.credentialBroker === undefined) {
+      throw new McpAdapterError('MCP_CREDENTIAL_BROKER_REQUIRED')
     }
     this.#registration = { ...options.registration }
     this.#workspaceId = options.workspaceId
     this.#client = options.client
+    this.#credentialBroker = options.credentialBroker
     this.#registry = options.registry
     this.#ids = options.ids
     this.#now = options.now ?? (() => new Date().toISOString())
@@ -184,26 +229,70 @@ export class McpAdapter implements ToolExecutor {
     if (!digestsMatch) {
       throw new ToolExecutorError('MCP_SCHEMA_CHANGED', false, 'none')
     }
-    try {
-      const output = await this.#client.invoke(
-        {
-          serverId: this.#registration.serverId,
-          toolName: source.sourceToolName,
-          input: request.input,
-          credentialRef: this.#registration.credentialRef,
-        },
-        signal
-      )
-      return { output }
-    } catch (error) {
-      const code =
-        error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string'
-          ? String((error as Error & { code: string }).code)
-          : 'MCP_PROTOCOL_ERROR'
-      const disconnected = code === 'MCP_DISCONNECTED'
-      if (disconnected) binding.availability = 'disconnected'
-      throw new ToolExecutorError(code, disconnected, 'none')
+    const connectorRef = this.#registration.connectorRef
+    if (connectorRef === undefined) {
+      try {
+        const output = await this.#client.invoke(
+          {
+            serverId: this.#registration.serverId,
+            toolName: source.sourceToolName,
+            input: request.input,
+            credentialRef: this.#registration.credentialRef,
+          },
+          signal
+        )
+        return { output }
+      } catch (error) {
+        throw this.#clientFailure(binding, mcpErrorCode(error))
+      }
     }
+    // Workspace-owned imports are only ever executed for their own workspace's credential.
+    if (request.workspaceId !== this.#workspaceId || this.#credentialBroker === undefined) {
+      throw new ToolExecutorError('MCP_CREDENTIAL_SCOPE_MISMATCH', false, 'none')
+    }
+    let outcome:
+      | { readonly kind: 'output'; readonly output: unknown }
+      | { readonly kind: 'error'; readonly code: string }
+    try {
+      outcome = await this.#credentialBroker.withCredential(
+        {
+          workspaceId: request.workspaceId,
+          connectorRef,
+          requestId: request.requestId,
+          principalRef: request.audit.principalRef,
+          operation: request.operation,
+          resourceRef: `mcp/${this.#registration.serverId}/${source.sourceToolName}`,
+        },
+        async (credential) => {
+          try {
+            const output = await this.#client.invoke(
+              {
+                serverId: this.#registration.serverId,
+                toolName: source.sourceToolName,
+                input: request.input,
+                credentialRef: this.#registration.credentialRef,
+                credential,
+              },
+              signal
+            )
+            return { kind: 'output' as const, output }
+          } catch (error) {
+            // Only a bounded code crosses the lease boundary; transport errors may echo secrets.
+            return { kind: 'error' as const, code: mcpErrorCode(error) }
+          }
+        }
+      )
+    } catch (error) {
+      throw credentialFailure(error)
+    }
+    if (outcome.kind === 'error') throw this.#clientFailure(binding, outcome.code)
+    return { output: outcome.output }
+  }
+
+  #clientFailure(binding: Binding, code: string): ToolExecutorError {
+    const disconnected = code === 'MCP_DISCONNECTED'
+    if (disconnected) binding.availability = 'disconnected'
+    return new ToolExecutorError(code, disconnected, 'none')
   }
 
   async #import(tool: McpDiscoveredTool): Promise<ToolVersion> {
@@ -424,4 +513,39 @@ function canonical(value: unknown): string {
       .join(',')}}`
   }
   return JSON.stringify(value) ?? 'null'
+}
+
+function mcpErrorCode(error: unknown): string {
+  const code =
+    error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string'
+      ? String((error as Error & { code: string }).code)
+      : 'MCP_PROTOCOL_ERROR'
+  return /^[A-Z][A-Z0-9_]{0,127}$/.test(code) ? code : 'MCP_PROTOCOL_ERROR'
+}
+
+const credentialFailureCodes: Readonly<Record<string, string>> = {
+  POLICY_DENIED: 'MCP_CREDENTIAL_POLICY_DENIED',
+  CREDENTIAL_MISSING: 'MCP_CREDENTIAL_MISSING',
+  CREDENTIAL_SECRET_REQUIRED: 'MCP_CREDENTIAL_MISSING',
+  CREDENTIAL_REVOKED: 'MCP_CREDENTIAL_REVOKED',
+  CREDENTIAL_EXPIRED: 'MCP_CREDENTIAL_EXPIRED',
+}
+
+/**
+ * Lease failures happen before the remote call, so no effect occurred. A blocked secret echo is
+ * detected after the call returned, so its effect state is unknown.
+ */
+function credentialFailure(error: unknown): ToolExecutorError {
+  const code =
+    error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string'
+      ? String((error as Error & { code: string }).code)
+      : ''
+  if (code === 'SECRET_EGRESS_BLOCKED') {
+    return new ToolExecutorError('MCP_CREDENTIAL_EGRESS_BLOCKED', false, 'unknown')
+  }
+  return new ToolExecutorError(
+    credentialFailureCodes[code] ?? 'MCP_CREDENTIAL_UNAVAILABLE',
+    false,
+    'none'
+  )
 }

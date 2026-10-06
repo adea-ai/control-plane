@@ -11,6 +11,12 @@ import {
   UnavailableGraphAdministrationService,
   type GraphAdministrationService,
 } from './graphs/graph-administration.service.js'
+import { CredentialAdministrationController } from './credentials/credential-administration.controller.js'
+import {
+  CREDENTIAL_ADMINISTRATION_SERVICE,
+  UnavailableCredentialAdministrationService,
+  type CredentialAdministrationService,
+} from './credentials/credential-administration.service.js'
 import { Module, type DynamicModule } from '@nestjs/common'
 import {
   createOpenTelemetryMetricAdapter,
@@ -113,6 +119,7 @@ import {
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
+  readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
@@ -152,6 +159,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       GraphAdministrationController,
       WorkspaceSkillCatalogController,
       WorkspaceAgentProfileCatalogController,
+      CredentialAdministrationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
@@ -174,6 +182,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: WORKSPACE_CATALOG_SERVICE,
         useValue: options.workspaceCatalogService ?? new UnavailableWorkspaceCatalogService(),
+      },
+      {
+        provide: CREDENTIAL_ADMINISTRATION_SERVICE,
+        useValue:
+          options.credentialAdministrationService ??
+          new UnavailableCredentialAdministrationService(),
       },
       {
         provide: INTERACTION_COMMAND_SERVICE,

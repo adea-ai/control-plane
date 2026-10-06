@@ -1,4 +1,11 @@
 import {
+  type CredentialCreateRequest,
+  type CredentialGetRequest,
+  type CredentialListRequest,
+  type CredentialListResponse,
+  type CredentialResponse,
+  type CredentialRevokeRequest,
+  type CredentialRotateRequest,
   type GraphDefinitionPublishRequest,
   type GraphDefinitionDeprecationRequest,
   type GraphDefinitionRevocationRequest,
@@ -141,6 +148,28 @@ export class ControlPlaneClient {
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs <= 0) {
       throw new Error('Control Plane client timeout must be a positive integer')
     }
+  }
+
+  /** Sends the secret once; the response carries metadata only. */
+  createCredential(input: CredentialCreateRequest): Promise<CredentialResponse> {
+    return this.#request(ControlApiOperations.createCredential, input)
+  }
+
+  /** Sends a new secret revision once; the response carries metadata only. */
+  rotateCredential(input: CredentialRotateRequest): Promise<CredentialResponse> {
+    return this.#request(ControlApiOperations.rotateCredential, input)
+  }
+
+  revokeCredential(input: CredentialRevokeRequest): Promise<CredentialResponse> {
+    return this.#request(ControlApiOperations.revokeCredential, input)
+  }
+
+  getCredential(input: CredentialGetRequest): Promise<CredentialResponse> {
+    return this.#request(ControlApiOperations.getCredential, input)
+  }
+
+  listCredentials(input: CredentialListRequest): Promise<CredentialListResponse> {
+    return this.#request(ControlApiOperations.listCredentials, input)
   }
 
   publishGraph(input: GraphDefinitionPublishRequest): Promise<GraphDefinitionResponse> {

@@ -6,6 +6,8 @@ import {
 } from '@control-plane/memory-writeback'
 import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
 import { RepositoryWorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
+import { VaultCredentialAdministrationService } from './credentials/credential-administration.service.js'
+import { CredentialVault, NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   decidedRetentionPolicy,
@@ -21,6 +23,8 @@ import {
   createPostgresConnection,
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
+  PostgresCredentialVaultRepository,
+  PostgresEncryptedSecretStore,
   PostgresGraphDefinitionRepository,
   PostgresWorkspaceCatalogCommandRepository,
   PostgresCommandAcceptanceRepository,
@@ -71,6 +75,35 @@ import { MarketplaceRegistryService } from './marketplace/registry.js'
 
 const executionPlanCompilerVersion = '1.0.0'
 
+/**
+ * Stable label bound into each ciphertext's AAD. Changing it makes existing secrets
+ * unreadable, so a key rotation must introduce a new label alongside the old one.
+ */
+export const MANAGED_CLOUD_SECRET_KEY_REFERENCE = 'control-plane-secret-encryption-key/v1'
+
+function createCredentialAdministration(
+  configuration: ManagedCloudConfiguration,
+  database: PostgresConnection['database']
+): VaultCredentialAdministrationService | undefined {
+  if (!configuration.secretEncryptionKey) return undefined
+  let provider: NeonEncryptedSecretProvider
+  try {
+    provider = new NeonEncryptedSecretProvider({
+      store: new PostgresEncryptedSecretStore(database),
+      encryptionKey: configuration.secretEncryptionKey,
+      keyReference: MANAGED_CLOUD_SECRET_KEY_REFERENCE,
+    })
+  } catch {
+    throw new ControlApiCloudCompositionError()
+  }
+  const repository = new PostgresCredentialVaultRepository(database)
+  // The Control API never leases: no policy decision point is composed, so leases deny.
+  return new VaultCredentialAdministrationService({
+    vault: new CredentialVault({ provider, repository }),
+    receipts: repository,
+  })
+}
+
 const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 3_600_000
 
 /** Sweep cadence override; invalid values fail closed before any resource is created. */
@@ -94,6 +127,8 @@ export interface ManagedCloudControlApiComposition {
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly graphAdministrationService: RepositoryGraphAdministrationService
   readonly workspaceCatalogService: RepositoryWorkspaceCatalogService
+  /** Absent when no secret-encryption key is configured; the routes then fail closed. */
+  readonly credentialAdministrationService?: VaultCredentialAdministrationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly serviceAuthenticator: PolicyServiceAuthenticator
   readonly profileResolutionService: RepositoryProfileResolutionService
@@ -194,7 +229,12 @@ export function createManagedCloudControlApiComposition(
     ...(registryToken === undefined ? {} : { token: registryToken }),
   })
 
+  const credentialAdministrationService = createCredentialAdministration(
+    configuration,
+    connection.database
+  )
   return {
+    ...(credentialAdministrationService === undefined ? {} : { credentialAdministrationService }),
     memoryWrites: createMemoryWriteApplication({
       repository: new PostgresMemoryWriteProposalRepository(connection.database),
       interactionRepository: new PostgresInteractionRepository(connection.database),

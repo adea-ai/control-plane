@@ -13,6 +13,11 @@
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "node": "./dist/conformance.js",
+      "default": "./dist/conformance.js"
     }
   },
   "scripts": {
