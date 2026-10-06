@@ -206,6 +206,27 @@ export const ProjectStateResolutionResponseSchema = successResponse(
   z.object({ projectState: ProjectStateReferenceSchema })
 )
 
+/**
+ * Initialize an empty revision-zero ProjectState for the envelope's project. The
+ * project is required and must be granted to the credential. The payload is intentionally empty;
+ * the Control Plane owns the initial content and creation time.
+ */
+export const ProjectStateInitializationRequestSchema = CommandContextSchema.extend({
+  projectId: IdentifierSchemas.projectId,
+  operation: z.literal('project-state.initialize'),
+  issuedAt: TimestampSchema,
+  payload: z.object({}).strict(),
+})
+
+export const ProjectStateInitializationResponseSchema = successResponse(
+  z.object({
+    projectState: ProjectStateReferenceSchema.extend({ revision: z.literal(0) }),
+    /** The command that created revision zero; an exact retry returns the original. */
+    commandId: IdentifierSchemas.commandId,
+    initializedAt: TimestampSchema,
+  })
+)
+
 export const ContextPackageResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('context-package.resolve'),
   requestedAt: TimestampSchema,
@@ -604,6 +625,12 @@ export type ProfileResolutionRequest = z.input<typeof ProfileResolutionRequestSc
 export type ProfileResolutionResponse = z.output<typeof ProfileResolutionResponseSchema>
 export type ProjectStateResolutionRequest = z.input<typeof ProjectStateResolutionRequestSchema>
 export type ProjectStateResolutionResponse = z.output<typeof ProjectStateResolutionResponseSchema>
+export type ProjectStateInitializationRequest = z.input<
+  typeof ProjectStateInitializationRequestSchema
+>
+export type ProjectStateInitializationResponse = z.output<
+  typeof ProjectStateInitializationResponseSchema
+>
 export type ContextPackageResolutionRequest = z.input<typeof ContextPackageResolutionRequestSchema>
 export type ContextPackageResolutionResponse = z.output<
   typeof ContextPackageResolutionResponseSchema
@@ -684,6 +711,10 @@ export interface ControlApiFixtureSet {
   readonly projectStateResolution: {
     readonly request: ProjectStateResolutionRequest
     readonly response: z.input<typeof ProjectStateResolutionResponseSchema>
+  }
+  readonly projectStateInitialization: {
+    readonly request: ProjectStateInitializationRequest
+    readonly response: z.input<typeof ProjectStateInitializationResponseSchema>
   }
   readonly contextPackageResolution: {
     readonly request: ContextPackageResolutionRequest
@@ -821,6 +852,25 @@ export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
       parameters: { revision: 7 },
     },
     response: { ...responseContext, data: { projectState: projectStateReference } },
+  },
+  projectStateInitialization: {
+    request: {
+      ...requestContext,
+      commandId,
+      idempotencyKey: 'project-state-init:prj_01JABCDEF0123456789ABCDEFG',
+      payloadHash: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+      operation: 'project-state.initialize',
+      issuedAt: '2026-08-23T12:00:00.000Z',
+      payload: {},
+    },
+    response: {
+      ...responseContext,
+      data: {
+        projectState: { workspaceId, projectId, revision: 0 },
+        commandId,
+        initializedAt: '2026-08-23T12:00:00.000Z',
+      },
+    },
   },
   contextPackageResolution: {
     request: {

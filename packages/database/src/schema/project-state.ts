@@ -3,7 +3,9 @@ import type {
   ProjectState,
   StatePromotionProposal,
 } from '@control-plane/domain'
+import { sql } from 'drizzle-orm'
 import {
+  check,
   foreignKey,
   index,
   integer,
@@ -102,6 +104,39 @@ export const statePromotionProposals = pgTable(
       table.workspaceId,
       table.projectId,
       table.state
+    ),
+  ]
+)
+
+/**
+ * One receipt per scope: the authenticated command that created revision zero. Committed in the
+ * same transaction as the state, its revision-zero snapshot and the `project_state.initialized`
+ * outbox event. Scopes created by operator bootstrap or portability import have no receipt.
+ */
+export const projectStateInitializations = pgTable(
+  'project_state_initializations',
+  {
+    workspaceId: identifier('workspace_id').notNull(),
+    projectId: identifier('project_id').notNull(),
+    callerId: varchar('caller_id', { length: 64 }).notNull(),
+    commandId: identifier('command_id').notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
+    payloadHash: varchar('payload_hash', { length: 64 }).notNull(),
+    initializedAt: timestamp('initialized_at', { mode: 'date', withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.projectId],
+      name: 'project_state_initializations_scope_pk',
+    }),
+    foreignKey({
+      columns: [table.workspaceId, table.projectId],
+      foreignColumns: [projectStates.workspaceId, projectStates.projectId],
+      name: 'project_state_initializations_state_fk',
+    }),
+    check(
+      'project_state_initializations_payload_hash_check',
+      sql`${table.payloadHash} ~ '^[a-f0-9]{64}$'`
     ),
   ]
 )

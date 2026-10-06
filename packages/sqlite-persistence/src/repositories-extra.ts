@@ -21,9 +21,14 @@ import {
 import type { PersistenceProvider, PersistenceTransaction } from '@control-plane/deployment'
 import {
   AppliedStateMutationSchema,
+  ProjectStateInitializationReceiptSchema,
   ProjectStateSchema,
+  parseInitialization,
   type AppliedStateMutation,
   type ProjectState,
+  type ProjectStateInitializationOutcome,
+  type ProjectStateInitializationReceipt,
+  type ProjectStateInitializationRepository,
   type ProjectStateRepository,
   RetentionAssessmentCounter,
   RetentionJournalOperationSchema,
@@ -47,6 +52,10 @@ const namespaces = {
   projectStateMutations: 'project-state-mutations',
   /** Storage-level parity with the PostgreSQL outbox; no SQLite dispatcher consumes it yet. */
   projectStateUpdates: 'project-state-updates',
+  /** One receipt per scope for the command that created revision zero. */
+  projectStateInitializations: 'project-state-initializations',
+  /** Storage-level parity with the PostgreSQL project_state.initialized outbox event. */
+  projectStateInitializedEvents: 'project-state-initialized-events',
 } as const
 
 /** The context package an execution plan pins, read from the plan JSON. */
@@ -414,8 +423,53 @@ export class SqliteContextPackageRepository implements ContextPackageRepository 
   }
 }
 
-export class SqliteProjectStateRepository implements ProjectStateRepository {
+export class SqliteProjectStateRepository
+  implements ProjectStateRepository, ProjectStateInitializationRepository
+{
   constructor(readonly provider: PersistenceProvider) {}
+
+  async initializeWithReceipt(
+    stateInput: ProjectState,
+    receiptInput: ProjectStateInitializationReceipt
+  ): Promise<ProjectStateInitializationOutcome> {
+    const { state, receipt } = parseInitialization(stateInput, receiptInput)
+    return this.provider.transaction(async (transaction) => {
+      const id = stateId(state.workspaceId, state.projectId)
+      if ((await transaction.get(namespaces.projectStates, id)) !== undefined) {
+        const existing = await transaction.get(namespaces.projectStateInitializations, id)
+        return existing === undefined
+          ? { outcome: 'exists' as const }
+          : {
+              outcome: 'exists' as const,
+              receipt: ProjectStateInitializationReceiptSchema.parse(existing.value),
+            }
+      }
+      await transaction.put({ namespace: namespaces.projectStates, id, value: json(state) })
+      await transaction.put({
+        namespace: namespaces.projectStateHistory,
+        id: historyId(state.workspaceId, state.projectId, state.revision),
+        value: json(state),
+      })
+      await transaction.put({
+        namespace: namespaces.projectStateInitializations,
+        id,
+        value: json(receipt),
+      })
+      await transaction.put({
+        namespace: namespaces.projectStateInitializedEvents,
+        id,
+        value: json({
+          eventType: 'project_state.initialized',
+          workspaceId: state.workspaceId,
+          projectId: state.projectId,
+          revision: 0,
+          commandId: receipt.commandId,
+          initializedAt: receipt.initializedAt,
+        }),
+      })
+      return { outcome: 'initialized' as const }
+    })
+  }
 
   create(input: ProjectState): Promise<boolean> {
     const state = ProjectStateSchema.parse(input)

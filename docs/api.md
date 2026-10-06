@@ -85,6 +85,17 @@ The Adea-facing typed client is published separately as `@control-plane/sdk`. It
 OpenAPI boundary and deterministic pre-execution stub are documented in [`sdk.md`](sdk.md). The SDK
 does not import this application or any server implementation package.
 
+## ProjectState initialization
+
+`POST /v1/project-states/initialize` requires `project-state:initialize`, a required envelope
+`projectId` granted to the credential, and a matching caller assertion. It creates the empty
+revision-zero ProjectState once per scope, replays the original result for an exact retry, and
+returns `409` with `PROJECT_STATE_ALREADY_INITIALIZED` or `PROJECT_STATE_IDEMPOTENCY_CONFLICT`
+otherwise. A payload hash that does not match the canonical payload is `400
+PROJECT_STATE_PAYLOAD_HASH_MISMATCH`; an unconfigured composition returns `503
+PROJECT_STATE_INITIALIZATION_NOT_CONFIGURED`. All four profiles bind it to their ProjectState
+repository. See [`project-state.md`](project-state.md#initialization-over-the-control-api).
+
 ## Graph selection and immutable plans
 
 Execution validation may include `payload.graph` with an exact

@@ -181,6 +181,56 @@ export const AppliedStateMutationSchema = z.object({
 
 export type AppliedStateMutation = z.output<typeof AppliedStateMutationSchema>
 
+/**
+ * Durable receipt for the one command that initialized a scope's revision zero. It binds the
+ * authenticated caller, idempotency key and server-computed payload hash so an exact retry
+ * returns the original result and any other initialization of the same scope is a conflict.
+ */
+export const ProjectStateInitializationReceiptSchema = z
+  .object({
+    workspaceId: IdentifierSchemas.workspaceId,
+    projectId: IdentifierSchemas.projectId,
+    callerId: z.string().min(1).max(64),
+    commandId: IdentifierSchemas.commandId,
+    idempotencyKey: z
+      .string()
+      .min(16)
+      .max(128)
+      .regex(/^[A-Za-z0-9._:-]+$/),
+    payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+    initializedAt: TimestampSchema,
+  })
+  .strict()
+
+export type ProjectStateInitializationReceipt = z.output<
+  typeof ProjectStateInitializationReceiptSchema
+>
+
+export type ProjectStateInitializationOutcome =
+  | { readonly outcome: 'initialized' }
+  | {
+      readonly outcome: 'exists'
+      /** Absent when the scope was created without a receipt (operator bootstrap, import). */
+      readonly receipt?: ProjectStateInitializationReceipt
+    }
+
+/**
+ * Persistence port for command-driven initialization. Adapters must create revision zero, its
+ * history snapshot, the receipt and the `project_state.initialized` record in one transaction,
+ * or create nothing and report the scope's existing receipt.
+ */
+export interface ProjectStateInitializationRepository {
+  initializeWithReceipt(
+    state: ProjectState,
+    receipt: ProjectStateInitializationReceipt
+  ): Promise<ProjectStateInitializationOutcome>
+  getAtRevision(
+    workspaceId: string,
+    projectId: string,
+    revision: number
+  ): Promise<ProjectState | undefined>
+}
+
 export interface ProjectStateRepository {
   create(state: ProjectState): Promise<boolean>
   get(workspaceId: string, projectId: string): Promise<ProjectState | undefined>
@@ -230,10 +280,30 @@ export class RecordingProjectStateEventPublisher implements ProjectStateEventPub
   }
 }
 
-export class InMemoryProjectStateRepository implements ProjectStateRepository {
+export class InMemoryProjectStateRepository
+  implements ProjectStateRepository, ProjectStateInitializationRepository
+{
   readonly #states = new Map<string, ProjectState>()
   readonly #history = new Map<string, ProjectState[]>()
   readonly #mutations = new Map<string, AppliedStateMutation>()
+  readonly #initializations = new Map<string, ProjectStateInitializationReceipt>()
+
+  async initializeWithReceipt(
+    stateInput: ProjectState,
+    receiptInput: ProjectStateInitializationReceipt
+  ): Promise<ProjectStateInitializationOutcome> {
+    const { state, receipt } = parseInitialization(stateInput, receiptInput)
+    const key = stateKey(state.workspaceId, state.projectId)
+    if (this.#states.has(key)) {
+      const existing = this.#initializations.get(key)
+      return existing === undefined
+        ? { outcome: 'exists' }
+        : { outcome: 'exists', receipt: clone(existing) }
+    }
+    await this.create(state)
+    this.#initializations.set(key, clone(receipt))
+    return { outcome: 'initialized' }
+  }
 
   async create(state: ProjectState): Promise<boolean> {
     const key = stateKey(state.workspaceId, state.projectId)
@@ -313,6 +383,7 @@ export class InMemoryStatePromotionProposalRepository implements StatePromotionP
 
 export type ProjectStateErrorCode =
   | 'PROJECT_STATE_EXISTS'
+  | 'INITIALIZATION_IDEMPOTENCY_CONFLICT'
   | 'PROJECT_STATE_MISSING'
   | 'MUTATION_ID_REUSED'
   | 'PROMOTION_REQUIRED'
@@ -370,6 +441,99 @@ const PromotionProposalInputSchema = z.object({
   expiresAt: TimestampSchema,
 })
 
+const InitializationCommandSchema = z.object({
+  workspaceId: IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId,
+  callerId: z.string().min(1).max(64),
+  commandId: IdentifierSchemas.commandId,
+  idempotencyKey: z.string().min(16).max(128),
+  payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  at: TimestampSchema,
+})
+
+/** The canonical empty revision-zero state for a scope. */
+export function initialProjectState(input: {
+  readonly workspaceId: string
+  readonly projectId: string
+  readonly at: string
+}): ProjectState {
+  return ProjectStateSchema.parse({
+    schemaVersion: 1,
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+    revision: 0,
+    items: [],
+    createdAt: input.at,
+    updatedAt: input.at,
+  })
+}
+
+/**
+ * Validates the cross-record invariants an initialization adapter relies on: an empty revision
+ * zero whose scope and creation time match the receipt.
+ */
+export function parseInitialization(
+  stateInput: ProjectState,
+  receiptInput: ProjectStateInitializationReceipt
+): { state: ProjectState; receipt: ProjectStateInitializationReceipt } {
+  const state = ProjectStateSchema.parse(stateInput)
+  const receipt = ProjectStateInitializationReceiptSchema.parse(receiptInput)
+  if (
+    state.revision !== 0 ||
+    state.items.length !== 0 ||
+    state.workspaceId !== receipt.workspaceId ||
+    state.projectId !== receipt.projectId ||
+    state.createdAt !== receipt.initializedAt ||
+    state.updatedAt !== receipt.initializedAt
+  ) {
+    throw new Error('PROJECT_STATE_INITIALIZATION_INTEGRITY_ERROR')
+  }
+  return { state, receipt }
+}
+
+/**
+ * Initializes revision zero exactly once per scope. An exact retry (same caller, idempotency key
+ * and payload hash) returns the original state and receipt; the same key with another payload is
+ * `INITIALIZATION_IDEMPOTENCY_CONFLICT`; any other command against an existing scope is
+ * `PROJECT_STATE_EXISTS`. Initialization is not a mutation and records no mutation ID.
+ */
+export async function initializeProjectStateOnce(
+  repository: ProjectStateInitializationRepository,
+  input: unknown
+): Promise<{
+  readonly state: ProjectState
+  readonly receipt: ProjectStateInitializationReceipt
+  readonly replayed: boolean
+}> {
+  const command = InitializationCommandSchema.parse(input)
+  const state = initialProjectState(command)
+  const receipt = ProjectStateInitializationReceiptSchema.parse({
+    workspaceId: command.workspaceId,
+    projectId: command.projectId,
+    callerId: command.callerId,
+    commandId: command.commandId,
+    idempotencyKey: command.idempotencyKey,
+    payloadHash: command.payloadHash,
+    initializedAt: command.at,
+  })
+  const result = await repository.initializeWithReceipt(state, receipt)
+  if (result.outcome === 'initialized') return { state, receipt, replayed: false }
+  const original = result.receipt
+  if (
+    original === undefined ||
+    original.callerId !== command.callerId ||
+    original.idempotencyKey !== command.idempotencyKey
+  ) {
+    throw new ProjectStateError('PROJECT_STATE_EXISTS')
+  }
+  if (original.payloadHash !== command.payloadHash) {
+    throw new ProjectStateError('INITIALIZATION_IDEMPOTENCY_CONFLICT')
+  }
+  const initial = await repository.getAtRevision(command.workspaceId, command.projectId, 0)
+  if (initial === undefined) throw new Error('PROJECT_STATE_INITIALIZATION_INTEGRITY_ERROR')
+  return { state: initial, receipt: original, replayed: true }
+}
+
 export class ProjectStateService {
   constructor(
     readonly repository: ProjectStateRepository,
@@ -385,14 +549,7 @@ export class ProjectStateService {
         at: TimestampSchema,
       })
       .parse(input)
-    const state = ProjectStateSchema.parse({
-      schemaVersion: 1,
-      ...parsed,
-      revision: 0,
-      items: [],
-      createdAt: parsed.at,
-      updatedAt: parsed.at,
-    })
+    const state = initialProjectState(parsed)
     if (!(await this.repository.create(state))) throw new ProjectStateError('PROJECT_STATE_EXISTS')
     return state
   }

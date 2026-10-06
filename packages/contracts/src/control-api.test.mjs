@@ -18,12 +18,16 @@ import {
   MarketplaceInstallationUninstallResponseSchema,
   ProfileResolutionRequestSchema,
   ProfileResolutionResponseSchema,
+  ProjectStateInitializationRequestSchema,
+  ProjectStateInitializationResponseSchema,
   ProjectStateReferenceSchema,
   RuntimeListRequestSchema,
   RuntimeListResponseSchema,
   ServiceAuthenticationRequestSchema,
   ServiceAuthenticationResponseSchema,
+  canonicalJsonStringify,
 } from './index.ts'
+import { createHash } from 'node:crypto'
 
 describe('Agent HQ Control API contracts', () => {
   test('defines caller context inputs without accepting host-owned authority', () => {
@@ -365,5 +369,41 @@ describe('Agent HQ Control API contracts', () => {
         },
       }).success
     ).toBe(false)
+  })
+
+  test('defines additive ProjectState initialization with a required granted project', () => {
+    const { request, response } = ControlApiFixtures.projectStateInitialization
+    expect(ProjectStateInitializationRequestSchema.parse(request)).toEqual(request)
+    expect(ProjectStateInitializationResponseSchema.parse(response)).toEqual(response)
+    expect(request.payloadHash).toBe(
+      createHash('sha256').update(canonicalJsonStringify(request.payload)).digest('hex')
+    )
+
+    const { projectId: _projectId, ...withoutProject } = request
+    expect(ProjectStateInitializationRequestSchema.safeParse(withoutProject).success).toBe(false)
+    for (const payload of [{ items: [] }, { revision: 0 }, { createdAt: request.issuedAt }]) {
+      expect(
+        ProjectStateInitializationRequestSchema.safeParse({ ...request, payload }).success
+      ).toBe(false)
+    }
+    expect(
+      ProjectStateInitializationRequestSchema.safeParse({
+        ...request,
+        operation: 'project-state.resolve',
+      }).success
+    ).toBe(false)
+    expect(
+      ProjectStateInitializationResponseSchema.safeParse({
+        ...response,
+        data: { ...response.data, projectState: { ...response.data.projectState, revision: 1 } },
+      }).success
+    ).toBe(false)
+    // A newer same-major producer may send additive minor metadata.
+    expect(
+      ProjectStateInitializationRequestSchema.safeParse({
+        ...request,
+        contractVersion: { major: 3, minor: 1 },
+      }).success
+    ).toBe(true)
   })
 })
