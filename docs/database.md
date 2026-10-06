@@ -176,6 +176,18 @@ monitor capacity. This is not retention completion. Safe compaction, SQLite inde
 and deployed acceptance remain M11.9 requirements; see the
 [coverage matrix](./evidence/m11-retention-coverage-2026-09-22.md).
 
+## Marketplace installations
+
+`marketplace_installations` is managed-cloud PostgreSQL state. The `state`
+column keeps the original install decision; uninstallation is a separate
+terminal transition recorded atomically in `uninstalled_at`, `uninstalled_by`,
+`uninstall_idempotency_key` and `uninstall_request_digest` (all set or all
+null, enforced by a check constraint), with a per-workspace unique uninstall
+key. Migration `0061` adds those columns and a `(workspace_id, user_id)` index
+for the installer filter. The Local and Hosted profiles do not compose
+marketplace installation, so SQLite has no equivalent table; see
+[the marketplace consumer guide](marketplace-consumer.md#installation-lifecycle).
+
 ## ExecutionEvent persistence
 
 Execution events are durable, ordered, redacted records. Required state transitions and their durable event/outbox records must commit atomically within the owning persistence adapter's transaction semantics. Raw prompt, credential, file, provider, or unrestricted runtime payloads are not event-log content.

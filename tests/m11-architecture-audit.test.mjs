@@ -42,6 +42,8 @@ const publicOperations = [
   'marketplace.catalog.read',
   'marketplace.install.plan',
   'marketplace.install.request',
+  'marketplace.installation.get',
+  'marketplace.installation.uninstall',
   'profile.resolve',
   'project-state.resolve',
   'runtime-connection.get',

@@ -9,6 +9,13 @@ import {
   ExecutionAcceptanceResponseSchema,
   ExecutionRequestValidationRequestSchema,
   ExecutionRequestValidationResponseSchema,
+  MarketplaceCatalogRequestSchema,
+  MarketplaceCatalogResponseSchema,
+  MarketplaceInstallResponseSchema,
+  MarketplaceInstallationGetRequestSchema,
+  MarketplaceInstallationGetResponseSchema,
+  MarketplaceInstallationUninstallRequestSchema,
+  MarketplaceInstallationUninstallResponseSchema,
   ProfileResolutionRequestSchema,
   ProfileResolutionResponseSchema,
   ProjectStateReferenceSchema,
@@ -79,6 +86,103 @@ describe('Agent HQ Control API contracts', () => {
     expect(
       ProfileResolutionResponseSchema.parse(ControlApiFixtures.profileResolution.response)
     ).toEqual(ControlApiFixtures.profileResolution.response)
+  })
+
+  test('publishes marketplace installation get and uninstall fixtures', () => {
+    const get = ControlApiFixtures.marketplaceInstallationGet
+    const uninstall = ControlApiFixtures.marketplaceInstallationUninstall
+    expect(MarketplaceInstallationGetRequestSchema.parse(get.request)).toEqual(get.request)
+    expect(MarketplaceInstallationGetResponseSchema.parse(get.response)).toEqual(get.response)
+    expect(MarketplaceInstallationUninstallRequestSchema.parse(uninstall.request)).toEqual(
+      uninstall.request
+    )
+    expect(MarketplaceInstallationUninstallResponseSchema.parse(uninstall.response)).toEqual(
+      uninstall.response
+    )
+    // The read model never carries the idempotency key, request digest or scope.
+    for (const key of ['idempotencyKey', 'requestDigest', 'workspaceId', 'userId'])
+      expect(Object.keys(uninstall.response.data.installation)).not.toContain(key)
+    // A malformed or foreign installation handle fails before any lookup.
+    expect(
+      MarketplaceInstallationGetRequestSchema.safeParse({
+        ...get.request,
+        parameters: { ...get.request.parameters, installationId: 'exe_01JABCDEF0123456789ABCDEFG' },
+      }).success
+    ).toBe(false)
+    // An uninstall is a command: it needs an idempotency key and payload hash.
+    const { idempotencyKey: _key, ...withoutKey } = uninstall.request
+    expect(MarketplaceInstallationUninstallRequestSchema.safeParse(withoutKey).success).toBe(false)
+  })
+
+  test('keeps the catalog and install closed enums while adding optional lifecycle fields', () => {
+    const catalogRequest = {
+      ...ControlApiFixtures.marketplaceInstallationGet.request,
+      operation: 'marketplace.catalog.read',
+      parameters: {
+        workspaceIdentity:
+          ControlApiFixtures.marketplaceInstallationGet.request.parameters.workspaceIdentity,
+      },
+    }
+    // The installedBy filter is optional, so a 3.0 request is still valid.
+    expect(MarketplaceCatalogRequestSchema.safeParse(catalogRequest).success).toBe(true)
+    expect(
+      MarketplaceCatalogRequestSchema.safeParse({
+        ...catalogRequest,
+        parameters: { ...catalogRequest.parameters, installedBy: 'user-1' },
+      }).success
+    ).toBe(true)
+    const installation = {
+      canonicalContentDigest: `sha256:${'b'.repeat(64)}`,
+      pluginId: 'plugin:openai-official:gmail',
+      releaseId: `release:${'c'.repeat(64)}`,
+      state: 'installed',
+    }
+    const catalogResponse = (entry) => ({
+      contractVersion: { major: 3, minor: 0 },
+      requestId: 'req_01JABCDEF0123456789ABCDEFG',
+      correlation: { traceId: 'trc_01JABCDEF0123456789ABCDEFG' },
+      data: {
+        artifacts: {
+          'catalog.v1.json': '{}',
+          'catalog-latest.v1.json': '{}',
+          'catalog-summary.v1.json': '{}',
+          'categories.v1.json': '{}',
+          'compatibility.v1.json': '{}',
+          'integrity.json': '{}',
+          'sources.lock.json': '{}',
+        },
+        catalogId: `catalog:${'a'.repeat(64)}`,
+        installations: [entry],
+        releaseId: `catalog:${'a'.repeat(64)}`,
+        state: 'ready',
+      },
+    })
+    expect(MarketplaceCatalogResponseSchema.safeParse(catalogResponse(installation)).success).toBe(
+      true
+    )
+    expect(
+      MarketplaceCatalogResponseSchema.safeParse(
+        catalogResponse({ ...installation, installationId: 'ins_0123456789abcdef0123456789' })
+      ).success
+    ).toBe(true)
+    // `uninstalled` belongs only to the lifecycle read model.
+    expect(
+      MarketplaceCatalogResponseSchema.safeParse(
+        catalogResponse({ ...installation, state: 'uninstalled' })
+      ).success
+    ).toBe(false)
+    expect(
+      MarketplaceInstallResponseSchema.safeParse({
+        ...catalogResponse(installation),
+        data: {
+          ...installation,
+          catalogId: `catalog:${'a'.repeat(64)}`,
+          installationId: 'ins_0123456789abcdef0123456789',
+          requestedHarness: 'codex',
+          state: 'uninstalled',
+        },
+      }).success
+    ).toBe(false)
   })
 
   test('exposes only immutable ProjectState and ContextPackage references', () => {

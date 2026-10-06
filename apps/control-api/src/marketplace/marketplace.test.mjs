@@ -11,7 +11,11 @@ import {
   InMemoryMarketplaceInstallationRepository,
   MarketplaceInstallationService,
 } from './installation.ts'
-import { MarketplaceCatalogResponseSchema } from '@control-plane/contracts'
+import {
+  MarketplaceCatalogResponseSchema,
+  MarketplaceInstallationGetResponseSchema,
+  MarketplaceInstallationUninstallResponseSchema,
+} from '@control-plane/contracts'
 import {
   MarketplaceRegistryService,
   bytesDigest,
@@ -122,8 +126,8 @@ describe('Control Plane marketplace contract', () => {
     // artifact to one and not the other breaks the marketplace read path for
     // clients only — the server still answers 200 — so nothing else caught it.
     const fixture = snapshotFixture()
-    expect(Object.keys(fixture.snapshot.artifacts).sort()).toEqual(
-      [...marketplaceArtifactNames].sort()
+    expect(Object.keys(fixture.snapshot.artifacts).toSorted()).toEqual(
+      [...marketplaceArtifactNames].toSorted()
     )
     const parsed = MarketplaceCatalogResponseSchema.safeParse({
       contractVersion: { major: 1, minor: 0 },
@@ -946,4 +950,484 @@ test('aborts artifact downloads that exceed the size cap mid-stream', async () =
   // Cold start with an over-cap artifact: the download aborts in flight and
   // the registry reports unavailable instead of buffering the full payload.
   await expect(registry.getCatalog()).rejects.toThrow(/marketplace registry is unavailable/)
+})
+
+describe('marketplace installation lifecycle', () => {
+  const workspaceB = 'wsp_01JABCDEF0123456789ABCDEFH'
+  const release = {
+    canonicalContentDigest: `sha256:${'b'.repeat(64)}`,
+    pluginId: 'plugin:openai-official:gmail',
+    releaseId: `release:${'c'.repeat(64)}`,
+  }
+
+  function lifecycleService(overrides = {}) {
+    const fixture = snapshotFixture()
+    const events = []
+    let tick = 0
+    const repository = overrides.repository ?? new InMemoryMarketplaceInstallationRepository()
+    const service = new MarketplaceInstallationService({
+      registry: { getCatalog: async () => fixture.snapshot, verifyRelease: async () => true },
+      repository,
+      logger: { write: (entry) => events.push(entry) },
+      now: () => new Date(Date.UTC(2026, 8, 1, 0, 0, tick++)).toISOString(),
+    })
+    return { events, repository, service }
+  }
+
+  function installEnvelope(
+    idempotencyKey,
+    identity = { userId: 'user-1', workspaceId: ids.workspaceId }
+  ) {
+    return {
+      idempotencyKey,
+      payload: { ...release, requestedHarness: 'codex', workspaceIdentity: identity },
+      workspaceId: identity.workspaceId,
+    }
+  }
+
+  function uninstallEnvelope(
+    installationId,
+    idempotencyKey,
+    identity = { userId: 'user-2', workspaceId: ids.workspaceId }
+  ) {
+    return {
+      idempotencyKey,
+      payload: { installationId, workspaceIdentity: identity },
+      workspaceId: identity.workspaceId,
+    }
+  }
+
+  function getEnvelope(
+    installationId,
+    identity = { userId: 'user-1', workspaceId: ids.workspaceId }
+  ) {
+    return {
+      parameters: { installationId, workspaceIdentity: identity },
+      workspaceId: identity.workspaceId,
+    }
+  }
+
+  test('gets, uninstalls once, and replays the terminal state idempotently', async () => {
+    const { events, service } = lifecycleService()
+    const installed = await service.install(installEnvelope('lifecycle-install-0001'))
+    expect(installed.state).toBe('installed')
+
+    const read = await service.get(getEnvelope(installed.installationId))
+    expect(read).toEqual({
+      ...release,
+      catalogId: installed.catalogId,
+      installationId: installed.installationId,
+      installedAt: installed.createdAt,
+      installedBy: 'user-1',
+      requestedHarness: 'codex',
+      state: 'installed',
+      updatedAt: installed.updatedAt,
+    })
+    for (const key of ['idempotencyKey', 'requestDigest', 'workspaceId', 'userId'])
+      expect(Object.keys(read)).not.toContain(key)
+
+    const first = await service.uninstall(
+      uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0001')
+    )
+    expect(first.replayed).toBe(false)
+    expect(first.installation).toMatchObject({
+      installedBy: 'user-1',
+      state: 'uninstalled',
+      uninstalledBy: 'user-2',
+    })
+    expect(first.installation.uninstalledAt).toBe(first.installation.updatedAt)
+    expect(Date.parse(first.installation.uninstalledAt)).toBeGreaterThan(
+      Date.parse(installed.createdAt)
+    )
+
+    // The same command replays its original result.
+    const replay = await service.uninstall(
+      uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0001')
+    )
+    expect(replay).toEqual({ installation: first.installation, replayed: true })
+    // Another command on the terminal state changes nothing, including who/when.
+    const again = await service.uninstall(
+      uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0002', {
+        userId: 'user-3',
+        workspaceId: ids.workspaceId,
+      })
+    )
+    expect(again).toEqual({ installation: first.installation, replayed: true })
+    expect(await service.get(getEnvelope(installed.installationId))).toEqual(first.installation)
+
+    expect(events.map(({ event, details }) => [event, details.actorUserId, details.state])).toEqual(
+      [
+        ['marketplace.installation.recorded', 'user-1', 'installed'],
+        ['marketplace.installation.uninstalled', 'user-2', 'uninstalled'],
+      ]
+    )
+    expect(JSON.stringify(events)).not.toContain('lifecycle-uninstall-0001')
+  })
+
+  test('rejects reuse of an uninstall key for a different request', async () => {
+    const { service } = lifecycleService()
+    const one = await service.install(installEnvelope('lifecycle-install-0101'))
+    const two = await service.install(installEnvelope('lifecycle-install-0102'))
+    await service.uninstall(uninstallEnvelope(one.installationId, 'lifecycle-uninstall-0101'))
+    await expect(
+      service.uninstall(uninstallEnvelope(two.installationId, 'lifecycle-uninstall-0101'))
+    ).rejects.toMatchObject({
+      response: { code: 'MARKETPLACE_IDEMPOTENCY_CONFLICT' },
+    })
+    await expect(
+      service.uninstall(
+        uninstallEnvelope(one.installationId, 'lifecycle-uninstall-0101', {
+          userId: 'someone-else',
+          workspaceId: ids.workspaceId,
+        })
+      )
+    ).rejects.toMatchObject({ response: { code: 'MARKETPLACE_IDEMPOTENCY_CONFLICT' } })
+    expect((await service.get(getEnvelope(two.installationId))).state).toBe('installed')
+  })
+
+  test('removes uninstalled installations from the active list and allows a reinstall', async () => {
+    const { service } = lifecycleService()
+    const original = await service.install(installEnvelope('lifecycle-install-0201'))
+    const other = await service.install(
+      installEnvelope('lifecycle-install-0202', { userId: 'user-9', workspaceId: ids.workspaceId })
+    )
+    expect((await service.list(ids.workspaceId)).map((record) => record.installationId)).toEqual([
+      original.installationId,
+      other.installationId,
+    ])
+    await service.uninstall(uninstallEnvelope(original.installationId, 'lifecycle-uninstall-0201'))
+    expect((await service.list(ids.workspaceId)).map((record) => record.installationId)).toEqual([
+      other.installationId,
+    ])
+
+    // Replaying the original install key must not report an installation that
+    // no longer exists; a reinstall uses a new key and a new installation.
+    await expect(service.install(installEnvelope('lifecycle-install-0201'))).rejects.toMatchObject({
+      response: { code: 'MARKETPLACE_INSTALLATION_UNINSTALLED' },
+    })
+    const reinstalled = await service.install(installEnvelope('lifecycle-install-0203'))
+    expect(reinstalled.installationId).not.toBe(original.installationId)
+    expect(reinstalled.state).toBe('installed')
+    expect((await service.get(getEnvelope(original.installationId))).state).toBe('uninstalled')
+    expect(
+      (await service.list(ids.workspaceId)).map((record) => record.installationId).toSorted()
+    ).toEqual([other.installationId, reinstalled.installationId].toSorted())
+  })
+
+  test('filters the active list by installer only when asked', async () => {
+    const { service } = lifecycleService()
+    const mine = await service.install(installEnvelope('lifecycle-install-0301'))
+    const theirs = await service.install(
+      installEnvelope('lifecycle-install-0302', { userId: 'user-9', workspaceId: ids.workspaceId })
+    )
+    expect((await service.list(ids.workspaceId)).length).toBe(2)
+    expect((await service.list(ids.workspaceId, {})).length).toBe(2)
+    expect(
+      (await service.list(ids.workspaceId, { installedBy: 'user-1' })).map(
+        (record) => record.installationId
+      )
+    ).toEqual([mine.installationId])
+    expect(
+      (await service.list(ids.workspaceId, { installedBy: 'user-9' })).map(
+        (record) => record.installationId
+      )
+    ).toEqual([theirs.installationId])
+    expect(await service.list(ids.workspaceId, { installedBy: 'nobody' })).toEqual([])
+    expect(await service.list(workspaceB, { installedBy: 'user-1' })).toEqual([])
+  })
+
+  test('keeps another workspace installation invisible and unchanged', async () => {
+    const { service } = lifecycleService()
+    const installed = await service.install(installEnvelope('lifecycle-install-0401'))
+    const identityB = { userId: 'user-1', workspaceId: workspaceB }
+    await expect(
+      service.get(getEnvelope(installed.installationId, identityB))
+    ).rejects.toMatchObject({ response: { code: 'MARKETPLACE_INSTALLATION_NOT_FOUND' } })
+    await expect(
+      service.uninstall(
+        uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0401', identityB)
+      )
+    ).rejects.toMatchObject({ response: { code: 'MARKETPLACE_INSTALLATION_NOT_FOUND' } })
+    // The B-scoped key was not consumed and A's installation is untouched.
+    expect((await service.get(getEnvelope(installed.installationId))).state).toBe('installed')
+    await expect(service.get(getEnvelope('ins_00000000000000000000000000'))).rejects.toMatchObject({
+      response: { code: 'MARKETPLACE_INSTALLATION_NOT_FOUND' },
+    })
+    // A nested identity that differs from the envelope scope is invalid.
+    await expect(
+      service.get({
+        ...getEnvelope(installed.installationId, identityB),
+        workspaceId: ids.workspaceId,
+      })
+    ).rejects.toMatchObject({ response: { code: 'MARKETPLACE_REQUEST_INVALID' } })
+    await expect(
+      service.uninstall({
+        ...uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0402'),
+        idempotencyKey: '',
+      })
+    ).rejects.toMatchObject({ response: { code: 'MARKETPLACE_REQUEST_INVALID' } })
+  })
+
+  test('records one actor when uninstalls race', async () => {
+    const { repository, service } = lifecycleService()
+    const installed = await service.install(installEnvelope('lifecycle-install-0501'))
+    // Simulate a competing command winning between the read and the transition.
+    const markUninstalled = repository.markUninstalled.bind(repository)
+    repository.markUninstalled = async (transition) => {
+      await markUninstalled({
+        ...transition,
+        idempotencyKey: 'lifecycle-uninstall-winner',
+        uninstalledBy: 'winner',
+      })
+      return markUninstalled(transition)
+    }
+    const result = await service.uninstall(
+      uninstallEnvelope(installed.installationId, 'lifecycle-uninstall-0501')
+    )
+    expect(result.replayed).toBe(true)
+    expect(result.installation.uninstalledBy).toBe('winner')
+  })
+
+  function scopedApplication({ scopes, workspaceIds = [ids.workspaceId], service }) {
+    const claims = {
+      audience: 'control-plane',
+      credentialId: 'marketplace-lifecycle-probe',
+      credentialKind: 'service',
+      expiresAt: '2026-08-31T01:00:00.000Z',
+      issuedAt: '2026-08-31T00:00:00.000Z',
+      issuer: 'https://agent-hq.example',
+      keyId: 'marketplace-test-key',
+      principalId: 'svc_agent-hq',
+      projectIds: [],
+      scopes,
+      workspaceIds,
+    }
+    return createControlApiApplication({
+      ...applicationDefaults,
+      serviceAuthenticator: new PolicyServiceAuthenticator({
+        audience: 'control-plane',
+        clockSkewMs: 30_000,
+        issuer: claims.issuer,
+        logger: { write: () => undefined },
+        now: () => new Date('2026-08-31T00:05:00.000Z'),
+        revocationChecker: { isRevoked: async () => false },
+        verifier: { verify: async () => claims },
+      }),
+      marketplaceRegistryService: { getCatalog: async () => snapshotFixture().snapshot },
+      ...(service === undefined ? {} : { marketplaceInstallationService: service }),
+    })
+  }
+
+  function httpGet(installationId, workspaceId = ids.workspaceId) {
+    return {
+      method: 'POST',
+      url: '/v1/marketplace/installations/get',
+      headers: { authorization: 'Bearer scoped-test-credential' },
+      payload: {
+        caller: { servicePrincipalId: 'svc_agent-hq' },
+        contractVersion: { major: 3, minor: 0 },
+        correlation: { traceId: ids.traceId },
+        operation: 'marketplace.installation.get',
+        parameters: { installationId, workspaceIdentity: { userId: 'user-1', workspaceId } },
+        requestId: ids.requestId,
+        requestedAt: '2026-08-31T00:00:00.000Z',
+        workspaceId,
+      },
+    }
+  }
+
+  function httpUninstall(installationId, idempotencyKey, workspaceId = ids.workspaceId) {
+    return {
+      method: 'POST',
+      url: '/v1/marketplace/installations/uninstall',
+      headers: { authorization: 'Bearer scoped-test-credential' },
+      payload: {
+        caller: { servicePrincipalId: 'svc_agent-hq' },
+        commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+        contractVersion: { major: 3, minor: 0 },
+        correlation: { traceId: ids.traceId },
+        idempotencyKey,
+        issuedAt: '2026-08-31T00:00:00.000Z',
+        operation: 'marketplace.installation.uninstall',
+        payload: { installationId, workspaceIdentity: { userId: 'user-2', workspaceId } },
+        payloadHash: 'a'.repeat(64),
+        requestId: 'req_01JABCDEF1123456789ABCDEFG',
+        workspaceId,
+      },
+    }
+  }
+
+  test('requires marketplace:uninstall and marketplace:read before any access', async () => {
+    let calls = 0
+    const service = {
+      list: async () => [],
+      install: async () => ({}),
+      get: async () => {
+        calls++
+        return {}
+      },
+      uninstall: async () => {
+        calls++
+        return {}
+      },
+    }
+    const installOnly = await scopedApplication({
+      scopes: ['marketplace:read', 'marketplace:install'],
+      service,
+    })
+    try {
+      const response = await installOnly.inject(
+        httpUninstall('ins_0123456789abcdef0123456789', 'lifecycle-http-0001')
+      )
+      expect(response.statusCode).toBe(403)
+      expect(response.json().error.code).toBe('SERVICE_CREDENTIAL_SCOPE_MISMATCH')
+    } finally {
+      await installOnly.close()
+    }
+    const uninstallOnly = await scopedApplication({ scopes: ['marketplace:uninstall'], service })
+    try {
+      const response = await uninstallOnly.inject(httpGet('ins_0123456789abcdef0123456789'))
+      expect(response.statusCode).toBe(403)
+      // A credential for workspace A cannot address workspace B at all.
+      const foreign = await uninstallOnly.inject(
+        httpUninstall('ins_0123456789abcdef0123456789', 'lifecycle-http-0002', workspaceB)
+      )
+      expect(foreign.statusCode).toBe(403)
+    } finally {
+      await uninstallOnly.close()
+    }
+    expect(calls).toBe(0)
+  })
+
+  test('serves get and uninstall over HTTP with workspace isolation', async () => {
+    const { service } = lifecycleService()
+    const installed = await service.install(installEnvelope('lifecycle-install-0601'))
+    const contractResponse = (body) => ({
+      contractVersion: { major: 3, minor: 0 },
+      correlation: { traceId: ids.traceId },
+      data: body.data,
+      requestId: ids.requestId,
+    })
+    const applicationA = await scopedApplication({
+      scopes: ['marketplace:read', 'marketplace:uninstall'],
+      service,
+    })
+    try {
+      const read = await applicationA.inject(httpGet(installed.installationId))
+      expect(read.statusCode).toBe(200)
+      expect(read.json().data.installation.state).toBe('installed')
+      const parsedRead = MarketplaceInstallationGetResponseSchema.safeParse(
+        contractResponse(read.json())
+      )
+      expect(parsedRead.success ? [] : parsedRead.error.issues).toEqual([])
+
+      const mismatched = httpGet(installed.installationId)
+      mismatched.payload.parameters.workspaceIdentity.workspaceId = workspaceB
+      expect((await applicationA.inject(mismatched)).statusCode).toBe(400)
+
+      const removed = await applicationA.inject(
+        httpUninstall(installed.installationId, 'lifecycle-http-0601')
+      )
+      expect(removed.statusCode).toBe(200)
+      expect(removed.json().data).toMatchObject({
+        installation: { state: 'uninstalled', uninstalledBy: 'user-2' },
+        replayed: false,
+      })
+      const parsedRemoval = MarketplaceInstallationUninstallResponseSchema.safeParse(
+        contractResponse(removed.json())
+      )
+      expect(parsedRemoval.success ? [] : parsedRemoval.error.issues).toEqual([])
+      const replay = await applicationA.inject(
+        httpUninstall(installed.installationId, 'lifecycle-http-0601')
+      )
+      expect(replay.json().data).toEqual({ ...removed.json().data, replayed: true })
+    } finally {
+      await applicationA.close()
+    }
+
+    const applicationB = await scopedApplication({
+      scopes: ['marketplace:read', 'marketplace:uninstall'],
+      workspaceIds: [workspaceB],
+      service,
+    })
+    try {
+      const read = await applicationB.inject(httpGet(installed.installationId, workspaceB))
+      expect(read.statusCode).toBe(404)
+      expect(read.json().error.code).toBe('MARKETPLACE_INSTALLATION_NOT_FOUND')
+      const removal = await applicationB.inject(
+        httpUninstall(installed.installationId, 'lifecycle-http-0602', workspaceB)
+      )
+      expect(removal.statusCode).toBe(404)
+    } finally {
+      await applicationB.close()
+    }
+  })
+
+  test('filters catalog installations by installer and hides uninstalled ones', async () => {
+    const { service } = lifecycleService()
+    const mine = await service.install(installEnvelope('lifecycle-install-0701'))
+    await service.install(
+      installEnvelope('lifecycle-install-0702', { userId: 'user-9', workspaceId: ids.workspaceId })
+    )
+    const application = await scopedApplication({ scopes: ['marketplace:read'], service })
+    const catalog = (parameters) => ({
+      method: 'POST',
+      url: '/v1/marketplace/catalog',
+      headers: { authorization: 'Bearer scoped-test-credential' },
+      payload: {
+        caller: { servicePrincipalId: 'svc_agent-hq' },
+        contractVersion: { major: 3, minor: 0 },
+        correlation: { traceId: ids.traceId },
+        operation: 'marketplace.catalog.read',
+        parameters: {
+          workspaceIdentity: { userId: 'user-1', workspaceId: ids.workspaceId },
+          ...parameters,
+        },
+        requestId: ids.requestId,
+        requestedAt: '2026-08-31T00:00:00.000Z',
+        workspaceId: ids.workspaceId,
+      },
+    })
+    try {
+      const all = await application.inject(catalog({}))
+      expect(all.json().data.installations.length).toBe(2)
+      const filtered = await application.inject(catalog({ installedBy: 'user-1' }))
+      expect(filtered.json().data.installations.map((entry) => entry.installationId)).toEqual([
+        mine.installationId,
+      ])
+      expect((await application.inject(catalog({ installedBy: '' }))).statusCode).toBe(400)
+      await service.uninstall(uninstallEnvelope(mine.installationId, 'lifecycle-uninstall-0701'))
+      const after = await application.inject(catalog({ installedBy: 'user-1' }))
+      expect(after.json().data.installations).toEqual([])
+      expect((await application.inject(catalog({}))).json().data.installations.length).toBe(1)
+    } finally {
+      await application.close()
+    }
+  })
+
+  test('fails closed when installation management is not configured', async () => {
+    const application = await scopedApplication({
+      scopes: ['marketplace:read', 'marketplace:uninstall'],
+    })
+    try {
+      const read = await application.inject(httpGet('ins_0123456789abcdef0123456789'))
+      expect(read.statusCode).toBe(503)
+      expect(read.json().error.code).toBe('MARKETPLACE_INSTALLATION_NOT_CONFIGURED')
+      const removal = await application.inject(
+        httpUninstall('ins_0123456789abcdef0123456789', 'lifecycle-http-0801')
+      )
+      expect(removal.statusCode).toBe(503)
+    } finally {
+      await application.close()
+    }
+    const legacy = await scopedApplication({
+      scopes: ['marketplace:read', 'marketplace:uninstall'],
+      service: { list: async () => [], install: async () => ({}) },
+    })
+    try {
+      expect((await legacy.inject(httpGet('ins_0123456789abcdef0123456789'))).statusCode).toBe(503)
+    } finally {
+      await legacy.close()
+    }
+  })
 })

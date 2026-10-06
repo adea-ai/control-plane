@@ -18,6 +18,8 @@ import type {
   MarketplaceInstallEnvelope,
   MarketplaceInstallPlanEnvelope,
   MarketplaceInstallationAuthority,
+  MarketplaceInstallationGetEnvelope,
+  MarketplaceUninstallEnvelope,
 } from './installation.js'
 import { MarketplaceRegistryPlanError, planFailureResponse } from './agent-plugins.js'
 
@@ -45,7 +47,10 @@ export class MarketplaceController {
         releaseId: snapshot.releaseId,
         state: snapshot.state,
         artifacts: snapshot.artifacts,
-        installations: await this.installations.list(identity.workspaceId),
+        installations: await this.installations.list(
+          identity.workspaceId,
+          identity.installedBy === undefined ? {} : { installedBy: identity.installedBy }
+        ),
       },
       meta: responseMetadata(request),
     }
@@ -58,6 +63,32 @@ export class MarketplaceController {
   @ApiAcceptedResponse({ description: 'Marketplace installation state' })
   async install(@Body() envelope: unknown, @Req() request: FastifyRequest) {
     const result = await this.installations.install(parseInstallEnvelope(envelope))
+    return { data: result, meta: responseMetadata(request) }
+  }
+
+  @Post('installations/get')
+  @HttpCode(200)
+  @RequireServiceAuthentication('marketplace:read')
+  @ApiOperation({ summary: 'Read one marketplace installation of the envelope workspace' })
+  @ApiOkResponse({ description: 'Installation lifecycle state and exact pins' })
+  async getInstallation(@Body() envelope: unknown, @Req() request: FastifyRequest) {
+    if (!this.installations.get) installationManagementUnavailable()
+    const installation = await this.installations.get(
+      parseInstallationEnvelope<MarketplaceInstallationGetEnvelope>(envelope, 'parameters')
+    )
+    return { data: { installation }, meta: responseMetadata(request) }
+  }
+
+  @Post('installations/uninstall')
+  @HttpCode(200)
+  @RequireServiceAuthentication('marketplace:uninstall')
+  @ApiOperation({ summary: 'Idempotently uninstall a marketplace installation of the workspace' })
+  @ApiOkResponse({ description: 'Terminal uninstalled installation state' })
+  async uninstall(@Body() envelope: unknown, @Req() request: FastifyRequest) {
+    if (!this.installations.uninstall) installationManagementUnavailable()
+    const result = await this.installations.uninstall(
+      parseInstallationEnvelope<MarketplaceUninstallEnvelope>(envelope, 'payload')
+    )
     return { data: result, meta: responseMetadata(request) }
   }
 
@@ -78,7 +109,11 @@ export class MarketplaceController {
   }
 }
 
-function readIdentity(value: unknown): { workspaceId: string; userId: string } {
+function readIdentity(value: unknown): {
+  workspaceId: string
+  userId: string
+  installedBy?: string
+} {
   if (
     !isObject(value) ||
     !isObject(value['parameters']) ||
@@ -91,20 +126,52 @@ function readIdentity(value: unknown): { workspaceId: string; userId: string } {
   const parameters = value['parameters'] as Record<string, unknown>
   const identity = parameters['workspaceIdentity'] as Record<string, unknown>
   const workspaceId = stringValue(identity['workspaceId'])
+  const installedBy = parameters['installedBy']
   if (
     !stringValue(value['workspaceId']) ||
     !workspaceId ||
     workspaceId !== stringValue(value['workspaceId']) ||
-    !stringValue(identity['userId'])
+    !stringValue(identity['userId']) ||
+    (installedBy !== undefined &&
+      (!stringValue(installedBy) || stringValue(installedBy).length > 128))
   )
     throw new BadRequestException({
       code: 'MARKETPLACE_REQUEST_INVALID',
       message: 'Marketplace catalog request is invalid',
     })
   return {
+    ...(installedBy === undefined ? {} : { installedBy: stringValue(installedBy) }),
     userId: stringValue(identity['userId']),
     workspaceId,
   }
+}
+
+// The nested identity must name the authenticated envelope workspace, exactly
+// as for catalog and install, so workspace B can never address workspace A.
+function parseInstallationEnvelope<Envelope>(
+  value: unknown,
+  body: 'parameters' | 'payload'
+): Envelope {
+  if (!isObject(value) || !isObject(value[body]) || !isObject(value[body]['workspaceIdentity']))
+    throw new BadRequestException({
+      code: 'MARKETPLACE_REQUEST_INVALID',
+      message: 'Marketplace installation request is invalid',
+    })
+  const workspaceId = stringValue(value['workspaceId'])
+  const nestedWorkspaceId = stringValue(value[body]['workspaceIdentity']['workspaceId'])
+  if (!workspaceId || !nestedWorkspaceId || workspaceId !== nestedWorkspaceId)
+    throw new BadRequestException({
+      code: 'MARKETPLACE_REQUEST_INVALID',
+      message: 'Marketplace installation request is invalid',
+    })
+  return value as Envelope
+}
+
+function installationManagementUnavailable(): never {
+  throw new ServiceUnavailableException({
+    code: 'MARKETPLACE_INSTALLATION_NOT_CONFIGURED',
+    message: 'Marketplace installation management is not configured',
+  })
 }
 
 function parseInstallPlanEnvelope(value: unknown): MarketplaceInstallPlanEnvelope {

@@ -1,0 +1,7 @@
+ALTER TABLE "marketplace_installations" ADD COLUMN "uninstalled_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "marketplace_installations" ADD COLUMN "uninstalled_by" varchar(256);--> statement-breakpoint
+ALTER TABLE "marketplace_installations" ADD COLUMN "uninstall_idempotency_key" varchar(128);--> statement-breakpoint
+ALTER TABLE "marketplace_installations" ADD COLUMN "uninstall_request_digest" varchar(64);--> statement-breakpoint
+CREATE UNIQUE INDEX "marketplace_installations_workspace_uninstall_idempotency_unique" ON "marketplace_installations" USING btree ("workspace_id","uninstall_idempotency_key");--> statement-breakpoint
+CREATE INDEX "marketplace_installations_workspace_user_index" ON "marketplace_installations" USING btree ("workspace_id","user_id");--> statement-breakpoint
+ALTER TABLE "marketplace_installations" ADD CONSTRAINT "marketplace_installations_uninstall_complete" CHECK (("marketplace_installations"."uninstalled_at" IS NULL AND "marketplace_installations"."uninstalled_by" IS NULL AND "marketplace_installations"."uninstall_idempotency_key" IS NULL AND "marketplace_installations"."uninstall_request_digest" IS NULL) OR ("marketplace_installations"."uninstalled_at" IS NOT NULL AND "marketplace_installations"."uninstalled_by" IS NOT NULL AND "marketplace_installations"."uninstall_idempotency_key" IS NOT NULL AND "marketplace_installations"."uninstall_request_digest" IS NOT NULL));
