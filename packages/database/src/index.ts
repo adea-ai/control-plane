@@ -29,6 +29,7 @@ export {
 } from './catalog-approval-repository.js'
 export { PostgresCatalogRepository } from './catalog-repository.js'
 export { PostgresEncryptedSecretStore } from './credential-secret-store.js'
+export { PostgresCredentialVaultRepository } from './credential-vault-repository.js'
 export { PostgresDelegationRepository } from './delegation-repository.js'
 export { PostgresExecutionEventRepository } from './execution-event-repository.js'
 export {
@@ -162,6 +163,10 @@ export {
   toolDefinitions,
   toolRateLimitEvents,
   toolVersions,
+  credentialAuditEvents,
+  credentialCommands,
+  credentialLeases,
+  credentials,
 } from './schema/index.js'
 export { PostgresToolCallRepository, PostgresToolRegistryRepository } from './tool-repositories.js'
 export { PostgresToolRateLimiter } from './tool-rate-limiter.js'
