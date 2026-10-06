@@ -28,6 +28,7 @@ export * from './catalog-approval-policy.js'
 export * from './reconciliation-projection.js'
 export * from './context-node-inbox.js'
 export * from './versioned-catalog.js'
+export * from './workspace-catalog.js'
 export * from './retention-hold.js'
 
 export const packageName = 'domain'

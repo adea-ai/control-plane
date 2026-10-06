@@ -85,6 +85,17 @@ The Adea-facing typed client is published separately as `@control-plane/sdk`. It
 OpenAPI boundary and deterministic pre-execution stub are documented in [`sdk.md`](sdk.md). The SDK
 does not import this application or any server implementation package.
 
+## ProjectState initialization
+
+`POST /v1/project-states/initialize` requires `project-state:initialize`, a required envelope
+`projectId` granted to the credential, and a matching caller assertion. It creates the empty
+revision-zero ProjectState once per scope, replays the original result for an exact retry, and
+returns `409` with `PROJECT_STATE_ALREADY_INITIALIZED` or `PROJECT_STATE_IDEMPOTENCY_CONFLICT`
+otherwise. A payload hash that does not match the canonical payload is `400
+PROJECT_STATE_PAYLOAD_HASH_MISMATCH`; an unconfigured composition returns `503
+PROJECT_STATE_INITIALIZATION_NOT_CONFIGURED`. All four profiles bind it to their ProjectState
+repository. See [`project-state.md`](project-state.md#initialization-over-the-control-api).
+
 ## Graph selection and immutable plans
 
 Execution validation may include `payload.graph` with an exact
@@ -164,6 +175,53 @@ version catalog. Local/Simple restart tests verify both original receipt replay
 and independent lifecycle changes for identical pins in different workspaces.
 Production graph execution admission stays fail closed until the compiler and
 policy-controlled operation bindings are configured.
+
+## Workspace catalog administration
+
+Workspace-owned Skills and AgentProfiles (see
+[`profiles-and-skills.md`](profiles-and-skills.md#workspace-catalog-api)) use these `POST` routes.
+Every envelope is workspace-scoped and rejects `projectId`; the credential must grant the route's
+scope and the envelope workspace. Scopes are explicit and deny by default:
+
+| Route                                                            | Operation                                              | Scope             |
+| ---------------------------------------------------------------- | ------------------------------------------------------ | ----------------- |
+| `/v1/catalog/skills/list`, `/v1/catalog/profiles/list`           | `catalog.skill.list`, `catalog.profile.list`           | `catalog:read`    |
+| `/v1/catalog/skills/get`, `/v1/catalog/profiles/get`             | `catalog.skill.get`, `catalog.profile.get`             | `catalog:read`    |
+| `/v1/catalog/skills/publish`, `/v1/catalog/profiles/publish`     | `catalog.skill.publish`, `catalog.profile.publish`     | `catalog:publish` |
+| `/v1/catalog/skills/deprecate`, `/v1/catalog/profiles/deprecate` | `catalog.skill.deprecate`, `catalog.profile.deprecate` | `catalog:manage`  |
+| `/v1/catalog/skills/revoke`, `/v1/catalog/profiles/revoke`       | `catalog.skill.revoke`, `catalog.profile.revoke`       | `catalog:manage`  |
+
+List parameters accept an opaque `cursor` and `limit` (1-100, default 50); items are owned and
+system records in ascending stable-ID order, each with its latest non-draft version summary. Get
+parameters take the stable ID and an optional exact version ID; the response carries the record,
+every non-draft version summary and the full content of the selected (or latest) version.
+Records report `ownership` (`system` or `workspace`) and `readOnly`.
+
+Publish payloads carry the stable ID, a new version ID, an optional display name (required for a
+new item), and the executable content as JSON objects: a Skill `manifest` without its digest plus
+`content`, or a profile `version` number plus `definition`. The Control Plane validates them
+against the versioned catalog schemas; failures return `422 CATALOG_CONTENT_INVALID`, and
+unpublished, invisible or digest-mismatched Skill pins return `422 CATALOG_SKILL_PIN_INVALID`.
+Lifecycle payloads target either one exact version (`skillId` and `skillVersionId`, or
+`profileId` and `profileVersionId`, plus `expectedRevision` and `reason`) or the whole item (the
+stable ID and `reason`); they return the changed version summaries.
+
+Invisible items return `404 CATALOG_ITEM_NOT_FOUND`, system items return
+`403 CATALOG_ITEM_READ_ONLY` to writes, and immutability or revision conflicts return `409` with
+the catalog code. Credential-shaped keys or recognizable secret values in a payload are rejected
+with `422 CATALOG_CREDENTIAL_INPUT_REJECTED`; other instruction text is free-form. Receipt
+identity is workspace, caller, operation and idempotency key, bound to a server-computed hash of
+the payload: an exact retry returns the original result with current response metadata, and a
+changed payload under the same key returns `409 CATALOG_COMMAND_CONFLICT`.
+
+Each committed or replayed mutation writes one structured `catalog.<operation>` audit event with
+the workspace, principal, request and command IDs, item ID, version IDs, revisions, lifecycle,
+digests and a `replayed` flag; instructions and definitions are never logged. The SDK exposes
+`listWorkspaceSkills`, `getWorkspaceSkill`, `publishWorkspaceSkill`, `deprecateWorkspaceSkill`,
+`revokeWorkspaceSkill` and the matching `...WorkspaceProfile(s)` methods. Cloud, Hosted `server`,
+Hosted `simple` and Local compose the service over their catalog persistence; Local and Hosted use
+their private API credential, which authorizes a single trusted caller. A deployment without the
+service returns `503 WORKSPACE_CATALOG_NOT_CONFIGURED`.
 
 ## Workspace connector credentials
 

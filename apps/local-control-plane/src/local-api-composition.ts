@@ -6,6 +6,7 @@ import {
   createExecutionId,
   RepositoryProfileResolutionService,
   RepositoryProjectStateResolutionService,
+  RepositoryProjectStateInitializationService,
   RepositoryContextPackageResolutionService,
   type ExecutionWorkflowDispatcher,
 } from '@control-plane/control-api'
@@ -88,6 +89,7 @@ export class LocalControlApiComposition {
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
+  readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: SqliteRuntimeDiscoveryRepository
 
@@ -206,6 +208,9 @@ export class LocalControlApiComposition {
           }
     )
     this.projectStateResolutionService = new RepositoryProjectStateResolutionService(
+      this.projectStates
+    )
+    this.projectStateInitializationService = new RepositoryProjectStateInitializationService(
       this.projectStates
     )
     this.contextPackageResolutionService = new RepositoryContextPackageResolutionService(

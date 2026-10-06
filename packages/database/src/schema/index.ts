@@ -8,6 +8,7 @@ export {
   catalogVersionLifecycle,
   skillVersions,
   skills,
+  workspaceCatalogCommands,
 } from './catalog.js'
 export { credentialSecrets } from './credential-secrets.js'
 export {
@@ -56,6 +57,7 @@ export { toolCalls, toolDefinitions, toolVersions } from './tool-execution.js'
 export { toolRateLimitEvents } from './tool-rate-limit-events.js'
 export { executionValidationCommands } from './execution-validation-commands.js'
 export {
+  projectStateInitializations,
   projectStateMutations,
   projectStateRevisions,
   projectStates,

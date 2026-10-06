@@ -31,6 +31,7 @@ import {
   RestateExecutionWorkflowDispatcher,
   UnavailableExecutionAcceptanceService,
   type ExecutionAcceptanceService,
+  RepositoryWorkspaceCatalogService,
 } from '@control-plane/control-api'
 import type { RuntimeAdapterWithTransport } from '@control-plane/runtime-sdk'
 import {
@@ -49,8 +50,11 @@ import {
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
   SqliteCatalogApprovalRepository,
+  SqliteVersionedCatalogRepository,
+  SqliteWorkspaceCatalogCommandRepository,
   assertSqliteWorkflowExecutionReference,
 } from '@control-plane/sqlite-persistence'
+import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   createRestateEndpointFactory,
   EmbeddedExecutionWorkflowDispatcher,
@@ -250,6 +254,7 @@ export class LocalControlPlaneComposition {
   readonly executionValidationService: LocalControlApiComposition['executionValidationService']
   readonly profileResolutionService: LocalControlApiComposition['profileResolutionService']
   readonly projectStateResolutionService: LocalControlApiComposition['projectStateResolutionService']
+  readonly projectStateInitializationService: LocalControlApiComposition['projectStateInitializationService']
   readonly contextPackageResolutionService: LocalControlApiComposition['contextPackageResolutionService']
   readonly executionEvents: LocalControlApiComposition['executionEvents']
   readonly statePromotionProposals: LocalControlApiComposition['statePromotionProposals']
@@ -435,6 +440,7 @@ export class LocalControlPlaneComposition {
     this.executionCancellationService = controlApi.executionCancellationService
     this.profileResolutionService = controlApi.profileResolutionService
     this.projectStateResolutionService = controlApi.projectStateResolutionService
+    this.projectStateInitializationService = controlApi.projectStateInitializationService
     this.contextPackageResolutionService = controlApi.contextPackageResolutionService
     this.executionEvents = controlApi.executionEvents
     this.statePromotionProposals = controlApi.statePromotionProposals
@@ -620,6 +626,15 @@ export class LocalControlPlaneComposition {
             },
           ])
         : new StaticServiceDiscovery([])
+  }
+
+  /** Workspace catalog API over the local SQLite catalog; audit events use `logger`. */
+  createWorkspaceCatalogService(logger: StructuredLogger): RepositoryWorkspaceCatalogService {
+    return new RepositoryWorkspaceCatalogService({
+      catalog: new SqliteVersionedCatalogRepository(this.persistence),
+      commands: new SqliteWorkspaceCatalogCommandRepository(this.persistence),
+      logger,
+    })
   }
 
   async start(): Promise<void> {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TextEncoder } from 'node:util'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { canonicalJsonStringify } from '@control-plane/domain'
+import { canonicalJsonStringify, initializeProjectStateOnce } from '@control-plane/domain'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
   assertExecutionPlanIntegrity,
@@ -1097,6 +1097,56 @@ describe('portable profile export and import', () => {
     await expect(
       applyPortableImport(manifest, replayPlan, destination, {}, () => createdAt)
     ).resolves.toMatchObject({ outcome: 'replayed' })
+  })
+
+  test('moves API-initialized ProjectState without its idempotency receipt', async () => {
+    const sourceProvider = await sqliteProvider('local')
+    const command = {
+      workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+      projectId: 'prj_01JABCDEF0123456789ABCDEFG',
+      callerId: 'svc_adea',
+      commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+      idempotencyKey: 'project-state-init:prj_01JABCDEF',
+      payloadHash: 'a'.repeat(64),
+      at: createdAt,
+    }
+    const { state } = await initializeProjectStateOnce(
+      new SqliteProjectStateRepository(sourceProvider),
+      command
+    )
+    const manifest = await exportPortableState(
+      new PersistencePortableStateSource({
+        persistence: sourceProvider,
+        componentVersions: { contracts: '3.0.0' },
+      }),
+      { exportId: 'export-initialized-state', createdAt }
+    )
+    // Initialization receipts are command-replay metadata, not portable state.
+    expect(manifest.records.map((record) => record.logicalId)).toEqual([
+      `project-states/${command.workspaceId}:${command.projectId}`,
+    ])
+
+    const destinationProvider = await sqliteProvider('hosted-simple')
+    const destination = new PersistencePortableStateDestination({
+      persistence: destinationProvider,
+      capabilities: new Set(),
+      secretProviders: new Set(),
+    })
+    const plan = await planPortableImport(manifest, destination)
+    await expect(
+      applyPortableImport(manifest, plan, destination, {}, () => createdAt)
+    ).resolves.toMatchObject({ outcome: 'applied' })
+    const destinationStates = new SqliteProjectStateRepository(destinationProvider)
+    expect(
+      await destinationStates.getAtRevision(command.workspaceId, command.projectId, 0)
+    ).toEqual(state)
+    // Without the receipt the destination never re-creates or silently claims the scope.
+    await expect(initializeProjectStateOnce(destinationStates, command)).rejects.toMatchObject({
+      code: 'PROJECT_STATE_EXISTS',
+    })
+    expect(await destinationStates.getHistory(command.workspaceId, command.projectId)).toEqual([
+      state,
+    ])
   })
 })
 

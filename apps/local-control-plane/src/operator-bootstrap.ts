@@ -3,15 +3,14 @@ import { isDeepStrictEqual } from 'node:util'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
   AgentProfileDefinitionSchema,
-  AgentProfileSchema,
-  SkillSchema,
-  SkillManifestSchema,
   InMemoryVersionedCatalogRepository,
   InMemoryProjectStateRepository,
   InMemoryStatePromotionProposalRepository,
   RecordingProjectStateEventPublisher,
   ProjectStateService,
   VersionedCatalog,
+  workspaceAgentProfileRecord,
+  workspaceSkillRecord,
   type Skill,
   type SkillVersion,
 } from '@control-plane/domain'
@@ -40,7 +39,6 @@ export async function bootstrapLocalOperator(persistence: PersistenceProvider, i
     new RecordingProjectStateEventPublisher()
   ).initialize({ workspaceId, projectId, at: request['at'] })
   const at = state.createdAt
-  const ownership = { scope: 'workspace', workspaceId }
   const staged = new InMemoryVersionedCatalogRepository()
   const catalog = new VersionedCatalog(staged, staged)
   const profileInput = fields(request['profile'], [
@@ -51,27 +49,22 @@ export async function bootstrapLocalOperator(persistence: PersistenceProvider, i
     'definition',
   ])
   const profile = await catalog.createAgentProfile(
-    AgentProfileSchema.parse({
-      profileId: profileInput['profileId'],
+    workspaceAgentProfileRecord({
+      workspaceId,
+      profileId: IdentifierSchemas.profileId.parse(profileInput['profileId']),
       displayName: profileInput['displayName'],
-      ownership,
-      createdAt: at,
+      at,
     })
   )
   const definition = AgentProfileDefinitionSchema.parse(profileInput['definition'])
   const versionNumber = profileInput['version']
   if (typeof versionNumber !== 'number') throw new Error('LOCAL_OPERATOR_BOOTSTRAP_INPUT_INVALID')
-  const profileDraft = await catalog.createAgentProfileDraft({
+  const profileVersion = await catalog.publishNewAgentProfileVersion({
     profileId: profile.profileId,
     profileVersionId: IdentifierSchemas.profileVersionId.parse(profileInput['profileVersionId']),
     version: versionNumber,
     definition,
-    createdAt: at,
-  })
-  const profileVersion = await catalog.publishAgentProfileVersion({
-    profileVersionId: profileDraft.profileVersionId,
-    expectedRevision: profileDraft.revision,
-    publishedAt: at,
+    at,
   })
   if (!Array.isArray(request['skills']) || request['skills'].length > 32)
     throw new Error('LOCAL_OPERATOR_BOOTSTRAP_INPUT_INVALID')
@@ -79,25 +72,19 @@ export async function bootstrapLocalOperator(persistence: PersistenceProvider, i
   for (const value of request['skills']) {
     const item = fields(value, ['skillId', 'skillVersionId', 'displayName', 'manifest', 'content'])
     const skill = await catalog.createSkill(
-      SkillSchema.parse({
-        skillId: item['skillId'],
+      workspaceSkillRecord({
+        workspaceId,
+        skillId: IdentifierSchemas.skillId.parse(item['skillId']),
         displayName: item['displayName'],
-        ownership,
-        createdAt: at,
-        provenance: { source: 'workspace-authorized', ownerRef: workspaceId, trust: 'authorized' },
+        at,
       })
     )
-    const draft = await catalog.createSkillDraft({
+    const version = await catalog.publishNewSkillVersion({
       skillId: skill.skillId,
       skillVersionId: IdentifierSchemas.skillVersionId.parse(item['skillVersionId']),
-      manifest: SkillManifestSchema.omit({ contentDigest: true }).parse(item['manifest']),
+      manifest: item['manifest'],
       content: item['content'],
-      createdAt: at,
-    })
-    const version = await catalog.publishSkillVersion({
-      skillVersionId: draft.skillVersionId,
-      expectedRevision: draft.revision,
-      publishedAt: at,
+      at,
     })
     skills.push({ skill, version })
   }
@@ -135,34 +122,24 @@ export async function bootstrapLocalOperator(persistence: PersistenceProvider, i
         profileVersion
       )
     ) {
-      const draft = await publication.createAgentProfileDraft({
+      await publication.publishNewAgentProfileVersion({
         profileId: profile.profileId,
         profileVersionId: profileVersion.profileVersionId,
         version: profileVersion.version,
         definition: profileVersion.definition,
-        createdAt: at,
-      })
-      await publication.publishAgentProfileVersion({
-        profileVersionId: draft.profileVersionId,
-        expectedRevision: draft.revision,
-        publishedAt: at,
+        at,
       })
     }
     for (const { skill, version } of skills) {
       if (missingOrSame(await records.getSkill(skill.skillId), skill))
         await publication.createSkill(skill)
       if (missingOrSame(await records.getSkillVersion(version.skillVersionId), version)) {
-        const draft = await publication.createSkillDraft({
+        await publication.publishNewSkillVersion({
           skillId: skill.skillId,
           skillVersionId: version.skillVersionId,
           manifest: version.manifest,
           content: version.content,
-          createdAt: at,
-        })
-        await publication.publishSkillVersion({
-          skillVersionId: draft.skillVersionId,
-          expectedRevision: draft.revision,
-          publishedAt: at,
+          at,
         })
       }
     }

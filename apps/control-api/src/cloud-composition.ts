@@ -5,6 +5,7 @@ import {
   type MemoryWriteApplicationConfiguration,
 } from '@control-plane/memory-writeback'
 import { RepositoryGraphAdministrationService } from './graphs/graph-administration.service.js'
+import { RepositoryWorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import { VaultCredentialAdministrationService } from './credentials/credential-administration.service.js'
 import { CredentialVault, NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
 import type { StructuredLogger } from '@control-plane/bootstrap'
@@ -25,6 +26,7 @@ import {
   PostgresCredentialVaultRepository,
   PostgresEncryptedSecretStore,
   PostgresGraphDefinitionRepository,
+  PostgresWorkspaceCatalogCommandRepository,
   PostgresCommandAcceptanceRepository,
   PostgresExecutionEventRepository,
   PostgresInteractionRepository,
@@ -60,6 +62,7 @@ import {
 } from './executions/execution-acceptance.service.js'
 import { RepositoryProfileResolutionService } from './queries/profile-resolution.service.js'
 import { RepositoryProjectStateResolutionService } from './queries/project-state-resolution.service.js'
+import { RepositoryProjectStateInitializationService } from './project-states/project-state-initialization.service.js'
 import { RepositoryContextPackageResolutionService } from './queries/context-package-resolution.service.js'
 import { GithubReleaseVerifier } from './marketplace/github-release-verifier.js'
 import {
@@ -123,12 +126,14 @@ export interface ManagedCloudControlApiComposition {
   readonly connection: PostgresConnection
   readonly executionAcceptanceService: DurableExecutionAcceptanceService
   readonly graphAdministrationService: RepositoryGraphAdministrationService
+  readonly workspaceCatalogService: RepositoryWorkspaceCatalogService
   /** Absent when no secret-encryption key is configured; the routes then fail closed. */
   readonly credentialAdministrationService?: VaultCredentialAdministrationService
   readonly executionValidationService: DurableExecutionValidationService
   readonly serviceAuthenticator: PolicyServiceAuthenticator
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
+  readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly marketplaceRegistryService: MarketplaceRegistryService
@@ -277,6 +282,11 @@ export function createManagedCloudControlApiComposition(
       repository: (workspaceId) =>
         new PostgresGraphDefinitionRepository(connection.database, workspaceId),
     }),
+    workspaceCatalogService: new RepositoryWorkspaceCatalogService({
+      catalog,
+      commands: new PostgresWorkspaceCatalogCommandRepository(connection.database),
+      logger,
+    }),
     executionValidationService: new DurableExecutionValidationService({
       compilerVersion: executionPlanCompilerVersion,
       contextPackages,
@@ -318,6 +328,9 @@ export function createManagedCloudControlApiComposition(
           }
     ),
     projectStateResolutionService: new RepositoryProjectStateResolutionService(projectStates),
+    projectStateInitializationService: new RepositoryProjectStateInitializationService(
+      projectStates
+    ),
     contextPackageResolutionService: new RepositoryContextPackageResolutionService(contextPackages),
     runtimeDiscoveryRepository: new PostgresRuntimeDiscoveryRepository(connection.database),
     serviceAuthenticator,

@@ -1,4 +1,5 @@
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
+import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import type { CredentialAdministrationService } from './credentials/credential-administration.service.js'
 import {
   bootstrapService,
@@ -24,6 +25,7 @@ import type { ExecutionCancellationService } from './executions/execution-cancel
 import type { RuntimeDiscoveryRepository } from './runtime-discovery/runtime-discovery.repository.js'
 import type { ProfileResolutionService } from './queries/profile-resolution.service.js'
 import type { ProjectStateResolutionService } from './queries/project-state-resolution.service.js'
+import type { ProjectStateInitializationService } from './project-states/project-state-initialization.service.js'
 import type { ContextPackageResolutionService } from './queries/context-package-resolution.service.js'
 import type { MarketplaceInstallationAuthority } from './marketplace/installation.js'
 import type { MarketplaceHarnessProfileAuthority } from './marketplace/agent-plugins.js'
@@ -38,6 +40,7 @@ export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
@@ -54,6 +57,7 @@ export interface ControlApiStartOptions {
   readonly runtimeDiscoveryRepository?: RuntimeDiscoveryRepository
   readonly profileResolutionService?: ProfileResolutionService
   readonly projectStateResolutionService?: ProjectStateResolutionService
+  readonly projectStateInitializationService?: ProjectStateInitializationService
   readonly contextPackageResolutionService?: ContextPackageResolutionService
   readonly serviceAuthenticator?: ServiceAuthenticator
   readonly marketplaceRegistryService?: MarketplaceRegistryService
@@ -108,6 +112,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       }
       const graphAdministrationService =
         options.graphAdministrationService ?? cloudComposition?.graphAdministrationService
+      const workspaceCatalogService =
+        options.workspaceCatalogService ?? cloudComposition?.workspaceCatalogService
       const credentialAdministrationService =
         options.credentialAdministrationService ?? cloudComposition?.credentialAdministrationService
       const executionValidationService =
@@ -124,6 +130,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.profileResolutionService ?? cloudComposition?.profileResolutionService
       const projectStateResolutionService =
         options.projectStateResolutionService ?? cloudComposition?.projectStateResolutionService
+      const projectStateInitializationService =
+        options.projectStateInitializationService ??
+        cloudComposition?.projectStateInitializationService
       const contextPackageResolutionService =
         options.contextPackageResolutionService ?? cloudComposition?.contextPackageResolutionService
       const runtimeDiscoveryRepository =
@@ -134,6 +143,7 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
+        ...(workspaceCatalogService === undefined ? {} : { workspaceCatalogService }),
         ...(credentialAdministrationService === undefined
           ? {}
           : { credentialAdministrationService }),
@@ -150,6 +160,9 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
           : { dependencyReadiness: () => databaseReadinessProbe(cloudComposition.connection) }),
         ...(profileResolutionService === undefined ? {} : { profileResolutionService }),
         ...(projectStateResolutionService === undefined ? {} : { projectStateResolutionService }),
+        ...(projectStateInitializationService === undefined
+          ? {}
+          : { projectStateInitializationService }),
         ...(contextPackageResolutionService === undefined
           ? {}
           : { contextPackageResolutionService }),
@@ -189,6 +202,11 @@ export {
   type ProjectStateResolutionService,
 } from './queries/project-state-resolution.service.js'
 export {
+  RepositoryProjectStateInitializationService,
+  UnavailableProjectStateInitializationService,
+  type ProjectStateInitializationService,
+} from './project-states/project-state-initialization.service.js'
+export {
   RepositoryContextPackageResolutionService,
   type ContextPackageResolutionService,
 } from './queries/context-package-resolution.service.js'
@@ -211,3 +229,4 @@ export {
 } from './auth/private-api-authentication.js'
 
 export * from './graphs/graph-administration.service.js'
+export * from './catalog/workspace-catalog.service.js'

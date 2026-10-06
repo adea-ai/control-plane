@@ -11,5 +11,6 @@ export * from './memory-writeback.js'
 export * from './pagination.js'
 export * from './runtime-discovery.js'
 export * from './versioning.js'
+export * from './workspace-catalog.js'
 
 export const packageName = 'contracts'

@@ -18,6 +18,10 @@ const fixtureByPath = new Map<string, unknown>([
     ControlApiFixtures.projectStateResolution.response,
   ],
   [
+    ControlApiOperations.initializeProjectState.path,
+    ControlApiFixtures.projectStateInitialization.response,
+  ],
+  [
     ControlApiOperations.resolveContextPackage.path,
     ControlApiFixtures.contextPackageResolution.response,
   ],

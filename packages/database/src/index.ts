@@ -27,7 +27,8 @@ export {
   catalogApprovalDatabaseAuthority,
   PostgresCatalogApprovalRepository,
 } from './catalog-approval-repository.js'
-export { PostgresCatalogRepository } from './catalog-repository.js'
+export { PostgresCatalogRepository, type CatalogDatabase } from './catalog-repository.js'
+export { PostgresWorkspaceCatalogCommandRepository } from './workspace-catalog-command-repository.js'
 export { PostgresEncryptedSecretStore } from './credential-secret-store.js'
 export { PostgresCredentialVaultRepository } from './credential-vault-repository.js'
 export { PostgresDelegationRepository } from './delegation-repository.js'

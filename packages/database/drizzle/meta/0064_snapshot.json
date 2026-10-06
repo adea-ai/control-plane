@@ -1,6 +1,6 @@
 {
-  "id": "90ce7fde-27f9-4e32-93b1-c9f448172da5",
-  "prevId": "2b57f3ff-c112-41eb-a44a-dd451d824400",
+  "id": "307ebf3f-f8dd-48fd-a7d4-d01beb2094cd",
+  "prevId": "5a4b8d63-ed38-449b-a5eb-4170041ab014",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4369,6 +4369,81 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.project_state_initializations": {
+      "name": "project_state_initializations",
+      "schema": "",
+      "columns": {
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "caller_id": {
+          "name": "caller_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command_id": {
+          "name": "command_id",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "initialized_at": {
+          "name": "initialized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "project_state_initializations_state_fk": {
+          "name": "project_state_initializations_state_fk",
+          "tableFrom": "project_state_initializations",
+          "tableTo": "project_states",
+          "columnsFrom": ["workspace_id", "project_id"],
+          "columnsTo": ["workspace_id", "project_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "project_state_initializations_scope_pk": {
+          "name": "project_state_initializations_scope_pk",
+          "columns": ["workspace_id", "project_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "project_state_initializations_payload_hash_check": {
+          "name": "project_state_initializations_payload_hash_check",
+          "value": "\"project_state_initializations\".\"payload_hash\" ~ '^[a-f0-9]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.project_state_mutations": {
       "name": "project_state_mutations",
       "schema": "",
@@ -7311,6 +7386,80 @@
         "usage_operation_receipts_receipt_object_check": {
           "name": "usage_operation_receipts_receipt_object_check",
           "value": "jsonb_typeof(\"usage_operation_receipts\".\"receipt\") = 'object'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.workspace_catalog_commands": {
+      "name": "workspace_catalog_commands",
+      "schema": "",
+      "columns": {
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "caller_id": {
+          "name": "caller_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operation": {
+          "name": "operation",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "receipt": {
+          "name": "receipt",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "workspace_catalog_commands_scope_pk": {
+          "name": "workspace_catalog_commands_scope_pk",
+          "columns": ["workspace_id", "caller_id", "operation", "idempotency_key"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "workspace_catalog_commands_operation_check": {
+          "name": "workspace_catalog_commands_operation_check",
+          "value": "\"workspace_catalog_commands\".\"operation\" in ('skill.publish', 'skill.deprecate', 'skill.revoke', 'profile.publish', 'profile.deprecate', 'profile.revoke')"
+        },
+        "workspace_catalog_commands_payload_hash_check": {
+          "name": "workspace_catalog_commands_payload_hash_check",
+          "value": "\"workspace_catalog_commands\".\"payload_hash\" ~ '^[a-f0-9]{64}$'"
+        },
+        "workspace_catalog_commands_receipt_object_check": {
+          "name": "workspace_catalog_commands_receipt_object_check",
+          "value": "jsonb_typeof(\"workspace_catalog_commands\".\"receipt\") = 'object' or \"workspace_catalog_commands\".\"receipt\" is null"
         }
       },
       "isRLSEnabled": false

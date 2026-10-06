@@ -82,8 +82,12 @@ export const start = (options: HostedControlPlaneStartOptions = {}) =>
         executionCancellationService: composition.executionCancellationService,
         executionValidationService: composition.executionValidationService,
         graphAdministrationService: composition.graphAdministrationService,
+        workspaceCatalogService: composition.createWorkspaceCatalogService(
+          options.logger ?? jsonLogger
+        ),
         profileResolutionService: composition.profileResolutionService,
         projectStateResolutionService: composition.projectStateResolutionService,
+        projectStateInitializationService: composition.projectStateInitializationService,
         contextPackageResolutionService: composition.contextPackageResolutionService,
         runtimeDiscoveryRepository: composition.runtimeDiscoveryRepository,
         serviceAuthenticator: authentication.authenticator,

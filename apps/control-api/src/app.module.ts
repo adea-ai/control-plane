@@ -1,4 +1,11 @@
 import { GraphAdministrationController } from './graphs/graph-administration.controller.js'
+import { WorkspaceAgentProfileCatalogController } from './catalog/workspace-profile-catalog.controller.js'
+import { WorkspaceSkillCatalogController } from './catalog/workspace-skill-catalog.controller.js'
+import {
+  UnavailableWorkspaceCatalogService,
+  WORKSPACE_CATALOG_SERVICE,
+  type WorkspaceCatalogService,
+} from './catalog/workspace-catalog.service.js'
 import {
   GRAPH_ADMINISTRATION_SERVICE,
   UnavailableGraphAdministrationService,
@@ -96,6 +103,12 @@ import {
   UnavailableProjectStateResolutionService,
   type ProjectStateResolutionService,
 } from './queries/project-state-resolution.service.js'
+import { ProjectStateInitializationController } from './project-states/project-state-initialization.controller.js'
+import {
+  PROJECT_STATE_INITIALIZATION_SERVICE,
+  UnavailableProjectStateInitializationService,
+  type ProjectStateInitializationService,
+} from './project-states/project-state-initialization.service.js'
 import { ContextPackageResolutionController } from './queries/context-package-resolution.controller.js'
 import {
   CONTEXT_PACKAGE_RESOLUTION_SERVICE,
@@ -105,6 +118,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly credentialAdministrationService?: CredentialAdministrationService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
@@ -116,6 +130,7 @@ export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly componentManifest?: () => Promise<unknown>
   readonly profileResolutionService?: ProfileResolutionService
   readonly projectStateResolutionService?: ProjectStateResolutionService
+  readonly projectStateInitializationService?: ProjectStateInitializationService
   readonly contextPackageResolutionService?: ContextPackageResolutionService
   readonly marketplaceRegistryService?: MarketplaceRegistryService
   readonly marketplaceInstallationService?: MarketplaceInstallationAuthority
@@ -142,6 +157,8 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     controllers: [
       AuthenticationController,
       GraphAdministrationController,
+      WorkspaceSkillCatalogController,
+      WorkspaceAgentProfileCatalogController,
       CredentialAdministrationController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
@@ -152,6 +169,7 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       HealthController,
       ProfileResolutionController,
       ProjectStateResolutionController,
+      ProjectStateInitializationController,
       RuntimeDiscoveryController,
       MarketplaceController,
       SystemController,
@@ -160,6 +178,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: GRAPH_ADMINISTRATION_SERVICE,
         useValue: options.graphAdministrationService ?? new UnavailableGraphAdministrationService(),
+      },
+      {
+        provide: WORKSPACE_CATALOG_SERVICE,
+        useValue: options.workspaceCatalogService ?? new UnavailableWorkspaceCatalogService(),
       },
       {
         provide: CREDENTIAL_ADMINISTRATION_SERVICE,
@@ -215,6 +237,12 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
         provide: PROJECT_STATE_RESOLUTION_SERVICE,
         useValue:
           options.projectStateResolutionService ?? new UnavailableProjectStateResolutionService(),
+      },
+      {
+        provide: PROJECT_STATE_INITIALIZATION_SERVICE,
+        useValue:
+          options.projectStateInitializationService ??
+          new UnavailableProjectStateInitializationService(),
       },
       {
         provide: RUNTIME_DISCOVERY_REPOSITORY,

@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { FakeMemoryProviderWriter } from '@control-plane/memory-writeback'
 import { InteractionService } from '@control-plane/domain'
+import { WorkspaceCatalogFixtures } from '@control-plane/contracts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -118,6 +119,9 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
       projectStateResolutionService: composition.projectStateResolutionService,
       contextPackageResolutionService: composition.contextPackageResolutionService,
       runtimeDiscoveryRepository: composition.runtimeDiscoveryRepository,
+      workspaceCatalogService: composition.createWorkspaceCatalogService({
+        write: () => undefined,
+      }),
       serviceAuthenticator: authentication.authenticator,
       dependencyReadiness: () => hostedDependencyReadiness(composition),
       componentManifest: () => composition.manifest(),
@@ -322,6 +326,32 @@ describe.skipIf(!integrationEnabled)('hosted control plane HTTP surface', () => 
     expect(ok.statusCode).toBe(201)
     expect(ok.json().data.authenticated).toBe(true)
     expect(typeof ok.json().data.principalId).toBe('string')
+  })
+
+  test('workspace catalog publishes and lists over the hosted PostgreSQL composition', async () => {
+    const post = (url, payload) =>
+      application.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: `Bearer ${credential}` },
+        payload,
+      })
+    const published = await post(
+      '/v1/catalog/skills/publish',
+      WorkspaceCatalogFixtures.skillPublish.request
+    )
+    expect(published.statusCode).toBe(200)
+    expect(published.json().data.version.lifecycle).toBe('published')
+    const replay = await post(
+      '/v1/catalog/skills/publish',
+      WorkspaceCatalogFixtures.skillPublish.request
+    )
+    expect(replay.json().data).toEqual(published.json().data)
+    const listed = await post('/v1/catalog/skills/list', WorkspaceCatalogFixtures.skillList.request)
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json().data.items.map(({ skill }) => skill.skillId)).toEqual([
+      WorkspaceCatalogFixtures.skillPublish.request.payload.skillId,
+    ])
   })
 
   test('versioned request stack answers over the hosted composition', async () => {

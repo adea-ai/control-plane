@@ -4,6 +4,7 @@ import {
   type MemoryWriteApplication,
   type MemoryWriteApplicationConfiguration,
 } from '@control-plane/memory-writeback'
+import type { StructuredLogger } from '@control-plane/bootstrap'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
@@ -16,9 +17,11 @@ import {
   DurableExecutionAcceptanceService,
   DurableExecutionValidationService,
   RepositoryGraphAdministrationService,
+  RepositoryWorkspaceCatalogService,
   RestateExecutionWorkflowDispatcher,
   RepositoryProfileResolutionService,
   RepositoryProjectStateResolutionService,
+  RepositoryProjectStateInitializationService,
   RepositoryContextPackageResolutionService,
   createExecutionId,
 } from '@control-plane/control-api'
@@ -27,6 +30,7 @@ import {
   PostgresCatalogApprovalRepository,
   PostgresCatalogRepository,
   PostgresGraphDefinitionRepository,
+  PostgresWorkspaceCatalogCommandRepository,
   PostgresCommandAcceptanceRepository,
   PostgresDurableUsageStore,
   PostgresContextPackageRepository,
@@ -245,6 +249,7 @@ export class HostedServerControlPlaneComposition {
   readonly executionValidationService: DurableExecutionValidationService
   readonly profileResolutionService: RepositoryProfileResolutionService
   readonly projectStateResolutionService: RepositoryProjectStateResolutionService
+  readonly projectStateInitializationService: RepositoryProjectStateInitializationService
   readonly contextPackageResolutionService: RepositoryContextPackageResolutionService
   readonly runtimeDiscoveryRepository: PostgresRuntimeDiscoveryRepository
   readonly runtimeActivityPort: WorkflowRuntimeActivityPort
@@ -422,6 +427,9 @@ export class HostedServerControlPlaneComposition {
           }
     )
     this.projectStateResolutionService = new RepositoryProjectStateResolutionService(projectStates)
+    this.projectStateInitializationService = new RepositoryProjectStateInitializationService(
+      projectStates
+    )
     this.contextPackageResolutionService = new RepositoryContextPackageResolutionService(
       contextPackages
     )
@@ -623,6 +631,15 @@ export class HostedServerControlPlaneComposition {
         private: true,
       },
     ])
+  }
+
+  /** Workspace catalog API over the hosted PostgreSQL catalog; audit events use `logger`. */
+  createWorkspaceCatalogService(logger: StructuredLogger): RepositoryWorkspaceCatalogService {
+    return new RepositoryWorkspaceCatalogService({
+      catalog: new PostgresCatalogRepository(this.connection.database),
+      commands: new PostgresWorkspaceCatalogCommandRepository(this.connection.database),
+      logger,
+    })
   }
 
   async start(): Promise<void> {
