@@ -130,7 +130,10 @@ stack traces, queries, or persistence details.
 
 ## Compatibility and negotiation
 
-The current boundary is `3.0`.
+The current boundary is `3.0`. The workspace catalog administration envelopes
+(`catalog.skill.*` and `catalog.profile.*`; see [`api.md`](api.md#workspace-catalog-administration))
+and their `catalog:read`, `catalog:publish` and `catalog:manage` scopes are additive within major
+`3`; the OpenAPI compatibility baseline verifies that no existing operation changed.
 
 - A major version change is breaking. Removing or renaming fields, making an optional field required,
   narrowing valid values, or adding a closed-enum value requires a major version.

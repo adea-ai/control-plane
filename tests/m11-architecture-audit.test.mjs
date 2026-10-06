@@ -28,6 +28,16 @@ const infrastructurePorts = [
 
 const publicOperations = [
   'authentication.verify',
+  'catalog.profile.deprecate',
+  'catalog.profile.get',
+  'catalog.profile.list',
+  'catalog.profile.publish',
+  'catalog.profile.revoke',
+  'catalog.skill.deprecate',
+  'catalog.skill.get',
+  'catalog.skill.list',
+  'catalog.skill.publish',
+  'catalog.skill.revoke',
   'context-package.resolve',
   'execution.accept',
   'execution.cancel',

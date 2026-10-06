@@ -69,6 +69,7 @@ export const INTEGRATION_SHARDS = [
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
           'src/project-state-initialization.integration.test.mjs',
+          'src/workspace-catalog.integration.test.mjs',
           'src/hosted-graph-operations.integration.test.mjs',
           'src/retention-hold-operator.integration.test.mjs',
           'src/retention-hold-repository.integration.test.mjs',

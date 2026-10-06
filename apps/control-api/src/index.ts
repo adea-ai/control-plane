@@ -1,4 +1,5 @@
 import type { GraphAdministrationService } from './graphs/graph-administration.service.js'
+import type { WorkspaceCatalogService } from './catalog/workspace-catalog.service.js'
 import {
   bootstrapService,
   jsonLogger,
@@ -38,6 +39,7 @@ export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly memoryWriteback?: MemoryWriteApplicationConfiguration
@@ -108,6 +110,8 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
       }
       const graphAdministrationService =
         options.graphAdministrationService ?? cloudComposition?.graphAdministrationService
+      const workspaceCatalogService =
+        options.workspaceCatalogService ?? cloudComposition?.workspaceCatalogService
       const executionValidationService =
         options.executionValidationService ?? cloudComposition?.executionValidationService
       const executionAcceptanceService =
@@ -135,6 +139,7 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
       application = await createControlApiApplication({
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
+        ...(workspaceCatalogService === undefined ? {} : { workspaceCatalogService }),
         ...(interactionCommandService === undefined ? {} : { interactionCommandService }),
         ...(executionCancellationService === undefined ? {} : { executionCancellationService }),
         ...(executionAcceptanceService === undefined ? {} : { executionAcceptanceService }),
@@ -217,3 +222,4 @@ export {
 } from './auth/private-api-authentication.js'
 
 export * from './graphs/graph-administration.service.js'
+export * from './catalog/workspace-catalog.service.js'

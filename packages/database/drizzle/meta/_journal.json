@@ -442,6 +442,13 @@
       "when": 1791300255617,
       "tag": "0062_project_state_initializations",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1791301246892,
+      "tag": "0063_workspace_catalog_commands",
+      "breakpoints": true
     }
   ]
 }

@@ -15,11 +15,14 @@ paths do not share receipts: the route rejects a scope the command created as al
 initialized, and the command accepts an existing revision zero only when it exactly matches its
 own input (including `at`).
 
-This command has database-owner authority. It creates no HTTP route, service credential, catalog
-approval, context grant, tool tariff, provider credential or runtime binding. Configure those through
-their existing operator procedures. Catalog approval, when enabled, still requires a separate
-approved decision. Execution validation creates a ContextPackage through the configured authoring
-authority; caller-supplied ContextPackages are not imported by this command.
+Record creation and draft-then-publish use the same domain path as the authenticated
+[workspace catalog API](profiles-and-skills.md#workspace-catalog-api), which can publish further
+workspace-owned versions while the launcher runs. This command has database-owner authority. It
+creates no HTTP route, service credential, catalog approval, context grant, tool tariff, provider
+credential or runtime binding. Configure those through their existing operator procedures. Catalog
+approval, when enabled, still requires a separate approved decision. Execution validation creates
+a ContextPackage through the configured authoring authority; caller-supplied ContextPackages are
+not imported by this command.
 
 Stop the Local process or Hosted Simple container and its children before using the command. Use
 the same OS/container user that owns the data directory. The directory must be private (0700), the

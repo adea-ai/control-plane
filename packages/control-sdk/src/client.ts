@@ -47,6 +47,24 @@ import {
   type MarketplaceInstallationGetResponse,
   type MarketplaceInstallationUninstallRequest,
   type MarketplaceInstallationUninstallResponse,
+  type WorkspaceSkillListRequest,
+  type WorkspaceSkillListResponse,
+  type WorkspaceSkillGetRequest,
+  type WorkspaceSkillGetResponse,
+  type WorkspaceSkillPublishRequest,
+  type WorkspaceSkillPublishResponse,
+  type WorkspaceSkillDeprecationRequest,
+  type WorkspaceSkillRevocationRequest,
+  type WorkspaceSkillLifecycleResponse,
+  type WorkspaceAgentProfileListRequest,
+  type WorkspaceAgentProfileListResponse,
+  type WorkspaceAgentProfileGetRequest,
+  type WorkspaceAgentProfileGetResponse,
+  type WorkspaceAgentProfilePublishRequest,
+  type WorkspaceAgentProfilePublishResponse,
+  type WorkspaceAgentProfileDeprecationRequest,
+  type WorkspaceAgentProfileRevocationRequest,
+  type WorkspaceAgentProfileLifecycleResponse,
 } from '@control-plane/contracts'
 import { ControlApiOperations } from './operations.js'
 
@@ -139,6 +157,62 @@ export class ControlPlaneClient {
 
   resolveGraph(input: GraphDefinitionResolutionRequest): Promise<GraphDefinitionResponse> {
     return this.#request(ControlApiOperations.resolveGraph, input)
+  }
+
+  listWorkspaceSkills(input: WorkspaceSkillListRequest): Promise<WorkspaceSkillListResponse> {
+    return this.#request(ControlApiOperations.listWorkspaceSkills, input)
+  }
+
+  getWorkspaceSkill(input: WorkspaceSkillGetRequest): Promise<WorkspaceSkillGetResponse> {
+    return this.#request(ControlApiOperations.getWorkspaceSkill, input)
+  }
+
+  publishWorkspaceSkill(
+    input: WorkspaceSkillPublishRequest
+  ): Promise<WorkspaceSkillPublishResponse> {
+    return this.#request(ControlApiOperations.publishWorkspaceSkill, input)
+  }
+
+  deprecateWorkspaceSkill(
+    input: WorkspaceSkillDeprecationRequest
+  ): Promise<WorkspaceSkillLifecycleResponse> {
+    return this.#request(ControlApiOperations.deprecateWorkspaceSkill, input)
+  }
+
+  revokeWorkspaceSkill(
+    input: WorkspaceSkillRevocationRequest
+  ): Promise<WorkspaceSkillLifecycleResponse> {
+    return this.#request(ControlApiOperations.revokeWorkspaceSkill, input)
+  }
+
+  listWorkspaceProfiles(
+    input: WorkspaceAgentProfileListRequest
+  ): Promise<WorkspaceAgentProfileListResponse> {
+    return this.#request(ControlApiOperations.listWorkspaceProfiles, input)
+  }
+
+  getWorkspaceProfile(
+    input: WorkspaceAgentProfileGetRequest
+  ): Promise<WorkspaceAgentProfileGetResponse> {
+    return this.#request(ControlApiOperations.getWorkspaceProfile, input)
+  }
+
+  publishWorkspaceProfile(
+    input: WorkspaceAgentProfilePublishRequest
+  ): Promise<WorkspaceAgentProfilePublishResponse> {
+    return this.#request(ControlApiOperations.publishWorkspaceProfile, input)
+  }
+
+  deprecateWorkspaceProfile(
+    input: WorkspaceAgentProfileDeprecationRequest
+  ): Promise<WorkspaceAgentProfileLifecycleResponse> {
+    return this.#request(ControlApiOperations.deprecateWorkspaceProfile, input)
+  }
+
+  revokeWorkspaceProfile(
+    input: WorkspaceAgentProfileRevocationRequest
+  ): Promise<WorkspaceAgentProfileLifecycleResponse> {
+    return this.#request(ControlApiOperations.revokeWorkspaceProfile, input)
   }
 
   verifyAuthentication(

@@ -1,4 +1,6 @@
+import { sql } from 'drizzle-orm'
 import {
+  check,
   index,
   integer,
   jsonb,
@@ -96,5 +98,40 @@ export const catalogApprovals = pgTable(
   (table) => [
     primaryKey({ columns: [table.versionKind, table.versionId, table.revision] }),
     index('catalog_approvals_version_index').on(table.versionKind, table.versionId),
+  ]
+)
+
+/**
+ * Workspace catalog API receipts (ADR 0013): the original result of a publish or lifecycle
+ * command, committed atomically with the catalog mutation it describes.
+ */
+export const workspaceCatalogCommands = pgTable(
+  'workspace_catalog_commands',
+  {
+    workspaceId: varchar('workspace_id', { length: 64 }).notNull(),
+    callerId: varchar('caller_id', { length: 64 }).notNull(),
+    operation: varchar('operation', { length: 32 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
+    payloadHash: varchar('payload_hash', { length: 64 }).notNull(),
+    receipt: jsonb('receipt'),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.callerId, table.operation, table.idempotencyKey],
+      name: 'workspace_catalog_commands_scope_pk',
+    }),
+    check(
+      'workspace_catalog_commands_operation_check',
+      sql`${table.operation} in ('skill.publish', 'skill.deprecate', 'skill.revoke', 'profile.publish', 'profile.deprecate', 'profile.revoke')`
+    ),
+    check(
+      'workspace_catalog_commands_payload_hash_check',
+      sql`${table.payloadHash} ~ '^[a-f0-9]{64}$'`
+    ),
+    check(
+      'workspace_catalog_commands_receipt_object_check',
+      sql`jsonb_typeof(${table.receipt}) = 'object' or ${table.receipt} is null`
+    ),
   ]
 )

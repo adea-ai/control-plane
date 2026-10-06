@@ -26,3 +26,45 @@ export function catalogOwnershipAllowsAccess(
       return false
   }
 }
+
+export type WorkspaceCatalogVisibility = 'owned' | 'system'
+
+/** `owned` for the exact workspace, `system` for read-only system entries, else invisible. */
+export function workspaceCatalogVisibility(
+  ownership: unknown,
+  workspaceId: string
+): WorkspaceCatalogVisibility | undefined {
+  if (ownership === null || typeof ownership !== 'object' || Array.isArray(ownership)) {
+    return undefined
+  }
+  const value = ownership as Record<string, unknown>
+  if (value['scope'] === 'system' && Object.keys(value).length === 1) return 'system'
+  if (
+    value['scope'] === 'workspace' &&
+    Object.keys(value).length === 2 &&
+    value['workspaceId'] === workspaceId
+  ) {
+    return 'owned'
+  }
+  return undefined
+}
+
+/** Shared by the record-store adapters; PostgreSQL applies the same filter in SQL. */
+export function visiblePage<Item extends { readonly ownership: unknown }>(
+  items: readonly Item[],
+  idOf: (item: Item) => string,
+  query: {
+    readonly workspaceId: string
+    readonly after?: string | undefined
+    readonly limit: number
+  }
+): Item[] {
+  return items
+    .filter(
+      (item) =>
+        workspaceCatalogVisibility(item.ownership, query.workspaceId) !== undefined &&
+        (query.after === undefined || idOf(item) > query.after)
+    )
+    .toSorted((left, right) => (idOf(left) < idOf(right) ? -1 : idOf(left) > idOf(right) ? 1 : 0))
+    .slice(0, query.limit)
+}

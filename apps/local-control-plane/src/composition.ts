@@ -31,6 +31,7 @@ import {
   RestateExecutionWorkflowDispatcher,
   UnavailableExecutionAcceptanceService,
   type ExecutionAcceptanceService,
+  RepositoryWorkspaceCatalogService,
 } from '@control-plane/control-api'
 import type { RuntimeAdapterWithTransport } from '@control-plane/runtime-sdk'
 import {
@@ -49,8 +50,11 @@ import {
   SqliteReconciliationEffects,
   SqliteReconciliationSource,
   SqliteCatalogApprovalRepository,
+  SqliteVersionedCatalogRepository,
+  SqliteWorkspaceCatalogCommandRepository,
   assertSqliteWorkflowExecutionReference,
 } from '@control-plane/sqlite-persistence'
+import type { StructuredLogger } from '@control-plane/bootstrap'
 import {
   createRestateEndpointFactory,
   EmbeddedExecutionWorkflowDispatcher,
@@ -622,6 +626,15 @@ export class LocalControlPlaneComposition {
             },
           ])
         : new StaticServiceDiscovery([])
+  }
+
+  /** Workspace catalog API over the local SQLite catalog; audit events use `logger`. */
+  createWorkspaceCatalogService(logger: StructuredLogger): RepositoryWorkspaceCatalogService {
+    return new RepositoryWorkspaceCatalogService({
+      catalog: new SqliteVersionedCatalogRepository(this.persistence),
+      commands: new SqliteWorkspaceCatalogCommandRepository(this.persistence),
+      logger,
+    })
   }
 
   async start(): Promise<void> {

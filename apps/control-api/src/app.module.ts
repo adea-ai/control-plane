@@ -1,4 +1,11 @@
 import { GraphAdministrationController } from './graphs/graph-administration.controller.js'
+import { WorkspaceAgentProfileCatalogController } from './catalog/workspace-profile-catalog.controller.js'
+import { WorkspaceSkillCatalogController } from './catalog/workspace-skill-catalog.controller.js'
+import {
+  UnavailableWorkspaceCatalogService,
+  WORKSPACE_CATALOG_SERVICE,
+  type WorkspaceCatalogService,
+} from './catalog/workspace-catalog.service.js'
 import {
   GRAPH_ADMINISTRATION_SERVICE,
   UnavailableGraphAdministrationService,
@@ -105,6 +112,7 @@ import {
 
 export interface AppModuleOptions extends ApiRuntimeBindings {
   readonly graphAdministrationService?: GraphAdministrationService
+  readonly workspaceCatalogService?: WorkspaceCatalogService
   readonly interactionCommandService?: InteractionCommandService
   readonly executionCancellationService?: ExecutionCancellationService
   readonly executionAcceptanceService?: ExecutionAcceptanceService
@@ -142,6 +150,8 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
     controllers: [
       AuthenticationController,
       GraphAdministrationController,
+      WorkspaceSkillCatalogController,
+      WorkspaceAgentProfileCatalogController,
       ContextPackageResolutionController,
       ExecutionAcceptanceController,
       InteractionCommandController,
@@ -160,6 +170,10 @@ export function createAppModule(options: AppModuleOptions): DynamicModule {
       {
         provide: GRAPH_ADMINISTRATION_SERVICE,
         useValue: options.graphAdministrationService ?? new UnavailableGraphAdministrationService(),
+      },
+      {
+        provide: WORKSPACE_CATALOG_SERVICE,
+        useValue: options.workspaceCatalogService ?? new UnavailableWorkspaceCatalogService(),
       },
       {
         provide: INTERACTION_COMMAND_SERVICE,
