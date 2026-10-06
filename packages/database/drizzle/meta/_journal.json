@@ -432,7 +432,14 @@
     {
       "idx": 61,
       "version": "7",
-      "when": 1791299229688,
+      "when": 1791298825758,
+      "tag": "0061_marketplace_installation_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1791300425394,
       "tag": "0064_credential_vault",
       "breakpoints": true
     }

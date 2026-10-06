@@ -12,7 +12,7 @@
     "lint": "oxlint src",
     "openapi:check": "bun src/openapi/check.ts",
     "test": "bun test src --timeout 30000",
-    "test:integration": "bun test src/validation-replay.integration.test.mjs src/budget-admission.integration.test.mjs --timeout 30000"
+    "test:integration": "bun test src/validation-replay.integration.test.mjs src/budget-admission.integration.test.mjs src/marketplace-installation.integration.test.mjs --timeout 30000"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",

@@ -43,6 +43,10 @@ import {
   MarketplaceInstallPlanResponseSchema,
   MarketplaceInstallRequestSchema,
   MarketplaceInstallResponseSchema,
+  MarketplaceInstallationGetRequestSchema,
+  MarketplaceInstallationGetResponseSchema,
+  MarketplaceInstallationUninstallRequestSchema,
+  MarketplaceInstallationUninstallResponseSchema,
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
@@ -222,6 +226,20 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/marketplace/install-plan',
     requestSchema: MarketplaceInstallPlanRequestSchema,
     responseSchema: MarketplaceInstallPlanResponseSchema,
+  },
+  marketplaceInstallationGet: {
+    operation: 'marketplace.installation.get',
+    method: 'POST',
+    path: '/v1/marketplace/installations/get',
+    requestSchema: MarketplaceInstallationGetRequestSchema,
+    responseSchema: MarketplaceInstallationGetResponseSchema,
+  },
+  marketplaceInstallationUninstall: {
+    operation: 'marketplace.installation.uninstall',
+    method: 'POST',
+    path: '/v1/marketplace/installations/uninstall',
+    requestSchema: MarketplaceInstallationUninstallRequestSchema,
+    responseSchema: MarketplaceInstallationUninstallResponseSchema,
   },
 } as const)
 

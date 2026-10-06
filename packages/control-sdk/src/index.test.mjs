@@ -93,6 +93,39 @@ describe('Control Plane SDK public client', () => {
     })
   })
 
+  test('gets and uninstalls marketplace installations through versioned operations', async () => {
+    const calls = []
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://control-plane.test',
+      credential: 'marketplace-token',
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init })
+        return Response.json(
+          String(url).endsWith('/uninstall')
+            ? ControlApiFixtures.marketplaceInstallationUninstall.response
+            : ControlApiFixtures.marketplaceInstallationGet.response
+        )
+      },
+    })
+
+    await expect(
+      client.marketplaceInstallationGet(ControlApiFixtures.marketplaceInstallationGet.request)
+    ).resolves.toEqual(ControlApiFixtures.marketplaceInstallationGet.response)
+    await expect(
+      client.marketplaceInstallationUninstall(
+        ControlApiFixtures.marketplaceInstallationUninstall.request
+      )
+    ).resolves.toEqual(ControlApiFixtures.marketplaceInstallationUninstall.response)
+    expect(calls.map(({ url }) => url)).toEqual([
+      'https://control-plane.test/v1/marketplace/installations/get',
+      'https://control-plane.test/v1/marketplace/installations/uninstall',
+    ])
+    expect(JSON.parse(calls[1].init.body)).toMatchObject({
+      operation: 'marketplace.installation.uninstall',
+      idempotencyKey: 'uninstall-01JABCDEF0123456789ABCDEFG',
+    })
+  })
+
   test('lists and gets normalized runtime and session discovery models through versioned operations', async () => {
     const calls = []
     const response = runtimeDiscoveryResponse()

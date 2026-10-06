@@ -1691,6 +1691,88 @@
       "openApiHasRequestSchema": true
     },
     {
+      "id": "OP-MARKETPLACE-INSTALLATION-GET",
+      "name": "marketplaceInstallationGet",
+      "operation": "marketplace.installation.get",
+      "method": "POST",
+      "path": "/v1/marketplace/installations/get",
+      "inOpenApi": true,
+      "controllerReachable": true,
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with marketplace:read scope and workspace authority",
+        "service": "MarketplaceController -> MarketplaceInstallationService",
+        "persistence": "workspace-scoped MarketplaceInstallationRepository lookup",
+        "execution": "read-only installation lifecycle projection",
+        "delivery": "installation lifecycle state, exact pins, installer and uninstall actor/time",
+        "cleanup": "no external side effect"
+      },
+      "assessment": "The authenticated get operation resolves an installation only inside the envelope workspace, returns the same not-found result for an unknown or foreign identifier, and never exposes idempotency keys or request digests.",
+      "evidence": [
+        {
+          "kind": "contract",
+          "path": "packages/contracts/src/control-api.ts"
+        },
+        {
+          "kind": "implementation",
+          "path": "apps/control-api/src/marketplace/installation.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/marketplace/marketplace.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/marketplace-installation.integration.test.mjs"
+        }
+      ],
+      "openApiOperationId": "marketplace.installation.get",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true
+    },
+    {
+      "id": "OP-MARKETPLACE-INSTALLATION-UNINSTALL",
+      "name": "marketplaceInstallationUninstall",
+      "operation": "marketplace.installation.uninstall",
+      "method": "POST",
+      "path": "/v1/marketplace/installations/uninstall",
+      "inOpenApi": true,
+      "controllerReachable": true,
+      "classification": "verified",
+      "trace": {
+        "auth": "service bearer with marketplace:uninstall scope and workspace authority",
+        "service": "MarketplaceController -> MarketplaceInstallationService",
+        "persistence": "conditional terminal uninstall transition with workspace-scoped idempotency key, actor, and time",
+        "execution": "records lifecycle state only; no materialized plugin files or harness activation are changed",
+        "delivery": "terminal uninstalled installation state and replay flag",
+        "cleanup": "uninstalled installations leave the active catalog projection; reinstall requires a new idempotency key"
+      },
+      "assessment": "The authenticated uninstall operation records one terminal transition per installation inside the envelope workspace, replays identical commands, rejects conflicting key reuse, and removes the installation from the active catalog projection.",
+      "evidence": [
+        {
+          "kind": "contract",
+          "path": "packages/contracts/src/control-api.ts"
+        },
+        {
+          "kind": "implementation",
+          "path": "apps/control-api/src/marketplace/installation.ts"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/marketplace/marketplace.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/marketplace-installation.integration.test.mjs"
+        }
+      ],
+      "openApiOperationId": "marketplace.installation.uninstall",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true
+    },
+    {
       "id": "OP-PROFILE-RESOLVE",
       "name": "resolveProfile",
       "operation": "profile.resolve",
@@ -1902,7 +1984,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:a225713d3e58c63199f80e28bade578b4da683f8f7980e76d87248c8d1461b89"
+      "sourceDigest": "sha256:d2eeba62b7bc179228b33eea3e3e82abab17261202689fd4dba2f5ff21fd1b04"
     },
     {
       "id": "hosted-server",

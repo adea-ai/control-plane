@@ -3,8 +3,10 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common'
+import type { StructuredLogger } from '@control-plane/bootstrap'
 import type { InstallationPlan } from './agent-plugins.js'
 import {
   assertMarketplacePlanRequest,
@@ -26,6 +28,14 @@ export const marketplaceInstallationStates = [
 ] as const
 
 export type MarketplaceInstallationState = (typeof marketplaceInstallationStates)[number]
+
+/**
+ * Lifecycle state exposed by the installation get/uninstall operations: the
+ * recorded install decision, or the terminal `uninstalled` state once an
+ * uninstall has been recorded. The persisted `state` keeps the original install
+ * decision so an install replay can return its original result.
+ */
+export type MarketplaceInstallationLifecycleState = MarketplaceInstallationState | 'uninstalled'
 
 export type MarketplaceWorkspaceIdentity = Readonly<{
   workspaceId: string
@@ -50,6 +60,22 @@ export type MarketplaceInstallationRecord = Readonly<{
   requestDigest: string
   createdAt: string
   updatedAt: string
+  // Recorded together by the one uninstall transition; absent while active.
+  uninstalledAt?: string
+  uninstalledBy?: string
+  uninstallIdempotencyKey?: string
+  uninstallRequestDigest?: string
+}>
+
+export type MarketplaceInstallationListOptions = Readonly<{ installedBy?: string }>
+
+export type MarketplaceUninstallTransition = Readonly<{
+  workspaceId: string
+  installationId: string
+  uninstalledAt: string
+  uninstalledBy: string
+  idempotencyKey: string
+  requestDigest: string
 }>
 
 export interface MarketplaceInstallationRepository {
@@ -57,14 +83,62 @@ export interface MarketplaceInstallationRepository {
     workspaceId: string,
     idempotencyKey: string
   ): Promise<MarketplaceInstallationRecord | undefined>
-  listByWorkspace(workspaceId: string): Promise<readonly MarketplaceInstallationRecord[]>
+  /** Exact lookup inside one workspace; another workspace's id is not found. */
+  findById(
+    workspaceId: string,
+    installationId: string
+  ): Promise<MarketplaceInstallationRecord | undefined>
+  findByUninstallIdempotency(
+    workspaceId: string,
+    idempotencyKey: string
+  ): Promise<MarketplaceInstallationRecord | undefined>
+  /** Active (not uninstalled) installations, optionally for one installer. */
+  listByWorkspace(
+    workspaceId: string,
+    options?: MarketplaceInstallationListOptions
+  ): Promise<readonly MarketplaceInstallationRecord[]>
   save(record: MarketplaceInstallationRecord): Promise<MarketplaceInstallationRecord>
+  /**
+   * Records the terminal uninstall transition only while the installation is
+   * still active. Returns the updated record, or undefined when nothing changed
+   * (unknown id, already uninstalled, or the uninstall key is already taken).
+   */
+  markUninstalled(
+    transition: MarketplaceUninstallTransition
+  ): Promise<MarketplaceInstallationRecord | undefined>
 }
 
+export type MarketplaceInstallationView = Readonly<{
+  installationId: string
+  catalogId: string
+  pluginId: string
+  releaseId: string
+  canonicalContentDigest: string
+  requestedHarness: string
+  installationInstanceId?: string
+  packageDigest?: string
+  state: MarketplaceInstallationLifecycleState
+  installedBy: string
+  installedAt: string
+  updatedAt: string
+  uninstalledBy?: string
+  uninstalledAt?: string
+}>
+
+export type MarketplaceUninstallResult = Readonly<{
+  installation: MarketplaceInstallationView
+  replayed: boolean
+}>
+
 export interface MarketplaceInstallationAuthority {
-  list(workspaceId: string): Promise<readonly MarketplaceInstallationRecord[]>
+  list(
+    workspaceId: string,
+    options?: MarketplaceInstallationListOptions
+  ): Promise<readonly MarketplaceInstallationRecord[]>
   install(envelope: MarketplaceInstallEnvelope): Promise<MarketplaceInstallationRecord>
   plan?(envelope: MarketplaceInstallPlanEnvelope): Promise<InstallationPlan>
+  get?(envelope: MarketplaceInstallationGetEnvelope): Promise<MarketplaceInstallationView>
+  uninstall?(envelope: MarketplaceUninstallEnvelope): Promise<MarketplaceUninstallResult>
 }
 
 export class InMemoryMarketplaceInstallationRepository implements MarketplaceInstallationRepository {
@@ -77,13 +151,62 @@ export class InMemoryMarketplaceInstallationRepository implements MarketplaceIns
     return this.#records.get(`${workspaceId}:${idempotencyKey}`)
   }
 
-  async listByWorkspace(workspaceId: string): Promise<readonly MarketplaceInstallationRecord[]> {
-    return [...this.#records.values()].filter((record) => record.workspaceId === workspaceId)
+  async findById(
+    workspaceId: string,
+    installationId: string
+  ): Promise<MarketplaceInstallationRecord | undefined> {
+    return [...this.#records.values()].find(
+      (record) => record.workspaceId === workspaceId && record.installationId === installationId
+    )
+  }
+
+  async findByUninstallIdempotency(
+    workspaceId: string,
+    idempotencyKey: string
+  ): Promise<MarketplaceInstallationRecord | undefined> {
+    return [...this.#records.values()].find(
+      (record) =>
+        record.workspaceId === workspaceId && record.uninstallIdempotencyKey === idempotencyKey
+    )
+  }
+
+  async listByWorkspace(
+    workspaceId: string,
+    options: MarketplaceInstallationListOptions = {}
+  ): Promise<readonly MarketplaceInstallationRecord[]> {
+    return [...this.#records.values()].filter(
+      (record) =>
+        record.workspaceId === workspaceId &&
+        record.uninstalledAt === undefined &&
+        (options.installedBy === undefined || record.userId === options.installedBy)
+    )
   }
 
   async save(record: MarketplaceInstallationRecord): Promise<MarketplaceInstallationRecord> {
-    this.#records.set(`${record.workspaceId}:${record.idempotencyKey}`, record)
+    const key = `${record.workspaceId}:${record.idempotencyKey}`
+    const existing = this.#records.get(key)
+    if (existing) return existing
+    this.#records.set(key, record)
     return record
+  }
+
+  async markUninstalled(
+    transition: MarketplaceUninstallTransition
+  ): Promise<MarketplaceInstallationRecord | undefined> {
+    const current = await this.findById(transition.workspaceId, transition.installationId)
+    if (!current || current.uninstalledAt !== undefined) return undefined
+    if (await this.findByUninstallIdempotency(transition.workspaceId, transition.idempotencyKey))
+      return undefined
+    const updated: MarketplaceInstallationRecord = {
+      ...current,
+      uninstallIdempotencyKey: transition.idempotencyKey,
+      uninstallRequestDigest: transition.requestDigest,
+      uninstalledAt: transition.uninstalledAt,
+      uninstalledBy: transition.uninstalledBy,
+      updatedAt: transition.uninstalledAt,
+    }
+    this.#records.set(`${current.workspaceId}:${current.idempotencyKey}`, updated)
+    return updated
   }
 }
 
@@ -126,6 +249,27 @@ export type MarketplaceInstallEnvelope = Readonly<{
   idempotencyKey: string
 }>
 
+export type MarketplaceInstallationGetEnvelope = Readonly<{
+  workspaceId: string
+  parameters: Readonly<{
+    installationId: string
+    workspaceIdentity: MarketplaceWorkspaceIdentity
+  }>
+}>
+
+export type MarketplaceUninstallEnvelope = Readonly<{
+  workspaceId: string
+  idempotencyKey: string
+  payload: Readonly<{
+    installationId: string
+    workspaceIdentity: MarketplaceWorkspaceIdentity
+  }>
+}>
+
+export type MarketplaceInstallationAuditEvent =
+  | 'marketplace.installation.recorded'
+  | 'marketplace.installation.uninstalled'
+
 export type MarketplaceInstallPlanEnvelope = Readonly<{
   workspaceId: string
   payload: Readonly<{
@@ -145,6 +289,7 @@ export class MarketplaceInstallationService {
     harnessProfile?: MarketplaceHarnessProfileAuthority
   }
   readonly #now: () => string
+  readonly #logger: StructuredLogger | undefined
 
   constructor(
     options: Readonly<{
@@ -154,16 +299,110 @@ export class MarketplaceInstallationService {
         harnessProfile?: MarketplaceHarnessProfileAuthority
       }
       now?: () => string
+      /** Receives the installation audit events; omitted, none are emitted. */
+      logger?: StructuredLogger
     }>
   ) {
     this.#registry = options.registry
     this.#repository = options.repository
     this.#policy = options.policy ?? {}
     this.#now = options.now ?? (() => new Date().toISOString())
+    this.#logger = options.logger
   }
 
-  async list(workspaceId: string): Promise<readonly MarketplaceInstallationRecord[]> {
-    return this.#repository.listByWorkspace(workspaceId)
+  async list(
+    workspaceId: string,
+    options: MarketplaceInstallationListOptions = {}
+  ): Promise<readonly MarketplaceInstallationRecord[]> {
+    return this.#repository.listByWorkspace(
+      workspaceId,
+      options.installedBy === undefined ? {} : { installedBy: options.installedBy }
+    )
+  }
+
+  async get(envelope: MarketplaceInstallationGetEnvelope): Promise<MarketplaceInstallationView> {
+    const { installationId, workspaceIdentity } = parseInstallationReference(
+      envelope,
+      envelope?.parameters
+    )
+    const record = await this.#repository.findById(workspaceIdentity.workspaceId, installationId)
+    if (!record) installationNotFound()
+    return marketplaceInstallationView(record)
+  }
+
+  async uninstall(envelope: MarketplaceUninstallEnvelope): Promise<MarketplaceUninstallResult> {
+    const { installationId, workspaceIdentity } = parseInstallationReference(
+      envelope,
+      envelope?.payload
+    )
+    const idempotencyKey = stringValue(envelope.idempotencyKey)
+    if (!idempotencyKey || idempotencyKey.length > 128) invalidRequest('uninstallation')
+    const workspaceId = workspaceIdentity.workspaceId
+    const requestDigest = digest({ installationId, workspaceIdentity })
+    const replay = await this.#uninstallReplay(workspaceId, idempotencyKey, requestDigest)
+    if (replay) return replay
+    const current = await this.#repository.findById(workspaceId, installationId)
+    if (!current) installationNotFound()
+    if (current.uninstalledAt !== undefined)
+      return { installation: marketplaceInstallationView(current), replayed: true }
+    const uninstalledAt = this.#now()
+    const updated = await this.#repository.markUninstalled({
+      idempotencyKey,
+      installationId,
+      requestDigest,
+      uninstalledAt,
+      uninstalledBy: workspaceIdentity.userId,
+      workspaceId,
+    })
+    if (!updated) {
+      // A concurrent uninstall won the transition or claimed this key first.
+      const raced = await this.#uninstallReplay(workspaceId, idempotencyKey, requestDigest)
+      if (raced) return raced
+      const latest = await this.#repository.findById(workspaceId, installationId)
+      if (!latest) installationNotFound()
+      if (latest.uninstalledAt === undefined)
+        throw new ConflictException({
+          code: 'MARKETPLACE_INSTALLATION_CONFLICT',
+          message: 'The marketplace installation changed during uninstallation; retry',
+        })
+      return { installation: marketplaceInstallationView(latest), replayed: true }
+    }
+    this.#audit('marketplace.installation.uninstalled', updated, workspaceIdentity.userId)
+    return { installation: marketplaceInstallationView(updated), replayed: false }
+  }
+
+  async #uninstallReplay(
+    workspaceId: string,
+    idempotencyKey: string,
+    requestDigest: string
+  ): Promise<MarketplaceUninstallResult | undefined> {
+    const existing = await this.#repository.findByUninstallIdempotency(workspaceId, idempotencyKey)
+    if (!existing) return undefined
+    if (existing.uninstallRequestDigest !== requestDigest)
+      throw new ConflictException({
+        code: 'MARKETPLACE_IDEMPOTENCY_CONFLICT',
+        message: 'The idempotency key was already used for another marketplace request',
+      })
+    return { installation: marketplaceInstallationView(existing), replayed: true }
+  }
+
+  #audit(
+    event: MarketplaceInstallationAuditEvent,
+    record: MarketplaceInstallationRecord,
+    actorUserId: string
+  ): void {
+    this.#logger?.write({
+      level: 'info',
+      event,
+      details: {
+        actorUserId,
+        installationId: record.installationId,
+        pluginId: record.pluginId,
+        releaseId: record.releaseId,
+        state: lifecycleState(record),
+        workspaceId: record.workspaceId,
+      },
+    })
   }
 
   async plan(envelope: MarketplaceInstallPlanEnvelope): Promise<InstallationPlan> {
@@ -216,6 +455,10 @@ export class MarketplaceInstallationService {
           code: 'MARKETPLACE_IDEMPOTENCY_CONFLICT',
           message: 'The idempotency key was already used for another marketplace request',
         })
+      // The install response cannot represent `uninstalled`, and replaying the
+      // original decision would report an installation that no longer exists.
+      // A reinstall is a new request under a new idempotency key.
+      if (existing.uninstalledAt !== undefined) installationUninstalled()
       return existing
     }
     const snapshot = await this.#registry.getCatalog()
@@ -256,7 +499,15 @@ export class MarketplaceInstallationService {
       userId: request.payload.workspaceIdentity.userId,
       workspaceId,
     }
-    return this.#repository.save(record)
+    const saved = await this.#repository.save(record)
+    if (saved.requestDigest !== requestDigest)
+      throw new ConflictException({
+        code: 'MARKETPLACE_IDEMPOTENCY_CONFLICT',
+        message: 'The idempotency key was already used for another marketplace request',
+      })
+    if (saved.uninstalledAt !== undefined) installationUninstalled()
+    if (saved === record) this.#audit('marketplace.installation.recorded', saved, saved.userId)
+    return saved
   }
 
   async #stateFor(
@@ -336,6 +587,14 @@ export class UnavailableMarketplaceInstallationService implements MarketplaceIns
     throw new Error('MARKETPLACE_INSTALLATION_NOT_CONFIGURED')
   }
 
+  async get(): Promise<never> {
+    installationNotConfigured()
+  }
+
+  async uninstall(): Promise<never> {
+    installationNotConfigured()
+  }
+
   async plan(): Promise<never> {
     throw new ServiceUnavailableException({
       code: 'MARKETPLACE_INSTALLATION_NOT_CONFIGURED',
@@ -371,6 +630,88 @@ function parseEnvelope(value: MarketplaceInstallEnvelope): MarketplaceInstallEnv
       message: 'Marketplace installation request is invalid',
     })
   return value
+}
+
+export function marketplaceInstallationView(
+  record: MarketplaceInstallationRecord
+): MarketplaceInstallationView {
+  return {
+    canonicalContentDigest: record.canonicalContentDigest,
+    catalogId: record.catalogId,
+    installationId: record.installationId,
+    ...(record.installationInstanceId === undefined
+      ? {}
+      : { installationInstanceId: record.installationInstanceId }),
+    installedAt: record.createdAt,
+    installedBy: record.userId,
+    ...(record.packageDigest === undefined ? {} : { packageDigest: record.packageDigest }),
+    pluginId: record.pluginId,
+    releaseId: record.releaseId,
+    requestedHarness: record.requestedHarness,
+    state: lifecycleState(record),
+    ...(record.uninstalledAt === undefined || record.uninstalledBy === undefined
+      ? {}
+      : { uninstalledAt: record.uninstalledAt, uninstalledBy: record.uninstalledBy }),
+    updatedAt: record.updatedAt,
+  }
+}
+
+function lifecycleState(
+  record: MarketplaceInstallationRecord
+): MarketplaceInstallationLifecycleState {
+  return record.uninstalledAt === undefined ? record.state : 'uninstalled'
+}
+
+const installationIdPattern = /^ins_[a-z0-9]{1,124}$/
+
+function parseInstallationReference(
+  envelope: unknown,
+  body: unknown
+): Readonly<{ installationId: string; workspaceIdentity: MarketplaceWorkspaceIdentity }> {
+  if (!isObject(envelope) || !isObject(body) || !isObject(body['workspaceIdentity']))
+    invalidRequest('installation')
+  const identity = body['workspaceIdentity'] as Record<string, unknown>
+  const workspaceId = stringValue(envelope['workspaceId'])
+  const installationId = stringValue(body['installationId'])
+  const userId = stringValue(identity['userId'])
+  if (
+    !workspaceId ||
+    stringValue(identity['workspaceId']) !== workspaceId ||
+    !userId ||
+    userId.length > 128 ||
+    !installationIdPattern.test(installationId)
+  )
+    invalidRequest('installation')
+  return { installationId, workspaceIdentity: { userId, workspaceId } }
+}
+
+function invalidRequest(subject: 'installation' | 'uninstallation'): never {
+  throw new BadRequestException({
+    code: 'MARKETPLACE_REQUEST_INVALID',
+    message: `Marketplace ${subject} request is invalid`,
+  })
+}
+
+function installationNotFound(): never {
+  // Deliberately identical for an unknown id and another workspace's id.
+  throw new NotFoundException({
+    code: 'MARKETPLACE_INSTALLATION_NOT_FOUND',
+    message: 'The marketplace installation was not found in this workspace',
+  })
+}
+
+function installationUninstalled(): never {
+  throw new ConflictException({
+    code: 'MARKETPLACE_INSTALLATION_UNINSTALLED',
+    message: 'The marketplace installation was uninstalled; reinstall with a new idempotency key',
+  })
+}
+
+function installationNotConfigured(): never {
+  throw new ServiceUnavailableException({
+    code: 'MARKETPLACE_INSTALLATION_NOT_CONFIGURED',
+    message: 'Marketplace installation management is not configured',
+  })
 }
 
 function packageDigestForRelease(release: MarketplaceRelease | undefined): string | undefined {

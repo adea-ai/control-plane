@@ -361,10 +361,37 @@ const MarketplaceArtifactsSchema = z
   })
   .strict()
 
+// The install decision recorded by `marketplace.install.request`. These values
+// are the closed enum of the catalog and install responses and stay unchanged.
+const MarketplaceInstallationDecisionStates = [
+  'pending-authorization',
+  'unavailable',
+  'rejected-by-policy',
+  'installed',
+  'superseded',
+] as const
+
+// Lifecycle state for the installation get/uninstall operations (additive 3.x):
+// every install decision plus the terminal `uninstalled` state. An uninstalled
+// installation is never returned by the catalog or install operations, so their
+// closed enums are unaffected.
+export const MarketplaceInstallationLifecycleStateSchema = z.enum([
+  ...MarketplaceInstallationDecisionStates,
+  'uninstalled',
+])
+
+const MarketplaceInstallationIdSchema = z.string().regex(/^ins_[a-z0-9]{1,124}$/)
+
 export const MarketplaceCatalogRequestSchema = RequestContextSchema.extend({
   operation: z.literal('marketplace.catalog.read'),
   requestedAt: TimestampSchema,
-  parameters: z.object({ workspaceIdentity: MarketplaceIdentitySchema }),
+  parameters: z.object({
+    workspaceIdentity: MarketplaceIdentitySchema,
+    // Additive 3.x filter: only installations whose recorded installer (the
+    // `workspaceIdentity.userId` of the install request) matches. Omitted,
+    // every active installation in the workspace is returned, as before.
+    installedBy: z.string().min(1).max(128).optional(),
+  }),
 })
 
 export const MarketplaceCatalogResponseSchema = successResponse(
@@ -375,15 +402,12 @@ export const MarketplaceCatalogResponseSchema = successResponse(
     artifacts: MarketplaceArtifactsSchema,
     installations: z.array(
       MarketplacePluginReferenceContractSchema.extend({
+        // Additive 3.x field: the handle for the installation get and
+        // uninstall operations.
+        installationId: z.string().min(1).max(128).optional(),
         installationInstanceId: z.string().min(1).max(256).optional(),
         packageDigest: DigestSchema.optional(),
-        state: z.enum([
-          'pending-authorization',
-          'unavailable',
-          'rejected-by-policy',
-          'installed',
-          'superseded',
-        ]),
+        state: z.enum(MarketplaceInstallationDecisionStates),
       })
     ),
   })
@@ -406,13 +430,55 @@ export const MarketplaceInstallResponseSchema = successResponse(
     installationInstanceId: z.string().min(1).max(256).optional(),
     packageDigest: DigestSchema.optional(),
     requestedHarness: z.string().min(1).max(128),
-    state: z.enum([
-      'pending-authorization',
-      'unavailable',
-      'rejected-by-policy',
-      'installed',
-      'superseded',
-    ]),
+    state: z.enum(MarketplaceInstallationDecisionStates),
+  })
+)
+
+// Purpose-built installation read model for get/uninstall. It omits the
+// idempotency key, request digest, and workspace scope; it is not a row.
+export const MarketplaceInstallationSchema = z.object({
+  ...MarketplacePluginReferenceContractSchema.shape,
+  installationId: z.string().min(1).max(128),
+  catalogId: z.string().regex(/^catalog:[a-f0-9]{64}$/),
+  installationInstanceId: z.string().min(1).max(256).optional(),
+  packageDigest: DigestSchema.optional(),
+  requestedHarness: z.string().min(1).max(128),
+  state: MarketplaceInstallationLifecycleStateSchema,
+  installedBy: z.string().min(1).max(256),
+  installedAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  uninstalledBy: z.string().min(1).max(256).optional(),
+  uninstalledAt: TimestampSchema.optional(),
+})
+
+export const MarketplaceInstallationGetRequestSchema = RequestContextSchema.extend({
+  operation: z.literal('marketplace.installation.get'),
+  requestedAt: TimestampSchema,
+  parameters: z.object({
+    installationId: MarketplaceInstallationIdSchema,
+    workspaceIdentity: MarketplaceIdentitySchema,
+  }),
+})
+
+export const MarketplaceInstallationGetResponseSchema = successResponse(
+  z.object({ installation: MarketplaceInstallationSchema })
+)
+
+export const MarketplaceInstallationUninstallRequestSchema = CommandContextSchema.extend({
+  operation: z.literal('marketplace.installation.uninstall'),
+  issuedAt: TimestampSchema,
+  payload: z.object({
+    installationId: MarketplaceInstallationIdSchema,
+    workspaceIdentity: MarketplaceIdentitySchema,
+  }),
+})
+
+export const MarketplaceInstallationUninstallResponseSchema = successResponse(
+  z.object({
+    installation: MarketplaceInstallationSchema,
+    // True when the installation was already uninstalled, by this or an
+    // earlier command; the original uninstall actor and time are returned.
+    replayed: z.boolean(),
   })
 )
 
@@ -420,6 +486,22 @@ export type MarketplaceCatalogRequest = z.input<typeof MarketplaceCatalogRequest
 export type MarketplaceCatalogResponse = z.output<typeof MarketplaceCatalogResponseSchema>
 export type MarketplaceInstallRequest = z.input<typeof MarketplaceInstallRequestSchema>
 export type MarketplaceInstallResponse = z.output<typeof MarketplaceInstallResponseSchema>
+export type MarketplaceInstallation = z.output<typeof MarketplaceInstallationSchema>
+export type MarketplaceInstallationLifecycleState = z.output<
+  typeof MarketplaceInstallationLifecycleStateSchema
+>
+export type MarketplaceInstallationGetRequest = z.input<
+  typeof MarketplaceInstallationGetRequestSchema
+>
+export type MarketplaceInstallationGetResponse = z.output<
+  typeof MarketplaceInstallationGetResponseSchema
+>
+export type MarketplaceInstallationUninstallRequest = z.input<
+  typeof MarketplaceInstallationUninstallRequestSchema
+>
+export type MarketplaceInstallationUninstallResponse = z.output<
+  typeof MarketplaceInstallationUninstallResponseSchema
+>
 
 export const MarketplaceInstallPlanRequestSchema = CommandContextSchema.extend({
   operation: z.literal('marketplace.install.plan'),
@@ -669,6 +751,25 @@ const requestContext = {
   correlation: { traceId },
 }
 const responseContext = { contractVersion, requestId, correlation: { traceId } }
+// Marketplace operations are workspace-scoped and carry no project authority.
+const marketplaceRequestContext = {
+  caller,
+  contractVersion,
+  requestId,
+  workspaceId,
+  correlation: { traceId },
+}
+const marketplaceWorkspaceIdentity = { workspaceId, userId: 'user-01JABCDEF0123456789ABCDEFG' }
+const marketplaceInstallation = {
+  installationId: 'ins_0123456789abcdef0123456789',
+  catalogId: `catalog:${'a'.repeat(64)}`,
+  pluginId: 'plugin:openai-official:gmail',
+  releaseId: `release:${'c'.repeat(64)}`,
+  canonicalContentDigest: `sha256:${'b'.repeat(64)}`,
+  requestedHarness: 'codex',
+  installedBy: marketplaceWorkspaceIdentity.userId,
+  installedAt: '2026-08-23T12:00:00.000Z',
+}
 const projectStateReference = { workspaceId, projectId, revision: 7 }
 const contextPackageReference = {
   contextPackageId: 'ctx_01JABCDEF0123456789ABCDEFG',
@@ -715,6 +816,14 @@ export interface ControlApiFixtureSet {
   readonly executionAcceptance: {
     readonly request: ExecutionAcceptanceRequest
     readonly response: z.input<typeof ExecutionAcceptanceResponseSchema>
+  }
+  readonly marketplaceInstallationGet: {
+    readonly request: MarketplaceInstallationGetRequest
+    readonly response: z.input<typeof MarketplaceInstallationGetResponseSchema>
+  }
+  readonly marketplaceInstallationUninstall: {
+    readonly request: MarketplaceInstallationUninstallRequest
+    readonly response: z.input<typeof MarketplaceInstallationUninstallResponseSchema>
   }
 }
 
@@ -930,6 +1039,54 @@ export const ControlApiFixtures: ControlApiFixtureSet = Object.freeze({
           schemaVersion: 1,
         },
         status: 'accepted',
+        replayed: false,
+      },
+    },
+  },
+  marketplaceInstallationGet: {
+    request: {
+      ...marketplaceRequestContext,
+      operation: 'marketplace.installation.get',
+      requestedAt: '2026-08-23T12:00:00.000Z',
+      parameters: {
+        installationId: marketplaceInstallation.installationId,
+        workspaceIdentity: marketplaceWorkspaceIdentity,
+      },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        installation: {
+          ...marketplaceInstallation,
+          state: 'installed',
+          updatedAt: '2026-08-23T12:00:00.000Z',
+        },
+      },
+    },
+  },
+  marketplaceInstallationUninstall: {
+    request: {
+      ...marketplaceRequestContext,
+      commandId,
+      idempotencyKey: 'uninstall-01JABCDEF0123456789ABCDEFG',
+      payloadHash: 'f'.repeat(64),
+      operation: 'marketplace.installation.uninstall',
+      issuedAt: '2026-08-23T13:00:00.000Z',
+      payload: {
+        installationId: marketplaceInstallation.installationId,
+        workspaceIdentity: marketplaceWorkspaceIdentity,
+      },
+    },
+    response: {
+      ...responseContext,
+      data: {
+        installation: {
+          ...marketplaceInstallation,
+          state: 'uninstalled',
+          updatedAt: '2026-08-23T13:00:00.000Z',
+          uninstalledBy: marketplaceWorkspaceIdentity.userId,
+          uninstalledAt: '2026-08-23T13:00:00.000Z',
+        },
         replayed: false,
       },
     },

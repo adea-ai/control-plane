@@ -48,6 +48,10 @@ import {
   type MarketplaceInstallPlanResponse,
   type MarketplaceInstallRequest,
   type MarketplaceInstallResponse,
+  type MarketplaceInstallationGetRequest,
+  type MarketplaceInstallationGetResponse,
+  type MarketplaceInstallationUninstallRequest,
+  type MarketplaceInstallationUninstallResponse,
 } from '@control-plane/contracts'
 import { ControlApiOperations } from './operations.js'
 
@@ -242,6 +246,18 @@ export class ControlPlaneClient {
     input: MarketplaceInstallPlanRequest
   ): Promise<MarketplaceInstallPlanResponse> {
     return this.#request(ControlApiOperations.marketplaceInstallPlan, input)
+  }
+
+  marketplaceInstallationGet(
+    input: MarketplaceInstallationGetRequest
+  ): Promise<MarketplaceInstallationGetResponse> {
+    return this.#request(ControlApiOperations.marketplaceInstallationGet, input)
+  }
+
+  marketplaceInstallationUninstall(
+    input: MarketplaceInstallationUninstallRequest
+  ): Promise<MarketplaceInstallationUninstallResponse> {
+    return this.#request(ControlApiOperations.marketplaceInstallationUninstall, input)
   }
 
   async #request<RequestInput, RequestOutput, ResponseOutput>(

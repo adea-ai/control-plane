@@ -325,6 +325,7 @@ export function createManagedCloudControlApiComposition(
     marketplaceInstallationService: new MarketplaceInstallationService({
       registry: marketplaceRegistryService,
       repository: new PostgresMarketplaceInstallationRepository(connection.database),
+      logger,
       policy: {
         ...(marketplaceHarnessProfileAuthority === undefined
           ? {}

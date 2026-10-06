@@ -1,5 +1,18 @@
-import { index, jsonb, pgEnum, pgTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import {
+  check,
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from 'drizzle-orm/pg-core'
 
+// The recorded install decision. Uninstallation is a separate terminal
+// transition (the `uninstalled_*` columns), so replaying an install command
+// still sees its original decision and this enum is unchanged.
 export const marketplaceInstallationState = pgEnum('marketplace_installation_state', [
   'pending-authorization',
   'unavailable',
@@ -28,12 +41,27 @@ export const marketplaceInstallations = pgTable(
     requestDigest: varchar('request_digest', { length: 64 }).notNull(),
     createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull(),
     updatedAt: timestamp('updated_at', { mode: 'date', withTimezone: true }).notNull(),
+    uninstalledAt: timestamp('uninstalled_at', { mode: 'date', withTimezone: true }),
+    uninstalledBy: varchar('uninstalled_by', { length: 256 }),
+    uninstallIdempotencyKey: varchar('uninstall_idempotency_key', { length: 128 }),
+    uninstallRequestDigest: varchar('uninstall_request_digest', { length: 64 }),
   },
   (table) => [
     uniqueIndex('marketplace_installations_workspace_idempotency_unique').on(
       table.workspaceId,
       table.idempotencyKey
     ),
+    // NULLs are distinct, so only recorded uninstall commands are constrained.
+    uniqueIndex('marketplace_installations_workspace_uninstall_idempotency_unique').on(
+      table.workspaceId,
+      table.uninstallIdempotencyKey
+    ),
     index('marketplace_installations_workspace_index').on(table.workspaceId, table.updatedAt),
+    index('marketplace_installations_workspace_user_index').on(table.workspaceId, table.userId),
+    // The uninstall transition is recorded atomically: all four or none.
+    check(
+      'marketplace_installations_uninstall_complete',
+      sql`(${table.uninstalledAt} IS NULL AND ${table.uninstalledBy} IS NULL AND ${table.uninstallIdempotencyKey} IS NULL AND ${table.uninstallRequestDigest} IS NULL) OR (${table.uninstalledAt} IS NOT NULL AND ${table.uninstalledBy} IS NOT NULL AND ${table.uninstallIdempotencyKey} IS NOT NULL AND ${table.uninstallRequestDigest} IS NOT NULL)`
+    ),
   ]
 )
