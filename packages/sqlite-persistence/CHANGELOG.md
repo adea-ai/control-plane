@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.33.0...sqlite-persistence-v1.33.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **usage:** persist model request holds inside attempt reservations ([#925](https://github.com/adea-ai/control-plane/issues/925)) ([8d81e30](https://github.com/adea-ai/control-plane/commit/8d81e3074a946990a75a1caf9e66eff9090289bc))
+
 ## [1.33.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.32.0...sqlite-persistence-v1.33.0) (2026-10-07)
 
 
