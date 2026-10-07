@@ -1,0 +1,33 @@
+{
+  "runId": 37684246003,
+  "headSha": "7f8d3010c2b3e3c84cd3536cc734ea1006713f7f",
+  "jobIds": {
+    "1": 113007976688,
+    "2": 113007976610,
+    "3": 113007976606
+  },
+  "integrationSeconds": {
+    "1": 2441,
+    "2": 886,
+    "3": 601
+  },
+  "integrationComplete": {
+    "1": false,
+    "2": true,
+    "3": true
+  },
+  "fileToMove": {
+    "package": "packages/database",
+    "file": "src/budget-admission.integration.test.mjs",
+    "fromShard": 1,
+    "toShard": 3,
+    "secondsLowerBound": 1038.311,
+    "startedAt": "2026-10-07T21:12:14.4864561Z",
+    "cancelledAt": "2026-10-07T21:29:32.7973639Z",
+    "passedCasesBeforeCancellation": 23,
+    "totalStaticCases": 24,
+    "sourceSha256": "a4bcd7521ae30092dda49452262c52e1de7044ff63944c3ce116fb2ebde7c620"
+  },
+  "cleanupVerifiedAbsent": [1, 2, 3],
+  "limits": "Shard 1 and its budget file are censored by the 45-minute job limit. Step durations have whole-second precision. Redistribution estimates use only recorded work; they do not prove complete-run latency, cost savings, or milestone acceptance."
+}
