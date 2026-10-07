@@ -21,7 +21,7 @@
     "test": "bun test src/*.test.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1146.0",
+    "@aws-sdk/client-s3": "3.1147.0",
     "@control-plane/contracts": "workspace:*",
     "@control-plane/deployment": "workspace:*",
     "@control-plane/tool-sdk": "workspace:*"
