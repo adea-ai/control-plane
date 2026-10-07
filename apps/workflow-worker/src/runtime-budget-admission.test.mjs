@@ -71,15 +71,48 @@ describe('durable runtime budget admission', () => {
       source: { sourceId: 'other-consumer', idempotencyKey: 'other-consumer' },
     })
     const guard = makeAdmission(store, fixture.repository)
-    await guard.reserve(admissionInput(fixture))
+    const authority = await guard.reserve(admissionInput(fixture))
     const reservation = store.workspaces
       .get(allowance.workspaceId)
       .budgets.get(ids.executionId)
       .reservations.find((value) => value.attemptId === ids.attemptId)
     expect(reservation).toMatchObject({ maximumMicrounits: 1, maximumTokens: 1 })
+    expect(authority).toEqual({
+      schemaVersion: 1,
+      workspaceId: allowance.workspaceId,
+      executionId: allowance.executionId,
+      attemptId: ids.attemptId,
+      executionPlanId: fixture.plan.executionPlanId,
+      executionPlanDigest: fixture.plan.contentDigest,
+      reservationKey: `runtime-attempt:${ids.attemptId}`,
+      currency: 'USD',
+      maximumMicrounits: 1,
+      maximumTokens: 1,
+    })
+    expect(Object.isFrozen(authority)).toBe(true)
     const entries = await ledger.entries(allowance.workspaceId, allowance.executionId)
-    await guard.reserve(admissionInput(fixture))
+    expect(await guard.reserve(admissionInput(fixture))).toEqual(authority)
     expect(await ledger.entries(allowance.workspaceId, allowance.executionId)).toEqual(entries)
+  })
+
+  test('a failed store commit cannot expose allocation authority or persist the reservation', async () => {
+    const store = new TransactionalMemoryStore()
+    const fixture = await acceptedExecution(store, ids.executionId)
+    const allowance = await openAcceptedBudget(store, fixture)
+    const guard = makeAdmission(store, fixture.repository)
+    store.failCommit = true
+    await expect(guard.reserve(admissionInput(fixture))).rejects.toThrow(
+      'RUNTIME_BUDGET_ADMISSION_DENIED'
+    )
+    expect(
+      store.workspaces.get(allowance.workspaceId).budgets.get(ids.executionId).reservations
+    ).toHaveLength(0)
+    store.failCommit = false
+    expect(await guard.reserve(admissionInput(fixture))).toMatchObject({
+      attemptId: ids.attemptId,
+      maximumTokens: allowance.maximumTokens,
+      maximumMicrounits: allowance.maximumMicrounits,
+    })
   })
 
   test('a settled attempt cannot regain released runtime authority through reservation replay', async () => {
@@ -371,6 +404,7 @@ class TransactionalMemoryStore {
       listEntries: async (executionId) => clone(draft.entries.get(executionId) ?? []),
     }
     const result = await operation(transaction)
+    if (this.failCommit) throw new Error('FIXTURE_COMMIT_FAILED')
     this.workspaces.set(workspaceId, draft)
     return result
   }

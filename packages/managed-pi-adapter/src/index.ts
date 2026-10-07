@@ -20,6 +20,7 @@ import {
   inspectRuntimeCapabilities,
   type RuntimeAdapter,
   type RuntimeAdapterInspection,
+  type RuntimeAttemptBudgetAuthority,
   type RuntimeExecutionHandle,
   type RuntimeExecutionProgress,
   type RuntimeExecutionStatus,
@@ -262,6 +263,8 @@ export const ManagedPiStatusSchema = z
 
 export interface ManagedPiStartCommand {
   readonly attemptId: string
+  readonly executionId?: string
+  readonly attemptBudget?: RuntimeAttemptBudgetAuthority
   readonly idempotencyKey: string
   readonly configuration: ManagedPiConfiguration
 }
@@ -391,6 +394,8 @@ export class ManagedPiDriver implements RuntimeAdapter {
     const handle = RuntimeExecutionHandleSchema.parse(
       await this.#client.start({
         attemptId: request.attemptId,
+        ...(request.executionId === undefined ? {} : { executionId: request.executionId }),
+        ...(request.attemptBudget === undefined ? {} : { attemptBudget: request.attemptBudget }),
         idempotencyKey: request.idempotencyKey,
         configuration,
       })

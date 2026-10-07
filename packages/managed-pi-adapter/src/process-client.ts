@@ -9,8 +9,10 @@ import {
   RuntimeExecutionHandleSchema,
   RuntimeInputRequestSchema,
   RuntimeUsageSchema,
+  RuntimeAttemptBudgetAuthoritySchema,
   type RuntimeExecutionHandle,
   type RuntimeUsage,
+  type RuntimeAttemptBudgetAuthority,
 } from '@control-plane/runtime-sdk'
 import {
   enforceNodeProcessSpawnPolicy,
@@ -48,9 +50,21 @@ export interface ManagedPiProcessInvocation {
 }
 
 export interface ManagedPiProcessInputResolver {
-  resolve(
+  /** Read trusted immutable repository scope without resolving native model inputs. */
+  resolveWorkspace?(
     configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>
+  ): Promise<string>
+  resolve(
+    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
+    context: ManagedPiProcessInvocationContext
   ): Promise<ManagedPiProcessInvocation>
+}
+
+/** Pinned allocation context; this data does not authorize a provider request by itself. */
+export interface ManagedPiProcessInvocationContext {
+  readonly attemptId: string
+  readonly executionId?: string
+  readonly attemptBudget?: RuntimeAttemptBudgetAuthority
 }
 
 export interface ManagedPiProcessClientOptions {
@@ -154,20 +168,38 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   }
 
   async start(commandInput: Parameters<ManagedPiClient['start']>[0]) {
+    const idempotencyKey = commandInput.idempotencyKey
+    if (
+      typeof idempotencyKey !== 'string' ||
+      idempotencyKey.length < 1 ||
+      idempotencyKey.length > 256
+    )
+      throw new Error('PI_START_INVALID_IDEMPOTENCY_KEY')
     const configuration = ManagedPiConfigurationSchema.parse(commandInput.configuration)
     const handle = RuntimeExecutionHandleSchema.parse({
       handleId: `managed-pi:${commandInput.attemptId}`,
       attemptId: commandInput.attemptId,
       startedAt: this.#now().toISOString(),
     })
-    if (
-      typeof commandInput.idempotencyKey !== 'string' ||
-      commandInput.idempotencyKey.length < 1 ||
-      commandInput.idempotencyKey.length > 256
-    )
-      throw new Error('PI_START_INVALID_IDEMPOTENCY_KEY')
+    const context = invocationContext(commandInput, configuration)
+    if (context.attemptBudget !== undefined) {
+      if (this.#inputResolver.resolveWorkspace === undefined) {
+        throw new Error('PI_ATTEMPT_ALLOCATION_SCOPE_UNAVAILABLE')
+      }
+      const workspaceId = await this.#inputResolver.resolveWorkspace(
+        ManagedPiConfigurationSchema.parse(configuration)
+      )
+      if (context.attemptBudget.workspaceId !== workspaceId) {
+        throw new Error('PI_ATTEMPT_ALLOCATION_MISMATCH')
+      }
+    }
     const fingerprint = JSON.stringify(
-      { idempotencyKey: commandInput.idempotencyKey, configuration },
+      {
+        idempotencyKey,
+        configuration,
+        ...(context.executionId === undefined ? {} : { executionId: context.executionId }),
+        ...(context.attemptBudget === undefined ? {} : { attemptBudget: context.attemptBudget }),
+      },
       (_key, value: unknown) => {
         if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
           return Object.fromEntries(
@@ -182,7 +214,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       if (admitted.fingerprint !== fingerprint) throw new Error('PI_START_IDEMPOTENCY_CONFLICT')
       return structuredClone(await admitted.result)
     }
-    const result = this.#startProcess(handle, configuration, fingerprint)
+    const result = this.#startProcess(handle, configuration, fingerprint, context)
     // Retain rejected admissions as well: failure does not establish absence of native effects.
     this.#admissions.set(handle.handleId, { fingerprint, result })
     return structuredClone(await result)
@@ -191,7 +223,8 @@ export class ManagedPiProcessClient implements ManagedPiClient {
   async #startProcess(
     handle: RuntimeExecutionHandle,
     configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
-    fingerprint: string
+    fingerprint: string,
+    context: ManagedPiProcessInvocationContext
   ): Promise<RuntimeExecutionHandle> {
     try {
       await this.#reserveAdmission(handle, fingerprint)
@@ -216,7 +249,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         throw error
       }
     }
-    const invocation = await this.#inputResolver.resolve(configuration)
+    const invocation = await this.#inputResolver.resolve(configuration, context)
     const directory = join(this.#dataDirectory, handle.attemptId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const systemPromptPath = join(directory, 'system-prompt.md')
@@ -748,6 +781,38 @@ class PiRpcProcess {
     const stopped = await this.#link?.stop({ graceMs: 2_000, finalWaitMs: 1_000 })
     if (stopped === false) throw new Error('PI_PROCESS_STOP_UNCONFIRMED')
   }
+}
+
+function invocationContext(
+  command: Parameters<ManagedPiClient['start']>[0],
+  configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>
+): ManagedPiProcessInvocationContext {
+  const parsed =
+    command.attemptBudget === undefined
+      ? undefined
+      : RuntimeAttemptBudgetAuthoritySchema.safeParse(command.attemptBudget)
+  if (parsed !== undefined && !parsed.success) {
+    throw new Error('PI_ATTEMPT_ALLOCATION_MISMATCH')
+  }
+  const budget = parsed?.data
+  if (
+    budget !== undefined &&
+    (budget.executionId !== command.executionId ||
+      budget.attemptId !== command.attemptId ||
+      budget.executionPlanId !== configuration.executionPlanId ||
+      budget.executionPlanDigest !== configuration.executionPlanDigest ||
+      budget.reservationKey !== `runtime-attempt:${command.attemptId}` ||
+      budget.currency !== configuration.limits.budget.currency ||
+      budget.maximumMicrounits > configuration.limits.budget.maximumMicrounits ||
+      budget.maximumTokens > configuration.limits.tokens.maximumTotal)
+  ) {
+    throw new Error('PI_ATTEMPT_ALLOCATION_MISMATCH')
+  }
+  return Object.freeze({
+    attemptId: command.attemptId,
+    ...(command.executionId === undefined ? {} : { executionId: command.executionId }),
+    ...(budget === undefined ? {} : { attemptBudget: budget }),
+  })
 }
 
 async function inspectVersion(
