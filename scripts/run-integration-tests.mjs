@@ -194,6 +194,14 @@ try {
     // fast-fail ceiling and the package-level sweep.
     const perTestTimeoutMs = remoteDatabase ? '120000' : '30000'
     for (const group of selectIntegrationShard(integrationShard)) {
+      if (
+        remoteDatabase &&
+        process.env.GITHUB_ACTIONS === 'true' &&
+        group.qualification === 'hosted-graph-restate'
+      ) {
+        console.log('Hosted PostgreSQL/Restate graph runs in its required qualification step.')
+        continue
+      }
       for (const file of group.files) {
         const testArguments = integrationFileArguments(group, file, perTestTimeoutMs)
         try {

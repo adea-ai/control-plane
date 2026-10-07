@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  appendFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -34,6 +35,7 @@ const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
 const realNode = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
 const migrationVerifyStep = "Verify migrations and this shard's integration slice"
 const conformanceStep = 'Verify cross-profile conformance matrix (Postgres)'
+const hostedGraphStep = 'Verify Hosted PostgreSQL and Restate graph'
 
 function runGateGit(repository, args) {
   const result = spawnSync(realGit, args, { cwd: repository, encoding: 'utf8' })
@@ -60,6 +62,9 @@ function verifiedJobs() {
           ? [{ name: conformanceStep, status: 'completed', conclusion: 'success' }]
           : []),
         { name: migrationVerifyStep, status: 'completed', conclusion: 'success' },
+        ...(shard === 3
+          ? [{ name: hostedGraphStep, status: 'completed', conclusion: 'success' }]
+          : []),
       ],
     })),
   }
@@ -91,7 +96,24 @@ function runMigrationGate({
   failDiff = false,
   headMessage = 'fix: update docs',
 } = {}) {
+  const resourceLedger = process.env.M11_RESOURCE_LEDGER
+  if (resourceLedger) {
+    appendFileSync(
+      resourceLedger,
+      JSON.stringify({
+        owner: 'Neon migration gate tests',
+        prefix: 'neon-migration-gate-',
+        state: 'planned',
+      }) + '\n'
+    )
+  }
   const directory = mkdtempSync(join(tmpdir(), 'neon-migration-gate-'))
+  if (resourceLedger) {
+    appendFileSync(
+      resourceLedger,
+      JSON.stringify({ owner: 'Neon migration gate tests', directory, state: 'created' }) + '\n'
+    )
+  }
   const repository = join(directory, 'repository')
   const fakeBin = join(directory, 'bin')
   const outputPath = join(directory, 'github-output')
@@ -198,6 +220,12 @@ if (isJobsRequest) {
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })
+    if (resourceLedger) {
+      appendFileSync(
+        resourceLedger,
+        JSON.stringify({ owner: 'Neon migration gate tests', directory, state: 'removed' }) + '\n'
+      )
+    }
   }
 }
 
@@ -1000,6 +1028,13 @@ describe('Neon trusted-main migration gating', () => {
       'skipped'
     const duplicateShardJobs = verifiedJobs()
     duplicateShardJobs.jobs.push({ ...duplicateShardJobs.jobs[0] })
+    const missingHostedGraphJobs = verifiedJobs()
+    missingHostedGraphJobs.jobs[2].steps = missingHostedGraphJobs.jobs[2].steps.filter(
+      (step) => step.name !== hostedGraphStep
+    )
+    const skippedHostedGraphJobs = verifiedJobs()
+    skippedHostedGraphJobs.jobs[2].steps.find((step) => step.name === hostedGraphStep).conclusion =
+      'skipped'
 
     for (const jobs of [
       skippedJobs,
@@ -1008,6 +1043,8 @@ describe('Neon trusted-main migration gating', () => {
       failedIntegrationJobs,
       failedConformanceJobs,
       duplicateShardJobs,
+      missingHostedGraphJobs,
+      skippedHostedGraphJobs,
     ]) {
       const result = runMigrationGate({ jobsResponses: { 42: jobs } })
       expect(result.status).toBe(0)
@@ -1075,6 +1112,10 @@ describe('Neon trusted-main migration gating', () => {
       'scripts/integration-shards.mjs',
       'scripts/run-cloud-remote-drill.mjs',
       'scripts/run-integration-tests.mjs',
+      'scripts/run-hosted-graph-qualification.sh',
+      'scripts/provision-restate-identity.mjs',
+      'scripts/remove-hosted-compose-fixture.mjs',
+      'infrastructure/compose/compose.yaml',
       'tests/cp1-embedded-durable-execution.test.mjs',
       'tests/integration-shards.test.mjs',
       '.mise.toml',

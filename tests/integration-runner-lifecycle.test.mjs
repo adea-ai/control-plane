@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { parse } from 'acorn'
 import { runInNewContext } from 'node:vm'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  appendFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +20,16 @@ const runner = join(repository, 'scripts/run-integration-tests.mjs')
 // These executable doubles exercise the real runner without a Docker engine,
 // network target, database, install, build, or integration suite.
 function executeRunner(overrides = {}) {
+  const record = (entry) => {
+    if (process.env.M11_RESOURCE_LEDGER)
+      appendFileSync(
+        process.env.M11_RESOURCE_LEDGER,
+        JSON.stringify({ owner: 'integration runner lifecycle tests', ...entry }) + '\n'
+      )
+  }
+  record({ prefix: 'cp-integration-lifecycle-', state: 'planned' })
   const directory = mkdtempSync(join(tmpdir(), 'cp-integration-lifecycle-'))
+  record({ directory, state: 'created' })
   const commands = join(directory, 'commands.jsonl')
   try {
     const fake = `#!${process.execPath}
@@ -43,16 +59,36 @@ if (program === 'docker') {
         delete environment[key]
       }
     }
+    record({
+      command: [process.execPath, runner],
+      cwd: repository,
+      state: 'planned',
+      directory,
+      port: null,
+    })
     const result = spawnSync(process.execPath, [runner], {
       cwd: repository,
       encoding: 'utf8',
-      timeout: 2000,
+      // Multiple fresh CLI starts can exceed two seconds on a busy runner.
+      // This is only the executable-double harness; production probes retain
+      // their independent two-second deadline below.
+      timeout: 5000,
       env: {
         ...environment,
         PATH: `${directory}${delimiter}${process.env.PATH}`,
         COMMAND_RECEIPT: commands,
         ...overrides,
       },
+    })
+    record({
+      command: [process.execPath, runner],
+      cwd: repository,
+      pid: result.pid,
+      state: 'reaped',
+      status: result.status,
+      error: result.error?.code,
+      directory,
+      port: null,
     })
     if (result.error) throw result.error
     const calls = existsSync(commands)
@@ -61,6 +97,7 @@ if (program === 'docker') {
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls }
   } finally {
     rmSync(directory, { recursive: true, force: true })
+    record({ directory, state: 'removed' })
   }
 }
 
@@ -79,6 +116,27 @@ function destructiveCalls(result) {
 }
 
 describe('integration runner resource ownership', () => {
+  test('trusted remote shard 3 delegates Hosted graph exactly once to qualification', () => {
+    const result = executeRunner({
+      ...remoteTarget,
+      INTEGRATION_SHARD: '3',
+      GITHUB_ACTIONS: 'true',
+    })
+    expect(result.status).toBe(0)
+    expect(result.calls.filter(({ program }) => program === 'docker')).toEqual([])
+    expect(
+      result.calls.some(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
+    ).toBe(false)
+    expect(result.stdout).toContain(
+      'Hosted PostgreSQL/Restate graph runs in its required qualification step.'
+    )
+    const developer = executeRunner({ ...remoteTarget, INTEGRATION_SHARD: '3', GITHUB_ACTIONS: '' })
+    expect(developer.status).toBe(0)
+    expect(
+      developer.calls.filter(({ args }) => args.includes('src/hosted-graph.integration.test.mjs'))
+    ).toHaveLength(1)
+  }, 10_000)
+
   test('remote verification needs no Docker command even when the engine is unavailable', () => {
     const result = executeRunner(remoteTarget)
     expect(result.status).toBe(0)

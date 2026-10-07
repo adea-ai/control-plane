@@ -110,11 +110,15 @@ export const INTEGRATION_SHARDS = [
         package: 'apps/hosted-control-plane',
         files: [
           'src/hosted-graph-cancellation.integration.test.mjs',
-          'src/hosted-graph.integration.test.mjs',
           'src/hosted-http.integration.test.mjs',
           'src/reconciliation-metrics.integration.test.mjs',
           'src/reconciliation-projection.integration.test.mjs',
         ],
+      },
+      {
+        package: 'apps/hosted-control-plane',
+        files: ['src/hosted-graph.integration.test.mjs'],
+        qualification: 'hosted-graph-restate',
       },
     ],
   },
