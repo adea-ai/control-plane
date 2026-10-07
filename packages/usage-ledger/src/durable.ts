@@ -41,6 +41,30 @@ const ReserveInputSchema = z
   })
   .strict()
 
+const ModelRequestInputSchema = ReserveInputSchema.extend({
+  attemptId: IdentifierSchemas.attemptId,
+  modelCallId: IdentifierSchemas.modelCallId,
+  fundingSource: z.enum(['hq_managed', 'external_subscription']),
+  priceSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+})
+
+const ModelRequestSettlementInputSchema = z
+  .object({
+    workspaceId: IdentifierSchemas.workspaceId,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    reservationKey: KeySchema,
+    modelCallId: IdentifierSchemas.modelCallId,
+    costMicrounits: AmountSchema,
+    tokens: AmountSchema,
+    source: DurableUsageSourceSchema,
+  })
+  .strict()
+
+export type ReserveDurableModelRequestInput = z.input<typeof ModelRequestInputSchema>
+export type SettleDurableModelRequestInput = z.input<typeof ModelRequestSettlementInputSchema>
+
 const ChargeInputSchema = z
   .object({
     workspaceId: IdentifierSchemas.workspaceId,
@@ -193,6 +217,7 @@ interface ReplayIdentity {
   operation: string
   reservationKey?: string
   kind?: string
+  modelCallId?: string
 }
 
 /** A durable, transaction-backed usage ledger. Every mutation writes its budget,
@@ -370,6 +395,9 @@ export class DurableUsageLedger {
         throw usageError('RESERVATION_NOT_FOUND')
       }
       if (reservation.status === 'settled') throw usageError('RESERVATION_SETTLED')
+      if (data.kind === 'model_usage' && (reservation.modelRequests?.length ?? 0) > 0) {
+        throw usageError('INVALID_ENTRY')
+      }
       if (data.fundingSource === 'external_subscription' && data.costMicrounits !== 0) {
         throw usageError('INVALID_ENTRY')
       }
@@ -383,12 +411,7 @@ export class DurableUsageLedger {
         data.quantity.unit === 'tokens'
           ? safeAddOrThrow(reservation.chargedTokens, data.quantity.value, 'BUDGET_EXHAUSTED')
           : reservation.chargedTokens
-      if (
-        chargedMicrounits > reservation.maximumMicrounits ||
-        chargedTokens > reservation.maximumTokens
-      ) {
-        throw usageError('BUDGET_EXHAUSTED')
-      }
+      assertRequestCapacity(reservation, chargedMicrounits, chargedTokens)
       reservation.chargedMicrounits = chargedMicrounits
       reservation.chargedTokens = chargedTokens
 
@@ -428,6 +451,9 @@ export class DurableUsageLedger {
         throw usageError('SETTLEMENT_INCOMPLETE')
       }
       if (reservation.status === 'settled') throw usageError('RESERVATION_SETTLED')
+      if (reservation.modelRequests?.some((request) => request.status === 'open')) {
+        throw usageError('SETTLEMENT_INCOMPLETE')
+      }
 
       const releasedMicrounits = reservation.maximumMicrounits - reservation.chargedMicrounits
       const release = this.#makeEntry(
@@ -472,6 +498,135 @@ export class DurableUsageLedger {
       const result = { releasedMicrounits, settlement }
       await this.#writeMutation(transaction, [budget], [release, settlement])
       return result
+    })
+  }
+
+  /** Accounting hold within the admitted attempt envelope. The caller must
+   * supply a trusted quote/funding decision; this is not provider-send permission.
+   * Unknown outcomes remain open until explicit, authoritative reconciliation.
+   */
+  async reserveModelRequest(input: ReserveDurableModelRequestInput): Promise<UsageLedgerEntry> {
+    const parsed = ModelRequestInputSchema.safeParse(input)
+    if (!parsed.success) throw usageError('INVALID_ENTRY')
+    const data = parsed.data
+    if (data.fundingSource === 'external_subscription' && data.maximumMicrounits !== 0) {
+      throw usageError('INVALID_ENTRY')
+    }
+    return this.#mutate(
+      data,
+      'reserveModelRequest',
+      UsageLedgerEntrySchema,
+      async (transaction) => {
+        const loaded = await this.#loadValidatedTree(
+          transaction,
+          data.workspaceId,
+          data.executionId
+        )
+        const budget = mutableBudget(loaded.budget)
+        const reservation = openAttemptReservation(budget, data)
+        if (
+          budget.reservations.some((value) =>
+            value.modelRequests?.some((request) => request.modelCallId === data.modelCallId)
+          )
+        ) {
+          throw usageError('IDEMPOTENCY_CONFLICT')
+        }
+        assertRequestCapacity(
+          reservation,
+          safeAddOrThrow(reservation.chargedMicrounits, data.maximumMicrounits, 'BUDGET_EXHAUSTED'),
+          safeAddOrThrow(reservation.chargedTokens, data.maximumTokens, 'BUDGET_EXHAUSTED')
+        )
+        reservation.modelRequests ??= []
+        if (reservation.modelRequests.length >= 2_048) throw usageError('BUDGET_EXHAUSTED')
+        reservation.modelRequests.push({
+          modelCallId: data.modelCallId,
+          maximumMicrounits: data.maximumMicrounits,
+          maximumTokens: data.maximumTokens,
+          fundingSource: data.fundingSource,
+          priceSnapshotDigest: data.priceSnapshotDigest,
+          requestDigest: data.requestDigest,
+          status: 'open',
+          chargedMicrounits: 0,
+          chargedTokens: 0,
+        })
+        const entry = this.#makeEntry(
+          budget,
+          data.source,
+          'reserveModelRequest',
+          'model_reservation',
+          {
+            ...modelEntryScope(budget, reservation, data.modelCallId),
+            fundingSource: data.fundingSource,
+            quantity: { unit: 'microunits', value: data.maximumMicrounits },
+            costMicrounits: data.maximumMicrounits,
+            costExact: data.fundingSource === 'hq_managed',
+            reservedTokens: data.maximumTokens,
+            priceSnapshotDigest: data.priceSnapshotDigest,
+            requestDigest: data.requestDigest,
+          }
+        )
+        await this.#writeMutation(transaction, [budget], [entry])
+        return entry
+      }
+    )
+  }
+
+  async settleModelRequest(input: SettleDurableModelRequestInput): Promise<UsageLedgerEntry> {
+    const parsed = ModelRequestSettlementInputSchema.safeParse(input)
+    if (!parsed.success) throw usageError('INVALID_ENTRY')
+    const data = parsed.data
+    return this.#mutate(data, 'settleModelRequest', UsageLedgerEntrySchema, async (transaction) => {
+      const loaded = await this.#loadValidatedTree(transaction, data.workspaceId, data.executionId)
+      const budget = mutableBudget(loaded.budget)
+      const reservation = openAttemptReservation(budget, data)
+      const request = reservation.modelRequests?.find(
+        (value) => value.modelCallId === data.modelCallId
+      )
+      if (!request) throw usageError('RESERVATION_NOT_FOUND')
+      if (request.status === 'settled') throw usageError('RESERVATION_SETTLED')
+      if (data.costMicrounits > request.maximumMicrounits || data.tokens > request.maximumTokens) {
+        throw usageError('BUDGET_EXHAUSTED')
+      }
+      if (request.fundingSource === 'external_subscription' && data.costMicrounits !== 0) {
+        throw usageError('INVALID_ENTRY')
+      }
+      reservation.chargedMicrounits = safeAddOrThrow(
+        reservation.chargedMicrounits,
+        data.costMicrounits,
+        'BUDGET_EXHAUSTED'
+      )
+      reservation.chargedTokens = safeAddOrThrow(
+        reservation.chargedTokens,
+        data.tokens,
+        'BUDGET_EXHAUSTED'
+      )
+      request.status = 'settled'
+      request.chargedMicrounits = data.costMicrounits
+      request.chargedTokens = data.tokens
+      const fields = {
+        ...modelEntryScope(budget, reservation, data.modelCallId),
+        fundingSource: request.fundingSource,
+        costExact: request.fundingSource === 'hq_managed',
+      }
+      const charge = this.#makeEntry(budget, data.source, 'settleModelRequest', 'model_usage', {
+        ...fields,
+        quantity: { unit: 'tokens', value: data.tokens },
+        costMicrounits: data.costMicrounits,
+      })
+      const release = this.#makeEntry(
+        budget,
+        data.source,
+        'settleModelRequest',
+        'model_release',
+        {
+          ...fields,
+          quantity: { unit: 'microunits', value: request.maximumMicrounits - data.costMicrounits },
+          costMicrounits: 0,
+        },
+        1
+      )
+      await this.#writeMutation(transaction, [budget], [charge, release])
+      return charge
     })
   }
 
@@ -741,7 +896,11 @@ export class DurableUsageLedger {
         const replay = resultSchema.safeParse(prior.data.result)
         if (!replay.success) throw usageError('STORE_STATE_INVALID')
         assertResultExecution(replay.data, input.executionId)
-        const replayInput = input as Input & { reservationKey?: string; kind?: string }
+        const replayInput = input as Input & {
+          reservationKey?: string
+          kind?: string
+          modelCallId?: string
+        }
         assertReplayEntries(replay.data, replayBudget.entries, {
           operationKey: input.source.idempotencyKey,
           sourceId: input.source.sourceId,
@@ -751,6 +910,9 @@ export class DurableUsageLedger {
             ? {}
             : { reservationKey: replayInput.reservationKey }),
           ...(replayInput.kind === undefined ? {} : { kind: replayInput.kind }),
+          ...(replayInput.modelCallId === undefined
+            ? {}
+            : { modelCallId: replayInput.modelCallId }),
         })
         assertReplaySummary(replay.data, replayBudget, {
           operationKey: input.source.idempotencyKey,
@@ -983,6 +1145,7 @@ function validateLocalLedger(
   }
 
   const chargeTotals = new Map<string, { microunits: number; tokens: number }>()
+  validateModelRequestEntries(budget, entries)
   for (const entry of entries) {
     if (
       (entry.kind === 'release' || entry.kind === 'settlement') &&
@@ -1121,6 +1284,147 @@ function validateChildFunding(parent: DurableUsageBudget, child: DurableUsageBud
     funding.chargedTokens !== childTotals.spentTokens
   ) {
     throw usageError('STORE_STATE_INVALID')
+  }
+}
+
+type AttemptReservation = DurableUsageBudget['reservations'][number]
+
+function openAttemptReservation(
+  budget: DurableUsageBudget,
+  input: {
+    reservationKey: string
+    attemptId: string
+  }
+): AttemptReservation {
+  if (budget.status === 'settled') throw usageError('BUDGET_SETTLED')
+  const reservation = budget.reservations.find(
+    (value) => value.reservationKey === input.reservationKey
+  )
+  if (
+    !reservation ||
+    reservation.attemptId !== input.attemptId ||
+    reservation.childExecutionId !== undefined
+  ) {
+    throw usageError('RESERVATION_NOT_FOUND')
+  }
+  if (reservation.status === 'settled') throw usageError('RESERVATION_SETTLED')
+  return reservation
+}
+
+function modelEntryScope(
+  budget: DurableUsageBudget,
+  reservation: AttemptReservation,
+  modelCallId: NonNullable<UsageLedgerEntry['modelCallId']>
+) {
+  return {
+    attemptId: reservation.attemptId,
+    ...(budget.parentExecutionId === undefined
+      ? {}
+      : { parentExecutionId: budget.parentExecutionId }),
+    reservationKey: reservation.reservationKey,
+    currency: budget.currency,
+    modelCallId,
+  }
+}
+
+function assertRequestCapacity(
+  reservation: AttemptReservation,
+  chargedMoney: number,
+  chargedTokens: number
+): void {
+  let committedMoney = chargedMoney
+  let committedTokens = chargedTokens
+  for (const hold of reservation.modelRequests ?? []) {
+    if (hold.status !== 'open') continue
+    committedMoney = safeAddOrThrow(committedMoney, hold.maximumMicrounits, 'BUDGET_EXHAUSTED')
+    committedTokens = safeAddOrThrow(committedTokens, hold.maximumTokens, 'BUDGET_EXHAUSTED')
+  }
+  if (
+    committedMoney > reservation.maximumMicrounits ||
+    committedTokens > reservation.maximumTokens
+  ) {
+    throw usageError('BUDGET_EXHAUSTED')
+  }
+}
+
+function validateModelRequestEntries(
+  budget: DurableUsageBudget,
+  entries: readonly UsageLedgerEntry[]
+): void {
+  const requests = new Map<
+    string,
+    {
+      reservation: AttemptReservation
+      hold: NonNullable<AttemptReservation['modelRequests']>[number]
+    }
+  >()
+  for (const reservation of budget.reservations) {
+    for (const hold of reservation.modelRequests ?? [])
+      requests.set(hold.modelCallId, { reservation, hold })
+  }
+  for (const entry of entries) {
+    if (entry.modelCallId === undefined) continue
+    const request = requests.get(entry.modelCallId)
+    if (
+      !request ||
+      entry.reservationKey !== request.reservation.reservationKey ||
+      entry.attemptId !== request.reservation.attemptId ||
+      entry.fundingSource !== request.hold.fundingSource ||
+      entry.costExact !== (request.hold.fundingSource === 'hq_managed')
+    )
+      throw usageError('STORE_STATE_INVALID')
+  }
+  for (const { reservation, hold } of requests.values()) {
+    const matching = entries.filter((entry) => entry.modelCallId === hold.modelCallId)
+    const holds = matching.filter((entry) => entry.kind === 'model_reservation')
+    const opening = holds[0]
+    if (
+      holds.length !== 1 ||
+      !opening ||
+      opening.quantity.unit !== 'microunits' ||
+      opening.quantity.value !== hold.maximumMicrounits ||
+      opening.costMicrounits !== hold.maximumMicrounits ||
+      opening.reservedTokens !== hold.maximumTokens ||
+      opening.priceSnapshotDigest !== hold.priceSnapshotDigest ||
+      opening.requestDigest !== hold.requestDigest
+    )
+      throw usageError('STORE_STATE_INVALID')
+    // Legacy aggregate charges may precede the first per-request hold, but
+    // cannot be introduced after switching this attempt to request accounting.
+    if (
+      entries.some(
+        (entry) =>
+          entry.reservationKey === reservation.reservationKey &&
+          entry.kind === 'model_usage' &&
+          entry.modelCallId === undefined &&
+          entry.sequence > opening.sequence
+      )
+    ) {
+      throw usageError('STORE_STATE_INVALID')
+    }
+    const charges = matching.filter((entry) => entry.kind === 'model_usage')
+    const releases = matching.filter((entry) => entry.kind === 'model_release')
+    if (hold.status === 'open') {
+      if (charges.length !== 0 || releases.length !== 0) throw usageError('STORE_STATE_INVALID')
+    } else {
+      const charge = charges[0]
+      const release = releases[0]
+      if (
+        charges.length !== 1 ||
+        releases.length !== 1 ||
+        !charge ||
+        !release ||
+        charge.quantity.unit !== 'tokens' ||
+        charge.quantity.value !== hold.chargedTokens ||
+        charge.costMicrounits !== hold.chargedMicrounits ||
+        charge.sequence <= opening.sequence ||
+        release.quantity.unit !== 'microunits' ||
+        release.quantity.value !== hold.maximumMicrounits - hold.chargedMicrounits ||
+        release.costMicrounits !== 0 ||
+        release.sequence <= charge.sequence
+      )
+        throw usageError('STORE_STATE_INVALID')
+    }
   }
 }
 
@@ -1297,6 +1601,10 @@ function assertReplayEntries(
   if (record['entryId'] !== undefined) {
     if (identity.operation === 'reserve') {
       candidates.push({ candidate: result, kind: 'reservation', ordinal: 0 })
+    } else if (identity.operation === 'reserveModelRequest') {
+      candidates.push({ candidate: result, kind: 'model_reservation', ordinal: 0 })
+    } else if (identity.operation === 'settleModelRequest') {
+      candidates.push({ candidate: result, kind: 'model_usage', ordinal: 0 })
     } else if (identity.operation === 'charge' && identity.kind !== undefined) {
       candidates.push({ candidate: result, kind: identity.kind, ordinal: 0 })
     } else {
@@ -1325,6 +1633,7 @@ function assertReplayEntries(
       parsed.data.kind !== kind ||
       (identity.reservationKey !== undefined &&
         parsed.data.reservationKey !== identity.reservationKey) ||
+      (identity.modelCallId !== undefined && parsed.data.modelCallId !== identity.modelCallId) ||
       stableStringify(stored[0]) !== stableStringify(parsed.data)
     ) {
       throw usageError('STORE_STATE_INVALID')
@@ -1355,6 +1664,26 @@ function assertReplayEntries(
     ) {
       throw usageError('STORE_STATE_INVALID')
     }
+  }
+  if (identity.operation === 'settleModelRequest') {
+    const releaseKey = entryIdempotencyKey(
+      identity.operationKey,
+      identity.executionId,
+      identity.operation,
+      'model_release',
+      1
+    )
+    const releases = immutableEntries.filter((entry) => entry.source.idempotencyKey === releaseKey)
+    const release = releases[0]
+    if (
+      releases.length !== 1 ||
+      !release ||
+      release.kind !== 'model_release' ||
+      release.source.sourceId !== identity.sourceId ||
+      release.modelCallId !== identity.modelCallId ||
+      release.reservationKey !== identity.reservationKey
+    )
+      throw usageError('STORE_STATE_INVALID')
   }
 }
 

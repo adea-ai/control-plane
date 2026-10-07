@@ -202,6 +202,82 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
   }, integrationTestTimeout())
 
   test(
+    'keeps unresolved model holds through reconnect and settles known usage once',
+    async () => {
+      const { isolated, credentials } = await createDatabase()
+      const owner = await createOwner(isolated.application)
+      const scope = {
+        workspaceId: owner.execution.correlation.workspaceId,
+        executionId: owner.execution.executionId,
+      }
+      const service = ledger(isolated.application)
+      await service.openBudget({
+        ...scope,
+        currency: 'USD',
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        source: source('request-open'),
+      })
+      const attempt = {
+        ...scope,
+        attemptId: owner.attempt.attemptId,
+        reservationKey: `runtime-attempt:${owner.attempt.attemptId}`,
+      }
+      await service.reserve({
+        ...attempt,
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        source: source('request-attempt'),
+      })
+      const held = await service.reserveModelRequest({
+        ...attempt,
+        modelCallId: nextId('mdc'),
+        maximumMicrounits: 80,
+        maximumTokens: 80,
+        fundingSource: 'hq_managed',
+        priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
+        requestDigest: `sha256:${'d'.repeat(64)}`,
+        source: source('request-hold'),
+      })
+      const databaseUrl = new URL(credentials.application.url)
+      databaseUrl.pathname = `/${isolated.name}`
+      const reconnected = createPostgresConnection({
+        ...credentials.application,
+        url: databaseUrl.toString(),
+      })
+      try {
+        const reopened = ledger(reconnected.database)
+        expect((await reopened.entries(scope.workspaceId, scope.executionId)).at(-1)).toEqual(held)
+        const settleAttempt = {
+          ...scope,
+          reservationKey: attempt.reservationKey,
+          source: source('request-attempt-settle'),
+        }
+        await expect(reopened.settle(settleAttempt)).rejects.toMatchObject({
+          code: 'SETTLEMENT_INCOMPLETE',
+        })
+        const knownUsage = {
+          ...attempt,
+          modelCallId: held.modelCallId,
+          costMicrounits: 30,
+          tokens: 20,
+          source: source('request-known-usage'),
+        }
+        const settled = await reopened.settleModelRequest(knownUsage)
+        await expect(service.settleModelRequest(knownUsage)).resolves.toEqual(settled)
+        expect((await reopened.settle(settleAttempt)).releasedMicrounits).toBe(70)
+        expect(await reopened.publicSummary(scope.workspaceId, scope.executionId)).toMatchObject({
+          funding: { hqManagedMicrounits: 30, externalSubscriptionEffects: 0 },
+          usage: { tokens: 20 },
+        })
+      } finally {
+        await reconnected.close()
+      }
+    },
+    integrationTestTimeout(60_000)
+  )
+
+  test(
     'opens, reserves, charges, settles, finalizes, reconnects, and replays receipts',
     async () => {
       const { isolated, credentials } = await createDatabase()

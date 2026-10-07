@@ -13,6 +13,8 @@ import { executions } from './executions.js'
 
 export const usageLedgerEntryKind = pgEnum('usage_ledger_entry_kind', [
   'reservation',
+  'model_reservation',
+  'model_release',
   'model_usage',
   'tool_charge',
   'sandbox_usage',
@@ -43,6 +45,10 @@ export const usageLedgerEntries = pgTable(
     sourceId: varchar('source_id', { length: 256 }).notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 256 }).notNull(),
     reservationKey: varchar('reservation_key', { length: 256 }),
+    modelCallId: varchar('model_call_id', { length: 30 }),
+    reservedTokens: bigint('reserved_tokens', { mode: 'number' }),
+    priceSnapshotDigest: varchar('price_snapshot_digest', { length: 71 }),
+    requestDigest: varchar('request_digest', { length: 71 }),
     fundingSource: usageFundingSource('funding_source').notNull(),
     quantity: jsonb('quantity').$type<{ unit: string; value: number }>().notNull(),
     currency: varchar('currency', { length: 3 }).notNull(),

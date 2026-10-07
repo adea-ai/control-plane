@@ -129,6 +129,298 @@ function rootBudget(overrides = {}) {
   }
 }
 
+const modelCallId = 'mdc_01JABCDEF0123456789ABCDEFG'
+const secondModelCallId = 'mdc_01JABCDEF0123456789ABCDEFH'
+const attemptReservationKey = `runtime-attempt:${ids.attemptId}`
+const modelRequest = (overrides = {}) => ({
+  workspaceId: ids.workspaceId,
+  executionId: ids.executionId,
+  attemptId: ids.attemptId,
+  reservationKey: attemptReservationKey,
+  modelCallId,
+  maximumMicrounits: 600,
+  maximumTokens: 60,
+  fundingSource: 'hq_managed',
+  priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
+  requestDigest: `sha256:${'d'.repeat(64)}`,
+  source: source('model-request-one'),
+  ...overrides,
+})
+
+async function reservedAttempt(store) {
+  const ledger = makeLedger(store)
+  await ledger.openBudget(rootBudget())
+  await ledger.reserve({
+    workspaceId: ids.workspaceId,
+    executionId: ids.executionId,
+    attemptId: ids.attemptId,
+    reservationKey: attemptReservationKey,
+    maximumMicrounits: 1_000,
+    maximumTokens: 100,
+    source: source('reserve-runtime-attempt'),
+  })
+  return ledger
+}
+
+describe('durable model request holds', () => {
+  const settleRequest = (overrides = {}) => ({
+    workspaceId: ids.workspaceId,
+    executionId: ids.executionId,
+    attemptId: ids.attemptId,
+    reservationKey: attemptReservationKey,
+    modelCallId,
+    costMicrounits: 200,
+    tokens: 20,
+    source: source('request-settle'),
+    ...overrides,
+  })
+  test('serializes request holds inside an already fully reserved attempt', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    expect((await ledger.summary(ids.workspaceId, ids.executionId)).availableMicrounits).toBe(0)
+    const results = await Promise.allSettled([
+      ledger.reserveModelRequest(modelRequest()),
+      makeLedger(store).reserveModelRequest(
+        modelRequest({
+          modelCallId: secondModelCallId,
+          source: source('model-request-two'),
+        })
+      ),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(results.find((r) => r.status === 'rejected').reason.code).toBe('BUDGET_EXHAUSTED')
+    expect((await ledger.summary(ids.workspaceId, ids.executionId)).reservedMicrounits).toBe(1_000)
+    expect((await ledger.entries(ids.workspaceId, ids.executionId)).at(-1)).toMatchObject({
+      kind: 'model_reservation',
+      modelCallId,
+      reservationKey: attemptReservationKey,
+      quantity: { unit: 'microunits', value: 600 },
+      reservedTokens: 60,
+    })
+    await expect(
+      makeLedger(store).settle({
+        workspaceId: ids.workspaceId,
+        executionId: ids.executionId,
+        reservationKey: attemptReservationKey,
+        source: source('premature-attempt-settle'),
+      })
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+  })
+
+  test('charges known usage once and releases only the unused request hold', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    const held = await ledger.reserveModelRequest(modelRequest())
+    const settlement = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: attemptReservationKey,
+      modelCallId,
+      costMicrounits: 200,
+      tokens: 20,
+      source: source('model-request-one-known-usage'),
+    }
+    const charged = await makeLedger(store).settleModelRequest(settlement)
+    expect(charged).toMatchObject({
+      kind: 'model_usage',
+      modelCallId,
+      costMicrounits: 200,
+      quantity: { unit: 'tokens', value: 20 },
+    })
+    expect(await makeLedger(store).settleModelRequest(settlement)).toEqual(charged)
+    expect(await makeLedger(store).reserveModelRequest(modelRequest())).toEqual(held)
+    expect(
+      (await ledger.entries(ids.workspaceId, ids.executionId)).filter(
+        (e) => e.kind === 'model_usage'
+      )
+    ).toHaveLength(1)
+    await ledger.reserveModelRequest(
+      modelRequest({
+        modelCallId: secondModelCallId,
+        maximumMicrounits: 800,
+        maximumTokens: 80,
+        source: source('model-request-two'),
+      })
+    )
+    expect((await ledger.summary(ids.workspaceId, ids.executionId)).spentMicrounits).toBe(200)
+    await expect(
+      ledger.charge({
+        workspaceId: ids.workspaceId,
+        executionId: ids.executionId,
+        attemptId: ids.attemptId,
+        reservationKey: attemptReservationKey,
+        kind: 'tool_charge',
+        quantity: { unit: 'calls', value: 1 },
+        costMicrounits: 1,
+        fundingSource: 'hq_managed',
+        source: source('tool-cannot-spend-held-funds'),
+      })
+    ).rejects.toMatchObject({ code: 'BUDGET_EXHAUSTED' })
+  })
+
+  test('retains unknown request holds across reopen and blocks attempt retry and finalization', async () => {
+    const store = new TransactionalMemoryStore()
+    await (await reservedAttempt(store)).reserveModelRequest(modelRequest())
+    const ledger = makeLedger(store)
+    const before = await store.snapshot(ids.workspaceId)
+    await expect(
+      ledger.assertRuntimeAttemptReleased(ids.workspaceId, ids.executionId, ids.attemptId)
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+    await expect(
+      ledger.finalizeBudget({
+        workspaceId: ids.workspaceId,
+        executionId: ids.executionId,
+        source: source('unknown-finalize'),
+      })
+    ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+    expect(await store.snapshot(ids.workspaceId)).toEqual(before)
+  })
+
+  test('does not consume funds or erase a hold on failed settlement persistence', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    await ledger.reserveModelRequest(modelRequest())
+    const before = await store.snapshot(ids.workspaceId)
+    store.failNextEffect = true
+    await expect(ledger.settleModelRequest(settleRequest())).rejects.toThrow(
+      'injected effect write failure'
+    )
+    expect(await store.snapshot(ids.workspaceId)).toEqual(before)
+    await makeLedger(store).settleModelRequest(settleRequest())
+    expect(
+      (await ledger.entries(ids.workspaceId, ids.executionId)).filter(
+        (e) => e.kind === 'model_usage'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('rejects altered quotes, duplicate model-call identities, and foreign scope', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    await ledger.reserveModelRequest(modelRequest())
+    const before = await store.snapshot(ids.workspaceId)
+    await expect(
+      ledger.reserveModelRequest(modelRequest({ requestDigest: `sha256:${'e'.repeat(64)}` }))
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+    await expect(
+      ledger.reserveModelRequest(modelRequest({ source: source('duplicate-call') }))
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+    await expect(
+      ledger.reserveModelRequest(
+        modelRequest({ workspaceId: ids.otherWorkspaceId, source: source('other-workspace') })
+      )
+    ).rejects.toMatchObject({ code: 'BUDGET_NOT_FOUND' })
+    await expect(
+      ledger.reserveModelRequest(
+        modelRequest({
+          attemptId: 'att_01JABCDEF0123456789ABCDEFH',
+          source: source('other-attempt'),
+        })
+      )
+    ).rejects.toMatchObject({ code: 'RESERVATION_NOT_FOUND' })
+    expect(await store.snapshot(ids.workspaceId)).toEqual(before)
+  })
+
+  test('rejects usage above the held money or token ceiling without releasing funds', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    await ledger.reserveModelRequest(modelRequest())
+    const before = await store.snapshot(ids.workspaceId)
+    for (const invalid of [{ costMicrounits: 601 }, { tokens: 61 }]) {
+      await expect(ledger.settleModelRequest(settleRequest(invalid))).rejects.toMatchObject({
+        code: 'BUDGET_EXHAUSTED',
+      })
+      expect(await store.snapshot(ids.workspaceId)).toEqual(before)
+    }
+  })
+
+  test('keeps external subscription tokens separate from managed monetary charges', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    await expect(
+      ledger.reserveModelRequest(modelRequest({ fundingSource: 'external_subscription' }))
+    ).rejects.toMatchObject({ code: 'INVALID_ENTRY' })
+    await ledger.reserveModelRequest(
+      modelRequest({ fundingSource: 'external_subscription', maximumMicrounits: 0 })
+    )
+    await ledger.settleModelRequest(settleRequest({ costMicrounits: 0 }))
+    expect(await ledger.publicSummary(ids.workspaceId, ids.executionId)).toMatchObject({
+      funding: { hqManagedMicrounits: 0, externalSubscriptionEffects: 1 },
+      usage: { tokens: 20 },
+    })
+  })
+
+  test('allows unrelated charges only from unheld capacity and refuses duplicate aggregate model accounting', async () => {
+    const store = new TransactionalMemoryStore()
+    const ledger = await reservedAttempt(store)
+    await ledger.reserveModelRequest(modelRequest())
+    const charge = {
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      attemptId: ids.attemptId,
+      reservationKey: attemptReservationKey,
+      kind: 'tool_charge',
+      quantity: { unit: 'calls', value: 1 },
+      costMicrounits: 400,
+      fundingSource: 'hq_managed',
+      source: source('unheld-tool-capacity'),
+    }
+    await ledger.charge(charge)
+    await expect(
+      ledger.charge({ ...charge, kind: 'model_usage', source: source('duplicate-aggregate') })
+    ).rejects.toMatchObject({ code: 'INVALID_ENTRY' })
+    await ledger.settleModelRequest(settleRequest())
+    const settlement = await ledger.settle({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      reservationKey: attemptReservationKey,
+      source: source('known-attempt-settle'),
+    })
+    expect(settlement.releasedMicrounits).toBe(400)
+    expect(await ledger.summary(ids.workspaceId, ids.executionId)).toMatchObject({
+      spentMicrounits: 600,
+      reservedMicrounits: 0,
+      availableMicrounits: 400,
+      spentTokens: 20,
+    })
+    await makeLedger(store).finalizeBudget({
+      workspaceId: ids.workspaceId,
+      executionId: ids.executionId,
+      source: source('known-finalize'),
+    })
+    expect(await makeLedger(store).settleModelRequest(settleRequest())).toMatchObject({
+      costMicrounits: 200,
+    })
+  })
+
+  test('rejects hold and settlement receipt corruption against immutable entries', async () => {
+    for (const change of ['quote', 'status', 'receipt']) {
+      const store = new TransactionalMemoryStore()
+      const ledger = await reservedAttempt(store)
+      await ledger.reserveModelRequest(modelRequest())
+      if (change === 'receipt') {
+        await ledger.settleModelRequest(settleRequest())
+        await store.corruptEffect(ids.workspaceId, 'request-settle', (effect) => {
+          effect.result.modelCallId = secondModelCallId
+        })
+        await expect(makeLedger(store).settleModelRequest(settleRequest())).rejects.toMatchObject({
+          code: 'STORE_STATE_INVALID',
+        })
+      } else {
+        await store.corruptBudget(ids.workspaceId, ids.executionId, (budget) => {
+          const hold = budget.reservations[0].modelRequests[0]
+          if (change === 'quote') hold.maximumMicrounits += 1
+          else hold.status = 'settled'
+        })
+        await expect(
+          makeLedger(store).summary(ids.workspaceId, ids.executionId)
+        ).rejects.toMatchObject({ code: 'STORE_STATE_INVALID' })
+      }
+    }
+  })
+})
+
 describe('durable usage ledger', () => {
   test('reopens against the same store and replays identical effects after settlement and finalization', async () => {
     const store = new TransactionalMemoryStore()
