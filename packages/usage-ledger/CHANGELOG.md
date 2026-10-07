@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.2...usage-ledger-v1.3.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **usage:** persist model request holds inside attempt reservations ([#925](https://github.com/adea-ai/control-plane/issues/925)) ([8d81e30](https://github.com/adea-ai/control-plane/commit/8d81e3074a946990a75a1caf9e66eff9090289bc))
+
 ## [1.3.2](https://github.com/adea-ai/control-plane/compare/usage-ledger-v1.3.1...usage-ledger-v1.3.2) (2026-10-07)
 
 
