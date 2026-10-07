@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.2...workspace-v1.72.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ci:** rebalance Neon integration from terminal run timings ([#917](https://github.com/adea-ai/control-plane/issues/917)) ([f693e11](https://github.com/adea-ai/control-plane/commit/f693e1153b00e1c5af539ec76818b8fc263d6d95))
+
 ## [1.72.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.1...workspace-v1.72.2) (2026-10-07)
 
 
