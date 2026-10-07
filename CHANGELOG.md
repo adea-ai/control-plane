@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.0...workspace-v1.73.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ci:** balance Neon budget admission across existing shards ([#923](https://github.com/adea-ai/control-plane/issues/923)) ([5b17844](https://github.com/adea-ai/control-plane/commit/5b17844194bc20bacd20c76739e81dec90c0b050))
+
 ## [1.73.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.4...workspace-v1.73.0) (2026-10-07)
 
 
