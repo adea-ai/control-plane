@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.8.0...langgraph-adapter-v1.8.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** update external non-major dependencies ([#898](https://github.com/adea-ai/control-plane/issues/898)) ([46a1464](https://github.com/adea-ai/control-plane/commit/46a1464b82fb611adcf05729be522dfb4f142211))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/langgraph-adapter-v1.7.0...langgraph-adapter-v1.8.0) (2026-10-03)
 
 

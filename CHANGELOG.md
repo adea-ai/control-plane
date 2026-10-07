@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.72.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.1...workspace-v1.72.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ci:** reconcile unacknowledged Neon branch creation ([#914](https://github.com/adea-ai/control-plane/issues/914)) ([e29560b](https://github.com/adea-ai/control-plane/commit/e29560b8072502d9df38b4ea2e5de32f9e5a251c))
+* **deps:** update external non-major dependencies ([#898](https://github.com/adea-ai/control-plane/issues/898)) ([46a1464](https://github.com/adea-ai/control-plane/commit/46a1464b82fb611adcf05729be522dfb4f142211))
+
 ## [1.72.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.0...workspace-v1.72.1) (2026-10-07)
 
 
