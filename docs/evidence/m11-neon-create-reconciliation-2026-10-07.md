@@ -62,6 +62,15 @@ metadata, pagination, transport failures, authorization failures, bounded retrie
 and post-delete metadata verification. These are synthetic checks, not a live
 Neon deletion receipt or complete M11 operational acceptance.
 
+The first hosted CI head caught another repository assertion that still required
+push-only events (Core and Smoke both reported `tests/repository.test.mjs:779`).
+That assertion now allows cleanup dispatch only from main, forbids PR events,
+requires the verification job to remain push-only, and forbids provisioning or
+database work in the manual job. The focused command
+`bun test ./tests/neon-workflow.test.mjs ./tests/repository.test.mjs --test-name-pattern Neon`
+passed 46 tests in 13.63 seconds. No production workflow behavior changed in this
+follow-up; hosted CI must pass on its new head before merge.
+
 Local validation uses a 20-second process-group deadline, one sequential fixture,
 512 MiB Node heap cap, and no dependency installation. Local Docker is kept off;
 no daemon queries, containers, images, volumes, global pruning, or VM file edits
