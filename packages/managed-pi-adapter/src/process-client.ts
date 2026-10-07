@@ -3,6 +3,7 @@ import { compareCodePointOrder } from '@control-plane/domain'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import {
   RuntimeAdapterError,
   RuntimeExecutionHandleSchema,
@@ -73,7 +74,8 @@ interface ProcessExecution {
   readonly startedAtMs: number
   readonly events: ManagedPiEvent[]
   readonly waiters: Set<() => void>
-  state: 'running' | 'succeeded' | 'errored' | 'cancelled'
+  state: 'running' | 'succeeded' | 'errored' | 'cancelled' | 'timed_out'
+  deadlineTimer?: ReturnType<typeof setTimeout>
   output: string
   finalUsage?: RuntimeUsage
   statsSnapshot?: Promise<RuntimeUsage | undefined>
@@ -261,11 +263,13 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     rpc.onExit((error) => this.#fail(execution, error))
     try {
       await rpc.start()
+      this.#armDeadline(execution, configuration.limits.duration.maximumMs)
       await rpc.request({ type: 'get_state' }, this.#rpcTimeoutMs)
       await rpc.request({ type: 'prompt', message: invocation.prompt }, this.#rpcTimeoutMs)
     } catch (error) {
       this.#fail(execution, asError(error))
-      await rpc.stop().catch(() => undefined)
+      if (execution.terminalFinalization) await execution.terminalFinalization
+      await rpc.stop()
       await rm(directory, { recursive: true, force: true })
       this.#executions.delete(handle.handleId)
       throw error
@@ -360,11 +364,14 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     }
     const execution = this.#require(handle)
     if (execution.state === 'running') {
-      await execution.rpc.request({ type: 'abort' }, this.#rpcTimeoutMs)
+      // A missing abort acknowledgement must not prevent bounded child stopping.
+      await execution.rpc
+        .request({ type: 'abort' }, Math.max(1, Math.min(this.#rpcTimeoutMs, CANCEL_STATS_WAIT_MS)))
+        .catch(() => undefined)
       if (execution.state !== 'running') return this.#status(execution)
       execution.state = 'cancelled'
       appendEvent(execution, { kind: 'status', state: 'cancelled' }, this.#now())
-      execution.terminalFinalization = this.#finalizeCancellation(execution)
+      this.#beginTerminalFinalization(execution, { captureUsage: true })
       await execution.terminalFinalization
     }
     return this.#status(execution)
@@ -392,14 +399,13 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       return
     }
     const execution = this.#require(handleInput)
-    try {
-      if (execution.terminalFinalization) await execution.terminalFinalization
-      await execution.rpc.stop()
-      if (execution.persistence) await execution.persistence
-    } finally {
-      await rm(execution.directory, { recursive: true, force: true })
-      this.#executions.delete(execution.handle.handleId)
-    }
+    if (execution.terminalFinalization) await execution.terminalFinalization
+    await execution.rpc.stop()
+    // Stopping a still-running process can create its failure receipt.
+    if (execution.terminalFinalization) await execution.terminalFinalization
+    if (execution.persistence) await execution.persistence
+    await rm(execution.directory, { recursive: true, force: true })
+    this.#executions.delete(execution.handle.handleId)
   }
 
   #observe(execution: ProcessExecution, event: Record<string, unknown>): void {
@@ -463,7 +469,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         execution.state = 'errored'
         execution.error = new Error('PI_SESSION_STATS_INVALID')
         appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
-        this.#persist(execution)
+        this.#beginTerminalFinalization(execution)
         return
       }
       execution.state = 'succeeded'
@@ -479,7 +485,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
       )
       appendEvent(execution, { kind: 'status', state: 'succeeded' }, this.#now())
     }
-    this.#persist(execution)
+    this.#beginTerminalFinalization(execution)
   }
 
   #requestFinalUsage(
@@ -503,12 +509,49 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     return request
   }
 
-  async #finalizeCancellation(execution: ProcessExecution): Promise<void> {
-    const waitMs = Math.max(1, Math.min(this.#rpcTimeoutMs, CANCEL_STATS_WAIT_MS))
-    const finalUsage = await waitWithin(this.#requestFinalUsage(execution, waitMs), waitMs)
-    if (execution.state === 'cancelled' && finalUsage !== undefined) {
-      execution.finalUsage = finalUsage
+  #armDeadline(execution: ProcessExecution, maximumMs: number): void {
+    const expiresAt = performance.now() + maximumMs
+    const check = () => {
+      if (execution.state !== 'running') return
+      const remaining = expiresAt - performance.now()
+      if (remaining > 0) {
+        // Node timers overflow above this value; long limits use bounded chunks.
+        execution.deadlineTimer = setTimeout(check, Math.min(remaining, 2_147_483_647))
+        return
+      }
+      execution.state = 'timed_out'
+      appendEvent(execution, { kind: 'status', state: 'timed_out' }, this.#now())
+      this.#beginTerminalFinalization(execution, { captureUsage: true, abort: true })
     }
+    check()
+  }
+
+  #beginTerminalFinalization(
+    execution: ProcessExecution,
+    options: { captureUsage?: boolean; abort?: boolean } = {}
+  ): void {
+    if (execution.deadlineTimer !== undefined) clearTimeout(execution.deadlineTimer)
+    delete execution.deadlineTimer
+    execution.terminalFinalization = this.#finalizeTerminal(execution, options)
+    // The same rejection is surfaced by status/progress/cleanup consumers.
+    void execution.terminalFinalization.catch(() => undefined)
+  }
+
+  async #finalizeTerminal(
+    execution: ProcessExecution,
+    options: { captureUsage?: boolean; abort?: boolean }
+  ): Promise<void> {
+    const waitMs = Math.max(1, Math.min(this.#rpcTimeoutMs, CANCEL_STATS_WAIT_MS))
+    if (options.abort) {
+      await execution.rpc.request({ type: 'abort' }, waitMs).catch(() => undefined)
+    }
+    if (options.captureUsage) {
+      const finalUsage = await waitWithin(this.#requestFinalUsage(execution, waitMs), waitMs)
+      if (finalUsage !== undefined) execution.finalUsage = finalUsage
+    }
+    // Publish the durable terminal receipt only after the owned child is reaped.
+    // Unconfirmed stopping retains admission and working state for reconciliation.
+    await execution.rpc.stop()
     this.#persist(execution)
     if (execution.persistence) await execution.persistence
   }
@@ -518,7 +561,7 @@ export class ManagedPiProcessClient implements ManagedPiClient {
     execution.error = error
     execution.state = 'errored'
     appendEvent(execution, { kind: 'status', state: 'errored' }, this.#now())
-    this.#persist(execution)
+    this.#beginTerminalFinalization(execution)
   }
 
   #persist(execution: ProcessExecution): void {
@@ -552,14 +595,17 @@ export class ManagedPiProcessClient implements ManagedPiClient {
         },
       }
     }
-    if (execution.state === 'errored') {
+    if (execution.state === 'errored' || execution.state === 'timed_out') {
+      const timedOut = execution.state === 'timed_out'
       return {
-        state: 'errored' as const,
+        state: execution.state,
         observedAt,
         error: {
-          code: 'PI_RUNTIME_ERROR',
-          classification: 'runtime' as const,
-          message: 'Managed Pi runtime failed',
+          code: timedOut ? 'PI_EXECUTION_TIMED_OUT' : 'PI_RUNTIME_ERROR',
+          classification: timedOut ? ('timeout' as const) : ('runtime' as const),
+          message: timedOut
+            ? 'Managed Pi execution duration exceeded'
+            : 'Managed Pi runtime failed',
           retryable: false,
         },
         ...(execution.finalUsage === undefined ? {} : { terminalUsage: execution.finalUsage }),
@@ -699,7 +745,8 @@ class PiRpcProcess {
   }
 
   async stop(): Promise<void> {
-    await this.#link?.stop({ graceMs: 2_000, finalWaitMs: 0 })
+    const stopped = await this.#link?.stop({ graceMs: 2_000, finalWaitMs: 1_000 })
+    if (stopped === false) throw new Error('PI_PROCESS_STOP_UNCONFIRMED')
   }
 }
 

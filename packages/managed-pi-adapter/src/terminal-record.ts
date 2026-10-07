@@ -22,7 +22,7 @@ const recordSchema = () =>
       handle: RuntimeExecutionHandleSchema,
       events: z.array(ManagedPiEventSchema).max(4096).optional(),
       status: ManagedPiStatusSchema.refine(({ state }) =>
-        ['succeeded', 'errored', 'cancelled'].includes(state)
+        ['succeeded', 'errored', 'cancelled', 'timed_out'].includes(state)
       ),
     })
     .strict()

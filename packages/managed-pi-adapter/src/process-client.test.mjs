@@ -1,11 +1,25 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, test } from 'bun:test'
 import { ProcessRpcLink } from '@control-plane/deployment'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
+import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { DirectLocalRuntimeTransport } from '@control-plane/runtime-sdk'
 import { ManagedPiAdapter, ManagedPiDriver, translateExecutionPlanToManagedPi } from './index.ts'
 import { ManagedPiProcessClient } from './process-client.ts'
@@ -625,10 +639,11 @@ describe('ManagedPiProcessClient', () => {
     }
   })
 
-  test('bounded stats timeout preserves cancellation without zero or late mutation', async () => {
+  test('bounded stats timeout reaps the native child without zero or late mutation', async () => {
     const fixture = await processAdapterFixture('cancel-stats-after-window', {
       rpcTimeoutMs: 5_000,
       captureStatsResponse: true,
+      captureProcess: true,
     })
     const statsResponsePath = fixture.statsResponsePath
     let handle
@@ -652,18 +667,18 @@ describe('ManagedPiProcessClient', () => {
       expect(status.state).toBe('cancelled')
       expect(status.terminalUsage).toBeUndefined()
       expect(status.result).toBeUndefined()
-      await waitForFile(statsResponsePath)
+      expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
       expect(rpcCapture.captured).toBe(true)
-      // The same-link probe's FIFO response proves the queued stats frame was read first.
-      const readBarrier = await rpcCapture.request(
-        { type: 'get_state' },
-        { id: 'late-stats-read-barrier', timeoutMs: 5_000 }
-      )
-      expect(readBarrier).toMatchObject({
-        command: 'get_state',
-        success: true,
-        data: { isStreaming: false },
-      })
+      // The measured window has ended and the same native link is closed.
+      // Its delayed stats response must not be produced or retrofit a charge.
+      await expect(
+        rpcCapture.request(
+          { type: 'get_state' },
+          { id: 'late-stats-read-barrier', timeoutMs: 5_000 }
+        )
+      ).rejects.toThrow(/PI_RPC_(?:EXITED|NOT_RUNNING)/)
+      await delay(350)
+      await expect(access(statsResponsePath)).rejects.toThrow()
       expect((await fixture.adapter.status(handle)).terminalUsage).toBeUndefined()
       await fixture.adapter.cleanup(handle)
       const recovered = await fixture.recreate().reconcile(handle)
@@ -799,10 +814,182 @@ describe('ManagedPiProcessClient', () => {
   })
 })
 
+describe('terminal native child lifecycle', () => {
+  test('lost abort acknowledgement still reaps the cancelled child and recovers usage', async () => {
+    const fixture = await processAdapterFixture('cancel-abort-unacknowledged', {
+      captureProcess: true,
+      rpcTimeoutMs: 200,
+    })
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId: 'att_01JD0000000000000000000104',
+        idempotencyKey: 'unacknowledged-native-abort',
+        executionPlan: fixture.plan,
+      })
+      const startedAt = performance.now()
+      const status = await fixture.adapter.cancel(handle, {
+        idempotencyKey: 'unacknowledged-native-abort:cancel',
+        requestedAt: new Date().toISOString(),
+      })
+      expect(performance.now() - startedAt).toBeLessThan(1_500)
+      expect(status.state).toBe('cancelled')
+      expectTerminalUsage(status, 23, 6)
+      expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
+      const recovered = await fixture.recreate().reconcile(handle)
+      expect(recovered.state).toBe('cancelled')
+      expectTerminalUsage(recovered, 23, 6)
+    } finally {
+      if (handle) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  test('unconfirmed child stopping retains admission and working state', async () => {
+    const fixture = await processAdapterFixture('cancel-with-stats', { captureProcess: true })
+    const originalStop = ProcessRpcLink.prototype.stop
+    const attemptId = 'att_01JD0000000000000000000103'
+    let handle
+    try {
+      handle = await fixture.adapter.start({
+        attemptId,
+        idempotencyKey: 'unconfirmed-native-stop',
+        executionPlan: fixture.plan,
+      })
+      ProcessRpcLink.prototype.stop = async function (options) {
+        await originalStop.call(this, options)
+        return false // The child is reaped, but its stopping acknowledgement is lost.
+      }
+      await expect(
+        fixture.adapter.cancel(handle, {
+          idempotencyKey: 'unconfirmed-native-cancel',
+          requestedAt: new Date().toISOString(),
+        })
+      ).rejects.toThrow('PI_PROCESS_STOP_UNCONFIRMED')
+      expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
+      await expect(fixture.adapter.status(handle)).rejects.toThrow('PI_PROCESS_STOP_UNCONFIRMED')
+      await expect(fixture.adapter.cleanup(handle)).rejects.toThrow('PI_PROCESS_STOP_UNCONFIRMED')
+      expect((await stat(join(fixture.directory, 'executions', attemptId))).isDirectory()).toBe(
+        true
+      )
+      await expect(
+        access(join(fixture.directory, 'executions', 'terminal-results', `${attemptId}.json`))
+      ).rejects.toThrow()
+      ProcessRpcLink.prototype.stop = originalStop
+      await expect(
+        fixture.recreate().start({
+          attemptId,
+          idempotencyKey: 'unconfirmed-native-stop',
+          configuration: translateExecutionPlanToManagedPi(fixture.plan, '1.2.0'),
+        })
+      ).rejects.toThrow('PI_START_RECONCILIATION_REQUIRED')
+      expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
+    } finally {
+      ProcessRpcLink.prototype.stop = originalStop
+      if (handle) await fixture.adapter.cleanup(handle).catch(() => undefined)
+      await fixture.cleanup()
+    }
+  })
+
+  for (const outcome of ['completed', 'cancelled']) {
+    test(`reaps the ${outcome} terminal native child before separate cleanup`, async () => {
+      const fixture = await processAdapterFixture(
+        outcome === 'completed' ? 'normal' : 'cancel-with-stats',
+        { captureProcess: true, durationMs: 500 }
+      )
+      let handle
+      try {
+        handle = await fixture.adapter.start({
+          attemptId: 'att_01JD0000000000000000000101',
+          idempotencyKey: `terminal-native:${outcome}`,
+          executionPlan: fixture.plan,
+        })
+        if (outcome === 'cancelled') {
+          await fixture.adapter.cancel(handle, {
+            idempotencyKey: 'terminal-native:cancel',
+            requestedAt: new Date().toISOString(),
+          })
+        }
+        const status = await waitForNativeTerminal(fixture.adapter, handle)
+        expect(status.state).toBe(outcome)
+        expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
+        // A stale duration timer must not replace a committed terminal outcome.
+        await delay(600)
+        expect((await fixture.adapter.status(handle)).state).toBe(outcome)
+        expect((await fixture.recreate().reconcile(handle)).state).toBe(
+          outcome === 'completed' ? 'succeeded' : 'cancelled'
+        )
+      } finally {
+        if (handle) await fixture.adapter.cleanup(handle).catch(() => undefined)
+        await fixture.cleanup()
+      }
+    })
+  }
+
+  for (const mode of ['cancel-with-stats', 'deadline-stubborn-no-stats']) {
+    test(`enforces compiled duration and recovers its terminal receipt: ${mode}`, async () => {
+      const fixture = await processAdapterFixture(mode, {
+        captureProcess: true,
+        durationMs: 500,
+      })
+      let handle
+      try {
+        handle = await fixture.adapter.start({
+          attemptId: 'att_01JD0000000000000000000102',
+          idempotencyKey: `compiled-duration:${mode}`,
+          executionPlan: fixture.plan,
+        })
+        const status = await waitForNativeTerminal(fixture.adapter, handle, 4_000)
+        expect(status).toMatchObject({
+          state: 'timed_out',
+          error: { code: 'PI_EXECUTION_TIMED_OUT', retryable: false },
+        })
+        expect(nativeChildAlive(await fixture.nativePid())).toBe(false)
+        if (mode === 'cancel-with-stats') expectTerminalUsage(status, 23, 6)
+        else expect(status).not.toHaveProperty('terminalUsage')
+        const recovered = await fixture.recreate().reconcile(handle)
+        expect(recovered).toMatchObject({ state: 'timed_out' })
+        if (mode === 'cancel-with-stats') expectTerminalUsage(recovered, 23, 6)
+        else expect(recovered).not.toHaveProperty('terminalUsage')
+      } finally {
+        if (handle) await fixture.adapter.cleanup(handle).catch(() => undefined)
+        await fixture.cleanup()
+      }
+    })
+  }
+})
+
+function nativeChildAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function waitForNativeTerminal(adapter, handle, maximumMs = 2_000) {
+  const deadline = performance.now() + maximumMs
+  while (performance.now() < deadline) {
+    const status = await adapter.status(handle)
+    if (['completed', 'cancelled', 'failed', 'timed_out'].includes(status.state)) return status
+    await delay(10)
+  }
+  throw new Error('NATIVE_TERMINAL_OBSERVATION_TIMEOUT')
+}
+
 async function processAdapterFixture(mode, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-rpc-case-'))
   const executablePath = join(directory, 'pi-fixture.mjs')
   await writeManagedPiRpcFixture(executablePath)
+  const processReceiptPath = options.captureProcess ? join(directory, 'processes.jsonl') : undefined
+  if (processReceiptPath) {
+    await writeFile(
+      join(directory, 'process-owner.json'),
+      JSON.stringify({ owner: 'native-process-lifecycle-test', cwd: directory, pid: null })
+    )
+  }
   const statsResponsePath = options.captureStatsResponse
     ? join(directory, 'stats-response.json')
     : options.statsResponsePath
@@ -813,6 +1000,9 @@ async function processAdapterFixture(mode, options = {}) {
     environment: {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       MOCK_MODE: mode,
+      ...(processReceiptPath === undefined
+        ? {}
+        : { MOCK_PROCESS_RECEIPT_PATH: processReceiptPath }),
       ...(statsResponsePath === undefined ? {} : { MOCK_STATS_RESPONSE_PATH: statsResponsePath }),
     },
     inputResolver: {
@@ -835,31 +1025,50 @@ async function processAdapterFixture(mode, options = {}) {
       })
     ),
   })
+  let plan = createExecutionPlanTestFixture({
+    profileCapabilityRequirements: ['stream.output'],
+    skillRequiredCapabilities: [],
+  })
+  if (options.durationMs !== undefined) {
+    const inputs = createExecutionPlanTestFixtureInputs({
+      profileCapabilityRequirements: ['stream.output'],
+      skillRequiredCapabilities: [],
+    })
+    inputs.profile.definition.executionConstraints.limits.duration.maximumMs = options.durationMs
+    plan = new ExecutionPlanCompiler('1.0.0').compile(inputs)
+  }
   return {
     adapter,
     recreate: () => new ManagedPiProcessClient(clientOptions),
     directory,
     statsResponsePath,
-    plan: createExecutionPlanTestFixture({
-      profileCapabilityRequirements: ['stream.output'],
-      skillRequiredCapabilities: [],
-    }),
-    cleanup: () => rm(directory, { recursive: true, force: true }),
+    plan,
+    nativePid: async () => {
+      const records = (await readFile(processReceiptPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+      const native = records.filter(({ args }) => args.includes('rpc'))
+      expect(native).toHaveLength(1)
+      return native[0].pid
+    },
+    cleanup: async () => {
+      if (processReceiptPath) {
+        const records = await readFile(processReceiptPath, 'utf8').catch(() => '')
+        for (const line of records.trim().split('\n').filter(Boolean)) {
+          const { pid } = JSON.parse(line)
+          const deadline = performance.now() + 1_000
+          while (nativeChildAlive(pid) && performance.now() < deadline) await delay(10)
+          expect(nativeChildAlive(pid)).toBe(false)
+        }
+        const ledger = process.env.M11_PROCESS_LEDGER_PATH
+        if (ledger && process.env.M11_RESOURCE_OWNER && dirname(ledger) === process.env.TMPDIR) {
+          await appendFile(ledger, records)
+        }
+      }
+      await rm(directory, { recursive: true, force: true })
+    },
   }
-}
-
-async function waitForFile(path) {
-  const deadline = performance.now() + 3_000
-  while (performance.now() < deadline) {
-    try {
-      await access(path)
-      return
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
-      await delay(10)
-    }
-  }
-  throw new Error('PI_FIXTURE_STATS_RESPONSE_NOT_OBSERVED')
 }
 
 function captureProcessRpcLinkRequest(commandType, { after }) {
