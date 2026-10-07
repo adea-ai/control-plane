@@ -6,7 +6,13 @@ export async function writeManagedPiRpcFixture(executablePath, { runtimeVersion 
 }
 
 const managedPiRpcFixtureSource = (runtimeVersion) => `#!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+if (process.env.MOCK_PROCESS_RECEIPT_PATH) {
+  appendFileSync(process.env.MOCK_PROCESS_RECEIPT_PATH, JSON.stringify({
+    pid: process.pid, cwd: process.cwd(), args: process.argv.slice(2),
+  }) + '\\n')
+}
+if (process.env.MOCK_MODE === 'deadline-stubborn-no-stats') process.on('SIGTERM', () => {})
 if (process.argv.includes('--version')) {
   process.stdout.write(${JSON.stringify(`${runtimeVersion}\n`)})
   process.exit(0)
@@ -51,7 +57,9 @@ function handle(command) {
     if (
       [
         'hold',
+        'deadline-stubborn-no-stats',
         'cancel-with-stats',
+        'cancel-abort-unacknowledged',
         'cancel-stats-delayed',
         'cancel-stats-hang',
         'cancel-stats-after-window',
@@ -106,6 +114,7 @@ function handle(command) {
     if (process.env.MOCK_MODE === 'error-with-stats') data = { tokens: { input: 17, output: 4 } }
     if (
       process.env.MOCK_MODE === 'cancel-with-stats' ||
+      process.env.MOCK_MODE === 'cancel-abort-unacknowledged' ||
       process.env.MOCK_MODE === 'cancel-stats-delayed' ||
       process.env.MOCK_MODE === 'cancel-stats-after-window'
     ) data = { tokens: { input: 23, output: 6 } }
@@ -126,7 +135,7 @@ function handle(command) {
         process.stdout.write(JSON.stringify(response) + '\\n', () => setTimeout(() => process.exit(17), 100))
       } else send(response)
     }
-    if (process.env.MOCK_MODE === 'cancel-stats-hang') return
+    if (process.env.MOCK_MODE === 'cancel-stats-hang' || process.env.MOCK_MODE === 'deadline-stubborn-no-stats') return
     if (process.env.MOCK_MODE === 'cancel-stats-delayed') setTimeout(respond, 150)
     else if (process.env.MOCK_MODE === 'cancel-stats-after-window') setTimeout(respond, 800)
     else if (process.env.MOCK_MODE === 'cancel-race') setTimeout(respond, 20)
@@ -134,6 +143,7 @@ function handle(command) {
     else respond()
     return
   }
+  if (command.type === 'abort' && process.env.MOCK_MODE === 'cancel-abort-unacknowledged') return
   if (command.type === 'abort' || command.type === 'steer') {
     send({ id: command.id, type: 'response', command: command.type, success: true })
   }
