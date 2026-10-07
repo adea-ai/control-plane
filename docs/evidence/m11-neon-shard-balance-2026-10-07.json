@@ -1,0 +1,42 @@
+{
+  "runId": 37575729589,
+  "headSha": "2ea5039de73fc182c5116de864a69bcc6e3f6ae3",
+  "jobIds": [112647936418, 112647936402, 112647936364],
+  "integrationSeconds": {
+    "1": 1220,
+    "2": 560,
+    "3": 2688
+  },
+  "shard3Complete": false,
+  "shard3StopReason": "GitHub annotation: The job has exceeded the maximum execution time of 45m0s",
+  "filesToMove": [
+    {
+      "package": "packages/database",
+      "file": "src/usage-store.integration.test.mjs",
+      "seconds": 643.659,
+      "fromShard": 3,
+      "toShard": 2,
+      "startedAt": "2026-10-07T05:35:19.9653559Z",
+      "nextFileStartedAt": "2026-10-07T05:46:03.6244824Z"
+    },
+    {
+      "package": "packages/database",
+      "file": "src/memory-provenance-retention.integration.test.mjs",
+      "seconds": 314.087,
+      "fromShard": 3,
+      "toShard": 2,
+      "startedAt": "2026-10-07T05:46:03.6244824Z",
+      "nextFileStartedAt": "2026-10-07T05:51:17.7117291Z"
+    },
+    {
+      "package": "packages/database",
+      "file": "src/retention-hold-owner-activation.integration.test.mjs",
+      "seconds": 156.796,
+      "fromShard": 3,
+      "toShard": 2,
+      "startedAt": "2026-10-07T05:51:17.7117291Z",
+      "nextFileStartedAt": "2026-10-07T05:53:54.5077356Z"
+    }
+  ],
+  "limits": "Measured elapsed file spans include process transition overhead. Shard 3 is censored by timeout; projections are lower bounds, not a complete-run or cost-saving claim. All three cleanup/absence checks passed."
+}
