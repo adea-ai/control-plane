@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.7.1...managed-pi-adapter-v1.7.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* bound native Pi terminal process lifecycle ([#912](https://github.com/adea-ai/control-plane/issues/912)) ([6d789a5](https://github.com/adea-ai/control-plane/commit/6d789a55c03cb306139fe7c0a0b10555229a9535))
+
 ## [1.7.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.7.0...managed-pi-adapter-v1.7.1) (2026-10-03)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.0...workspace-v1.72.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* bound native Pi terminal process lifecycle ([#912](https://github.com/adea-ai/control-plane/issues/912)) ([6d789a5](https://github.com/adea-ai/control-plane/commit/6d789a55c03cb306139fe7c0a0b10555229a9535))
+
 ## [1.72.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.3...workspace-v1.72.0) (2026-10-07)
 
 
