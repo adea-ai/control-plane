@@ -23,6 +23,11 @@
 // keeping every case, per-file serial execution, and the same three owners.
 // The interrupted shard's projection is a lower bound; the dated evidence
 // does not claim complete-run acceptance or measured monetary savings.
+// Run 37684246003 (later 2026-10-07) reached the same limit on shard 1,
+// after 37 foundation cases and 23 of 24 budget-admission cases passed.
+// Shard 3 completed its integration slice in 601s. Move the complete budget
+// file to shard 3; the interrupted file's 1,038.311s span is a lower bound.
+// Keep the preceding observations as history, not current-run acceptance.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -35,10 +40,6 @@ export const INTEGRATION_SHARDS = [
         package: 'packages/database',
         files: ['src/integration.test.mjs'],
         testNamePattern: `^(?!.*(?:${foundationCasesForShard2})).*$`,
-      },
-      {
-        package: 'packages/database',
-        files: ['src/budget-admission.integration.test.mjs'],
       },
     ],
   },
@@ -69,6 +70,7 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/database',
         files: [
+          'src/budget-admission.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',

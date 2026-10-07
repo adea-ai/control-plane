@@ -84,7 +84,7 @@ function foundationCaseNames() {
 }
 
 describe('integration shard partition', () => {
-  test('recorded Neon work fits the balance target across the existing three owners', () => {
+  test('historical three-file move redistributes recorded Neon work across three owners', () => {
     const measurement = JSON.parse(
       readFileSync(
         new URL('../docs/evidence/m11-neon-shard-balance-2026-10-07.json', import.meta.url),
@@ -109,6 +109,36 @@ describe('integration shard partition', () => {
     const durations = Object.values(projected)
     expect(Math.max(...durations)).toBeLessThan(32 * 60)
     expect(Math.max(...durations) - Math.min(...durations)).toBeLessThan(8 * 60)
+  })
+
+  test('budget admission preserves all cases on the spare owner after the recorded timeout', () => {
+    const measurement = JSON.parse(
+      readFileSync(
+        new URL('../docs/evidence/m11-neon-budget-shard-balance-2026-10-07.json', import.meta.url),
+        'utf8'
+      )
+    )
+    const file = measurement.fileToMove
+    const owners = INTEGRATION_SHARDS.flatMap(({ shard, groups }) =>
+      groups
+        .filter((group) => group.package === file.package && group.files.includes(file.file))
+        .map((group) => ({ shard, pattern: group.testNamePattern }))
+    )
+    expect(owners).toEqual([{ shard: 3, pattern: undefined }])
+    const source = readFileSync(new URL(`../${file.package}/${file.file}`, import.meta.url), 'utf8')
+    expect(createHash('sha256').update(source).digest('hex')).toBe(file.sourceSha256)
+    expect(foundationCaseInventory(source).names).toHaveLength(24)
+    expect(file.totalStaticCases).toBe(24)
+    expect(measurement.integrationComplete).toEqual({ 1: false, 2: true, 3: true })
+    // Both the interrupted step and file are censored. Bound only the known
+    // work after redistribution; complete hosted qualification remains required.
+    const recorded = { ...measurement.integrationSeconds }
+    recorded[file.fromShard] -= file.secondsLowerBound
+    recorded[owners[0].shard] += file.secondsLowerBound
+    expect(Math.max(...Object.values(recorded))).toBeLessThan(32 * 60)
+    expect(
+      measurement.integrationSeconds[1] - Math.max(...Object.values(recorded))
+    ).toBeGreaterThan(12 * 60)
   })
 
   test('inventory parses JavaScript and rejects disabled or dynamic case declarations', () => {
