@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.3...workspace-v1.72.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ci:** qualify hosted graph on trusted Neon lane ([#919](https://github.com/adea-ai/control-plane/issues/919)) ([86191aa](https://github.com/adea-ai/control-plane/commit/86191aa6a78e6f0b643c6e84cee589665c0f8329))
+
 ## [1.72.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.2...workspace-v1.72.3) (2026-10-07)
 
 
