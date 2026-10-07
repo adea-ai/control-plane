@@ -84,6 +84,33 @@ function foundationCaseNames() {
 }
 
 describe('integration shard partition', () => {
+  test('recorded Neon work fits the balance target across the existing three owners', () => {
+    const measurement = JSON.parse(
+      readFileSync(
+        new URL('../docs/evidence/m11-neon-shard-balance-2026-10-07.json', import.meta.url),
+        'utf8'
+      )
+    )
+    expect(INTEGRATION_SHARDS.map(({ shard }) => shard)).toEqual([1, 2, 3])
+    // The interrupted shard is a lower bound. This protects redistribution of
+    // recorded work; only a later complete hosted run proves the final deadline.
+    expect(measurement.shard3Complete).toBe(false)
+    const projected = { ...measurement.integrationSeconds }
+    for (const file of measurement.filesToMove) {
+      const owners = INTEGRATION_SHARDS.filter(({ groups }) =>
+        groups.some((group) => group.package === file.package && group.files.includes(file.file))
+      )
+      expect(owners).toHaveLength(1)
+      const actualOwner = owners[0].shard
+      expect(actualOwner).toBe(file.toShard)
+      projected[file.fromShard] -= file.seconds
+      projected[actualOwner] += file.seconds
+    }
+    const durations = Object.values(projected)
+    expect(Math.max(...durations)).toBeLessThan(32 * 60)
+    expect(Math.max(...durations) - Math.min(...durations)).toBeLessThan(8 * 60)
+  })
+
   test('inventory parses JavaScript and rejects disabled or dynamic case declarations', () => {
     expect(
       foundationCaseInventory(`

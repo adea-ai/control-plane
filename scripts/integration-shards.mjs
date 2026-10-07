@@ -17,6 +17,12 @@
 // with no retry. Its budget-admission file took 955.20s; shard 1's integration
 // step took 763s. Move that complete file to shard 1 rather than adding another
 // branch or splitting its cases. See the dated evidence for scope and limits.
+// Run 37575729589 (2026-10-07) then hit shard 3's 45-minute job limit.
+// Shard 2 completed its integration work in 560s; three whole database files
+// consumed 1,114.542s on shard 3. Move those files to shard 2's spare capacity,
+// keeping every case, per-file serial execution, and the same three owners.
+// The interrupted shard's projection is a lower bound; the dated evidence
+// does not claim complete-run acceptance or measured monetary savings.
 
 const foundationCasesForShard2 =
   'retention|delet|sweep|retired command|retains|frees|pins|usage|evaluation|release decisions|proposal'
@@ -50,6 +56,9 @@ export const INTEGRATION_SHARDS = [
           'src/retention-reference-windows.integration.test.mjs',
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
+          'src/usage-store.integration.test.mjs',
+          'src/memory-provenance-retention.integration.test.mjs',
+          'src/retention-hold-owner-activation.integration.test.mjs',
         ],
       },
     ],
@@ -60,9 +69,6 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/database',
         files: [
-          'src/usage-store.integration.test.mjs',
-          'src/memory-provenance-retention.integration.test.mjs',
-          'src/retention-hold-owner-activation.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
