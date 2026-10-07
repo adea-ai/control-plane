@@ -250,6 +250,7 @@ async function findCleanupBranch(responses, overrides = {}, observed = {}) {
 }
 
 const manualCleanupInputs = {
+  NEON_CLEANUP_MODE: 'completed-run',
   NEON_CLEANUP_RUN_ID: '404',
   NEON_CLEANUP_RUN_ATTEMPT: '1',
   NEON_CLEANUP_HEAD_SHA: 'a'.repeat(40),
@@ -323,8 +324,43 @@ const previewBranch = {
 }
 
 describe('Neon preview cleanup lookup', () => {
+  test('cleanup dispatch uses the protected default workflow and drops unused token scope', () => {
+    expect(workflowEvents(workflow)).toBe(
+      '  push:\n    branches:\n      - main\n  repository_dispatch:\n    types: [neon-preview-cleanup]'
+    )
+    const cleanupJob = workflow.split('  cleanup_completed_preview:')[1]
+    expect(cleanupJob).toContain(
+      "if: github.event_name == 'repository_dispatch' && github.ref == 'refs/heads/main'"
+    )
+    expect(cleanupJob).toContain('NEON_CLEANUP_MODE: completed-run')
+    expect(cleanupJob).toContain(
+      'NEON_CLEANUP_RUN_ID: ${{ github.event.client_payload.cleanup_run_id }}'
+    )
+    expect(cleanupJob).toContain('actions: read')
+    expect(cleanupJob).not.toContain('contents: read')
+  })
+
+  test('an empty completed-run cleanup payload never falls back to current-run ownership', async () => {
+    const observed = {}
+    await expect(
+      findCleanupBranch(
+        [{ body: { branches: [previewBranch] } }],
+        {
+          NEON_CLEANUP_MODE: 'completed-run',
+        },
+        observed
+      )
+    ).rejects.toThrow('cleanup inputs are unavailable or invalid')
+    expect(observed.requests).toEqual([])
+    expect(observed.writes).toEqual([])
+  })
   test('queues main runs and looks for the exact branch after an unacknowledged creation', async () => {
-    expect(workflow).toMatch(/group: neon-main-preview\n  cancel-in-progress: false/)
+    expect(workflow).toContain('cancel-in-progress: false')
+    const group = workflow.match(/^  group: \$\{\{(.*)\}\}/m)?.[1]
+    expect(runInNewContext(group, { github: { event_name: 'push' } })).toBe('neon-main-preview')
+    expect(runInNewContext(group, { github: { event_name: 'repository_dispatch' } })).toBe(
+      'neon-completed-preview-cleanup'
+    )
     expect(workflow).toContain("if: always() && steps.preview_branch.outputs.name != ''")
     const result = await findCleanupBranch([{ body: { branches: [previewBranch] } }], {
       NEON_CREATE_OUTCOME: 'failure',
@@ -344,7 +380,9 @@ describe('Neon preview cleanup lookup', () => {
 
   test('runs Neon creation only on main pushes and fences cleanup dispatch to main', () => {
     expect(workflowEvents(workflow)).toContain('  push:\n    branches:\n      - main\n')
-    expect(workflowEvents(workflow)).toContain('  workflow_dispatch:\n    inputs:\n')
+    expect(workflowEvents(workflow)).toContain(
+      '  repository_dispatch:\n    types: [neon-preview-cleanup]'
+    )
     expect(workflowEvents(workflow)).not.toContain('pull_request')
     const creationJob = workflow
       .split('  verify_neon_preview:')[1]
@@ -352,7 +390,7 @@ describe('Neon preview cleanup lookup', () => {
     expect(creationJob).toContain("github.event_name == 'push' && !cancelled()")
     const cleanupJob = workflow.split('  cleanup_completed_preview:')[1]
     expect(cleanupJob).toContain(
-      "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+      "if: github.event_name == 'repository_dispatch' && github.ref == 'refs/heads/main'"
     )
     expect(cleanupJob).not.toMatch(/create-branch-action|bun install|bun run build|db:migrate/)
     expect(cleanupJob).toContain('run: *find_owned_preview_branch')
@@ -891,7 +929,7 @@ describe('Neon trusted-main migration gating', () => {
       { result: 'skipped', verify: 'false', cancelled: false, expected: true },
       { result: 'success', verify: 'false', cancelled: true, expected: false },
     ]
-    for (const event of ['push', 'workflow_dispatch']) {
+    for (const event of ['push', 'repository_dispatch']) {
       for (const { result, verify, cancelled, expected } of scenarios) {
         expect(
           runInNewContext(condition, {

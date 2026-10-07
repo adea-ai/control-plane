@@ -1,36 +1,19 @@
 name: Verify trusted-main Neon database migrations
 
+# Cleanup uses the default-branch workflow; caller data never selects its source.
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      cleanup_run_id:
-        description: Completed trusted-main Neon run to reconcile
-        required: true
-        type: string
-      cleanup_run_attempt:
-        description: Recorded run attempt
-        required: true
-        default: '1'
-        type: string
-      cleanup_shard:
-        description: Recorded shard
-        required: true
-        type: choice
-        options: ['1', '2', '3']
-      cleanup_head_sha:
-        description: Recorded source commit of that run
-        required: true
-        type: string
+  repository_dispatch:
+    types: [neon-preview-cleanup]
 
 permissions: {}
 
 # Queue main verification so newer pushes cannot interrupt owned branch teardown.
-# The cleanup-only dispatch joins the same group and never provisions a branch.
+# Completed-run cleanup has its own group and cannot replace pending main runs.
 concurrency:
-  group: neon-main-preview
+  group: ${{ github.event_name == 'push' && 'neon-main-preview' || 'neon-completed-preview-cleanup' }}
   cancel-in-progress: false
 
 jobs:
@@ -280,13 +263,15 @@ jobs:
             GITHUB_RUN_ATTEMPT,
             GITHUB_OUTPUT,
             NEON_CREATE_OUTCOME,
+            NEON_CLEANUP_MODE,
             NEON_CLEANUP_RUN_ID,
             NEON_CLEANUP_RUN_ATTEMPT,
             NEON_CLEANUP_HEAD_SHA,
             GH_TOKEN,
             GITHUB_REPOSITORY,
           } = process.env;
-          const manual = [NEON_CLEANUP_RUN_ID, NEON_CLEANUP_RUN_ATTEMPT, NEON_CLEANUP_HEAD_SHA]
+          const manual = NEON_CLEANUP_MODE === 'completed-run' ||
+            [NEON_CLEANUP_RUN_ID, NEON_CLEANUP_RUN_ATTEMPT, NEON_CLEANUP_HEAD_SHA]
             .some((value) => value !== undefined && value !== '');
           const targetRunId = manual ? NEON_CLEANUP_RUN_ID : GITHUB_RUN_ID;
           const targetAttempt = manual ? NEON_CLEANUP_RUN_ATTEMPT : GITHUB_RUN_ATTEMPT;
@@ -451,12 +436,11 @@ jobs:
 
   cleanup_completed_preview:
     name: Reconcile one completed run's Neon preview
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'repository_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-slim
     timeout-minutes: 16
     permissions:
       actions: read
-      contents: read
     steps:
       - name: Find exact preview branch for cleanup
         id: cleanup_branch
@@ -466,10 +450,11 @@ jobs:
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          NEON_CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
-          NEON_CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
-          NEON_CLEANUP_HEAD_SHA: ${{ inputs.cleanup_head_sha }}
-          SHARD: ${{ inputs.cleanup_shard }}
+          NEON_CLEANUP_MODE: completed-run
+          NEON_CLEANUP_RUN_ID: ${{ github.event.client_payload.cleanup_run_id }}
+          NEON_CLEANUP_RUN_ATTEMPT: ${{ github.event.client_payload.cleanup_run_attempt }}
+          NEON_CLEANUP_HEAD_SHA: ${{ github.event.client_payload.cleanup_head_sha }}
+          SHARD: ${{ github.event.client_payload.cleanup_shard }}
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
           DATABASE_MIGRATION_URL: ''

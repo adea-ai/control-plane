@@ -19,30 +19,42 @@ duplicate, protected, primary, default, root, or malformed branch metadata. It
 does not retry branch creation.
 
 Main runs now use `cancel-in-progress: false`, preserving in-progress verification
-and teardown. GitHub concurrency can replace pending runs; this is not a guarantee
-that every pending source gets tested.
+and teardown. Cleanup requests use a separate group, so they cannot replace
+pending main verification. GitHub concurrency can still replace pending requests
+within each group; this is not a guarantee that every pending source gets tested.
 
 ## Cleanup-only follow-up
 
-The manual workflow accepts an original run ID, attempt, shard, and source SHA.
-It runs only from `refs/heads/main`. Before querying Neon it requires a completed
+The cleanup repository event accepts an original run ID, attempt, shard, and source
+SHA as client payload. GitHub loads its workflow from the default branch; the job
+also requires `refs/heads/main`. Unlike manual workflow dispatch, the caller cannot
+select a branch's workflow definition. Before querying Neon it requires a completed
 push-to-main run of this exact workflow and repository, the recorded SHA and
 attempt, a complete jobs response, and exactly one completed matching shard and
 creator step. Active, ambiguous, mismatched, or incomplete ownership fails closed.
 The current run attempt must match; an older attempt after a rerun is refused.
 
-The manual path shares the normal lookup and verification scripts using YAML
+The requested cleanup path shares the normal lookup and verification scripts using YAML
 anchors. It performs no creation, dependency installation, build, migration, or
 database test. Deletion receives only the validated branch ID. All four database
 connection variables are blank in cleanup steps. API errors are not absence.
+Completed-run mode is explicit, so empty payloads cannot fall back to current-run
+ownership. Only `actions: read` is granted; checkout/contents access is unused.
 
 For the recorded failure, after this workflow lands on main:
 
 ```sh
-gh workflow run neon_workflow.yml --repo adea-ai/control-plane --ref main \
-  -f cleanup_run_id=37570244992 -f cleanup_run_attempt=1 \
-  -f cleanup_shard=3 \
-  -f cleanup_head_sha=6d789a55c03cb306139fe7c0a0b10555229a9535
+gh api --method POST repos/adea-ai/control-plane/dispatches --input - <<'JSON'
+{
+  "event_type": "neon-preview-cleanup",
+  "client_payload": {
+    "cleanup_run_id": "37570244992",
+    "cleanup_run_attempt": "1",
+    "cleanup_shard": "3",
+    "cleanup_head_sha": "6d789a55c03cb306139fe7c0a0b10555229a9535"
+  }
+}
+JSON
 ```
 
 After deleting a resolved target, bounded GET retries require HTTP 404 for that
@@ -78,8 +90,14 @@ are performed. The user-reported 150GB footprint and its reclamation remain
 unverified. The small owned worktree and fixtures are removed after publication.
 Full build, integration, and container checks belong to the existing hosted CI.
 
-Standards and spec reviews are sequential local reviews because independent
-review capacity was unavailable. This is not two independent review approvals.
+Initial Standards and spec reviews were sequential local reviews because independent
+review capacity was unavailable. When capacity returned, two independent reviewers
+examined candidate `07f1bad3d489ba6824db36e887c72063890f25dd`. Spec reported no
+actionable findings. Standards identified caller-selected workflow source and an
+unused `contents: read` permission. This follow-up replaces manual workflow dispatch
+with default-branch repository dispatch and removes the unused permission; its two
+new regressions failed on the prior candidate. Final independent delta review and
+new-head hosted CI are still required before merge.
 Issue #194 remains open for its full original acceptance scope, including
 retention, recovery, observability, rotation, and actual operational evidence.
 
@@ -90,3 +108,4 @@ retention, recovery, observability, rotation, and actual operational evidence.
 - [Neon branch details](https://api-docs.neon.tech/reference/getprojectbranch)
 - [Neon deletion and asynchronous operations](https://api-docs.neon.tech/reference/deleteprojectbranch)
 - [GitHub workflow anchors and aliases](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations)
+- [GitHub repository dispatch uses the default branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch)
