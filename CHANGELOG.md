@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.72.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.3...workspace-v1.72.0) (2026-10-07)
+
+
+### Features
+
+* **catalog:** workspace-owned skills and profiles over the Control API ([#909](https://github.com/adea-ai/control-plane/issues/909)) ([858e975](https://github.com/adea-ai/control-plane/commit/858e975d00f4840e5a383463d0ddc70b44113933))
+* **credential-vault:** durable workspace credentials over the Control API with tool-gateway leases ([#910](https://github.com/adea-ai/control-plane/issues/910)) ([5ac837d](https://github.com/adea-ai/control-plane/commit/5ac837d319441f5138d64feebc63d893d94e32fa))
+* **marketplace:** get and uninstall workspace installations ([#907](https://github.com/adea-ai/control-plane/issues/907)) ([d5162db](https://github.com/adea-ai/control-plane/commit/d5162db9a2a6752103368d8fe307440e624fc83d))
+* **project-state:** initialize a project's revision-0 state over the Control API ([#908](https://github.com/adea-ai/control-plane/issues/908)) ([8160a8f](https://github.com/adea-ai/control-plane/commit/8160a8f7e751d12a1e7cbd187c3ec7ff0f7f740b))
+
+
+### Bug Fixes
+
+* **ci:** adopt v1.44.10 tolerant release REST fallback ([#905](https://github.com/adea-ai/control-plane/issues/905)) ([6a1028b](https://github.com/adea-ai/control-plane/commit/6a1028bdc884b6d834d96e958bec0ffc79a3c9fd))
+* **ci:** adopt v1.44.11 write-retry hardening ([#906](https://github.com/adea-ai/control-plane/issues/906)) ([ef72aa1](https://github.com/adea-ai/control-plane/commit/ef72aa1fcfe6e7b251277b15ae00ec064e486e3d))
+* **ci:** adopt v1.44.5 token fallback and remove the diagnostic ([#900](https://github.com/adea-ai/control-plane/issues/900)) ([ac8f8a2](https://github.com/adea-ai/control-plane/commit/ac8f8a2bf5df20a85b68c78c9d5de68497ec146c))
+* **ci:** adopt v1.44.7 release REST fallback ([#902](https://github.com/adea-ai/control-plane/issues/902)) ([efc82bd](https://github.com/adea-ai/control-plane/commit/efc82bdb2609a27f37274eb12a8060084505dd90))
+* **ci:** adopt v1.44.8 release REST fallback ([#903](https://github.com/adea-ai/control-plane/issues/903)) ([ca61d31](https://github.com/adea-ai/control-plane/commit/ca61d31c9abe66213421b8da2c0e0cb9918ff6eb))
+* **ci:** adopt v1.44.9 draft-aware release REST fallback ([#904](https://github.com/adea-ai/control-plane/issues/904)) ([02981f4](https://github.com/adea-ai/control-plane/commit/02981f4e43c2261dbdd362716bfdfcfb7b1fba6d))
+* **ci:** clean owned hosted compose fixtures ([#897](https://github.com/adea-ai/control-plane/issues/897)) ([7bb52a9](https://github.com/adea-ai/control-plane/commit/7bb52a9da0967c5af9c0a51eee3efaa38d035f90))
+* **ci:** require completed Neon verification baseline ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
+* **ci:** require completed Neon verification before skipping ([#883](https://github.com/adea-ai/control-plane/issues/883)) ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
+* **ci:** run control-plane lanes on a standard runner and adopt v1.44.4 ([#899](https://github.com/adea-ai/control-plane/issues/899)) ([3545b99](https://github.com/adea-ai/control-plane/commit/3545b99a06828d7a67ca47d5510443d5813c3bbb))
+* **ci:** run release-please with the workflow token ([#901](https://github.com/adea-ai/control-plane/issues/901)) ([fe902cc](https://github.com/adea-ai/control-plane/commit/fe902cc2ecea7f5d7cead8c7ee0479253aa42341))
+* compose memory writes with current effect authority ([#891](https://github.com/adea-ai/control-plane/issues/891)) ([1757bc0](https://github.com/adea-ai/control-plane/commit/1757bc09c54ebd48b879e641ca1544930ffd072b))
+* isolate and remove integration fixture resources ([#894](https://github.com/adea-ai/control-plane/issues/894)) ([e28347f](https://github.com/adea-ai/control-plane/commit/e28347f1226f4201ae0a68fe66bcd393f1621c62))
+* **memory:** persist proposals and approvals atomically ([#885](https://github.com/adea-ai/control-plane/issues/885)) ([6bc3d94](https://github.com/adea-ai/control-plane/commit/6bc3d9411b1d1564fe3fb300b83875248119a1b5))
+* **memory:** preserve consent and reconcile interrupted writes ([#884](https://github.com/adea-ai/control-plane/issues/884)) ([c9aede6](https://github.com/adea-ai/control-plane/commit/c9aede640ce47f684efb4ee0145277a184dc59e6))
+* **memory:** preserve proposal source ownership during retention ([#889](https://github.com/adea-ai/control-plane/issues/889)) ([2203507](https://github.com/adea-ai/control-plane/commit/2203507cfef2c6e7397938103425b4a93827ba95))
+* **memory:** preserve the exact approved write intent ([#890](https://github.com/adea-ai/control-plane/issues/890)) ([ef3cfb5](https://github.com/adea-ai/control-plane/commit/ef3cfb5b002f7b6304c8b33b46b22a98c5e6d59e))
+* reserve and fence standard runtime attempt authority ([#896](https://github.com/adea-ai/control-plane/issues/896)) ([031c1df](https://github.com/adea-ai/control-plane/commit/031c1dfc5f6530877c9a7d6b00ea540d1933bb0c))
+* retry transient Neon cleanup lookup failures ([#892](https://github.com/adea-ai/control-plane/issues/892)) ([dd459c3](https://github.com/adea-ai/control-plane/commit/dd459c3f422af0c8059e9dbfc672dee80164980e))
+
+
+### Tests
+
+* **ci:** balance Neon budget admission across existing shards ([#895](https://github.com/adea-ai/control-plane/issues/895)) ([0c07f3f](https://github.com/adea-ai/control-plane/commit/0c07f3fa168b67b7b778bebddec94f7afcde9278))
+* **ci:** balance the expanded Neon foundation suite ([#888](https://github.com/adea-ai/control-plane/issues/888)) ([6682bee](https://github.com/adea-ai/control-plane/commit/6682beefdbfeb467f89e94bda5a92dec5a79c357))
+* **database:** isolate operator fixture lifecycle ([#887](https://github.com/adea-ai/control-plane/issues/887)) ([9a4da6f](https://github.com/adea-ai/control-plane/commit/9a4da6f0bd28fc208c5b683e79f5d46310f0f807))
+* verify memory recovery after hard process loss ([#893](https://github.com/adea-ai/control-plane/issues/893)) ([cb68d59](https://github.com/adea-ai/control-plane/commit/cb68d5914cd5f34489706bbdcf887c487f3faf28))
+
+
+### Maintenance
+
+* **deps:** update toolchain to latest ([#879](https://github.com/adea-ai/control-plane/issues/879)) ([d5a2ae4](https://github.com/adea-ai/control-plane/commit/d5a2ae4c7472118909a67b1675f9b251e071bb0e))
+
 ## [1.71.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.2...workspace-v1.71.3) (2026-10-03)
 
 

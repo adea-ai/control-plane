@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.3](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.13.2...workflow-worker-v1.13.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* reserve and fence standard runtime attempt authority ([#896](https://github.com/adea-ai/control-plane/issues/896)) ([031c1df](https://github.com/adea-ai/control-plane/commit/031c1dfc5f6530877c9a7d6b00ea540d1933bb0c))
+
 ## [1.13.2](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.13.1...workflow-worker-v1.13.2) (2026-10-03)
 
 
