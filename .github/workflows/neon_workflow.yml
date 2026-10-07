@@ -4,22 +4,41 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      cleanup_run_id:
+        description: Completed trusted-main Neon run to reconcile
+        required: true
+        type: string
+      cleanup_run_attempt:
+        description: Recorded run attempt
+        required: true
+        default: '1'
+        type: string
+      cleanup_shard:
+        description: Recorded shard
+        required: true
+        type: choice
+        options: ['1', '2', '3']
+      cleanup_head_sha:
+        description: Recorded source commit of that run
+        required: true
+        type: string
 
 permissions: {}
 
-# One verification per main at a time: the previous group embedded
-# github.run_id, which made the group unique per run and let concurrent main
-# pushes run overlapping 90-minute Neon verifications against the same
-# project. A newer main supersedes the verification of the older one.
+# Queue main verification so newer pushes cannot interrupt owned branch teardown.
+# The cleanup-only dispatch joins the same group and never provisions a branch.
 concurrency:
   group: neon-main-preview
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # Migration-relevance gate. A successful baseline is required before any
   # skip. A baseline counts only if the actual migration and integration
   # steps succeeded on all shards; version-only changes are checked directly.
   changes:
+    if: github.event_name == 'push'
     name: Classify migration relevance
     runs-on: ubuntu-slim
     timeout-minutes: 10
@@ -46,7 +65,7 @@ jobs:
     name: Verify Neon shard ${{ matrix.shard }} (migrations and integration slice)
     needs: [changes]
     if: >-
-      !cancelled() &&
+      github.event_name == 'push' && !cancelled() &&
       (needs.changes.result != 'success' || needs.changes.outputs.verify != 'false')
     runs-on: ubuntu-latest
     # Each case keeps an independent database. Remote migration setup alone
@@ -237,18 +256,19 @@ jobs:
           bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}
 
       - name: Find exact preview branch for cleanup
-        if: always() && steps.create_neon_branch.outcome == 'success'
+        if: always() && steps.preview_branch.outputs.name != ''
         id: cleanup_branch
         timeout-minutes: 12
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
           SHARD: ${{ matrix.shard }}
+          NEON_CREATE_OUTCOME: ${{ steps.create_neon_branch.outcome }}
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
           DATABASE_MIGRATION_URL: ''
           DATABASE_ADMIN_URL: ''
-        run: |
+        run: &find_owned_preview_branch |
           node <<'CLEANUP'
           const { appendFileSync } = require('node:fs');
           (async () => {
@@ -259,15 +279,58 @@ jobs:
             GITHUB_RUN_ID,
             GITHUB_RUN_ATTEMPT,
             GITHUB_OUTPUT,
+            NEON_CREATE_OUTCOME,
+            NEON_CLEANUP_RUN_ID,
+            NEON_CLEANUP_RUN_ATTEMPT,
+            NEON_CLEANUP_HEAD_SHA,
+            GH_TOKEN,
+            GITHUB_REPOSITORY,
           } = process.env;
+          const manual = [NEON_CLEANUP_RUN_ID, NEON_CLEANUP_RUN_ATTEMPT, NEON_CLEANUP_HEAD_SHA]
+            .some((value) => value !== undefined && value !== '');
+          const targetRunId = manual ? NEON_CLEANUP_RUN_ID : GITHUB_RUN_ID;
+          const targetAttempt = manual ? NEON_CLEANUP_RUN_ATTEMPT : GITHUB_RUN_ATTEMPT;
           if (
             !NEON_API_KEY || !GITHUB_OUTPUT ||
             !/^[a-z0-9-]{1,60}$/.test(NEON_PROJECT_ID ?? '') ||
-            !/^[0-9]+$/.test(SHARD ?? '') ||
-            !/^[1-9][0-9]*$/.test(GITHUB_RUN_ID ?? '') ||
-            !/^[1-9][0-9]*$/.test(GITHUB_RUN_ATTEMPT ?? '')
+            !/^[123]$/.test(SHARD ?? '') ||
+            !/^[1-9][0-9]*$/.test(targetRunId ?? '') ||
+            !/^[1-9][0-9]*$/.test(targetAttempt ?? '')
           ) throw new Error('Neon cleanup inputs are unavailable or invalid');
-          const targetName = "preview/main-" + GITHUB_RUN_ID + "-" + GITHUB_RUN_ATTEMPT + "-s" + SHARD;
+          let creationOutcome = NEON_CREATE_OUTCOME;
+          if (manual) {
+            if (!GH_TOKEN || !/^[a-f0-9]{40}$/.test(NEON_CLEANUP_HEAD_SHA ?? '') ||
+                !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(GITHUB_REPOSITORY ?? ''))
+              throw new Error('Invalid Neon cleanup owner inputs');
+            const requestOwner = async (suffix) => {
+              let response;
+              try {
+                response = await fetch('https://api.github.com/repos/' + GITHUB_REPOSITORY + suffix, {
+                  headers: { Authorization: 'Bearer ' + GH_TOKEN, Accept: 'application/vnd.github+json' },
+                  redirect: 'error', signal: AbortSignal.timeout(10000),
+                });
+                if (response.status !== 200) throw new Error();
+                return await response.json();
+              } catch { throw new Error('Neon cleanup owner lookup failed'); }
+            };
+            const owner = await requestOwner('/actions/runs/' + targetRunId);
+            if (String(owner?.id) !== targetRunId || String(owner.run_attempt) !== targetAttempt ||
+                owner.event !== 'push' || owner.head_branch !== 'main' ||
+                owner.head_sha !== NEON_CLEANUP_HEAD_SHA || owner.status !== 'completed' ||
+                owner.path !== '.github/workflows/neon_workflow.yml' ||
+                owner.repository?.full_name !== GITHUB_REPOSITORY)
+              throw new Error('Neon cleanup owner is not the recorded completed trusted-main run');
+            const result = await requestOwner('/actions/runs/' + targetRunId + '/attempts/' + targetAttempt + '/jobs?per_page=100');
+            if (!Array.isArray(result?.jobs) || result.total_count !== result.jobs.length || result.total_count > 100)
+              throw new Error('Neon cleanup owner jobs are incomplete');
+            const jobs = result.jobs.filter((job) => job.name === 'Verify Neon shard ' + SHARD + ' (migrations and integration slice)');
+            const creators = jobs[0]?.steps?.filter((step) => step.name === 'Create Neon branch');
+            if (jobs.length !== 1 || jobs[0].status !== 'completed' ||
+                !Array.isArray(creators) || creators.length !== 1 || creators[0].status !== 'completed')
+              throw new Error('Neon cleanup creator is not terminal and unique');
+            creationOutcome = creators[0].conclusion;
+          }
+          const targetName = "preview/main-" + targetRunId + "-" + targetAttempt + "-s" + SHARD;
             const cursors = new Set();
             let cursor;
             let target;
@@ -321,7 +384,11 @@ jobs:
               const next = result.pagination?.next;
               if (next === undefined || next === null || next === '') {
                 if (target) appendFileSync(GITHUB_OUTPUT, 'branch_id=' + target + "\n");
-                else console.log('No matching preview branch exists; cleanup is already satisfied.');
+                else if (!manual && !['success', 'skipped'].includes(creationOutcome))
+                  throw new Error('Neon creation outcome is unconfirmed; no matching preview observed');
+                else console.log(manual && creationOutcome !== 'success'
+                  ? 'No matching preview observed after terminal creator; original creation acknowledgement remains unknown.'
+                  : 'No matching preview branch exists; cleanup is already satisfied.');
                 return;
               }
               if (typeof next !== 'string' || cursors.has(next)) throw new Error('Invalid Neon branch pagination');
@@ -344,3 +411,91 @@ jobs:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch: ${{ steps.cleanup_branch.outputs.branch_id }}
           api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Verify Neon branch absence
+        if: always() && steps.cleanup_branch.outputs.branch_id != ''
+        timeout-minutes: 2
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          TARGET_BRANCH_ID: ${{ steps.cleanup_branch.outputs.branch_id }}
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
+        run: &verify_owned_preview_absence |
+          node <<'VERIFY'
+          (async () => {
+            const { NEON_API_KEY, NEON_PROJECT_ID, TARGET_BRANCH_ID } = process.env;
+            if (!NEON_API_KEY || !/^[a-z0-9-]{1,60}$/.test(NEON_PROJECT_ID ?? '') ||
+                !/^br-[a-z0-9-]{1,57}$/.test(TARGET_BRANCH_ID ?? ''))
+              throw new Error('Invalid Neon deletion verification inputs');
+            const url = 'https://console.neon.tech/api/v2/projects/' + NEON_PROJECT_ID + '/branches/' + TARGET_BRANCH_ID;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              let response;
+              try { response = await fetch(url, {
+                headers: { Authorization: 'Bearer ' + NEON_API_KEY },
+                redirect: 'error', signal: AbortSignal.timeout(10000),
+              }); } catch { response = undefined; }
+              if (response?.status === 404) {
+                console.log('Verified preview branch metadata is absent: ' + TARGET_BRANCH_ID);
+                return;
+              }
+              const retryable = !response || [200, 408, 423, 429, 500, 502, 503, 504].includes(response.status);
+              if (response?.body) await response.body.cancel().catch(() => {});
+              if (!retryable || attempt === 2) throw new Error('Neon branch deletion is not confirmed');
+              await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+            }
+          })();
+          VERIFY
+
+  cleanup_completed_preview:
+    name: Reconcile one completed run's Neon preview
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-slim
+    timeout-minutes: 16
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Find exact preview branch for cleanup
+        id: cleanup_branch
+        timeout-minutes: 12
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NEON_CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
+          NEON_CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
+          NEON_CLEANUP_HEAD_SHA: ${{ inputs.cleanup_head_sha }}
+          SHARD: ${{ inputs.cleanup_shard }}
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
+        run: *find_owned_preview_branch
+      - name: Delete Neon branch
+        if: always() && steps.cleanup_branch.outputs.branch_id != ''
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        env:
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: ${{ steps.cleanup_branch.outputs.branch_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+      - name: Verify Neon branch absence
+        if: always() && steps.cleanup_branch.outputs.branch_id != ''
+        timeout-minutes: 2
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          TARGET_BRANCH_ID: ${{ steps.cleanup_branch.outputs.branch_id }}
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+          DATABASE_MIGRATION_URL: ''
+          DATABASE_ADMIN_URL: ''
+        run: *verify_owned_preview_absence
