@@ -138,7 +138,7 @@ services:
       - no-new-privileges:true
 
   restate:
-    image: docker.restate.dev/restatedev/restate:1.7.13@sha256:ebe1c025b225b01ea5340e5dfb3bf9a8bfd7a75d27fe142f2d6545a38b59747f
+    image: docker.restate.dev/restatedev/restate:1.7.13@sha256:65abc8016d408b8b424f5e492a5da37c24573207e217a3d43242dd8b3fd8dc61
     profiles: [server]
     restart: unless-stopped
     environment:
