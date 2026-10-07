@@ -23,8 +23,8 @@ are structural, not proof that an agent will follow the instructions.
 ## Verification
 
 - Isolated `uv run --with PyYAML==6.0.3 python
-<installed-skill-creator>/scripts/quick_validate.py
-.agents/skills/control-plane-audit`: passed. The initial direct Python invocation
+  <installed-skill-creator>/scripts/quick_validate.py
+  .agents/skills/control-plane-audit`: passed. The initial direct Python invocation
   lacked PyYAML; no global Python packages were changed.
 - `bun test tests/agent-skill-library.test.mjs tests/repository.test.mjs`:
   initially 23 passed / 72 assertions; after extending structural coverage to
