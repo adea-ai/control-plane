@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.27.0](https://github.com/adea-ai/control-plane/compare/domain-v1.26.2...domain-v1.27.0) (2026-10-07)
+
+
+### Features
+
+* **catalog:** workspace-owned skills and profiles over the Control API ([#909](https://github.com/adea-ai/control-plane/issues/909)) ([858e975](https://github.com/adea-ai/control-plane/commit/858e975d00f4840e5a383463d0ddc70b44113933))
+* **project-state:** initialize a project's revision-0 state over the Control API ([#908](https://github.com/adea-ai/control-plane/issues/908)) ([8160a8f](https://github.com/adea-ai/control-plane/commit/8160a8f7e751d12a1e7cbd187c3ec7ff0f7f740b))
+
+
+### Bug Fixes
+
+* **memory:** persist proposals and approvals atomically ([#885](https://github.com/adea-ai/control-plane/issues/885)) ([6bc3d94](https://github.com/adea-ai/control-plane/commit/6bc3d9411b1d1564fe3fb300b83875248119a1b5))
+
 ## [1.26.2](https://github.com/adea-ai/control-plane/compare/domain-v1.26.1...domain-v1.26.2) (2026-10-01)
 
 

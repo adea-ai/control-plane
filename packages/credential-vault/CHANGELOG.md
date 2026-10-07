@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.2.1...credential-vault-v1.3.0) (2026-10-07)
+
+
+### Features
+
+* **credential-vault:** durable workspace credentials over the Control API with tool-gateway leases ([#910](https://github.com/adea-ai/control-plane/issues/910)) ([5ac837d](https://github.com/adea-ai/control-plane/commit/5ac837d319441f5138d64feebc63d893d94e32fa))
+
 ## [1.2.1](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.2.0...credential-vault-v1.2.1) (2026-10-01)
 
 

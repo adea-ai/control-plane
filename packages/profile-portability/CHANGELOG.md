@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.4.2...profile-portability-v1.5.0) (2026-10-07)
+
+
+### Features
+
+* **catalog:** workspace-owned skills and profiles over the Control API ([#909](https://github.com/adea-ai/control-plane/issues/909)) ([858e975](https://github.com/adea-ai/control-plane/commit/858e975d00f4840e5a383463d0ddc70b44113933))
+* **credential-vault:** durable workspace credentials over the Control API with tool-gateway leases ([#910](https://github.com/adea-ai/control-plane/issues/910)) ([5ac837d](https://github.com/adea-ai/control-plane/commit/5ac837d319441f5138d64feebc63d893d94e32fa))
+* **project-state:** initialize a project's revision-0 state over the Control API ([#908](https://github.com/adea-ai/control-plane/issues/908)) ([8160a8f](https://github.com/adea-ai/control-plane/commit/8160a8f7e751d12a1e7cbd187c3ec7ff0f7f740b))
+
 ## [1.4.2](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.4.1...profile-portability-v1.4.2) (2026-10-01)
 
 

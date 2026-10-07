@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.2](https://github.com/adea-ai/control-plane/compare/memory-writeback-v1.3.1...memory-writeback-v1.3.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* compose memory writes with current effect authority ([#891](https://github.com/adea-ai/control-plane/issues/891)) ([1757bc0](https://github.com/adea-ai/control-plane/commit/1757bc09c54ebd48b879e641ca1544930ffd072b))
+* **memory:** persist proposals and approvals atomically ([#885](https://github.com/adea-ai/control-plane/issues/885)) ([6bc3d94](https://github.com/adea-ai/control-plane/commit/6bc3d9411b1d1564fe3fb300b83875248119a1b5))
+* **memory:** preserve consent and reconcile interrupted writes ([#884](https://github.com/adea-ai/control-plane/issues/884)) ([c9aede6](https://github.com/adea-ai/control-plane/commit/c9aede640ce47f684efb4ee0145277a184dc59e6))
+* **memory:** preserve proposal source ownership during retention ([#889](https://github.com/adea-ai/control-plane/issues/889)) ([2203507](https://github.com/adea-ai/control-plane/commit/2203507cfef2c6e7397938103425b4a93827ba95))
+* **memory:** preserve the exact approved write intent ([#890](https://github.com/adea-ai/control-plane/issues/890)) ([ef3cfb5](https://github.com/adea-ai/control-plane/commit/ef3cfb5b002f7b6304c8b33b46b22a98c5e6d59e))
+
 ## [1.3.1](https://github.com/adea-ai/control-plane/compare/memory-writeback-v1.3.0...memory-writeback-v1.3.1) (2026-10-01)
 
 

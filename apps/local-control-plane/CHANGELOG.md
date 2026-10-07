@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.26.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.25.1...local-control-plane-v1.26.0) (2026-10-07)
+
+
+### Features
+
+* **catalog:** workspace-owned skills and profiles over the Control API ([#909](https://github.com/adea-ai/control-plane/issues/909)) ([858e975](https://github.com/adea-ai/control-plane/commit/858e975d00f4840e5a383463d0ddc70b44113933))
+* **project-state:** initialize a project's revision-0 state over the Control API ([#908](https://github.com/adea-ai/control-plane/issues/908)) ([8160a8f](https://github.com/adea-ai/control-plane/commit/8160a8f7e751d12a1e7cbd187c3ec7ff0f7f740b))
+
+
+### Bug Fixes
+
+* compose memory writes with current effect authority ([#891](https://github.com/adea-ai/control-plane/issues/891)) ([1757bc0](https://github.com/adea-ai/control-plane/commit/1757bc09c54ebd48b879e641ca1544930ffd072b))
+* reserve and fence standard runtime attempt authority ([#896](https://github.com/adea-ai/control-plane/issues/896)) ([031c1df](https://github.com/adea-ai/control-plane/commit/031c1dfc5f6530877c9a7d6b00ea540d1933bb0c))
+
 ## [1.25.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.25.0...local-control-plane-v1.25.1) (2026-10-03)
 
 

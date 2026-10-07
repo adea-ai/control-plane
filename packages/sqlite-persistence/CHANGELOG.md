@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.32.0...sqlite-persistence-v1.33.0) (2026-10-07)
+
+
+### Features
+
+* **catalog:** workspace-owned skills and profiles over the Control API ([#909](https://github.com/adea-ai/control-plane/issues/909)) ([858e975](https://github.com/adea-ai/control-plane/commit/858e975d00f4840e5a383463d0ddc70b44113933))
+* **credential-vault:** durable workspace credentials over the Control API with tool-gateway leases ([#910](https://github.com/adea-ai/control-plane/issues/910)) ([5ac837d](https://github.com/adea-ai/control-plane/commit/5ac837d319441f5138d64feebc63d893d94e32fa))
+* **project-state:** initialize a project's revision-0 state over the Control API ([#908](https://github.com/adea-ai/control-plane/issues/908)) ([8160a8f](https://github.com/adea-ai/control-plane/commit/8160a8f7e751d12a1e7cbd187c3ec7ff0f7f740b))
+
+
+### Bug Fixes
+
+* **memory:** persist proposals and approvals atomically ([#885](https://github.com/adea-ai/control-plane/issues/885)) ([6bc3d94](https://github.com/adea-ai/control-plane/commit/6bc3d9411b1d1564fe3fb300b83875248119a1b5))
+* **memory:** preserve proposal source ownership during retention ([#889](https://github.com/adea-ai/control-plane/issues/889)) ([2203507](https://github.com/adea-ai/control-plane/commit/2203507cfef2c6e7397938103425b4a93827ba95))
+* **memory:** preserve the exact approved write intent ([#890](https://github.com/adea-ai/control-plane/issues/890)) ([ef3cfb5](https://github.com/adea-ai/control-plane/commit/ef3cfb5b002f7b6304c8b33b46b22a98c5e6d59e))
+* reserve and fence standard runtime attempt authority ([#896](https://github.com/adea-ai/control-plane/issues/896)) ([031c1df](https://github.com/adea-ai/control-plane/commit/031c1dfc5f6530877c9a7d6b00ea540d1933bb0c))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.31.0...sqlite-persistence-v1.32.0) (2026-10-03)
 
 
