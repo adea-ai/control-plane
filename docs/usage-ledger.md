@@ -85,31 +85,10 @@ opening evidence are then read in one read-only workspace transaction. A caller
 supplying custom Local lifecycle activities owns their admission enforcement.
 Cancellation and
 cleanup stay available when admission is denied. Native composition tests prove
-denial before controlled runtime callbacks and cold replay. This is a preflight,
-not a serialized reservation or proof of provider payment; see the
+denial before controlled runtime callbacks and cold replay. The lifecycle now atomically reserves the attempt allowance before dispatch;
+this allocation is not proof of provider payment. See the
 [runtime admission checkpoint](evidence/m11-runtime-budget-admission-2026-09-27.md)
 for exact tested profiles and limitations.
-
-### Plan-bounded allocation authority
-
-The `accepted-plan-budget-allocation.v1` policy treats trusted execution acceptance
-as authorization to allocate an execution allowance, not as proof of prepaid
-funds or a provider charge. Acceptance must already enforce principal, scope,
-catalog and approval policy. `executionPlanBudgetAllowance` reads money and token
-ceilings only from the integrity-checked persisted plan and verifies its pin and
-execution correlation; request-supplied limits cannot increase the allowance.
-`executionBudgetAdmissionSource` binds the allocation to the recorded actor,
-command, payload, immutable execution and parent through an opaque digest. Its
-identity remains stable across lifecycle transitions and historical replay.
-
-Parent capacity and same-workspace, same-project ownership must be enforced by
-the admission repository within the command/owner transaction. Opening credits
-describe allocation, not purchased funds. Actual charges still need explicit
-funding and cost provenance; unknown costs must not become zero-cost settlement.
-SQLite and PostgreSQL acceptance now atomically records plan-bounded opening
-allocations, and Local, Hosted and Cloud runtime roots install the admission
-preflight. This does not reserve per-effect capacity or charge actual provider
-usage; trusted cost provenance and terminal settlement remain open M11 gates.
 
 Execution retention keeps owners referenced by these usage namespaces, including parent and
 funded-child references. This is an owner-safety guard, **not** the 400-day usage deletion
@@ -131,7 +110,7 @@ Budget summaries include finalized child funding consumption. Public usage summa
 describe billable entries owned by the requested execution, not duplicated descendant
 charges. Neither summary includes provider credentials or source/idempotency identifiers.
 Application allowance admission and runtime preflight now use the durable service/stores;
-runtime reservations, trusted funding/cost provenance, charges, terminal reconciliation,
+provider-send activation, trusted funding/cost provenance, charges, terminal reconciliation,
 complete PostgreSQL runtime/profile acceptance and deployed activation remain required.
 Policy-authorized budget extensions are not yet implemented by the
 durable service. Opening-summary replay verifies the original zero-use allocation rather
@@ -139,3 +118,36 @@ than comparing it with later reservations or current parent availability. Finali
 replay verifies the operation-bound terminal settlement and validated settled rollups.
 Future budget extensions must retain original opening authority so those historical
 receipts remain verifiable; extensions must not reuse the current maxima as that history.
+
+### Model-request holds inside an attempt
+
+`reserveModelRequest` subdivides an existing open attempt reservation. The caller
+supplies the exact workspace/execution/attempt and model-call identity, request
+digest, price snapshot digest, funding class, and maximum money/token usage.
+Concurrent open holds plus actual charges must fit both attempt ceilings. The
+execution totals count the attempt envelope once; nested holds do not allocate
+its capacity again. Each hold has an immutable `model_reservation` entry.
+
+`settleModelRequest` accepts authoritative known usage, charges it once, and
+records the unused monetary hold in a `model_release` entry within the same
+transaction. Its funding class comes from the original hold. External
+subscription usage has zero authoritative provider cost and `costExact: false`.
+Unknown outcomes retain their hold and block attempt settlement. Over-limit
+usage, conflicting replay, foreign ownership, and inconsistent persisted
+projections fail closed; none release capacity. Aggregate model charges cannot
+be introduced after an attempt starts per-request accounting.
+
+SQLite persists these additive version-1 projection and entry fields. PostgreSQL
+migration 0065 adds the two entry kinds and nullable model identity, reserved
+tokens, quote digest, and request digest columns; existing entries remain valid.
+The migrated PostgreSQL reconnect test is part of the database integration suite.
+The migration is expand-only, but older ledger binaries cannot parse new request
+entries or hold projections. Upgrade all ledger readers and writers before
+activating these APIs. Once request records exist, rollback requires a binary
+that understands them; never delete accounting evidence to permit rollback.
+
+These APIs are accounting primitives. They do not establish purchased funding,
+authenticate a price quote, authorize a provider send, or intercept native Pi
+requests, compaction, retries, or cached responses. Activation requires a trusted
+funding/quote authority and enforcement at the actual provider-send boundary.
+A missing or uncertain usage receipt must not be replaced with zero-cost usage.

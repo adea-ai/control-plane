@@ -26,6 +26,8 @@ export const UsageLedgerEntrySchema = z
     parentExecutionId: IdentifierSchemas.executionId.optional(),
     kind: z.enum([
       'reservation',
+      'model_reservation',
+      'model_release',
       'model_usage',
       'tool_charge',
       'sandbox_usage',
@@ -37,6 +39,16 @@ export const UsageLedgerEntrySchema = z
     ]),
     source: SourceSchema,
     reservationKey: z.string().min(1).max(256).optional(),
+    modelCallId: IdentifierSchemas.modelCallId.optional(),
+    reservedTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    priceSnapshotDigest: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/)
+      .optional(),
+    requestDigest: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/)
+      .optional(),
     fundingSource: z.enum(['hq_managed', 'external_subscription']),
     quantity: z
       .object({
@@ -54,6 +66,26 @@ export const UsageLedgerEntrySchema = z
     recordedAt: z.iso.datetime(),
   })
   .strict()
+  .superRefine((entry, context) => {
+    const hold = entry.kind === 'model_reservation'
+    const model = hold || entry.kind === 'model_release' || entry.kind === 'model_usage'
+    if (
+      (!model && entry.modelCallId !== undefined) ||
+      ((hold || entry.kind === 'model_release') &&
+        (entry.modelCallId === undefined ||
+          entry.attemptId === undefined ||
+          entry.reservationKey === undefined)) ||
+      (hold &&
+        (entry.reservedTokens === undefined ||
+          entry.priceSnapshotDigest === undefined ||
+          entry.requestDigest === undefined)) ||
+      (!hold &&
+        (entry.reservedTokens !== undefined ||
+          entry.priceSnapshotDigest !== undefined ||
+          entry.requestDigest !== undefined))
+    )
+      context.addIssue({ code: 'custom', message: 'Invalid model request entry identity' })
+  })
 
 export type UsageLedgerEntry = z.output<typeof UsageLedgerEntrySchema>
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExecutionSchema, ExecutionAttemptSchema } from '@control-plane/domain'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import { SqlitePersistenceProvider } from './provider.ts'
 import { SqliteDurableUsageStore, SQLITE_USAGE_NAMESPACES } from './usage-store.ts'
 import { recordId } from './record-storage.ts'
@@ -127,7 +128,7 @@ async function withStore(run) {
   try {
     await provider.migrate()
     await seedOwner(provider)
-    await run(provider, new SqliteDurableUsageStore(provider))
+    await run(provider, new SqliteDurableUsageStore(provider), join(directory, 'state.sqlite'))
   } finally {
     provider.close()
     await rm(directory, { recursive: true, force: true })
@@ -135,6 +136,87 @@ async function withStore(run) {
 }
 
 describe('SQLite durable usage transactions', () => {
+  test('persists model request holds through a cold reopen without releasing uncertain usage', async () => {
+    await withStore(async (provider, store, path) => {
+      const source = (id) => ({ sourceId: id, idempotencyKey: id })
+      const reservationKey = `runtime-attempt:${attemptId}`
+      const modelCallId = 'mdc_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      let ledger = new DurableUsageLedger({ store })
+      await ledger.openBudget({
+        workspaceId,
+        executionId,
+        currency: 'USD',
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        source: source('model-budget'),
+      })
+      await ledger.reserve({
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey,
+        maximumMicrounits: 100,
+        maximumTokens: 100,
+        source: source('model-attempt'),
+      })
+      await ledger.reserveModelRequest({
+        workspaceId,
+        executionId,
+        attemptId,
+        reservationKey,
+        modelCallId,
+        maximumMicrounits: 80,
+        maximumTokens: 80,
+        fundingSource: 'hq_managed',
+        priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
+        requestDigest: `sha256:${'d'.repeat(64)}`,
+        source: source('model-request'),
+      })
+      provider.close()
+      const reopened = new SqlitePersistenceProvider({ path })
+      try {
+        await reopened.migrate()
+        ledger = new DurableUsageLedger({ store: new SqliteDurableUsageStore(reopened) })
+        await expect(
+          ledger.settle({
+            workspaceId,
+            executionId,
+            reservationKey,
+            source: source('uncertain-settle'),
+          })
+        ).rejects.toMatchObject({ code: 'SETTLEMENT_INCOMPLETE' })
+        expect((await ledger.entries(workspaceId, executionId)).at(-1)).toMatchObject({
+          kind: 'model_reservation',
+          modelCallId,
+          reservedTokens: 80,
+          priceSnapshotDigest: `sha256:${'c'.repeat(64)}`,
+        })
+        await ledger.settleModelRequest({
+          workspaceId,
+          executionId,
+          attemptId,
+          reservationKey,
+          modelCallId,
+          costMicrounits: 30,
+          tokens: 20,
+          source: source('known-provider-receipt'),
+        })
+        const settled = await ledger.settle({
+          workspaceId,
+          executionId,
+          reservationKey,
+          source: source('known-settle'),
+        })
+        expect(settled.releasedMicrounits).toBe(70)
+        expect(await ledger.summary(workspaceId, executionId)).toMatchObject({
+          spentMicrounits: 30,
+          spentTokens: 20,
+        })
+      } finally {
+        reopened.close()
+      }
+    })
+  })
   test('preserves a failed operation error while rolling back bound writes', async () => {
     await withStore(async (provider) => {
       const failure = new Error('BOUND_USAGE_ORIGINAL_FAILURE')
@@ -522,7 +604,6 @@ describe('SQLite durable usage transactions', () => {
   })
 
   test('native reopen rejects schema-valid altered replay receipts without changing entries', async () => {
-    const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
     await withStore(async (provider, store) => {
       const ledger = new DurableUsageLedger({ store })
       const source = (idempotencyKey) => ({ sourceId: 'receipt-integrity', idempotencyKey })
@@ -622,7 +703,6 @@ describe('SQLite durable usage transactions', () => {
   })
 
   test('public durable service preserves charge replay after native reopen and budget finalization', async () => {
-    const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
     await withStore(async (provider, store) => {
       const ledger = new DurableUsageLedger({ store, now: () => '2026-09-27T12:00:00.000Z' })
       const source = (idempotencyKey) => ({ sourceId: 'native-service', idempotencyKey })
@@ -684,7 +764,6 @@ describe('SQLite durable usage transactions', () => {
   })
 
   test('native durable service serializes simultaneous admissions without overbooking money or tokens', async () => {
-    const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
     for (const [money, tokens] of [
       [600, 10],
       [100, 60],
@@ -732,7 +811,6 @@ describe('SQLite durable usage transactions', () => {
   }, 30_000)
 
   test('native child funding limits both money and tokens and rolls measured usage into the parent once', async () => {
-    const { DurableUsageLedger } = await import('@control-plane/usage-ledger')
     await withStore(async (provider, store) => {
       const childId = 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAW'
       const childAttemptId = 'att_01ARZ3NDEKTSV4RRFFQ69G5FAW'

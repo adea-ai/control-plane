@@ -9,6 +9,20 @@ export const DurableUsageSourceSchema = z
   .object({ sourceId: EffectKeySchema, idempotencyKey: EffectKeySchema })
   .strict()
 
+export const DurableModelRequestHoldSchema = z
+  .object({
+    modelCallId: IdentifierSchemas.modelCallId,
+    maximumMicrounits: AmountSchema,
+    maximumTokens: AmountSchema,
+    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    priceSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    status: z.enum(['open', 'settled']),
+    chargedMicrounits: AmountSchema,
+    chargedTokens: AmountSchema,
+  })
+  .strict()
+
 export const DurableUsageReservationSchema = z
   .object({
     reservationKey: EffectKeySchema,
@@ -19,6 +33,7 @@ export const DurableUsageReservationSchema = z
     chargedMicrounits: AmountSchema,
     chargedTokens: AmountSchema,
     status: z.enum(['open', 'settled']),
+    modelRequests: z.array(DurableModelRequestHoldSchema).max(2_048).optional(),
   })
   .strict()
 
@@ -40,11 +55,43 @@ export const DurableUsageBudgetSchema = z
     const keys = new Set()
     let allocatedMoney = 0
     let allocatedTokens = 0
+    const modelCalls = new Set<string>()
     for (const reservation of budget.reservations) {
       if (keys.has(reservation.reservationKey)) {
         context.addIssue({ code: 'custom', message: 'Duplicate reservation identity' })
       }
       keys.add(reservation.reservationKey)
+      let requestMoney = reservation.chargedMicrounits
+      let requestTokens = reservation.chargedTokens
+      for (const request of reservation.modelRequests ?? []) {
+        if (
+          modelCalls.has(request.modelCallId) ||
+          reservation.attemptId === undefined ||
+          reservation.childExecutionId !== undefined ||
+          request.chargedMicrounits > request.maximumMicrounits ||
+          request.chargedTokens > request.maximumTokens ||
+          (request.fundingSource === 'external_subscription' &&
+            (request.maximumMicrounits !== 0 || request.chargedMicrounits !== 0)) ||
+          (request.status === 'open' &&
+            (request.chargedMicrounits !== 0 || request.chargedTokens !== 0)) ||
+          (reservation.status === 'settled' && request.status !== 'settled')
+        ) {
+          context.addIssue({ code: 'custom', message: 'Invalid model request allocation' })
+        }
+        modelCalls.add(request.modelCallId)
+        if (request.status === 'open') {
+          requestMoney += request.maximumMicrounits
+          requestTokens += request.maximumTokens
+        }
+      }
+      if (
+        !Number.isSafeInteger(requestMoney) ||
+        !Number.isSafeInteger(requestTokens) ||
+        requestMoney > reservation.maximumMicrounits ||
+        requestTokens > reservation.maximumTokens
+      ) {
+        context.addIssue({ code: 'custom', message: 'Model requests exceed attempt allocation' })
+      }
       if (
         reservation.chargedMicrounits > reservation.maximumMicrounits ||
         reservation.chargedTokens > reservation.maximumTokens
