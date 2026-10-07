@@ -776,10 +776,23 @@ test('isolates credentialed Neon validation from pull-request source', async () 
   )
   const validationJob = validationWorkflow.split('  validation:\n')[1]?.split('\n  # CodeQL')[0]
 
-  assert.equal(
-    neonWorkflow.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd(),
-    '  push:\n    branches:\n      - main'
+  const events = neonWorkflow.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
+  assert.match(
+    events,
+    /^  push:\n    branches:\n      - main\n[\s\S]*  repository_dispatch:\n    types: \[neon-preview-cleanup\]$/
   )
+  assert.doesNotMatch(events, /\n  workflow_dispatch:/)
+  assert.doesNotMatch(events, /pull_request/)
+  const verificationJob = neonWorkflow
+    .split('  verify_neon_preview:')[1]
+    ?.split('  cleanup_completed_preview:')[0]
+  assert.match(verificationJob, /github\.event_name == 'push' && !cancelled\(\)/)
+  const cleanupJob = neonWorkflow.split('  cleanup_completed_preview:')[1]
+  assert.match(
+    cleanupJob,
+    /if: github\.event_name == 'repository_dispatch' && github\.ref == 'refs\/heads\/main'/
+  )
+  assert.doesNotMatch(cleanupJob, /create-branch-action|bun install|bun run build|db:migrate/)
   assert.match(neonWorkflow, /NEON_CI_ADMIN_PASSWORD/)
   assert.match(neonWorkflow, /DATABASE_ADMIN_PASSWORD/)
   assert.match(neonWorkflow, /control_plane_admin/)

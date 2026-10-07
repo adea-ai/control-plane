@@ -25,6 +25,7 @@ const pullRequestWorkflow = readFileSync(
 )
 const script = workflow.split("node <<'NODE'\n")[1]?.split('\n          NODE')[0]
 const cleanupScript = workflow.split("node <<'CLEANUP'\n")[1]?.split('\n          CLEANUP')[0]
+const verifyAbsenceScript = workflow.split("node <<'VERIFY'\n")[1]?.split('\n          VERIFY')[0]
 const migrationGateScript = fileURLToPath(
   new URL('../.github/scripts/neon-migration-gate.mjs', import.meta.url)
 )
@@ -208,7 +209,8 @@ async function findCleanupBranch(responses, overrides = {}, observed = {}) {
   const requests = []
   const writes = []
   const waits = []
-  Object.assign(observed, { requests, writes, waits })
+  const messages = []
+  Object.assign(observed, { requests, writes, waits, messages })
   let index = 0
   await runInNewContext(cleanupScript, {
     URL,
@@ -221,6 +223,7 @@ async function findCleanupBranch(responses, overrides = {}, observed = {}) {
         GITHUB_RUN_ID: '404',
         GITHUB_RUN_ATTEMPT: '1',
         GITHUB_OUTPUT: '/synthetic/output',
+        NEON_CREATE_OUTCOME: 'success',
         ...overrides,
       },
     },
@@ -241,9 +244,73 @@ async function findCleanupBranch(responses, overrides = {}, observed = {}) {
       waits.push(milliseconds)
       callback()
     },
-    console: { log: () => {} },
+    console: { log: (value) => messages.push(value) },
   })
-  return { requests, writes, waits }
+  return { requests, writes, waits, messages }
+}
+
+const manualCleanupInputs = {
+  NEON_CLEANUP_MODE: 'completed-run',
+  NEON_CLEANUP_RUN_ID: '404',
+  NEON_CLEANUP_RUN_ATTEMPT: '1',
+  NEON_CLEANUP_HEAD_SHA: 'a'.repeat(40),
+  GH_TOKEN: 'synthetic-github-token',
+  GITHUB_REPOSITORY: 'adea-ai/control-plane',
+}
+
+function cleanupOwner(overrides = {}) {
+  return {
+    ...successfulRun(manualCleanupInputs.NEON_CLEANUP_HEAD_SHA),
+    id: 404,
+    path: '.github/workflows/neon_workflow.yml',
+    repository: { full_name: 'adea-ai/control-plane' },
+    ...overrides,
+  }
+}
+
+function cleanupOwnerJobs(overrides = {}) {
+  return {
+    total_count: 1,
+    jobs: [
+      {
+        name: 'Verify Neon shard 1 (migrations and integration slice)',
+        status: 'completed',
+        steps: [{ name: 'Create Neon branch', status: 'completed', conclusion: 'failure' }],
+      },
+    ],
+    ...overrides,
+  }
+}
+
+async function verifyCleanupAbsence(responses, overrides = {}, observed = {}) {
+  const requests = []
+  const waits = []
+  const messages = []
+  Object.assign(observed, { requests, waits, messages })
+  let index = 0
+  await runInNewContext(verifyAbsenceScript, {
+    AbortSignal,
+    process: {
+      env: {
+        NEON_API_KEY: 'synthetic-key',
+        NEON_PROJECT_ID: 'synthetic-project-123',
+        TARGET_BRANCH_ID: 'br-synthetic-preview',
+        ...overrides,
+      },
+    },
+    fetch: async (url, options) => {
+      requests.push({ url: String(url), options })
+      const response = responses[Math.min(index++, responses.length - 1)]
+      if (response instanceof Error) throw response
+      return { status: response.status, body: { cancel: async () => {} } }
+    },
+    setTimeout: (callback, milliseconds) => {
+      waits.push(milliseconds)
+      callback()
+    },
+    console: { log: (value) => messages.push(value) },
+  })
+  return { requests, waits, messages }
 }
 
 const previewBranch = {
@@ -257,14 +324,212 @@ const previewBranch = {
 }
 
 describe('Neon preview cleanup lookup', () => {
-  test('runs Neon credentialed validation only on main pushes', () => {
-    expect(workflowEvents(workflow)).toBe('  push:\n    branches:\n      - main')
+  test('cleanup dispatch uses the protected default workflow and drops unused token scope', () => {
+    expect(workflowEvents(workflow)).toBe(
+      '  push:\n    branches:\n      - main\n  repository_dispatch:\n    types: [neon-preview-cleanup]'
+    )
+    const cleanupJob = workflow.split('  cleanup_completed_preview:')[1]
+    expect(cleanupJob).toContain(
+      "if: github.event_name == 'repository_dispatch' && github.ref == 'refs/heads/main'"
+    )
+    expect(cleanupJob).toContain('NEON_CLEANUP_MODE: completed-run')
+    expect(cleanupJob).toContain(
+      'NEON_CLEANUP_RUN_ID: ${{ github.event.client_payload.cleanup_run_id }}'
+    )
+    expect(cleanupJob).toContain('actions: read')
+    expect(cleanupJob).not.toContain('contents: read')
+  })
+
+  test('an empty completed-run cleanup payload never falls back to current-run ownership', async () => {
+    const observed = {}
+    await expect(
+      findCleanupBranch(
+        [{ body: { branches: [previewBranch] } }],
+        {
+          NEON_CLEANUP_MODE: 'completed-run',
+        },
+        observed
+      )
+    ).rejects.toThrow('cleanup inputs are unavailable or invalid')
+    expect(observed.requests).toEqual([])
+    expect(observed.writes).toEqual([])
+  })
+  test('queues main runs and looks for the exact branch after an unacknowledged creation', async () => {
+    expect(workflow).toContain('cancel-in-progress: false')
+    const group = workflow.match(/^  group: \$\{\{(.*)\}\}/m)?.[1]
+    expect(runInNewContext(group, { github: { event_name: 'push' } })).toBe('neon-main-preview')
+    expect(runInNewContext(group, { github: { event_name: 'repository_dispatch' } })).toBe(
+      'neon-completed-preview-cleanup'
+    )
+    expect(workflow).toContain("if: always() && steps.preview_branch.outputs.name != ''")
+    const result = await findCleanupBranch([{ body: { branches: [previewBranch] } }], {
+      NEON_CREATE_OUTCOME: 'failure',
+    })
+    expect(result.writes).toEqual([
+      { path: '/synthetic/output', value: 'branch_id=br-synthetic-preview\n' },
+    ])
+  })
+
+  test('a lost creation acknowledgement cannot classify a missing branch as settled cleanup', async () => {
+    const observed = {}
+    await expect(
+      findCleanupBranch([{ body: { branches: [] } }], { NEON_CREATE_OUTCOME: 'failure' }, observed)
+    ).rejects.toThrow('Neon creation outcome is unconfirmed')
+    expect(observed.writes).toEqual([])
+  })
+
+  test('runs Neon creation only on main pushes and fences cleanup dispatch to main', () => {
+    expect(workflowEvents(workflow)).toContain('  push:\n    branches:\n      - main\n')
+    expect(workflowEvents(workflow)).toContain(
+      '  repository_dispatch:\n    types: [neon-preview-cleanup]'
+    )
+    expect(workflowEvents(workflow)).not.toContain('pull_request')
+    const creationJob = workflow
+      .split('  verify_neon_preview:')[1]
+      ?.split('  cleanup_completed_preview:')[0]
+    expect(creationJob).toContain("github.event_name == 'push' && !cancelled()")
+    const cleanupJob = workflow.split('  cleanup_completed_preview:')[1]
+    expect(cleanupJob).toContain(
+      "if: github.event_name == 'repository_dispatch' && github.ref == 'refs/heads/main'"
+    )
+    expect(cleanupJob).not.toMatch(/create-branch-action|bun install|bun run build|db:migrate/)
+    expect(cleanupJob).toContain('run: *find_owned_preview_branch')
+    expect(cleanupJob).toContain('run: *verify_owned_preview_absence')
     expect(workflow).toContain('preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}')
     expect(workflow).toContain(
       'name=preview/main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-s${{ matrix.shard }}'
     )
     expect(workflow).toContain("date -u --date '+1 day'")
-    expect(workflow).toContain("if: always() && steps.create_neon_branch.outcome == 'success'")
+    expect(workflow).toContain("if: always() && steps.preview_branch.outputs.name != ''")
+  })
+
+  test('manual cleanup resolves the recorded completed creator before querying Neon', async () => {
+    const result = await findCleanupBranch(
+      [
+        { body: cleanupOwner() },
+        { body: cleanupOwnerJobs() },
+        { body: { branches: [previewBranch] } },
+      ],
+      manualCleanupInputs
+    )
+    expect(result.requests.map(({ url }) => url)).toEqual([
+      'https://api.github.com/repos/adea-ai/control-plane/actions/runs/404',
+      'https://api.github.com/repos/adea-ai/control-plane/actions/runs/404/attempts/1/jobs?per_page=100',
+      'https://console.neon.tech/api/v2/projects/synthetic-project-123/branches?search=preview%2Fmain-404-1-s1&limit=1000',
+    ])
+    expect(result.requests[0].options.headers.Authorization).toBe('Bearer synthetic-github-token')
+    expect(result.requests[2].options.headers.Authorization).toBe('Bearer synthetic-key')
+    expect(result.writes[0].value).toBe('branch_id=br-synthetic-preview\n')
+  })
+
+  test('manual cleanup refuses wrong or live owners before any Neon request', async () => {
+    for (const overrides of [
+      { id: 405 },
+      { run_attempt: 2 },
+      { event: 'pull_request' },
+      { head_branch: 'topic' },
+      { head_sha: 'b'.repeat(40) },
+      { status: 'in_progress' },
+      { path: '.github/workflows/other.yml' },
+      { repository: { full_name: 'other/repo' } },
+    ]) {
+      const observed = {}
+      await expect(
+        findCleanupBranch([{ body: cleanupOwner(overrides) }], manualCleanupInputs, observed)
+      ).rejects.toThrow('recorded completed trusted-main run')
+      expect(observed.requests).toHaveLength(1)
+      expect(observed.writes).toEqual([])
+    }
+  })
+
+  test('manual cleanup refuses incomplete, ambiguous or live creator jobs', async () => {
+    const job = cleanupOwnerJobs().jobs[0]
+    for (const result of [
+      cleanupOwnerJobs({ total_count: 2 }),
+      cleanupOwnerJobs({ total_count: 0, jobs: [] }),
+      cleanupOwnerJobs({ total_count: 2, jobs: [job, job] }),
+      cleanupOwnerJobs({ jobs: [{ ...job, status: 'in_progress' }] }),
+      cleanupOwnerJobs({ jobs: [{ ...job, steps: [] }] }),
+      cleanupOwnerJobs({ jobs: [{ ...job, steps: [job.steps[0], job.steps[0]] }] }),
+      cleanupOwnerJobs({ jobs: [{ ...job, steps: [{ ...job.steps[0], status: 'in_progress' }] }] }),
+    ]) {
+      const observed = {}
+      await expect(
+        findCleanupBranch(
+          [{ body: cleanupOwner() }, { body: result }],
+          manualCleanupInputs,
+          observed
+        )
+      ).rejects.toThrow(/owner jobs are incomplete|creator is not terminal and unique/)
+      expect(observed.requests).toHaveLength(2)
+      expect(observed.writes).toEqual([])
+    }
+  })
+
+  test('manual cleanup refuses partial inputs and owner API failures', async () => {
+    for (const overrides of [
+      { NEON_CLEANUP_RUN_ATTEMPT: '' },
+      { NEON_CLEANUP_HEAD_SHA: '' },
+      { GH_TOKEN: '' },
+    ]) {
+      const observed = {}
+      await expect(
+        findCleanupBranch([], { ...manualCleanupInputs, ...overrides }, observed)
+      ).rejects.toThrow()
+      expect(observed.requests).toEqual([])
+    }
+    for (const response of [{ status: 403 }, new Error('synthetic transport')]) {
+      const observed = {}
+      await expect(findCleanupBranch([response], manualCleanupInputs, observed)).rejects.toThrow(
+        'owner lookup failed'
+      )
+      expect(observed.requests).toHaveLength(1)
+      expect(observed.writes).toEqual([])
+    }
+  })
+
+  test('manual absence observation preserves the unknown creation acknowledgement', async () => {
+    const result = await findCleanupBranch(
+      [{ body: cleanupOwner() }, { body: cleanupOwnerJobs() }, { body: { branches: [] } }],
+      manualCleanupInputs
+    )
+    expect(result.writes).toEqual([])
+    expect(result.messages).toEqual([
+      'No matching preview observed after terminal creator; original creation acknowledgement remains unknown.',
+    ])
+  })
+
+  test('deletion verification requires a branch metadata 404', async () => {
+    const result = await verifyCleanupAbsence([{ status: 200 }, { status: 404 }])
+    expect(result.requests).toHaveLength(2)
+    expect(result.requests[0].url).toBe(
+      'https://console.neon.tech/api/v2/projects/synthetic-project-123/branches/br-synthetic-preview'
+    )
+    expect(result.requests[0].options.redirect).toBe('error')
+    expect(result.waits).toEqual([500])
+    expect(result.messages).toEqual([
+      'Verified preview branch metadata is absent: br-synthetic-preview',
+    ])
+  })
+
+  test('deletion verification refuses authorization failure and caps unresolved retries', async () => {
+    for (const response of [{ status: 401 }, { status: 200 }, new Error('synthetic transport')]) {
+      const observed = {}
+      await expect(verifyCleanupAbsence([response], {}, observed)).rejects.toThrow(
+        'deletion is not confirmed'
+      )
+      expect(observed.requests).toHaveLength(response.status === 401 ? 1 : 3)
+      expect(observed.waits).toEqual(response.status === 401 ? [] : [500, 1000])
+      expect(observed.messages).toEqual([])
+    }
+  })
+
+  test('deletion verification rejects malformed identifiers without making requests', async () => {
+    const observed = {}
+    await expect(
+      verifyCleanupAbsence([], { TARGET_BRANCH_ID: '../protected' }, observed)
+    ).rejects.toThrow('Invalid Neon deletion verification inputs')
+    expect(observed.requests).toEqual([])
   })
 
   test('partitions the suite across per-shard branches with the long pole on shard 1', () => {
@@ -664,13 +929,16 @@ describe('Neon trusted-main migration gating', () => {
       { result: 'skipped', verify: 'false', cancelled: false, expected: true },
       { result: 'success', verify: 'false', cancelled: true, expected: false },
     ]
-    for (const { result, verify, cancelled, expected } of scenarios) {
-      expect(
-        runInNewContext(condition, {
-          cancelled: () => cancelled,
-          needs: { changes: { result, outputs: { verify } } },
-        })
-      ).toBe(expected)
+    for (const event of ['push', 'repository_dispatch']) {
+      for (const { result, verify, cancelled, expected } of scenarios) {
+        expect(
+          runInNewContext(condition, {
+            github: { event_name: event },
+            cancelled: () => cancelled,
+            needs: { changes: { result, outputs: { verify } } },
+          })
+        ).toBe(event === 'push' && expected)
+      }
     }
   })
 
