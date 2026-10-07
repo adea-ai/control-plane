@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 const MAX_BASELINE_CANDIDATES = 25
 const VERIFY_STEP = "Verify migrations and this shard's integration slice"
 const CONFORMANCE_STEP = 'Verify cross-profile conformance matrix (Postgres)'
+const HOSTED_GRAPH_STEP = 'Verify Hosted PostgreSQL and Restate graph'
 
 const relevantPaths = new Set([
   '.bun-version',
@@ -25,6 +26,10 @@ const relevantPaths = new Set([
   'scripts/integration-shards.mjs',
   'scripts/run-cloud-remote-drill.mjs',
   'scripts/run-integration-tests.mjs',
+  'scripts/run-hosted-graph-qualification.sh',
+  'scripts/provision-restate-identity.mjs',
+  'scripts/remove-hosted-compose-fixture.mjs',
+  'infrastructure/compose/compose.yaml',
   'tests/cp1-embedded-durable-execution.test.mjs',
   'tests/integration-shards.test.mjs',
   'tsconfig.json',
@@ -158,7 +163,8 @@ function hasSuccessfulVerificationJobs(repository, run) {
       job?.status !== 'completed' ||
       job?.conclusion !== 'success' ||
       !hasSuccessfulStep(job, VERIFY_STEP) ||
-      (shard === 1 && !hasSuccessfulStep(job, CONFORMANCE_STEP))
+      (shard === 1 && !hasSuccessfulStep(job, CONFORMANCE_STEP)) ||
+      (shard === 3 && !hasSuccessfulStep(job, HOSTED_GRAPH_STEP))
     ) {
       return false
     }

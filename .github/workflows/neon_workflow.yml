@@ -238,6 +238,13 @@ jobs:
           bun --cwd=packages/database run db:migrate
           bun scripts/run-integration-tests.mjs --shard=${{ matrix.shard }}
 
+      - name: Verify Hosted PostgreSQL and Restate graph
+        if: steps.credentials.outputs.available == 'true' && matrix.shard == 3
+        # Reuse this shard's preview and the supported Compose Restate pin.
+        # The script requires one passing scenario, rejects skips, and removes
+        # only its owned container and identity fixture even after failed start.
+        run: bash scripts/run-hosted-graph-qualification.sh
+
       - name: Find exact preview branch for cleanup
         if: always() && steps.preview_branch.outputs.name != ''
         id: cleanup_branch
