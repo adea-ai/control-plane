@@ -3,6 +3,10 @@ import { canonicalJsonStringify, IdentifierSchemas } from '@control-plane/contra
 import type { CommandAcceptanceRepository, Execution } from '@control-plane/domain'
 import { executionPlanBudgetAllowance, type ExecutionPlan } from '@control-plane/execution-plan'
 import {
+  RuntimeAttemptBudgetAuthoritySchema,
+  type RuntimeAttemptBudgetAuthority,
+} from '@control-plane/runtime-sdk'
+import {
   budgetOpeningEntryIdempotencyKey,
   DurableUsageLedger,
   DurableUsageBudgetSchema,
@@ -13,14 +17,18 @@ import {
   type UsageLedgerEntry,
 } from '@control-plane/usage-ledger'
 
+export type { RuntimeAttemptBudgetAuthority } from '@control-plane/runtime-sdk'
+
 export interface RuntimeBudgetAdmissionPort {
   authorize(input: {
     readonly execution: Execution
     readonly executionPlan: ExecutionPlan
     readonly attemptId: string
   }): Promise<void>
-  /** Validate and reserve the funded attempt envelope atomically before runtime work. */
-  reserve?(input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]): Promise<void>
+  /** Validate and reserve the accepted attempt allocation atomically before runtime work. */
+  reserve?(
+    input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]
+  ): Promise<RuntimeAttemptBudgetAuthority | void>
 }
 
 export interface DurableRuntimeBudgetAdmissionOptions {
@@ -45,17 +53,21 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
     readonly executionPlan: ExecutionPlan
     readonly attemptId: string
   }): Promise<void> {
-    return this.#admit(input, false)
+    await this.#admit(input, false)
   }
 
-  async reserve(input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]): Promise<void> {
-    return this.#admit(input, true)
+  async reserve(
+    input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]
+  ): Promise<RuntimeAttemptBudgetAuthority> {
+    const authority = await this.#admit(input, true)
+    if (authority === undefined) denyAdmission()
+    return authority
   }
 
   async #admit(
     input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0],
     reserveAttempt: boolean
-  ): Promise<void> {
+  ): Promise<RuntimeAttemptBudgetAuthority | void> {
     try {
       if (
         !IdentifierSchemas.attemptId.safeParse(input.attemptId).success ||
@@ -73,7 +85,7 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
       )
       const openingFingerprint = fingerprintForOpenBudget(allowance)
 
-      await this.#store.transaction(allowance.workspaceId, async (transaction) => {
+      return await this.#store.transaction(allowance.workspaceId, async (transaction) => {
         const ledger = new DurableUsageLedger({
           store: transactionBoundReadOnlyStore(allowance.workspaceId, transaction),
         })
@@ -163,7 +175,7 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
           ) {
             denyAdmission()
           }
-          // Reserve remaining funded authority (children can be clamped), not
+          // Reserve remaining allowance (children can be clamped), not
           // an invented zero after another attempt reserved or spent it.
           // Exact replay reuses the same envelope and immutable effect identity.
           const mutationLedger = new DurableUsageLedger({
@@ -174,24 +186,69 @@ export class DurableRuntimeBudgetAdmission implements RuntimeBudgetAdmissionPort
               },
             },
           })
+          const maximumMicrounits = existing?.maximumMicrounits ?? summary.availableMicrounits
+          const maximumTokens = existing?.maximumTokens ?? summary.availableTokens
           await mutationLedger.reserve({
             workspaceId: allowance.workspaceId,
             executionId: allowance.executionId,
             attemptId: input.attemptId,
             reservationKey,
-            maximumMicrounits: existing?.maximumMicrounits ?? summary.availableMicrounits,
-            maximumTokens: existing?.maximumTokens ?? summary.availableTokens,
+            maximumMicrounits,
+            maximumTokens,
             source: {
               sourceId: input.attemptId,
               idempotencyKey: `${reservationKey}:reserve`,
             },
           })
+          // The transaction result is exposed only after the store confirms commit.
+          // Replay returns the same reservation ceiling, without rewriting the plan.
+          return RuntimeAttemptBudgetAuthoritySchema.parse({
+            schemaVersion: 1 as const,
+            workspaceId: allowance.workspaceId,
+            executionId: allowance.executionId,
+            attemptId: input.attemptId,
+            executionPlanId: input.executionPlan.executionPlanId,
+            executionPlanDigest: input.executionPlan.contentDigest,
+            reservationKey,
+            currency: allowance.currency,
+            maximumMicrounits,
+            maximumTokens,
+          })
         }
+        return undefined
       })
     } catch {
       throw new RuntimeBudgetAdmissionError()
     }
   }
+}
+
+/** Validate trusted admission composition before forwarding an immutable copy. */
+export function validateRuntimeAttemptBudgetAuthority(
+  authority: RuntimeAttemptBudgetAuthority,
+  input: Parameters<RuntimeBudgetAdmissionPort['authorize']>[0]
+): RuntimeAttemptBudgetAuthority {
+  const candidate = { ...authority }
+  if (
+    Object.keys(candidate).length !== 10 ||
+    candidate.schemaVersion !== 1 ||
+    candidate.workspaceId !== input.execution.correlation.workspaceId ||
+    candidate.executionId !== input.execution.executionId ||
+    candidate.attemptId !== input.attemptId ||
+    candidate.executionPlanId !== input.executionPlan.executionPlanId ||
+    candidate.executionPlanDigest !== input.executionPlan.contentDigest ||
+    candidate.reservationKey !== `runtime-attempt:${input.attemptId}` ||
+    candidate.currency !== input.executionPlan.constraints.limits.budget.currency ||
+    !Number.isSafeInteger(candidate.maximumMicrounits) ||
+    candidate.maximumMicrounits < 0 ||
+    candidate.maximumMicrounits > input.executionPlan.constraints.limits.budget.maximumMicrounits ||
+    !Number.isSafeInteger(candidate.maximumTokens) ||
+    candidate.maximumTokens < 0 ||
+    candidate.maximumTokens > input.executionPlan.constraints.limits.tokens.maximumTotal
+  ) {
+    denyAdmission()
+  }
+  return Object.freeze(candidate)
 }
 
 export class RuntimeBudgetAdmissionError extends Error {

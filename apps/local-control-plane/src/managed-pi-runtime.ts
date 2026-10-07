@@ -1,4 +1,5 @@
 import {
+  assertContextPackageIntegrity,
   ContextPackageReferenceSchema,
   type ContextPackageRepository,
 } from '@control-plane/context'
@@ -97,14 +98,8 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
     const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
     const [{ profile, skills }, contextPackage] = await Promise.all([
       resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI', this.#approval),
-      this.#contextPackages.get(
-        ContextPackageReferenceSchema.parse({
-          contextPackageId: configuration.contextPackage.contextPackageId,
-          contentDigest: configuration.contextPackage.contentDigest,
-        })
-      ),
+      this.#resolveContextPackage(configuration),
     ])
-    if (contextPackage === undefined) throw new Error('MANAGED_PI_CONTEXT_PIN_UNRESOLVED')
     this.#route.assertEligible(configuration.modelPolicy)
 
     const systemSections = [
@@ -149,5 +144,29 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
       provider: this.#route.provider,
       model: this.#route.model,
     }
+  }
+
+  async resolveWorkspace(configurationInput: unknown): Promise<string> {
+    const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
+    const contextPackage = await this.#resolveContextPackage(configuration)
+    return contextPackage.projectState.workspaceId
+  }
+
+  async #resolveContextPackage(
+    configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>
+  ) {
+    const reference = ContextPackageReferenceSchema.parse({
+      contextPackageId: configuration.contextPackage.contextPackageId,
+      contentDigest: configuration.contextPackage.contentDigest,
+    })
+    const contextPackage = await this.#contextPackages.get(reference)
+    if (
+      contextPackage === undefined ||
+      contextPackage.contextPackageId !== reference.contextPackageId ||
+      contextPackage.contentDigest !== reference.contentDigest
+    ) {
+      throw new Error('MANAGED_PI_CONTEXT_PIN_UNRESOLVED')
+    }
+    return assertContextPackageIntegrity(contextPackage)
   }
 }

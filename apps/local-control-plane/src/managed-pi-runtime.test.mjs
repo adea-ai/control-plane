@@ -230,3 +230,57 @@ test.each([
     }
   }
 )
+
+test('allocation workspace is resolved only from the intact repository context pin', async () => {
+  const original = contextPackageSerializationFixtures.futurePi
+  const plan = createExecutionPlanTestFixture({ contextPackage: original })
+  const configuration = translateExecutionPlanToManagedPi(plan, '1.2.0')
+  let contextPackage = original
+  let catalogReads = 0
+  const resolver = new RepositoryManagedPiProcessInputResolver(
+    {
+      catalog: {
+        getAgentProfileVersion: async () => {
+          catalogReads++
+          throw new Error('UNEXPECTED_PROFILE_READ')
+        },
+        getSkillVersion: async () => {
+          catalogReads++
+          throw new Error('UNEXPECTED_SKILL_READ')
+        },
+      },
+      contextPackages: {
+        get: async (reference) => {
+          expect(reference).toEqual({
+            contextPackageId: original.contextPackageId,
+            contentDigest: original.contentDigest,
+          })
+          return contextPackage
+        },
+      },
+    },
+    {
+      provider: 'fixture',
+      model: 'fixture-model',
+      modelAlias: 'reasoning.standard',
+      modelCapabilities: ['tool_calling', 'structured_output'],
+      providerClass: 'managed',
+      dataResidency: 'us',
+    }
+  )
+  expect(await resolver.resolveWorkspace(configuration)).toBe(original.projectState.workspaceId)
+  contextPackage = undefined
+  await expect(resolver.resolveWorkspace(configuration)).rejects.toThrow(
+    'MANAGED_PI_CONTEXT_PIN_UNRESOLVED'
+  )
+  contextPackage = { ...original, contentDigest: digest('f') }
+  await expect(resolver.resolveWorkspace(configuration)).rejects.toThrow(
+    'MANAGED_PI_CONTEXT_PIN_UNRESOLVED'
+  )
+  contextPackage = structuredClone(original)
+  contextPackage.projectState.workspaceId = 'wsp_01JBBCDEF0123456789ABCDEFG'
+  await expect(resolver.resolveWorkspace(configuration)).rejects.toThrow(
+    'CONTEXT_PACKAGE_INTEGRITY_ERROR'
+  )
+  expect(catalogReads).toBe(0)
+})

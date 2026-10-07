@@ -263,13 +263,71 @@ export const RuntimeExecutionPlanSnapshotSchema = z
   })
   .catchall(z.unknown())
 
+/** Allocation under an accepted allowance; not prepaid funds or charge authority. */
+export const RuntimeAttemptBudgetAuthoritySchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: IdentifierSchemas.workspaceId,
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    executionPlanId: IdentifierSchemas.executionPlanId,
+    executionPlanDigest: DigestSchema,
+    reservationKey: z.string().min(1).max(256),
+    currency: z.literal('USD'),
+    maximumMicrounits: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    maximumTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict()
+  .readonly()
+
+export type RuntimeAttemptBudgetAuthority = z.output<typeof RuntimeAttemptBudgetAuthoritySchema>
+
+const RuntimeBudgetPlanScopeSchema = z.object({
+  correlation: z.object({ workspaceId: IdentifierSchemas.workspaceId }),
+  constraints: z.object({
+    limits: z.object({
+      budget: z.object({
+        currency: z.literal('USD'),
+        maximumMicrounits: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      }),
+      tokens: z.object({
+        maximumTotal: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      }),
+    }),
+  }),
+})
+
 export const RuntimeStartRequestSchema = z
   .object({
     attemptId: IdentifierSchemas.attemptId,
+    executionId: IdentifierSchemas.executionId.optional(),
     idempotencyKey: IdempotencyKeySchema,
     executionPlan: RuntimeExecutionPlanSnapshotSchema,
+    attemptBudget: RuntimeAttemptBudgetAuthoritySchema.optional(),
   })
   .strict()
+  .superRefine((request, context) => {
+    const authority = request.attemptBudget
+    if (authority === undefined) return
+    const plan = RuntimeBudgetPlanScopeSchema.safeParse(request.executionPlan)
+    if (
+      !plan.success ||
+      authority.workspaceId !== plan.data.correlation.workspaceId ||
+      authority.executionId !== request.executionId ||
+      authority.attemptId !== request.attemptId ||
+      authority.executionPlanId !== request.executionPlan.executionPlanId ||
+      authority.executionPlanDigest !== request.executionPlan.contentDigest ||
+      authority.reservationKey !== `runtime-attempt:${request.attemptId}` ||
+      authority.maximumMicrounits > plan.data.constraints.limits.budget.maximumMicrounits ||
+      authority.maximumTokens > plan.data.constraints.limits.tokens.maximumTotal
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['attemptBudget'],
+        message: 'Runtime attempt authority must match the pinned start identity and ceilings',
+      })
+    }
+  })
 
 export const RuntimeInputRequestSchema = z
   .object({

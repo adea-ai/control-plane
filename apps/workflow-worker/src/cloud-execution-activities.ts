@@ -19,13 +19,18 @@ import type {
   WorkflowInteractionResponse,
   WorkflowRuntimeOutcome,
 } from './execution-workflow.js'
-import type { RuntimeBudgetAdmissionPort } from './runtime-budget-admission.js'
+import {
+  validateRuntimeAttemptBudgetAuthority,
+  type RuntimeAttemptBudgetAuthority,
+  type RuntimeBudgetAdmissionPort,
+} from './runtime-budget-admission.js'
 
 export interface WorkflowRuntimeActivityPort {
   dispatch(input: {
     readonly executionId: string
     readonly attemptId: string
     readonly executionPlan: ExecutionPlan
+    readonly attemptBudget?: RuntimeAttemptBudgetAuthority
     readonly marketplacePluginReferences?: ExecutionWorkflowInput['marketplacePluginReferences']
     readonly effectKey: string
   }): Promise<WorkflowRuntimeOutcome>
@@ -33,6 +38,7 @@ export interface WorkflowRuntimeActivityPort {
     input: WorkflowInteractionResponse & {
       readonly executionId: string
       readonly attemptId: string
+      readonly attemptBudget?: RuntimeAttemptBudgetAuthority
       readonly effectKey: string
     }
   ): Promise<WorkflowRuntimeOutcome>
@@ -177,24 +183,50 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     if (plan === undefined || plan.schemaVersion !== input.executionPlan.schemaVersion) {
       throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
     }
-    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId, true)
-    return this.#runtime.dispatch({ ...input, executionPlan: plan })
+    const attemptBudget = await this.#authorizeBudgetAdmission(
+      execution,
+      plan,
+      input.attemptId,
+      true
+    )
+    // Forward only admitted authority, never an extra caller-supplied budget field.
+    return this.#runtime.dispatch({
+      executionId: input.executionId,
+      attemptId: input.attemptId,
+      effectKey: input.effectKey,
+      executionPlan: plan,
+      ...(input.marketplacePluginReferences === undefined
+        ? {}
+        : { marketplacePluginReferences: input.marketplacePluginReferences }),
+      ...(attemptBudget === undefined ? {} : { attemptBudget }),
+    })
   }
 
   async applyInteraction(
     input: Parameters<ExecutionLifecycleActivities['applyInteraction']>[0]
   ): Promise<WorkflowRuntimeOutcome> {
-    if (this.#budgetAdmission === undefined) return this.#runtime.applyInteraction(input)
-    const execution = await this.#lifecycle.getExecution(input.executionId)
-    if (execution.latestAttemptId !== input.attemptId) {
-      throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+    let attemptBudget: RuntimeAttemptBudgetAuthority | void = undefined
+    if (this.#budgetAdmission !== undefined) {
+      const execution = await this.#lifecycle.getExecution(input.executionId)
+      if (execution.latestAttemptId !== input.attemptId) {
+        throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
+      }
+      const plan = await this.#plans.get(execution.executionPlan)
+      if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
+        throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
+      }
+      attemptBudget = await this.#authorizeBudgetAdmission(execution, plan, input.attemptId, true)
     }
-    const plan = await this.#plans.get(execution.executionPlan)
-    if (plan === undefined || plan.schemaVersion !== execution.executionPlan.schemaVersion) {
-      throw new Error('WORKFLOW_EXECUTION_PLAN_MISSING')
-    }
-    await this.#authorizeBudgetAdmission(execution, plan, input.attemptId, true)
-    return this.#runtime.applyInteraction(input)
+    return this.#runtime.applyInteraction({
+      executionId: input.executionId,
+      attemptId: input.attemptId,
+      interactionId: input.interactionId,
+      responseId: input.responseId,
+      action: input.action,
+      effectKey: input.effectKey,
+      ...(input.value === undefined ? {} : { value: input.value }),
+      ...(attemptBudget === undefined ? {} : { attemptBudget }),
+    })
   }
 
   async runGraphSegment(input: Parameters<GraphSegmentActivityPort['runGraphSegment']>[0]) {
@@ -302,7 +334,7 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     executionPlan: ExecutionPlan,
     attemptId: string,
     reserveAttempt = false
-  ): Promise<void> {
+  ): Promise<RuntimeAttemptBudgetAuthority | void> {
     if (this.#budgetAdmission === undefined) return
     if (execution.latestAttemptId !== attemptId) {
       throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
@@ -317,7 +349,9 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
     }
     const input = { execution, executionPlan, attemptId }
     if (reserveAttempt && this.#budgetAdmission.reserve !== undefined) {
-      await this.#budgetAdmission.reserve(input)
+      const reserved = await this.#budgetAdmission.reserve(input)
+      const authority =
+        reserved === undefined ? undefined : validateRuntimeAttemptBudgetAuthority(reserved, input)
       // Reservation may wait on the usage store while another lifecycle writer
       // supersedes this attempt. Keep its allocation for reconciliation, but
       // reject the stale effect before delegating to the runtime.
@@ -325,9 +359,11 @@ export class DurableExecutionLifecycleActivities implements ExecutionLifecycleAc
       if (current.latestAttemptId !== attemptId) {
         throw new Error('WORKFLOW_EXECUTION_IDENTITY_MISMATCH')
       }
+      return authority
     } else {
       await this.#budgetAdmission.authorize(input)
     }
+    return undefined
   }
 
   async #existingAttempt(

@@ -59,6 +59,7 @@ export {
 export type {
   DurableRuntimeBudgetAdmissionOptions,
   RuntimeBudgetAdmissionPort,
+  RuntimeAttemptBudgetAuthority,
 } from './runtime-budget-admission.js'
 
 export const serviceName = 'workflow-worker'

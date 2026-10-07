@@ -324,6 +324,138 @@ describe('durable Cloud execution activities', () => {
     expect(graphCalls[2]).toBe(continueInput)
   })
 
+  test('forwards allocated attempt authority separately from the immutable execution plan', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const originalDispatch = runtime.dispatch.bind(runtime)
+    runtime.dispatch = async (input) => {
+      expect(Object.isFrozen(input.attemptBudget)).toBe(true)
+      return originalDispatch(input)
+    }
+    const authority = attemptAuthority(fixture.plan)
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: { authorize: async () => {}, reserve: async () => authority },
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await activity.dispatch(dispatchInput())
+    expect(runtime.dispatches[0].attemptBudget).toEqual(authority)
+    expect(runtime.dispatches[0].executionPlan).toEqual(fixture.plan)
+    expect(runtime.dispatches[0].executionPlan.contentDigest).toBe(fixture.plan.contentDigest)
+  })
+
+  for (const admission of ['none', 'authorizer-only', 'reserved']) {
+    test(`interaction authority filters caller fields and forwards only the reservation: ${admission}`, async () => {
+      const fixture = await lifecycleFixture()
+      const runtime = runtimePort()
+      const authority = attemptAuthority(fixture.plan)
+      const originalInteraction = runtime.applyInteraction.bind(runtime)
+      runtime.applyInteraction = async (input) => {
+        if (admission === 'reserved') expect(Object.isFrozen(input.attemptBudget)).toBe(true)
+        return originalInteraction(input)
+      }
+      const budgetAdmission =
+        admission === 'none'
+          ? undefined
+          : admission === 'authorizer-only'
+            ? { authorize: async () => {} }
+            : { authorize: async () => {}, reserve: async () => authority }
+      const activity = activities({ ...fixture, runtime, budgetAdmission })
+      await activity.persistStatus(status('queued'))
+      await activity.ensureAttempt(attemptInput())
+      const allowed = {
+        executionId: ids.executionId,
+        attemptId: ids.attemptId,
+        interactionId: 'int_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        responseId: 'rsp_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        action: 'input',
+        value: { text: 'continue', accepted: true },
+        effectKey: 'interaction-effect',
+      }
+      await activity.applyInteraction({
+        ...allowed,
+        attemptBudget: { ...authority, maximumTokens: Number.MAX_SAFE_INTEGER },
+        unrelated: 'untrusted-field',
+      })
+      expect(runtime.interactions).toEqual([
+        { ...allowed, ...(admission === 'reserved' ? { attemptBudget: authority } : {}) },
+      ])
+    })
+  }
+
+  for (const change of [
+    { workspaceId: 'wsp_01JBBCDEF0123456789ABCDEFG' },
+    { executionId: 'exe_01JBBCDEF0123456789ABCDEFG' },
+    { attemptId: 'att_01JBBCDEF0123456789ABCDEFG' },
+    { executionPlanId: 'pln_01JBBCDEF0123456789ABCDEFG' },
+    { executionPlanDigest: `sha256:${'b'.repeat(64)}` },
+    { reservationKey: 'foreign-reservation' },
+    { maximumTokens: Number.MAX_SAFE_INTEGER },
+    { maximumMicrounits: -1 },
+    { currency: 'EUR' },
+    { unrelated: true },
+  ]) {
+    test(`rejects mismatched allocation before runtime effects: ${JSON.stringify(change)}`, async () => {
+      const fixture = await lifecycleFixture()
+      const runtime = runtimePort()
+      const activity = activities({
+        ...fixture,
+        runtime,
+        budgetAdmission: {
+          authorize: async () => {},
+          reserve: async () => attemptAuthority(fixture.plan, change),
+        },
+      })
+      await activity.persistStatus(status('queued'))
+      await activity.ensureAttempt(attemptInput())
+      await expect(activity.dispatch(dispatchInput())).rejects.toThrow(
+        'RUNTIME_BUDGET_ADMISSION_DENIED'
+      )
+      expect(runtime.dispatches).toHaveLength(0)
+    })
+  }
+
+  test('a mutable admission result cannot change the forwarded ceiling during the fresh identity check', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const authority = attemptAuthority(fixture.plan)
+    let reserved = false
+    const originalGet = fixture.lifecycle.getExecution.bind(fixture.lifecycle)
+    fixture.lifecycle.getExecution = async (executionId) => {
+      const execution = await originalGet(executionId)
+      if (reserved) authority.maximumTokens = fixture.plan.constraints.limits.tokens.maximumTotal
+      return execution
+    }
+    const activity = activities({
+      ...fixture,
+      runtime,
+      budgetAdmission: {
+        authorize: async () => {},
+        reserve: async () => {
+          reserved = true
+          return authority
+        },
+      },
+    })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await activity.dispatch(dispatchInput())
+    expect(authority.maximumTokens).toBe(fixture.plan.constraints.limits.tokens.maximumTotal)
+    expect(runtime.dispatches[0].attemptBudget.maximumTokens).toBe(1)
+  })
+
+  test('drops caller-supplied authority when no admission port produced it', async () => {
+    const fixture = await lifecycleFixture()
+    const runtime = runtimePort()
+    const activity = activities({ ...fixture, runtime })
+    await activity.persistStatus(status('queued'))
+    await activity.ensureAttempt(attemptInput())
+    await activity.dispatch({ ...dispatchInput(), attemptBudget: attemptAuthority(fixture.plan) })
+    expect(runtime.dispatches[0]).not.toHaveProperty('attemptBudget')
+  })
+
   test('funds native dispatch and interaction before invoking the runtime', async () => {
     const fixture = await lifecycleFixture()
     const calls = []
@@ -343,7 +475,9 @@ describe('durable Cloud execution activities', () => {
       runtime,
       budgetAdmission: {
         authorize: async () => calls.push('authorize'),
-        reserve: async () => calls.push('reserve'),
+        reserve: async () => {
+          calls.push('reserve')
+        },
       },
     })
     await activity.persistStatus(status('queued'))
@@ -748,3 +882,19 @@ test('unconfirmed graph cancellation persists reconciliation and prevents termin
     false
   )
 })
+
+function attemptAuthority(plan, change = {}) {
+  return {
+    schemaVersion: 1,
+    workspaceId: plan.correlation.workspaceId,
+    executionId: ids.executionId,
+    attemptId: ids.attemptId,
+    executionPlanId: plan.executionPlanId,
+    executionPlanDigest: plan.contentDigest,
+    reservationKey: `runtime-attempt:${ids.attemptId}`,
+    currency: 'USD',
+    maximumMicrounits: 1,
+    maximumTokens: 1,
+    ...change,
+  }
+}

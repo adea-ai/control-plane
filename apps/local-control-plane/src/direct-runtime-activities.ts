@@ -9,6 +9,7 @@ import type {
 import {
   RuntimeExecutionResultSchema,
   RuntimeExecutionStatusSchema,
+  RuntimeStartRequestSchema,
 } from '@control-plane/runtime-sdk'
 import type {
   WorkflowInteractionValue,
@@ -59,6 +60,21 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
   async #dispatch(
     input: Parameters<WorkflowRuntimeActivityPort['dispatch']>[0]
   ): Promise<WorkflowRuntimeOutcome> {
+    // Reject foreign authority before claiming a durable effect or crossing the driver boundary.
+    const request = RuntimeStartRequestSchema.parse({
+      attemptId: input.attemptId,
+      idempotencyKey: input.effectKey,
+      executionPlan:
+        input.marketplacePluginReferences === undefined
+          ? input.executionPlan
+          : {
+              ...input.executionPlan,
+              marketplacePluginReferences: input.marketplacePluginReferences,
+            },
+      ...(input.attemptBudget === undefined
+        ? {}
+        : { executionId: input.executionId, attemptBudget: input.attemptBudget }),
+    })
     const resultId = recordId(input.effectKey)
     const intentId = recordId(`dispatch-intent:${input.effectKey}`)
     const admission = await this.persistence.transaction(async (transaction) => {
@@ -117,17 +133,7 @@ export class DirectRuntimeActivityPort implements WorkflowRuntimeActivityPort {
       }
     }
     return this.#effect(input.effectKey, async () => {
-      const handle = await this.runtime.start({
-        attemptId: input.attemptId,
-        idempotencyKey: input.effectKey,
-        executionPlan:
-          input.marketplacePluginReferences === undefined
-            ? input.executionPlan
-            : {
-                ...input.executionPlan,
-                marketplacePluginReferences: input.marketplacePluginReferences,
-              },
-      })
+      const handle = await this.runtime.start(request)
       await this.#saveHandle(input.executionId, handle)
       const cancellation = await this.#cancellation(input.executionId)
       if (cancellation !== undefined) {
