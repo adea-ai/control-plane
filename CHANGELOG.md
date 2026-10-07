@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.4...workspace-v1.73.0) (2026-10-07)
+
+
+### Features
+
+* **runtime:** carry pinned attempt allocation to managed Pi ([#921](https://github.com/adea-ai/control-plane/issues/921)) ([7f8d301](https://github.com/adea-ai/control-plane/commit/7f8d3010c2b3e3c84cd3536cc734ea1006713f7f))
+
 ## [1.72.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.3...workspace-v1.72.4) (2026-10-07)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.11.1...runtime-sdk-v1.12.0) (2026-10-07)
+
+
+### Features
+
+* **runtime:** carry pinned attempt allocation to managed Pi ([#921](https://github.com/adea-ai/control-plane/issues/921)) ([7f8d301](https://github.com/adea-ai/control-plane/commit/7f8d3010c2b3e3c84cd3536cc734ea1006713f7f))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.11.0...runtime-sdk-v1.11.1) (2026-10-01)
 
 
