@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { SqlitePersistenceProvider } from './index.ts'
-import { SCHEMA_STATEMENTS } from './migrations.ts'
+import {
+  SCHEMA_STATEMENTS,
+  SCHEMA_VERSION,
+  applyMigrations,
+  SQLITE_MIGRATIONS,
+} from './migrations.ts'
 
 const resources = []
 afterEach(async () => {
@@ -76,7 +81,7 @@ test('restores a valid v1 backup by staging and applying the current indexes', a
   expect(await provider.transaction((tx) => tx.get('command-inbox', 'legacy'))).toMatchObject({
     value: { retentionExpiresAt: '2026-01-01T00:00:00.000Z' },
   })
-  expect(await provider.health()).toMatchObject({ version: '2' })
+  expect(await provider.health()).toMatchObject({ version: String(SCHEMA_VERSION) })
 })
 
 test('rejects a tampered v2 index without replacing live data', async () => {
@@ -157,7 +162,9 @@ for (const fixture of [
           const source = new DatabaseSync(join(directory, 'live.sqlite'))
           try {
             for (const row of source
-              .prepare('SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type DESC')
+              .prepare(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END"
+              )
               .all()) {
               database.exec(row.sql)
             }
@@ -211,5 +218,63 @@ for (const fixture of [
       value: { accepted: true },
     })
     expect((await readdir(directory)).filter((name) => name.includes('.restore-'))).toEqual([])
+  })
+}
+
+test('restores a released v2 backup without rehashing retained payloads', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sqlite-restore-v2-'))
+  const provider = new SqlitePersistenceProvider({ path: join(directory, 'live.sqlite') })
+  resources.push({ directory, provider })
+  await provider.migrate()
+  const sourcePath = join(directory, 'v2.sqlite')
+  const source = new DatabaseSync(sourcePath)
+  try {
+    applyMigrations(source, SQLITE_MIGRATIONS.slice(0, 2))
+    source
+      .prepare('INSERT INTO control_plane_records VALUES (?, ?, 1, ?, ?)')
+      .run('commands', 'historical', '{"signed":"original"}', '2026-09-22')
+  } finally {
+    source.close()
+  }
+  const bytes = new Uint8Array(await readFile(sourcePath))
+  await provider.restore({
+    schemaVersion: 2,
+    createdAt: '2026-09-22T00:00:00.000Z',
+    digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    bytes,
+  })
+  expect(await provider.transaction((tx) => tx.get('commands', 'historical'))).toMatchObject({
+    value: { signed: 'original' },
+    revision: 1,
+  })
+  expect(await provider.health()).toMatchObject({ version: String(SCHEMA_VERSION) })
+})
+
+for (const name of [
+  'control_plane_records_workspace_command_identity',
+  'control_plane_records_scope_correlation_insert',
+]) {
+  test(`restore rejects a missing workspace scope constraint: ${name}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sqlite-restore-scope-'))
+    const provider = new SqlitePersistenceProvider({ path: join(directory, 'live.sqlite') })
+    resources.push({ directory, provider })
+    await provider.migrate()
+    const snapshot = await provider.backup()
+    const path = join(directory, 'tampered.sqlite')
+    await writeFile(path, snapshot.bytes)
+    const database = new DatabaseSync(path)
+    try {
+      database.exec(`${name.includes('identity') ? 'DROP INDEX' : 'DROP TRIGGER'} ${name}`)
+    } finally {
+      database.close()
+    }
+    const bytes = new Uint8Array(await readFile(path))
+    await expect(
+      provider.restore({
+        ...snapshot,
+        bytes,
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      })
+    ).rejects.toMatchObject({ code: 'SQLITE_BACKUP_INVALID' })
   })
 }

@@ -1,3 +1,4 @@
+import { executionRetentionScopeFromRow } from './execution-scope.js'
 import {
   RetentionAssessmentCounter,
   RuntimeCommandRecordSchema,
@@ -96,7 +97,11 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
       const outcome = await this.database.transaction(async (transaction) => {
         await acquirePostgresRetentionHoldClassMutex(transaction, 'runtime-ledgers')
         const [owner] = await transaction
-          .select({ workspaceId: executions.workspaceId, projectId: executions.projectId })
+          .select({
+            workspaceId: executions.workspaceId,
+            projectId: executions.projectId,
+            executionScope: executions.executionScope,
+          })
           .from(executions)
           .where(eq(executions.executionId, candidate.executionId))
           .limit(1)
@@ -141,11 +146,7 @@ export class PostgresRuntimeCommandRepository implements RuntimeCommandRepositor
           transaction,
           {
             classId: 'runtime-ledgers',
-            scope: {
-              kind: 'project',
-              workspaceId: owner.workspaceId,
-              projectId: owner.projectId,
-            },
+            scope: executionRetentionScopeFromRow(owner),
           },
           options.retentionHoldPolicy
         )

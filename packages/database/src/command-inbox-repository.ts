@@ -1,3 +1,5 @@
+import { PostgresContextPackageRepository } from './context-package-repository.js'
+import { executionScopeFieldsFromRow, executionRetentionScopeFromRow } from './execution-scope.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CommandInboxError,
@@ -11,6 +13,8 @@ import {
   type Execution,
   RetentionAssessmentCounter,
   evaluateRetentionEligibility,
+  executionScopeCanNarrow,
+  executionScopesEqual,
   retiredCommandKeyCandidates,
   retiredCommandKeyFromMetadataV2,
   retiredCommandKeyV1,
@@ -24,6 +28,7 @@ import {
 import {
   executionBudgetAdmissionSource,
   executionPlanBudgetAllowance,
+  assertExecutionPlanDerivedFrom,
   type ExecutionPlan,
 } from '@control-plane/execution-plan'
 import {
@@ -32,7 +37,7 @@ import {
   type DurableUsageBudgetSummary,
 } from '@control-plane/usage-ledger'
 import { DurableUsageError } from '@control-plane/usage-ledger/durable-contract'
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { fromExecutionRow, toExecutionRow } from './execution-repository.js'
 import { commandInbox } from './schema/commands.js'
@@ -96,9 +101,11 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         operation: commandInbox.operation,
         workspaceId: commandInbox.workspaceId,
         projectId: commandInbox.projectId,
+        executionScope: commandInbox.executionScope,
         idempotencyKey: commandInbox.idempotencyKey,
         ownerWorkspaceId: executions.workspaceId,
         ownerProjectId: executions.projectId,
+        ownerExecutionScope: executions.executionScope,
       })
       .from(commandInbox)
       .innerJoin(executions, eq(executions.executionId, commandInbox.executionId))
@@ -120,9 +127,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
                   inArray(
                     retiredCommandKeys.scopeKey,
                     candidates.flatMap((candidate) => {
-                      const keys = retiredCommandKeyCandidates(
-                        CommandInboxScopeSchema.parse(candidate)
-                      )
+                      const keys = retiredCommandKeyCandidates(commandScopeFromRow(candidate))
                       return [keys.legacyKey, keys.metadata.scopeKey]
                     })
                   )
@@ -141,11 +146,11 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           transaction,
           {
             classId: 'command-inbox',
-            scope: {
-              kind: 'project',
+            scope: executionRetentionScopeFromRow({
               workspaceId: candidate.ownerWorkspaceId,
               projectId: candidate.ownerProjectId,
-            },
+              executionScope: candidate.ownerExecutionScope,
+            }),
           },
           options.retentionHoldPolicy
         )
@@ -159,7 +164,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           terminalExecutionStates.has(candidate.executionState),
         publicationSettled: true,
         rejectionKeyReserved: (() => {
-          const keys = retiredCommandKeyCandidates(CommandInboxScopeSchema.parse(candidate))
+          const keys = retiredCommandKeyCandidates(commandScopeFromRow(candidate))
           return retiredKeys.has(keys.legacyKey) || retiredKeys.has(keys.metadata.scopeKey)
         })(),
         pendingReferences: candidate.reconciliationRequiredAt === null ? 0 : 1,
@@ -219,6 +224,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
             state: executions.state,
             workspaceId: executions.workspaceId,
             projectId: executions.projectId,
+            executionScope: executions.executionScope,
           })
           .from(executions)
           .where(eq(executions.executionId, candidate.executionId))
@@ -235,6 +241,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
             operation: commandInbox.operation,
             workspaceId: commandInbox.workspaceId,
             projectId: commandInbox.projectId,
+            executionScope: commandInbox.executionScope,
             idempotencyKey: commandInbox.idempotencyKey,
           })
           .from(commandInbox)
@@ -246,7 +253,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
         if (stored.workspaceId !== owner.workspaceId || stored.projectId !== owner.projectId) {
           throw new RetentionHoldError('RETENTION_HOLD_STORAGE_INCONSISTENT')
         }
-        const keys = retiredCommandKeyCandidates(CommandInboxScopeSchema.parse(stored))
+        const keys = retiredCommandKeyCandidates(commandScopeFromRow(stored))
         const retirements = await transaction
           .select({
             scopeKey: retiredCommandKeys.scopeKey,
@@ -273,7 +280,7 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           transaction,
           {
             classId: 'command-inbox',
-            scope: { kind: 'project', workspaceId: owner.workspaceId, projectId: owner.projectId },
+            scope: executionRetentionScopeFromRow(owner),
           },
           options.retentionHoldPolicy
         )
@@ -354,6 +361,9 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
   ): Promise<CommandAcceptanceResult> {
     const parsedCommand = CommandInboxRecordSchema.parse(command)
     const parsedExecution = ExecutionSchema.parse(execution)
+    if (!executionScopesEqual(parsedCommand, parsedExecution.correlation)) {
+      throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+    }
     return this.database.transaction(
       async (transaction) => {
         await acquireAdmissionRolloutSharedLock(transaction)
@@ -390,17 +400,18 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
           ) {
             throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
           }
-          if (this.#budgetAdmission) {
+          if (this.#budgetAdmission || parsedExecution.correlation.executionScope !== undefined) {
             const plan = await new PostgresExecutionPlanRepository(transaction).get(
               parsedExecution.executionPlan
             )
             if (plan === undefined) throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
-            allowance = await this.#admissionAllowance(
+            const verifiedAllowance = await this.#admissionAllowance(
               transaction,
               parsedCommand,
               parsedExecution,
               plan
             )
+            if (this.#budgetAdmission) allowance = verifiedAllowance
           }
         }
         const insertedCommand = await transaction
@@ -757,14 +768,30 @@ export class PostgresCommandAcceptanceRepository implements CommandAcceptanceRep
       const parent = fromExecutionRow(parentRow)
       if (
         parent.executionId !== execution.parentExecutionId ||
-        parent.correlation.workspaceId !== execution.correlation.workspaceId ||
-        parent.correlation.projectId !== execution.correlation.projectId ||
+        !executionScopeCanNarrow(parent.correlation, execution.correlation) ||
         parentPlan === undefined ||
         parent.executionPlan.executionPlanId !== parentPlan.executionPlanId ||
         parent.executionPlan.contentDigest !== parentPlan.contentDigest
       ) {
         throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
       }
+      const persistedParentPlan = await new PostgresExecutionPlanRepository(transaction).get(
+        parent.executionPlan
+      )
+      const contexts = new PostgresContextPackageRepository(transaction)
+      const parentContext =
+        persistedParentPlan === undefined
+          ? undefined
+          : await contexts.get(persistedParentPlan.contextPackage)
+      const childContext = await contexts.get(plan.contextPackage)
+      if (
+        persistedParentPlan === undefined ||
+        parentContext === undefined ||
+        childContext === undefined
+      ) {
+        throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
+      }
+      assertExecutionPlanDerivedFrom(persistedParentPlan, plan, parentContext, childContext)
     }
     return executionPlanBudgetAllowance(command, execution, plan)
   }
@@ -892,7 +919,8 @@ function toCommandRow(command: CommandInboxRecord): typeof commandInbox.$inferIn
     callerPrincipalId: command.callerPrincipalId,
     operation: command.operation,
     workspaceId: command.workspaceId,
-    projectId: command.projectId,
+    projectId: command.projectId ?? null,
+    executionScope: command.executionScope ?? null,
     taskId: command.taskId,
     agentId: command.agentId,
     requestId: command.requestId,
@@ -938,7 +966,7 @@ function fromCommandRow(row: CommandRow): CommandInboxRecord {
     callerPrincipalId: row.callerPrincipalId,
     operation: row.operation,
     workspaceId: row.workspaceId,
-    projectId: row.projectId,
+    ...executionScopeFieldsFromRow(row),
     taskId: row.taskId,
     agentId: row.agentId,
     requestId: row.requestId,
@@ -972,11 +1000,28 @@ function scopeWhere(scope: CommandInboxScope) {
     eq(commandInbox.callerPrincipalId, scope.callerPrincipalId),
     eq(commandInbox.operation, scope.operation),
     eq(commandInbox.workspaceId, scope.workspaceId),
-    eq(commandInbox.projectId, scope.projectId),
+    scope.projectId === undefined
+      ? isNull(commandInbox.projectId)
+      : eq(commandInbox.projectId, scope.projectId),
     eq(commandInbox.idempotencyKey, scope.idempotencyKey)
   )
 }
 
 function optionalDate(value: string | undefined): Date | null {
   return value ? new Date(value) : null
+}
+
+function commandScopeFromRow(
+  row: Pick<
+    CommandRow,
+    | 'callerPrincipalId'
+    | 'operation'
+    | 'workspaceId'
+    | 'projectId'
+    | 'executionScope'
+    | 'idempotencyKey'
+  >
+): CommandInboxScope {
+  const { projectId: _projectId, executionScope: _executionScope, ...fields } = row
+  return CommandInboxScopeSchema.parse({ ...fields, ...executionScopeFieldsFromRow(row) })
 }

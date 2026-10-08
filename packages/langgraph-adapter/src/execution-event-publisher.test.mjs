@@ -149,6 +149,55 @@ function graphEvent(overrides = {}) {
   }
 }
 
+test('project-only graph event publication rejects workspace ownership before attempts, plans or events', async () => {
+  const environment = await createEnvironment()
+  try {
+    const command = await environment.commands.getByExecutionId(executionId)
+    const execution = await environment.commands.getExecution(executionId)
+    const { projectId: _commandProjectId, ...workspaceCommand } = command
+    const { projectId: _executionProjectId, ...correlation } = execution.correlation
+    let reads = 0
+    let writes = 0
+    const publisher = new DurableGraphEventPublisher({
+      commands: {
+        getByExecutionId: async () => ({
+          ...workspaceCommand,
+          executionPlan: { ...command.executionPlan, schemaVersion: 2 },
+          executionScope: { schemaVersion: 1, kind: 'workspace' },
+        }),
+        getExecution: async () => ({
+          ...execution,
+          executionPlan: { ...execution.executionPlan, schemaVersion: 2 },
+          correlation: { ...correlation, executionScope: { schemaVersion: 1, kind: 'workspace' } },
+        }),
+      },
+      attempts: {
+        getAttempt: async () => {
+          reads++
+        },
+      },
+      plans: {
+        get: async () => {
+          reads++
+        },
+      },
+      events: {
+        append: async () => {
+          writes++
+        },
+      },
+    })
+    await expect(publisher.publish(graphEvent(), 'workspace-denial')).rejects.toMatchObject({
+      code: 'GRAPH_EVENT_SCOPE_MISMATCH',
+    })
+    expect(reads).toBe(0)
+    expect(writes).toBe(0)
+  } finally {
+    await environment.provider.close()
+    await rm(environment.directory, { recursive: true, force: true })
+  }
+})
+
 test('publishes canonical graph events from trusted SQLite records and deduplicates after restart', async () => {
   const environment = await createEnvironment()
   let provider = environment.provider

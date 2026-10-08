@@ -1,3 +1,4 @@
+import type { ExecutionScope } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import { CommandInboxService, type CommandAcceptanceRepository } from './command-inbox.js'
 import type { ExecutionCancellationReceipt } from './execution-cancellation-command.js'
@@ -192,7 +193,8 @@ export interface ReconciliationEffectsPorts {
     listByExecution(input: {
       readonly executionId: string
       readonly workspaceId: string
-      readonly projectId: string
+      readonly projectId?: string | undefined
+      readonly executionScope?: ExecutionScope | undefined
       readonly limit: number
     }): Promise<readonly ExecutionCancellationReceipt[]>
   }
@@ -293,6 +295,7 @@ export function createReconciliationEffects(
           executionId: execution.executionId,
           workspaceId: execution.correlation.workspaceId,
           projectId: execution.correlation.projectId,
+          executionScope: execution.correlation.executionScope,
           limit: 1,
         })
         if (cancellations.length > 0) return

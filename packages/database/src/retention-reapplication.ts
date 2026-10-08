@@ -1,3 +1,4 @@
+import { executionScopeFieldsFromRow } from './execution-scope.js'
 import {
   CommandInboxScopeSchema,
   retiredCommandKeyCandidates,
@@ -259,6 +260,7 @@ export class PostgresRetentionReapplication {
           operation: commandInbox.operation,
           workspaceId: commandInbox.workspaceId,
           projectId: commandInbox.projectId,
+          executionScope: commandInbox.executionScope,
           idempotencyKey: commandInbox.idempotencyKey,
           executionId: commandInbox.executionId,
         })
@@ -276,7 +278,7 @@ export class PostgresRetentionReapplication {
           callerPrincipalId: source.callerPrincipalId,
           operation: source.operation,
           workspaceId: source.workspaceId,
-          projectId: source.projectId,
+          ...executionScopeFieldsFromRow(source),
           idempotencyKey: source.idempotencyKey,
         })
       )

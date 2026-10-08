@@ -1,4 +1,5 @@
 import { IdentifierSchemas } from '@control-plane/contracts'
+import { ExecutionScopeSchema, type ExecutionScope } from '@control-plane/contracts'
 import { z } from 'zod'
 
 export const RetentionHoldIdSchema = z
@@ -141,7 +142,26 @@ export type RetentionHoldAdministrationRequest = z.output<
 export interface RetentionHoldTarget {
   readonly classId: string
   /** Omitted/class means tenant scope is unavailable, not a wildcard for scoped holds. */
-  readonly scope?: RetentionHoldScope | undefined
+  readonly scope?: (RetentionHoldScope & { readonly executionScope?: ExecutionScope }) | undefined
+}
+
+/** Only a validated explicit workspace execution is known to have no project owner. */
+export function parseRetentionHoldTargetScope(input: RetentionHoldTarget['scope']) {
+  if (input === undefined) return { scope: undefined, workspaceExecution: false }
+  const { executionScope, ...owner } = input
+  const parsed = RetentionHoldScopeSchema.safeParse(owner)
+  const execution =
+    executionScope === undefined ? undefined : ExecutionScopeSchema.safeParse(executionScope)
+  if (
+    !parsed.success ||
+    (execution !== undefined &&
+      (!execution.success ||
+        execution.data.kind !== 'workspace' ||
+        parsed.data.kind !== 'workspace'))
+  ) {
+    throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+  }
+  return { scope: parsed.data, workspaceExecution: execution !== undefined }
 }
 
 export interface RetentionHoldRepository {
@@ -393,12 +413,9 @@ export function countMatchingActiveRetentionHolds(input: {
     throw new RetentionHoldError('RETENTION_HOLD_CLASS_UNCONFIGURED')
   const policy = parsedPolicy[targetClass.data]
   if (policy === undefined) throw new RetentionHoldError('RETENTION_HOLD_CLASS_UNCONFIGURED')
-  let targetScope: RetentionHoldScope | undefined
-  if (input.target.scope !== undefined) {
-    const parsedScope = RetentionHoldScopeSchema.safeParse(input.target.scope)
-    if (!parsedScope.success) throw new RetentionHoldError('RETENTION_HOLD_TARGET_SCOPE_MISSING')
-    targetScope = parsedScope.data
-  }
+  const { scope: targetScope, workspaceExecution } = parseRetentionHoldTargetScope(
+    input.target.scope
+  )
   let holds: RetentionHold[]
   try {
     holds = input.holds.map((value) => RetentionHoldSchema.parse(value))
@@ -429,7 +446,7 @@ export function countMatchingActiveRetentionHolds(input: {
 
   const targetWorkspaceId = targetScope.workspaceId
   const targetProjectId = targetScope.kind === 'project' ? targetScope.projectId : undefined
-  if (targetScope.kind === 'workspace') {
+  if (targetScope.kind === 'workspace' && !workspaceExecution) {
     if (
       active.some(
         (hold) => hold.scope.kind === 'project' && hold.scope.workspaceId === targetWorkspaceId

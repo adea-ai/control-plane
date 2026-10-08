@@ -3,6 +3,8 @@ import {
   ExecutionAttemptSchema,
   ExecutionCancellationReceiptSchema,
   ExecutionSchema,
+  executionScopesEqual,
+  executionRetentionScope,
   InteractionCommandReceiptSchema,
   InteractionRequestSchema,
   ReconciliationCheckpointSchema,
@@ -161,14 +163,9 @@ export class SqliteReceiptRetention {
               if (
                 owner?.success &&
                 owner.data.executionId === executionId &&
-                owner.data.correlation.workspaceId === request.workspaceId &&
-                owner.data.correlation.projectId === request.projectId
+                executionScopesEqual(owner.data.correlation, request)
               ) {
-                holdScope = {
-                  kind: 'project',
-                  workspaceId: request.workspaceId,
-                  projectId: request.projectId,
-                }
+                holdScope = executionRetentionScope(request)
                 terminalAt = owner.data.terminalAt
                 ownerTerminal = terminalStates.has(owner.data.state) && terminalAt !== undefined
                 if (ownerTerminal) {

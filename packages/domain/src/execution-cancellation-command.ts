@@ -2,18 +2,28 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import {
   ExecutionCancellationCommandSchema,
+  validateExecutionScopeFields,
+  executionScopesEqual,
+  executionScopeOf,
   ExecutionCancellationCommandResultSchema,
   type ExecutionCancellationCommand,
 } from '@control-plane/contracts'
-import type { CommandAcceptanceRepository } from './command-inbox.js'
+import type {
+  CommandAcceptanceRepository,
+  ExecutionPlanAcceptanceValidator,
+} from './command-inbox.js'
 
-export const ExecutionCancellationScopeSchema = ExecutionCancellationCommandSchema.pick({
-  workspaceId: true,
-  projectId: true,
-  caller: true,
-  operation: true,
-  idempotencyKey: true,
-}).strip()
+export const ExecutionCancellationScopeSchema = z
+  .object({
+    workspaceId: ExecutionCancellationCommandSchema.shape.workspaceId,
+    projectId: ExecutionCancellationCommandSchema.shape.projectId,
+    executionScope: ExecutionCancellationCommandSchema.shape.executionScope,
+    caller: ExecutionCancellationCommandSchema.shape.caller,
+    operation: ExecutionCancellationCommandSchema.shape.operation,
+    idempotencyKey: ExecutionCancellationCommandSchema.shape.idempotencyKey,
+  })
+  .strip()
+  .superRefine(validateExecutionScopeFields)
 export const ExecutionCancellationReceiptSchema = z.strictObject({
   request: ExecutionCancellationCommandSchema,
   acceptedAt: z.iso.datetime().optional(),
@@ -35,6 +45,15 @@ export interface ExecutionCancellationDispatcher {
 }
 export function executionCancellationScopeKey(input: ExecutionCancellationScope): string {
   const scope = ExecutionCancellationScopeSchema.parse(input)
+  if (executionScopeOf(scope).kind === 'workspace')
+    return JSON.stringify([
+      'execution-scope/v1',
+      'workspace',
+      scope.caller.servicePrincipalId,
+      scope.workspaceId,
+      scope.operation,
+      scope.idempotencyKey,
+    ])
   return JSON.stringify([
     scope.caller.servicePrincipalId,
     scope.workspaceId,
@@ -49,7 +68,8 @@ export class DurableExecutionCancellationService {
     readonly receipts: ExecutionCancellationRepository,
     readonly executions: Pick<CommandAcceptanceRepository, 'getByExecutionId' | 'getExecution'>,
     readonly dispatcher: ExecutionCancellationDispatcher,
-    readonly now: () => string = () => new Date().toISOString()
+    readonly now: () => string = () => new Date().toISOString(),
+    readonly scopeAuthority?: Pick<ExecutionPlanAcceptanceValidator, 'authorizeScope'>
   ) {}
 
   async cancel(input: unknown, authenticatedPrincipalId: string) {
@@ -67,10 +87,19 @@ export class DurableExecutionCancellationService {
       accepted.callerPrincipalId !== authenticatedPrincipalId ||
       accepted.executionId !== request.payload.executionId ||
       execution.executionId !== request.payload.executionId ||
-      accepted.workspaceId !== request.workspaceId ||
-      accepted.projectId !== request.projectId ||
-      execution.correlation.workspaceId !== request.workspaceId ||
-      execution.correlation.projectId !== request.projectId
+      !executionScopesEqual(accepted, request) ||
+      !executionScopesEqual(execution.correlation, request)
+    )
+      throw new Error('EXECUTION_CANCELLATION_SCOPE_REJECTED')
+    if (
+      accepted.executionScope !== undefined &&
+      !(await this.scopeAuthority?.authorizeScope?.({
+        workspaceId: accepted.workspaceId,
+        projectId: accepted.projectId,
+        executionScope: accepted.executionScope,
+        executionPlan: accepted.executionPlan,
+        callerPrincipalId: authenticatedPrincipalId,
+      }))
     )
       throw new Error('EXECUTION_CANCELLATION_SCOPE_REJECTED')
     const existing = await this.receipts.get(request)

@@ -430,7 +430,7 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
           HOSTED_GRAPH_TOOL_EXECUTOR,
           {
             workspaceId: operation.workspaceId,
-            projectId: execution.correlation.projectId,
+            projectId: authority.projectId,
           }
         )
       )
@@ -549,6 +549,8 @@ export class HostedGraphToolOperations implements GraphNodeOperationPort {
     if (threadId !== `graph:${executionId}`) throw new Error('GRAPH_TOOL_THREAD_MISMATCH')
     const execution = await this.#options.executions.getExecution(executionId)
     if (!execution) return false
+    if (execution.correlation.projectId === undefined)
+      throw new Error('HOSTED_GRAPH_TOOL_WORKSPACE_SCOPE_UNSUPPORTED')
     await this.#cancellations.record({
       workspaceId: execution.correlation.workspaceId,
       executionId,
@@ -665,6 +667,7 @@ export async function authorizeHostedGraphTool(
     !execution ||
     !attempt ||
     !command ||
+    execution.correlation.projectId === undefined ||
     execution.correlation.workspaceId !== operation.workspaceId ||
     execution.correlation.projectId !== command.projectId ||
     command.workspaceId !== operation.workspaceId ||
@@ -755,6 +758,7 @@ export async function authorizeHostedGraphTool(
     throw new Error('HOSTED_GRAPH_TOOL_APPROVAL_DISABLED')
   }
   return {
+    projectId: execution.correlation.projectId,
     execution,
     attempt,
     command,

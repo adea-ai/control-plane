@@ -1,3 +1,4 @@
+import { executionRetentionScopeFromRow } from './execution-scope.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ContextCompilationError,
@@ -224,7 +225,7 @@ export async function lockAndResetReferenceRetentionWindows(
       readonly contentDigest: string
       readonly schemaVersion: number
       readonly workspaceId: string
-      readonly projectId: string
+      readonly projectId: string | null
       readonly taskId: string
       readonly agentId: string
       readonly compiledAt: Date
@@ -238,6 +239,7 @@ export async function lockAndResetReferenceRetentionWindows(
         schemaVersion: executionPlans.schemaVersion,
         workspaceId: executionPlans.workspaceId,
         projectId: executionPlans.projectId,
+        executionScope: executionPlans.executionScope,
         taskId: executionPlans.taskId,
         agentId: executionPlans.agentId,
         compiledAt: executionPlans.compiledAt,
@@ -255,7 +257,8 @@ export async function lockAndResetReferenceRetentionWindows(
       row.schemaVersion !== plan.schemaVersion ||
       (reference.schemaVersion !== undefined && reference.schemaVersion !== plan.schemaVersion) ||
       row.workspaceId !== plan.correlation.workspaceId ||
-      row.projectId !== plan.correlation.projectId ||
+      row.projectId !== (plan.correlation.projectId ?? null) ||
+      !isDeepStrictEqual(row.executionScope, plan.correlation.executionScope ?? null) ||
       row.taskId !== plan.correlation.taskId ||
       row.agentId !== plan.correlation.agentId ||
       row.compiledAt.toISOString() !== plan.compiledAt
@@ -364,7 +367,8 @@ function toRow(package_: ContextPackage): typeof contextPackages.$inferInsert {
     contentDigest: package_.contentDigest,
     schemaVersion: package_.schemaVersion,
     workspaceId: package_.projectState.workspaceId,
-    projectId: package_.projectState.projectId,
+    projectId: package_.projectState.projectId ?? null,
+    executionScope: package_.projectState.executionScope ?? null,
     contextPackage: package_,
     compiledAt: new Date(package_.compiledAt),
   }
@@ -377,7 +381,8 @@ function fromRow(row: typeof contextPackages.$inferSelect): ContextPackage {
     row.contentDigest !== package_.contentDigest ||
     row.schemaVersion !== package_.schemaVersion ||
     row.workspaceId !== package_.projectState.workspaceId ||
-    row.projectId !== package_.projectState.projectId ||
+    row.projectId !== (package_.projectState.projectId ?? null) ||
+    !isDeepStrictEqual(row.executionScope, package_.projectState.executionScope ?? null) ||
     row.compiledAt.toISOString() !== package_.compiledAt
   ) {
     throw new Error('CONTEXT_PACKAGE_PERSISTENCE_INTEGRITY_ERROR')
@@ -469,7 +474,7 @@ export class PostgresContextPackageRetention {
           canonicalPackage.contextPackageId !== candidate.contextPackageId ||
           canonicalPackage.contentDigest !== stored.contentDigest ||
           canonicalPackage.projectState.workspaceId !== stored.workspaceId ||
-          canonicalPackage.projectState.projectId !== stored.projectId
+          (canonicalPackage.projectState.projectId ?? null) !== stored.projectId
         ) {
           return { verdict: undefined, removed: false, raced: true }
         }
@@ -507,11 +512,7 @@ export class PostgresContextPackageRetention {
           transaction,
           {
             classId: 'context-packages',
-            scope: {
-              kind: 'project',
-              workspaceId: canonicalPackage.projectState.workspaceId,
-              projectId: canonicalPackage.projectState.projectId,
-            },
+            scope: executionRetentionScopeFromRow(stored),
           },
           options.retentionHoldPolicy
         )

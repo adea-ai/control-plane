@@ -1,3 +1,4 @@
+import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
 import { index, integer, jsonb, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
 
@@ -10,7 +11,8 @@ export const executionPlans = pgTable(
     contentDigest: varchar('content_digest', { length: 71 }).notNull(),
     schemaVersion: integer('schema_version').notNull(),
     workspaceId: identifier('workspace_id').notNull(),
-    projectId: identifier('project_id').notNull(),
+    projectId: identifier('project_id'),
+    executionScope: executionScopeColumn(),
     taskId: identifier('task_id').notNull(),
     agentId: identifier('agent_id').notNull(),
     plan: jsonb('plan').$type<ExecutionPlan>().notNull(),
@@ -21,6 +23,7 @@ export const executionPlans = pgTable(
     createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    executionScopeCheck('execution_plans_scope_check', table),
     index('execution_plans_scope_index').on(
       table.workspaceId,
       table.projectId,

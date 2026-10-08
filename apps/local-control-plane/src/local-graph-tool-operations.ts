@@ -269,7 +269,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
         'local.object-store-json.v1',
         new ObjectStoreJsonToolExecutor(objectStore, {
           workspaceId: operation.workspaceId,
-          projectId: authority.execution.correlation.projectId,
+          projectId: authority.projectId,
         })
       )
       const interactions = new InteractionService(api.interactions)
@@ -387,6 +387,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
     const execution = await this.#options.api.executions.getExecution(identity.executionId)
     if (
       !execution ||
+      execution.correlation.projectId === undefined ||
       execution.correlation.workspaceId !== envelope.workspaceId ||
       execution.correlation.projectId !== envelope.projectId
     )
@@ -805,6 +806,7 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       !execution ||
       !attempt ||
       !command ||
+      execution.correlation.projectId === undefined ||
       execution.latestAttemptId !== call.attemptId ||
       command.workspaceId !== call.workspaceId ||
       execution.correlation.workspaceId !== call.workspaceId
@@ -1229,6 +1231,8 @@ export class LocalGraphToolOperations implements GraphNodeOperationPort {
       const parsed = ExecutionSchema.safeParse(stored.value)
       if (!parsed.success || parsed.data.executionId !== executionId)
         throw new Error('TOOL_EFFECT_AUTHORITY_MISMATCH')
+      if (parsed.data.correlation.projectId === undefined)
+        throw new Error('GRAPH_TOOL_WORKSPACE_SCOPE_UNSUPPORTED')
       if (isTerminalExecution(parsed.data)) return undefined
       if (!(await transaction.get('graph-tool-cancellations', executionId)))
         await transaction.put({

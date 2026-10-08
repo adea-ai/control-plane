@@ -6,7 +6,7 @@ import {
   contextAuthoringCommandKey,
   type ContextPackage,
 } from '@control-plane/context'
-import { compareCodePointOrder } from '@control-plane/domain'
+import { compareCodePointOrder, executionScopeOf } from '@control-plane/domain'
 import {
   agentProfileVersions,
   agentProfiles,
@@ -441,6 +441,8 @@ async function readPostgresContextPackage(
   } catch {
     throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.contextPackageId])
   }
+  if (package_.schemaVersion !== 1 || executionScopeOf(package_.projectState).kind !== 'project')
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [reference.contextPackageId])
   if (
     row.contextPackageId !== reference.contextPackageId ||
     row.contentDigest !== reference.contentDigest ||
@@ -478,6 +480,8 @@ async function readPostgresExecutionPlan(
   } catch {
     throw new PortableMigrationError('PORTABLE_PLAN_STALE', [reference.executionPlanId])
   }
+  if (plan.schemaVersion !== 1 || executionScopeOf(plan.correlation).kind !== 'project')
+    throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [reference.executionPlanId])
   if (
     row.executionPlanId !== reference.executionPlanId ||
     row.contentDigest !== reference.contentDigest ||
@@ -667,6 +671,9 @@ async function writeRecord(
   }
   if (namespace === 'context-packages') {
     const value = ContextPackageSchema.parse(record.value)
+    const scope = executionScopeOf(value.projectState)
+    if (value.schemaVersion !== 1 || scope.kind !== 'project')
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
     await inserted(
       transaction
         .insert(contextPackages)
@@ -675,7 +682,7 @@ async function writeRecord(
           contentDigest: value.contentDigest,
           schemaVersion: value.schemaVersion,
           workspaceId: value.projectState.workspaceId,
-          projectId: value.projectState.projectId,
+          projectId: scope.projectId,
           contextPackage: value,
           compiledAt: new Date(value.compiledAt),
         })
@@ -707,6 +714,8 @@ async function writeRecord(
   }
   if (namespace === 'execution-validation-commands') {
     const value = ExecutionValidationCommandRecordSchema.parse(record.value)
+    if (value.scope.projectId === undefined)
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
     if (id !== executionValidationCommandKey(value.scope))
       throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
     await inserted(
@@ -727,6 +736,9 @@ async function writeRecord(
   }
   if (namespace === 'execution-plans') {
     const value = ExecutionPlanSchema.parse(record.value)
+    const scope = executionScopeOf(value.correlation)
+    if (value.schemaVersion !== 1 || scope.kind !== 'project')
+      throw new PortableMigrationError('PORTABLE_SCHEMA_INCOMPATIBLE', [record.logicalId])
     await inserted(
       transaction
         .insert(executionPlans)
@@ -735,7 +747,7 @@ async function writeRecord(
           contentDigest: value.contentDigest,
           schemaVersion: value.schemaVersion,
           workspaceId: value.correlation.workspaceId,
-          projectId: value.correlation.projectId,
+          projectId: scope.projectId,
           taskId: value.correlation.taskId,
           agentId: value.correlation.agentId,
           plan: value,

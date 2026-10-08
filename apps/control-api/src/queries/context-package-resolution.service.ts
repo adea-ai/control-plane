@@ -34,6 +34,7 @@ export class RepositoryContextPackageResolutionService implements ContextPackage
     }
     if (
       input.projectId === undefined ||
+      package_.projectState.projectId === undefined ||
       package_.projectState.workspaceId !== input.workspaceId ||
       package_.projectState.projectId !== input.projectId
     ) {

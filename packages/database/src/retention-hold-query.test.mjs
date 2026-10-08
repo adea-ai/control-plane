@@ -54,7 +54,66 @@ test('workspace lookup also reads nested project holds to fail closed on incompl
   expect(captured.query.sql).not.toContain('"project_id" =')
 })
 
-function captureQuery() {
+test('explicit workspace execution ownership ignores unrelated project holds while incomplete legacy scope fails closed', async () => {
+  const row = {
+    holdId: '00000000-0000-4000-8000-000000000001',
+    classId: 'context-packages',
+    scopeKind: 'project',
+    workspaceId,
+    projectId,
+    owner: 'workspace-owner',
+    reasonCode: 'legal-case',
+    createdAt: new Date('2026-10-08T12:00:00.000Z'),
+    createdByPrincipalRef: 'principal://fixture',
+    createdAuthorityRef: 'authority://fixture',
+    revision: 0,
+    releaseRequestId: null,
+    releasedAt: null,
+    releasedByPrincipalRef: null,
+    releaseAuthorityRef: null,
+  }
+  const target = {
+    classId: 'context-packages',
+    scope: {
+      kind: 'workspace',
+      workspaceId,
+      executionScope: { schemaVersion: 1, kind: 'workspace' },
+    },
+  }
+  expect(
+    await countPostgresMatchingActiveRetentionHolds(captureQuery([row]).transaction, target, policy)
+  ).toBe(0)
+  expect(
+    await countPostgresMatchingActiveRetentionHolds(
+      captureQuery([{ ...row, scopeKind: 'workspace', projectId: null }]).transaction,
+      target,
+      policy
+    )
+  ).toBe(1)
+  await expect(
+    countPostgresMatchingActiveRetentionHolds(
+      captureQuery([row]).transaction,
+      { classId: target.classId, scope: { kind: 'workspace', workspaceId } },
+      policy
+    )
+  ).rejects.toThrow('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+  await expect(
+    countPostgresMatchingActiveRetentionHolds(
+      captureQuery().transaction,
+      {
+        classId: target.classId,
+        scope: {
+          kind: 'workspace',
+          workspaceId,
+          executionScope: { schemaVersion: 1, kind: 'project', projectId },
+        },
+      },
+      policy
+    )
+  ).rejects.toThrow('RETENTION_HOLD_TARGET_SCOPE_MISSING')
+})
+
+function captureQuery(rows = []) {
   const captured = {}
   return {
     get query() {
@@ -67,7 +126,7 @@ function captureQuery() {
             return {
               where(predicate) {
                 captured.query = new PgDialect().sqlToQuery(predicate)
-                return Promise.resolve([])
+                return Promise.resolve(rows)
               },
             }
           },

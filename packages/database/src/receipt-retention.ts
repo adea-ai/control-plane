@@ -1,9 +1,10 @@
+import { executionRetentionScopeFromRow } from './execution-scope.js'
 import {
   ExecutionCancellationReceiptSchema,
   InteractionCommandReceiptSchema,
   RetentionAssessmentCounter,
   type RetentionHoldPolicy,
-  type RetentionHoldScope,
+  type RetentionHoldTarget,
   evaluateRetentionEligibility,
   type RetentionDeletionResult,
   type RetentionJournalSink,
@@ -153,13 +154,13 @@ export class PostgresReceiptRetention {
         let settledAt: string | undefined
         let ownerExecutionId: string | undefined
         let ownerWorkspaceId: string | undefined
-        let ownerProjectId: string | undefined
-        let holdScope: RetentionHoldScope | undefined
+        let ownerProjectId: string | null | undefined
+        let holdScope: RetentionHoldTarget['scope']
         let interactionId: string | undefined
         if (
           observedReceipt !== undefined &&
           observed.workspaceId === observedReceipt.request.workspaceId &&
-          observed.projectId === observedReceipt.request.projectId
+          observed.projectId === (observedReceipt.request.projectId ?? null)
         ) {
           const request = observedReceipt.request
           const payload = request.payload as {
@@ -169,7 +170,7 @@ export class PostgresReceiptRetention {
           }
           ownerExecutionId = payload.executionId
           ownerWorkspaceId = request.workspaceId
-          ownerProjectId = request.projectId
+          ownerProjectId = request.projectId ?? null
           interactionId = payload.interactionId
           if (kind === 'interaction') {
             const [interaction] =
@@ -214,11 +215,7 @@ export class PostgresReceiptRetention {
               owner.workspaceId === ownerWorkspaceId &&
               owner.projectId === ownerProjectId
             ) {
-              holdScope = {
-                kind: 'project',
-                workspaceId: request.workspaceId,
-                projectId: request.projectId,
-              }
+              holdScope = executionRetentionScopeFromRow(owner)
               ownerTerminal = terminalStates.has(owner.state) && owner.terminalAt !== null
               const settlementInstants: string[] = []
               if (owner.terminalAt !== null) settlementInstants.push(owner.terminalAt.toISOString())

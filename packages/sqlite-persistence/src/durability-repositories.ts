@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from 'node:util'
 import type { JsonValue, PersistenceProvider } from '@control-plane/deployment'
 import {
   ExecutionAttemptSchema,
+  executionRetentionScope,
+  executionScopesEqual,
   ExecutionSchema,
   ReconciliationCheckpointSchema,
   RuntimeCommandRecordSchema,
@@ -157,13 +159,8 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
           const state = owner?.state
           const scope =
             owner?.executionId === event.executionId &&
-            owner.correlation.workspaceId === event.correlation.workspaceId &&
-            owner.correlation.projectId === event.correlation.projectId
-              ? {
-                  kind: 'project' as const,
-                  workspaceId: owner.correlation.workspaceId,
-                  projectId: owner.correlation.projectId,
-                }
+            executionScopesEqual(owner.correlation, event.correlation)
+              ? executionRetentionScope(owner.correlation)
               : undefined
           const holds = await countSqliteMatchingActiveRetentionHolds(
             transaction,
@@ -254,13 +251,8 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
           const state = owner?.state
           const scope =
             owner?.executionId === event.executionId &&
-            owner.correlation.workspaceId === event.correlation.workspaceId &&
-            owner.correlation.projectId === event.correlation.projectId
-              ? {
-                  kind: 'project' as const,
-                  workspaceId: owner.correlation.workspaceId,
-                  projectId: owner.correlation.projectId,
-                }
+            executionScopesEqual(owner.correlation, event.correlation)
+              ? executionRetentionScope(owner.correlation)
               : undefined
           const holds = await countSqliteMatchingActiveRetentionHolds(
             transaction,
@@ -749,11 +741,7 @@ export class SqliteRuntimeCommandRepository implements RuntimeCommandRepository 
           const scope =
             execution?.executionId === command.executionId &&
             execution.correlation.workspaceId === command.workspaceId
-              ? {
-                  kind: 'project' as const,
-                  workspaceId: command.workspaceId,
-                  projectId: execution.correlation.projectId,
-                }
+              ? executionRetentionScope(execution.correlation)
               : undefined
           const holds = await countSqliteMatchingActiveRetentionHolds(
             transaction,
@@ -990,6 +978,14 @@ async function appendEvent(
   draft: ExecutionEventDraft
 ): Promise<ExecutionEvent | undefined> {
   const sanitized = sanitizeExecutionEventDraft(draft)
+  if (sanitized.correlation.executionScope !== undefined) {
+    const owner = await transaction.get(namespaces.executions, recordId(sanitized.executionId))
+    if (
+      owner === undefined ||
+      !executionScopesEqual(ExecutionSchema.parse(owner.value).correlation, sanitized.correlation)
+    )
+      throw new Error('SQLITE_EXECUTION_EVENT_SCOPE_MISMATCH')
+  }
   const id = recordId(sanitized.eventId)
   if ((await transaction.get(namespaces.events, id)) !== undefined) return undefined
   // Deleted events keep their deduplication identity in the retired namespace:

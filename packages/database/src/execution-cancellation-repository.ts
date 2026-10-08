@@ -1,12 +1,14 @@
+import { executionScopeFieldsFromRow } from './execution-scope.js'
 import { createHash } from 'node:crypto'
 import {
   ExecutionCancellationReceiptSchema,
   executionCancellationScopeKey,
+  executionScopesEqual,
   type ExecutionCancellationReceipt,
   type ExecutionCancellationRepository,
   type ExecutionCancellationScope,
 } from '@control-plane/domain'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { ControlPlaneDatabase } from './connection.js'
 import { executionCancellations } from './schema/execution-cancellations.js'
 import { executions } from './schema/executions.js'
@@ -33,21 +35,28 @@ export class PostgresExecutionCancellationRepository implements ExecutionCancell
       const existing = await read(transaction, receipt.request)
       if (existing) return { receipt: existing, inserted: false }
       const [owner] = await transaction
-        .select({ workspaceId: executions.workspaceId, projectId: executions.projectId })
+        .select({
+          workspaceId: executions.workspaceId,
+          projectId: executions.projectId,
+          executionScope: executions.executionScope,
+        })
         .from(executions)
         .where(eq(executions.executionId, receipt.request.payload.executionId))
         .for('key share')
         .limit(1)
       if (owner === undefined) throw new Error('EXECUTION_CANCELLATION_EXECUTION_MISSING')
       if (
-        owner.workspaceId !== receipt.request.workspaceId ||
-        owner.projectId !== receipt.request.projectId
+        !executionScopesEqual(
+          { workspaceId: owner.workspaceId, ...executionScopeFieldsFromRow(owner) },
+          receipt.request
+        )
       )
         throw new Error('EXECUTION_CANCELLATION_SCOPE_MISMATCH')
       await transaction.insert(executionCancellations).values({
         commandKey: key(receipt.request),
         workspaceId: receipt.request.workspaceId,
-        projectId: receipt.request.projectId,
+        projectId: receipt.request.projectId ?? null,
+        executionScope: receipt.request.executionScope ?? null,
         receipt,
       })
       return { receipt, inserted: true }
@@ -83,7 +92,7 @@ export class PostgresExecutionCancellationRepository implements ExecutionCancell
   async listByExecution(input: {
     readonly executionId: string
     readonly workspaceId: string
-    readonly projectId: string
+    readonly projectId?: string
     readonly limit: number
   }): Promise<readonly ExecutionCancellationReceipt[]> {
     if (
@@ -99,7 +108,9 @@ export class PostgresExecutionCancellationRepository implements ExecutionCancell
       .where(
         and(
           eq(executionCancellations.workspaceId, input.workspaceId),
-          eq(executionCancellations.projectId, input.projectId),
+          input.projectId === undefined
+            ? isNull(executionCancellations.projectId)
+            : eq(executionCancellations.projectId, input.projectId),
           sql`${executionCancellations.receipt} -> 'request' -> 'payload' ->> 'executionId' = ${input.executionId}`
         )
       )
@@ -120,11 +131,14 @@ async function read(
     .where(eq(executionCancellations.commandKey, key(scope)))
     .limit(1)
   if (!row) return undefined
+  executionScopeFieldsFromRow(row)
   const receipt = ExecutionCancellationReceiptSchema.parse(row.receipt)
   if (
     executionCancellationScopeKey(receipt.request) !== executionCancellationScopeKey(scope) ||
-    row.workspaceId !== receipt.request.workspaceId ||
-    row.projectId !== receipt.request.projectId
+    !executionScopesEqual(
+      { workspaceId: row.workspaceId, ...executionScopeFieldsFromRow(row) },
+      receipt.request
+    )
   )
     throw new Error('EXECUTION_CANCELLATION_SCOPE_MISMATCH')
   return receipt
