@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.4.0...pi-cloudflare-host-v0.5.0) (2026-10-08)
+
+
+### Features
+
+* **pi-cloudflare:** add canonical read-only session binding ([#985](https://github.com/adea-ai/control-plane/issues/985)) ([e35b1fc](https://github.com/adea-ai/control-plane/commit/e35b1fcf62ffe5accbe97e49a049365d42267706))
+
 ## [0.4.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.3.0...pi-cloudflare-host-v0.4.0) (2026-10-08)
 
 
