@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.4.0...model-gateway-v1.5.0) (2026-10-08)
+
+
+### Features
+
+* **models:** retain Pi lead payer confirmation across send boundaries ([#962](https://github.com/adea-ai/control-plane/issues/962)) ([8135624](https://github.com/adea-ai/control-plane/commit/813562406f26259027154a40e8566ebbe5a797ab))
+
+
+### Bug Fixes
+
+* **models:** break funding authorization import cycle ([#965](https://github.com/adea-ai/control-plane/issues/965)) ([e7ac922](https://github.com/adea-ai/control-plane/commit/e7ac922b0e42b91b11f5557a9df1195ed6d9c090))
+
 ## [1.4.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.3.0...model-gateway-v1.4.0) (2026-10-08)
 
 
