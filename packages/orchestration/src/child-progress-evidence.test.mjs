@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { canonicalJsonStringify } from '@control-plane/contracts'
 import { contextPackageSerializationFixtures, deriveContextPackage } from '@control-plane/context'
 import {
   ExecutionLifecycleService,
@@ -18,6 +19,7 @@ import {
 import { DelegationService, InMemoryDelegationRepository } from './delegation.ts'
 
 const digest = (character) => `sha256:${character.repeat(64)}`
+const encoder = new TextEncoder()
 
 const ids = {
   workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
@@ -70,9 +72,46 @@ const runningEvent = (overrides = {}) => ({
   ...overrides,
 })
 
+const serializedBytes = (packet) => encoder.encode(canonicalJsonStringify(packet)).byteLength
+
+/**
+ * Wraps a buffer and enforces the emission invariant on every packet the
+ * buffer produces in any test: each packet must satisfy its own parser and
+ * respect the configured serialized byte limit.
+ */
+function trackedBuffer(options) {
+  const buffer = new ChildProgressEvidenceBuffer(options)
+  const maximumBytes = options.maximumBytes ?? 16_384
+  const emitted = []
+  const verify = (packet) => {
+    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+    expect(serializedBytes(packet)).toBeLessThanOrEqual(maximumBytes)
+    emitted.push(packet)
+  }
+  return {
+    emitted,
+    accept(event) {
+      const receipt = buffer.accept(event)
+      if (receipt.sealedPacket) verify(receipt.sealedPacket)
+      return receipt
+    },
+    flush() {
+      const packet = buffer.flush()
+      if (packet) verify(packet)
+      return packet
+    },
+    readyPackets() {
+      return buffer.readyPackets()
+    },
+    stats() {
+      return buffer.stats()
+    },
+  }
+}
+
 describe('child progress evidence packets', () => {
   test('coalesces a burst of routine progress into bounded per-child snapshots', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     for (let index = 0; index < 250; index += 1) {
       const receipt = buffer.accept(
         runningEvent({ observedAt: at(index), metrics: { 'steps.completed': 1 } })
@@ -95,6 +134,7 @@ describe('child progress evidence packets', () => {
     expect(packet.firstEventAt).toBe(at(0))
     expect(packet.lastEventAt).toBe(at(249))
     expect(buffer.stats().readyPacketCount).toBe(0)
+    expect(buffer.emitted).toHaveLength(1)
   })
 
   test('identical event streams produce identical packet digests', () => {
@@ -104,18 +144,14 @@ describe('child progress evidence packets', () => {
       }
       return buffer.flush()
     }
-    const first = feed(
-      new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
-    )
-    const second = feed(
-      new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
-    )
+    const first = feed(trackedBuffer({ parentExecutionId: ids.parentExecutionId }))
+    const second = feed(trackedBuffer({ parentExecutionId: ids.parentExecutionId }))
     expect(first.contentDigest).toBe(second.contentDigest)
     expect(parseChildProgressEvidencePacket(first)).toEqual(first)
   })
 
   test('never drops terminal outcomes, failures, cancellations, or approval requests', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     const events = [
       runningEvent({ observedAt: at(0) }),
       runningEvent({
@@ -180,11 +216,10 @@ describe('child progress evidence packets', () => {
       expect(entry.generation).toBe(1)
       expect(entry.observedAt).toMatch(/^2026-08-25T18:05:0/)
     }
-    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
   })
 
   test('keeps the lead responsive by surfacing approval requests immediately', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     buffer.accept(runningEvent({ observedAt: at(0) }))
     const receipt = buffer.accept(
       runningEvent({
@@ -199,8 +234,20 @@ describe('child progress evidence packets', () => {
     expect(packet.entries[0].phase).toBe('awaiting_input')
   })
 
+  test('retains child-originated cancellations that carry no reason', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(runningEvent({ observedAt: at(0) }))
+    const receipt = buffer.accept(runningEvent({ phase: 'cancelled', observedAt: at(1_000) }))
+    expect(receipt).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    const packet = buffer.flush()
+    expect(packet.entries).toHaveLength(1)
+    expect(packet.entries[0].phase).toBe('cancelled')
+    expect(packet.entries[0].cancelReason).toBeUndefined()
+    expect(packet.childSnapshots[0].phase).toBe('cancelled')
+  })
+
   test('deduplicates duplicate delivery by eventId without double counting', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     const first = runningEvent({ observedAt: at(0), metrics: { 'tool.calls': 1 } })
     expect(buffer.accept(first).outcome).toBe('coalesced')
     expect(buffer.accept(first).outcome).toBe('duplicate')
@@ -215,8 +262,79 @@ describe('child progress evidence packets', () => {
     expect(buffer.stats().lifetimeDuplicateCount).toBe(2)
   })
 
+  test('rejects an eventId reused with changed content as conflicting', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    const original = runningEvent({ observedAt: at(0), metrics: { 'tool.calls': 1 } })
+    expect(buffer.accept(original).outcome).toBe('coalesced')
+    // Same eventId, different content for the same child.
+    expect(
+      buffer.accept({ ...original, observedAt: at(500), metrics: { 'tool.calls': 2 } })
+    ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_event' })
+    // Same eventId reused for a different child's terminal event.
+    const terminalForB = runningEvent({
+      delegationId: ids.delegationIdB,
+      childExecutionId: ids.childExecutionIdB,
+      phase: 'cancelled',
+      observedAt: at(1_000),
+    })
+    expect(buffer.accept({ ...terminalForB, eventId: original.eventId })).toMatchObject({
+      outcome: 'rejected',
+      reason: 'conflicting_event',
+    })
+    const packet = buffer.flush()
+    // Neither conflicting delivery folded; the original stands alone.
+    expect(packet.childSnapshots[0].observedEventCount).toBe(1)
+    expect(packet.childSnapshots[0].metrics['tool.calls']).toBe(1)
+    expect(packet.entries).toHaveLength(0)
+    expect(packet.rejectedEventCount).toBe(2)
+    expect(buffer.stats().lifetimeRejectionCount).toBe(2)
+  })
+
+  test('rejects changed child or attempt identity within a delegation generation', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    expect(
+      buffer.accept(runningEvent({ childAttemptId: ids.attemptIdA, observedAt: at(0) })).outcome
+    ).toBe('coalesced')
+    // Another child's execution under the same delegation generation.
+    expect(
+      buffer.accept(
+        runningEvent({
+          childExecutionId: ids.childExecutionIdB,
+          childAttemptId: ids.attemptIdB,
+          observedAt: at(1_000),
+        })
+      )
+    ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_child_identity' })
+    // A different attempt for the same generation.
+    expect(
+      buffer.accept(runningEvent({ childAttemptId: ids.attemptIdC, observedAt: at(2_000) }))
+    ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_child_identity' })
+    const packet = buffer.flush()
+    expect(packet.childSnapshots[0]).toMatchObject({
+      childExecutionId: ids.childExecutionIdA,
+      childAttemptId: ids.attemptIdA,
+      observedEventCount: 1,
+    })
+    // A fresh generation may move to a new attempt, but never to another
+    // child execution under the same delegation.
+    expect(
+      buffer.accept(
+        runningEvent({ generation: 2, childAttemptId: ids.attemptIdB, observedAt: at(3_000) })
+      ).outcome
+    ).toBe('coalesced')
+    expect(
+      buffer.accept(
+        runningEvent({
+          generation: 3,
+          childExecutionId: ids.childExecutionIdC,
+          observedAt: at(4_000),
+        })
+      )
+    ).toMatchObject({ outcome: 'rejected', reason: 'conflicting_child_identity' })
+  })
+
   test('rejects stale generations and never regresses snapshots on out-of-order updates', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     expect(buffer.accept(runningEvent({ generation: 2, observedAt: at(0) })).outcome).toBe(
       'coalesced'
     )
@@ -267,13 +385,17 @@ describe('child progress evidence packets', () => {
     // A retry with a fresh generation is accepted again after termination.
     expect(
       buffer.accept(
-        runningEvent({ generation: 3, observedAt: at(40_000), childAttemptId: ids.attemptIdA })
+        runningEvent({
+          generation: 3,
+          observedAt: at(40_000),
+          childAttemptId: ids.attemptIdA,
+        })
       ).outcome
     ).toBe('coalesced')
   })
 
   test('tracks concurrent children independently with sorted snapshots', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     const children = [
       { delegationId: ids.delegationIdA, childExecutionId: ids.childExecutionIdA },
       { delegationId: ids.delegationIdB, childExecutionId: ids.childExecutionIdB },
@@ -305,7 +427,7 @@ describe('child progress evidence packets', () => {
   })
 
   test('survives cancellation during batching and accepts the retry generation', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     buffer.accept(runningEvent({ observedAt: at(0) }))
     buffer.accept(
       runningEvent({
@@ -352,7 +474,7 @@ describe('child progress evidence packets', () => {
   })
 
   test('seals a full packet instead of dropping terminal events under entry pressure', () => {
-    const buffer = new ChildProgressEvidenceBuffer({
+    const buffer = trackedBuffer({
       parentExecutionId: ids.parentExecutionId,
       maximumEntries: 2,
     })
@@ -366,7 +488,6 @@ describe('child progress evidence packets', () => {
         runningEvent({
           delegationId: ids.delegationIdB,
           childExecutionId: ids.childExecutionIdB,
-          childAttemptId: ids.attemptIdB,
           phase: 'failed',
           observedAt: at(1_000),
           failure: { classification: 'timeout', code: 'CHILD_DEADLINE' },
@@ -377,7 +498,6 @@ describe('child progress evidence packets', () => {
       runningEvent({
         delegationId: ids.delegationIdC,
         childExecutionId: ids.childExecutionIdC,
-        childAttemptId: ids.attemptIdC,
         phase: 'cancelled',
         observedAt: at(2_000),
         cancelReason: 'user_request',
@@ -395,13 +515,14 @@ describe('child progress evidence packets', () => {
     // The pressure-sealed packet is queued; the flushed packet was delivered
     // directly by flush() and is never queued behind it.
     expect(buffer.readyPackets()).toStrictEqual([third.sealedPacket])
-    for (const packet of [third.sealedPacket, final]) {
-      expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
-    }
+    // Nothing was dropped: every terminal observation is in some packet.
+    expect(
+      buffer.emitted.flatMap((packet) => packet.entries).map((entry) => entry.phase)
+    ).toStrictEqual(['completed', 'failed', 'cancelled'])
   })
 
   test('seals when distinct children exceed the per-packet child budget', () => {
-    const buffer = new ChildProgressEvidenceBuffer({
+    const buffer = trackedBuffer({
       parentExecutionId: ids.parentExecutionId,
       maximumChildren: 2,
     })
@@ -422,9 +543,105 @@ describe('child progress evidence packets', () => {
     ])
   })
 
-  test('seals on the byte budget when snapshots grow', () => {
+  test('enforces the child budget for returning children after a flush', () => {
+    const buffer = trackedBuffer({
+      parentExecutionId: ids.parentExecutionId,
+      maximumChildren: 1,
+    })
+    const childA = { delegationId: ids.delegationIdA, childExecutionId: ids.childExecutionIdA }
+    const childB = { delegationId: ids.delegationIdB, childExecutionId: ids.childExecutionIdB }
+    buffer.accept(runningEvent({ ...childA, observedAt: at(0) }))
+    const first = buffer.flush()
+    expect(first.childSnapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual([
+      ids.delegationIdA,
+    ])
+    buffer.accept(runningEvent({ ...childB, observedAt: at(1_000) }))
+    // Child A returns while child B occupies the single-child packet.
+    const receipt = buffer.accept(runningEvent({ ...childA, observedAt: at(2_000) }))
+    expect(receipt.outcome).toBe('coalesced')
+    expect(receipt.sealedPacket).toBeDefined()
+    expect(
+      receipt.sealedPacket.childSnapshots.map((snapshot) => snapshot.delegationId)
+    ).toStrictEqual([ids.delegationIdB])
+    expect(buffer.readyPackets()).toStrictEqual([receipt.sealedPacket])
+    const final = buffer.flush()
+    expect(final.childSnapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual([
+      ids.delegationIdA,
+    ])
+    // No packet ever held two children.
+    for (const packet of buffer.emitted) {
+      expect(packet.childSnapshots.length).toBe(1)
+    }
+    expect(buffer.emitted.map((packet) => packet.sequence)).toStrictEqual([1, 2, 3])
+  })
+
+  test('rejects a single observation that cannot fit any packet within the byte budget', () => {
+    const oversizedMetrics = Object.fromEntries(
+      Array.from({ length: 16 }, (_, index) => [
+        `metrics.oversized.longKeyName.${String(index).padStart(2, '0')}`.padEnd(110, 'x'),
+        7,
+      ])
+    )
+    const buffer = trackedBuffer({
+      parentExecutionId: ids.parentExecutionId,
+      maximumBytes: 2048,
+    })
+    expect(() =>
+      buffer.accept(
+        runningEvent({
+          phase: 'failed',
+          observedAt: at(0),
+          failure: { classification: 'runtime_error', code: 'X'.repeat(256) },
+          metrics: oversizedMetrics,
+        })
+      )
+    ).toThrow(ChildProgressEvidenceError)
+    // Nothing was emitted and nothing is left half-open.
+    expect(buffer.flush()).toBeUndefined()
+    expect(buffer.emitted).toHaveLength(0)
+    expect(buffer.stats().openPacket).toBe(false)
+  })
+
+  test('seals with valid timestamps when a large entry follows a fitting snapshot', () => {
+    const largeMetrics = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `metrics.largeentry.longKeyName.${String(index).padStart(2, '0')}`.padEnd(90, 'y'),
+        7,
+      ])
+    )
+    const buffer = trackedBuffer({
+      parentExecutionId: ids.parentExecutionId,
+      maximumBytes: 2048,
+    })
+    const receipt = buffer.accept(
+      runningEvent({
+        phase: 'failed',
+        observedAt: at(0),
+        failure: { classification: 'runtime_error', code: 'X'.repeat(256) },
+        metrics: largeMetrics,
+      })
+    )
+    // The snapshot fits in a fresh packet; the entry does not fit beside it.
+    expect(receipt).toMatchObject({ outcome: 'retained', entryKind: 'terminal' })
+    expect(receipt.sealedPacket).toBeDefined()
+    const sealed = receipt.sealedPacket
+    // The sealed packet is valid for its own parser (timestamps included)
+    // even though the triggering event's entry moved to the next packet.
+    expect(parseChildProgressEvidencePacket(sealed)).toEqual(sealed)
+    expect(sealed.childSnapshots).toHaveLength(1)
+    expect(sealed.entries).toHaveLength(0)
+    expect(sealed.firstEventAt).toBe(at(0))
+    const final = buffer.flush()
+    expect(final.entries).toHaveLength(1)
+    expect(final.entries[0].failure.code).toBe('X'.repeat(256))
+    // The failure observation survived the split across both packets.
+    expect(buffer.emitted).toHaveLength(2)
+    expect(buffer.emitted.map((packet) => packet.sequence)).toStrictEqual([1, 2])
+  })
+
+  test('seals on the serialized byte budget when snapshots grow', () => {
     const longMetrics = Object.fromEntries(
-      Array.from({ length: 8 }, (_, index) => [
+      Array.from({ length: 16 }, (_, index) => [
         `metrics.pressure.longKeyForBudgetTesting.${String(index).padStart(2, '0')}.x`.padEnd(
           60,
           'k'
@@ -432,7 +649,7 @@ describe('child progress evidence packets', () => {
         1_000_000,
       ])
     )
-    const buffer = new ChildProgressEvidenceBuffer({
+    const buffer = trackedBuffer({
       parentExecutionId: ids.parentExecutionId,
       maximumBytes: 2048,
     })
@@ -450,19 +667,45 @@ describe('child progress evidence packets', () => {
         })
       )
     )
+    // One child fits within the full serialized budget; a second does not.
     expect(receipts[0].sealedPacket).toBeUndefined()
-    expect(receipts[1].sealedPacket).toBeUndefined()
-    expect(receipts[2].sealedPacket).toBeDefined()
-    expect(receipts[2].sealedPacket.childSnapshots).toHaveLength(2)
+    expect(receipts[1].sealedPacket).toBeDefined()
     const final = buffer.flush()
-    expect(final.childSnapshots).toHaveLength(1)
-    for (const packet of [receipts[2].sealedPacket, final]) {
-      expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
-    }
+    expect(final.childSnapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual([
+      ids.delegationIdC,
+    ])
+    // Snapshots are conserved across the seal boundary and no packet exceeds
+    // its budget (verified by the tracked-buffer invariant on every emission).
+    const snapshots = buffer.emitted.flatMap((packet) => packet.childSnapshots)
+    expect(snapshots.map((snapshot) => snapshot.delegationId)).toStrictEqual([
+      ids.delegationIdA,
+      ids.delegationIdB,
+      ids.delegationIdC,
+    ])
+  })
+
+  test('metric accumulation ignores inherited keys and saturates at safe integers', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(runningEvent({ observedAt: at(0), metrics: { toString: 2 } }))
+    buffer.accept(runningEvent({ observedAt: at(1_000), metrics: { toString: 3 } }))
+    buffer.accept(runningEvent({ observedAt: at(2_000), metrics: { hasOwnProperty: 4 } }))
+    buffer.accept(
+      runningEvent({ observedAt: at(3_000), metrics: { huge: Number.MAX_SAFE_INTEGER } })
+    )
+    const overflow = buffer.accept(runningEvent({ observedAt: at(4_000), metrics: { huge: 7 } }))
+    expect(overflow.outcome).toBe('coalesced')
+    const packet = buffer.flush()
+    const metrics = packet.childSnapshots[0].metrics
+    expect(typeof metrics['toString']).toBe('number')
+    expect(metrics['toString']).toBe(5)
+    expect(metrics['hasOwnProperty']).toBe(4)
+    expect(metrics['huge']).toBe(Number.MAX_SAFE_INTEGER)
+    // The packet survives its own parser with the inherited-key metrics.
+    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
   })
 
   test('rejects events for a foreign parent execution without opening a packet', () => {
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     expect(
       buffer.accept(runningEvent({ parentExecutionId: ids.foreignExecutionId }))
     ).toMatchObject({ outcome: 'rejected', reason: 'foreign_parent' })
@@ -490,6 +733,20 @@ describe('child progress evidence packets', () => {
     expect(() => buffer.accept(runningEvent({ terminalResultRef: ids.resultRefA }))).toThrow()
     expect(() => buffer.accept(runningEvent({ phase: 'completed' }))).toThrow()
     expect(buffer.stats().openPacket).toBe(false)
+  })
+
+  test('rejects sequence tampering: the digest covers the ordering identity', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    buffer.accept(runningEvent({ observedAt: at(0) }))
+    const packet = buffer.flush()
+    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
+    const resequenced = { ...packet, sequence: packet.sequence + 1 }
+    expect(() => parseChildProgressEvidencePacket(resequenced)).toThrow(ChildProgressEvidenceError)
+    try {
+      parseChildProgressEvidencePacket(resequenced)
+    } catch (error) {
+      expect(error.code).toBe('DIGEST_MISMATCH')
+    }
   })
 })
 
@@ -556,11 +813,52 @@ describe('delegation event adapter', () => {
     ).toMatchObject({ phase: 'cancelled', cancelReason: 'parent_cancelled' })
   })
 
+  test('preserves uncertainty when a child-originated cancellation has no reason', () => {
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
+    // Ordinary child cancellation: the delegation pipeline publishes no reason.
+    const withoutReason = delegationEventToEvidenceEvent({
+      event: delegationEvent({ type: 'delegation.cancelled', details: {} }),
+      eventId: eventId(),
+      generation: 1,
+    })
+    expect(withoutReason.phase).toBe('cancelled')
+    expect(withoutReason.cancelReason).toBeUndefined()
+    // A reason the contract does not know is dropped, not invented into an enum.
+    const unknownReason = delegationEventToEvidenceEvent({
+      event: delegationEvent({
+        type: 'delegation.cancelled',
+        details: { reason: 'sorter_malfunction' },
+      }),
+      eventId: eventId(),
+      generation: 1,
+    })
+    expect(unknownReason.cancelReason).toBeUndefined()
+    // Both adapt cleanly into retained cancellation evidence.
+    expect(buffer.accept(withoutReason).outcome).toBe('retained')
+    const second = delegationEventToEvidenceEvent({
+      event: delegationEvent({
+        type: 'delegation.cancelled',
+        details: { reason: 'sorter_malfunction' },
+        delegationId: ids.delegationIdB,
+        childExecutionId: ids.childExecutionIdB,
+      }),
+      eventId: eventId(),
+      generation: 1,
+    })
+    expect(buffer.accept(second).outcome).toBe('retained')
+    const packet = buffer.flush()
+    const cancellations = packet.entries.filter((entry) => entry.phase === 'cancelled')
+    expect(cancellations).toHaveLength(2)
+    for (const entry of cancellations) {
+      expect(entry.cancelReason).toBeUndefined()
+    }
+  })
+
   test('coalesces progress from the delegation persistence fixtures into packets', async () => {
     const fixture = await createDelegationFixture()
     await delegateChild(fixture, 'A')
     await delegateChild(fixture, 'B')
-    const buffer = new ChildProgressEvidenceBuffer({ parentExecutionId: ids.parentExecutionId })
+    const buffer = trackedBuffer({ parentExecutionId: ids.parentExecutionId })
     const lane = new Map([
       [ids.delegationIdA, 1_000],
       [ids.delegationIdB, 60_000],
@@ -600,9 +898,7 @@ describe('delegation event adapter', () => {
     const approval = await deliver(
       ids.delegationIdB,
       { state: 'awaiting_input' },
-      {
-        interaction: { interactionId: ids.interactionId, kind: 'approval' },
-      }
+      { interaction: { interactionId: ids.interactionId, kind: 'approval' } }
     )
     expect(approval.receipt).toMatchObject({ outcome: 'retained', entryKind: 'awaiting_input' })
     const approvalPacket = buffer.flush()
@@ -629,7 +925,6 @@ describe('delegation event adapter', () => {
       'completed',
       'completed',
     ])
-    expect(parseChildProgressEvidencePacket(packet)).toEqual(packet)
 
     // Duplicate redelivery of a terminal event is absorbed by eventId.
     const redeliveredEvent = fixture.events.at(-1)

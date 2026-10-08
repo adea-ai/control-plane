@@ -19,17 +19,22 @@ import { z } from 'zod'
  * `cancelled`, including cancellation transitions), failure metadata, and
  * approval / human-input requests (`awaiting_input`). When a packet bound
  * would be exceeded, the open packet is sealed and a fresh one is started —
- * bounds shrink packet size, never the retained evidence set.
+ * bounds shrink packet size, never the retained evidence set. The serialized
+ * byte limit covers the whole packet (headers, sequence, digest and all
+ * entries/snapshots), including the very first observation of a window, and
+ * every emitted packet satisfies its own parser and bound.
  *
  * Every observation carries the full job/attempt identity (`delegationId`,
  * `childExecutionId`, `childAttemptId`, owner-owned `generation`) and
  * provenance (`eventId`, `observedAt`). Duplicate deliveries are deduplicated
- * by `eventId`; events from a superseded generation or arriving after a
- * generation went terminal are rejected with an explicit receipt rather than
- * folded silently. All payload-shaped fields are opaque identifiers, digests,
- * enums, timestamps or bounded integers: evidence travels as authorized
- * references (artifact, interaction, result), never as copied secrets or
- * unrelated private context.
+ * by `eventId` against a content fingerprint; a reused `eventId` with changed
+ * content, or a changed child/attempt identity inside an existing delegation
+ * generation, is rejected with an explicit receipt rather than folded
+ * silently — as are events from a superseded generation, events arriving
+ * after a generation went terminal, and events for a foreign parent. All
+ * payload-shaped fields are opaque identifiers, digests, enums, timestamps or
+ * bounded integers: evidence travels as authorized references (artifact,
+ * interaction, result), never as copied secrets or unrelated private context.
  */
 
 const TimestampSchema = z.iso.datetime()
@@ -67,11 +72,33 @@ const FailureEvidenceSchema = z
 
 const MetricsSchema = z.record(ReferenceSchema, z.number().int().nonnegative())
 
+type EvidenceMetrics = z.output<typeof MetricsSchema>
+
+/**
+ * Own-property-safe, overflow-safe accumulation of metric counters. Inherited
+ * keys such as `toString` are never read, and sums saturate at
+ * `Number.MAX_SAFE_INTEGER` instead of losing integer precision.
+ */
+function accumulateMetrics(base: EvidenceMetrics, addition: EvidenceMetrics | undefined) {
+  const merged: EvidenceMetrics = { ...base }
+  if (addition === undefined) return merged
+  for (const [key, value] of Object.entries(addition)) {
+    const prior = Object.hasOwn(merged, key) ? (merged[key] as number) : 0
+    const sum = prior + value
+    merged[key] = sum > Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : sum
+  }
+  return merged
+}
+
 /**
  * A single child progress observation as delivered by the child-job owner.
  * `generation` is the owner-owned monotonic attempt/revision mark for the
  * delegation (for example the delegation record revision or the attempt
  * sequence); events below the high-water mark are stale by definition.
+ * `cancelReason` is present when the producer knows it (for example
+ * parent-initiated cascade cancels); a child-originated cancellation may
+ * legitimately carry no reason — that uncertainty is preserved, never
+ * papered over with an invented reason.
  */
 export const ChildProgressEvidenceEventSchema = z
   .object({
@@ -93,7 +120,7 @@ export const ChildProgressEvidenceEventSchema = z
   .strict()
   .superRefine((event, context) => {
     const requireFor = (
-      field: 'terminalResultRef' | 'failure' | 'cancelReason' | 'interaction',
+      field: 'terminalResultRef' | 'failure' | 'interaction',
       present: boolean,
       message: string
     ) => {
@@ -131,15 +158,9 @@ export const ChildProgressEvidenceEventSchema = z
     } else {
       requireAbsent('failure', event.failure !== undefined)
     }
-    if (event.phase === 'cancelled') {
-      requireFor(
-        'cancelReason',
-        event.cancelReason !== undefined,
-        'Cancelled child progress requires a cancellation reason'
-      )
-    } else {
-      requireAbsent('cancelReason', event.cancelReason !== undefined)
-    }
+    // A cancellation keeps its reason when the producer knows it; the
+    // absence of a reason is a valid, explicitly uncertain cancellation.
+    requireAbsent('cancelReason', event.phase !== 'cancelled' && event.cancelReason !== undefined)
     if (event.phase === 'awaiting_input') {
       requireFor(
         'interaction',
@@ -166,6 +187,7 @@ export const ChildProgressEvidenceEntrySchema = z
     observedAt: TimestampSchema,
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
     failure: FailureEvidenceSchema.optional(),
+    /** Present when known; absent means the cancellation reason is unknown. */
     cancelReason: CancelReasonSchema.optional(),
     interaction: InteractionReferenceSchema.optional(),
   })
@@ -190,12 +212,6 @@ export const ChildProgressEvidenceEntrySchema = z
     }
     if (entry.phase === 'failed' && entry.failure === undefined) {
       context.addIssue({ code: 'custom', message: 'Failed entries require failure metadata' })
-    }
-    if (entry.phase === 'cancelled' && entry.cancelReason === undefined) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Cancelled entries require a cancellation reason',
-      })
     }
     if (entry.phase === 'awaiting_input' && entry.interaction === undefined) {
       context.addIssue({
@@ -225,9 +241,15 @@ export const ChildProgressSnapshotSchema = z
 
 export type ChildProgressSnapshot = z.output<typeof ChildProgressSnapshotSchema>
 
+/**
+ * Packet format v2: the content digest covers every field except the digest
+ * itself, including the sequence — re-sequencing a packet cannot re-derive a
+ * valid digest. v1 packets (digest over the body without sequence) are
+ * refused by the parser.
+ */
 export const ChildProgressEvidencePacketSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     parentExecutionId: IdentifierSchemas.executionId,
     /** Monotonic per-buffer sequence; gaps mean a packet was consumed elsewhere. */
     sequence: z.number().int().positive(),
@@ -257,6 +279,13 @@ export class ChildProgressEvidenceError extends Error {
   }
 }
 
+export type ChildProgressEvidenceRejectionReason =
+  | 'stale_generation'
+  | 'terminated_generation'
+  | 'foreign_parent'
+  | 'conflicting_event'
+  | 'conflicting_child_identity'
+
 export type ChildProgressEvidenceReceipt =
   | {
       readonly outcome: 'coalesced'
@@ -275,7 +304,7 @@ export type ChildProgressEvidenceReceipt =
   | { readonly outcome: 'duplicate'; readonly eventId: string }
   | {
       readonly outcome: 'rejected'
-      readonly reason: 'stale_generation' | 'terminated_generation' | 'foreign_parent'
+      readonly reason: ChildProgressEvidenceRejectionReason
       readonly eventId: string
       readonly delegationId?: string
     }
@@ -286,7 +315,8 @@ export interface ChildProgressEvidenceBufferOptions {
   readonly maximumEntries?: number
   /** Distinct children per packet before the packet seals. Default 64. */
   readonly maximumChildren?: number
-  /** Canonical-JSON byte budget per packet. Default 16384; 2048..1048576. */
+  /** Serialized byte budget per packet (whole packet, not just the payload).
+   * Default 16384; 2048..1048576. */
   readonly maximumBytes?: number
   /** Bounded memory for duplicate detection. Default 8192; oldest evicted. */
   readonly maximumTrackedEventIds?: number
@@ -324,6 +354,15 @@ function isTerminalPhase(phase: ChildProgressEvidenceEvent['phase']): boolean {
   return TERMINAL_PHASES.has(phase)
 }
 
+/**
+ * Placeholder digest with the exact serialized length of a real one, so size
+ * projection includes the digest field without computing it twice.
+ */
+const DIGEST_PLACEHOLDER = `sha256:${'0'.repeat(64)}`
+
+/** Same length as a real ISO timestamp; only used for sizing a fresh window. */
+const TIMESTAMP_PLACEHOLDER = '2026-01-01T00:00:00.000Z'
+
 function isEmptyWindow(window: OpenWindow): boolean {
   return (
     window.entries.length === 0 &&
@@ -332,6 +371,10 @@ function isEmptyWindow(window: OpenWindow): boolean {
     window.duplicateEventCount === 0 &&
     window.rejectedEventCount === 0
   )
+}
+
+function eventFingerprint(event: ChildProgressEvidenceEvent): string {
+  return createHash('sha256').update(canonicalJsonStringify(event)).digest('hex')
 }
 
 /**
@@ -346,7 +389,7 @@ export class ChildProgressEvidenceBuffer {
   readonly #maximumChildren: number
   readonly #maximumBytes: number
   readonly #maximumTrackedEventIds: number
-  readonly #seenEventIds = new Map<string, true>()
+  readonly #seenEventIds = new Map<string, string>()
   readonly #windows = new Map<string, DelegationWindow>()
   readonly #ready: ChildProgressEvidencePacket[] = []
   #open: OpenWindow | undefined
@@ -383,38 +426,59 @@ export class ChildProgressEvidenceBuffer {
   /**
    * Validates and folds one observation. Malformed events throw (Zod parse);
    * semantic outcomes are returned as receipts so batch loops never need
-   * exception control flow for at-least-once delivery.
+   * exception control flow for at-least-once delivery. A single observation
+   * that cannot fit any packet within the configured bounds throws
+   * `BOUNDS_EXCEEDED` rather than being silently truncated.
    */
   accept(event: unknown): ChildProgressEvidenceReceipt {
     const parsed = ChildProgressEvidenceEventSchema.parse(event)
     if (parsed.parentExecutionId !== this.#parentExecutionId) {
-      this.#lifetimeRejections += 1
-      return {
-        outcome: 'rejected',
-        reason: 'foreign_parent',
-        eventId: parsed.eventId,
-        delegationId: parsed.delegationId,
-      }
+      return this.#reject('foreign_parent', parsed.eventId, parsed.delegationId)
     }
-    if (this.#seenEventIds.has(parsed.eventId)) {
+    const fingerprint = eventFingerprint(parsed)
+    const seenFingerprint = this.#seenEventIds.get(parsed.eventId)
+    if (seenFingerprint !== undefined) {
+      if (seenFingerprint !== fingerprint) {
+        // Same delivery identity, different content: never treat as a
+        // duplicate — one of the two deliveries is lying.
+        return this.#reject('conflicting_event', parsed.eventId, parsed.delegationId)
+      }
       this.#lifetimeDuplicates += 1
       if (this.#open) this.#open.duplicateEventCount += 1
       return { outcome: 'duplicate', eventId: parsed.eventId }
     }
-    this.#trackEventId(parsed.eventId)
+    this.#trackEventId(parsed.eventId, fingerprint)
 
     const window = this.#windows.get(parsed.delegationId)
     if (window) {
       if (parsed.generation < window.generation) {
         return this.#reject('stale_generation', parsed.eventId, parsed.delegationId)
       }
-      if (parsed.generation === window.generation && window.terminal) {
-        return this.#reject('terminated_generation', parsed.eventId, parsed.delegationId)
+      if (parsed.childExecutionId !== window.snapshot.childExecutionId) {
+        return this.#reject('conflicting_child_identity', parsed.eventId, parsed.delegationId)
+      }
+      if (parsed.generation === window.generation) {
+        if (window.terminal) {
+          return this.#reject('terminated_generation', parsed.eventId, parsed.delegationId)
+        }
+        if (
+          parsed.childAttemptId !== undefined &&
+          window.snapshot.childAttemptId !== undefined &&
+          parsed.childAttemptId !== window.snapshot.childAttemptId
+        ) {
+          return this.#reject('conflicting_child_identity', parsed.eventId, parsed.delegationId)
+        }
       }
     }
 
     const critical = parsed.phase !== 'running'
     const entry: ChildProgressEvidenceEntry | undefined = critical ? toEntry(parsed) : undefined
+
+    // Timestamp the window before any placement decision: every packet that
+    // seals from here on — including under byte pressure — carries a valid
+    // observation window. Stamped again after placement: a window created by
+    // a mid-accept seal+retry must not outlive the event without carrying it.
+    this.#noteEventTime(parsed.observedAt)
 
     // Critical observations must survive packet pressure: seal the open
     // packet first, then place the entry into a fresh one.
@@ -499,7 +563,7 @@ export class ChildProgressEvidenceBuffer {
   }
 
   #reject(
-    reason: 'stale_generation' | 'terminated_generation',
+    reason: ChildProgressEvidenceRejectionReason,
     eventId: string,
     delegationId: string
   ): ChildProgressEvidenceReceipt {
@@ -508,8 +572,8 @@ export class ChildProgressEvidenceBuffer {
     return { outcome: 'rejected', reason, eventId, delegationId }
   }
 
-  #trackEventId(eventId: string): void {
-    this.#seenEventIds.set(eventId, true)
+  #trackEventId(eventId: string, fingerprint: string): void {
+    this.#seenEventIds.set(eventId, fingerprint)
     while (this.#seenEventIds.size > this.#maximumTrackedEventIds) {
       const oldest = this.#seenEventIds.keys().next()
       if (oldest.done) break
@@ -517,20 +581,27 @@ export class ChildProgressEvidenceBuffer {
     }
   }
 
+  /**
+   * Stamps the observation time on the open window, creating the window if
+   * needed. Runs before every placement decision so a packet sealed under
+   * pressure always carries a valid observation window.
+   */
   #noteEventTime(observedAt: string): void {
-    if (!this.#open) return
-    if (this.#open.firstEventAt === '' || observedAt < this.#open.firstEventAt) {
-      this.#open.firstEventAt = observedAt
-    }
-    if (this.#open.lastEventAt === '' || observedAt > this.#open.lastEventAt) {
-      this.#open.lastEventAt = observedAt
-    }
+    this.#withOpenWindow((open) => {
+      if (open.firstEventAt === '' || observedAt < open.firstEventAt) {
+        open.firstEventAt = observedAt
+      }
+      if (open.lastEventAt === '' || observedAt > open.lastEventAt) {
+        open.lastEventAt = observedAt
+      }
+    })
   }
 
   /**
    * Merges the event into the per-child snapshot. Returns false when the
-   * child is new and the packet is at child capacity, or when the projected
-   * packet would exceed the byte budget; the caller seals and retries.
+   * child would exceed the per-packet child budget (returning children
+   * included) or the projected serialized packet would exceed the byte
+   * budget; the caller seals and retries.
    */
   #mergeSnapshot(event: ChildProgressEvidenceEvent): boolean {
     const window = this.#windows.get(event.delegationId)
@@ -543,9 +614,13 @@ export class ChildProgressEvidenceBuffer {
         phase: event.phase,
         lastObservedAt: event.observedAt,
         observedEventCount: 1,
-        metrics: event.metrics ?? {},
+        metrics: accumulateMetrics({}, event.metrics),
       }
-      if (this.#exceedsFreshPacketBudget(event.delegationId, snapshot)) return false
+      if (
+        !this.#canPlaceSnapshot(event.delegationId, snapshot, event.phase === 'running' ? 1 : 0)
+      ) {
+        return false
+      }
       this.#windows.set(event.delegationId, {
         generation: event.generation,
         terminal: isTerminalPhase(event.phase),
@@ -561,25 +636,15 @@ export class ChildProgressEvidenceBuffer {
     }
 
     // Same generation: coalesce. Older observations never regress the
-    // snapshot; metric totals always accumulate.
+    // snapshot; metric totals accumulate with own-property-safe checked sums.
     const supersedes = event.observedAt >= window.snapshot.lastObservedAt
-    const metrics = { ...window.snapshot.metrics }
-    for (const [key, value] of Object.entries(event.metrics ?? {})) {
-      metrics[key] = (metrics[key] ?? 0) + value
-    }
     const merged: ChildProgressSnapshot = {
       ...window.snapshot,
-      ...(supersedes
-        ? {
-            phase: event.phase,
-            lastObservedAt: event.observedAt,
-            ...(event.childAttemptId ? { childAttemptId: event.childAttemptId } : {}),
-          }
-        : {}),
+      ...(supersedes ? { phase: event.phase, lastObservedAt: event.observedAt } : {}),
       observedEventCount: window.snapshot.observedEventCount + 1,
-      metrics,
+      metrics: accumulateMetrics(window.snapshot.metrics, event.metrics),
     }
-    if (this.#exceedsGrownPacketBudget(window.snapshot, merged)) return false
+    if (!this.#canPlaceSnapshot(event.delegationId, merged, 1)) return false
     this.#windows.set(event.delegationId, {
       generation: window.generation,
       terminal: window.terminal || (supersedes && isTerminalPhase(event.phase)),
@@ -597,53 +662,75 @@ export class ChildProgressEvidenceBuffer {
     mutate(this.#open)
   }
 
-  #variableBodySize(variable: {
-    readonly entries: readonly ChildProgressEvidenceEntry[]
-    readonly childSnapshots: readonly ChildProgressSnapshot[]
-  }): number {
-    return encoder.encode(
-      canonicalJsonStringify({ entries: variable.entries, childSnapshots: variable.childSnapshots })
-    ).byteLength
+  /**
+   * Child-capacity and byte-budget check for placing a candidate snapshot
+   * into the open window. Applies to new children and returning children
+   * alike: a child absent from the open window counts against the child
+   * budget even when an older window for the same delegation exists.
+   */
+  #canPlaceSnapshot(
+    delegationId: string,
+    candidate: ChildProgressSnapshot,
+    coalescedDelta: number
+  ): boolean {
+    const represented =
+      this.#open?.childSnapshots.some((entry) => entry.delegationId === delegationId) ?? false
+    if (!represented && (this.#open?.childSnapshots.length ?? 0) >= this.#maximumChildren) {
+      return false
+    }
+    return this.#fitsInPacket({ snapshot: candidate, coalescedDelta })
   }
 
-  #projectedSize(overrides?: {
+  /**
+   * Projects the exact packet that sealing would emit — headers, sequence,
+   * entries, snapshots, delivery counters and a digest placeholder of the
+   * real digest's length — and reports whether it stays within the
+   * serialized byte budget. Runs against the open window or, when none is
+   * open yet, against a fresh window, so the first observation of a window
+   * is bounded too.
+   */
+  #fitsInPacket(candidate: {
     readonly snapshot?: ChildProgressSnapshot
     readonly entry?: ChildProgressEvidenceEntry
-  }): number {
-    if (!this.#open) return 0
+    readonly coalescedDelta?: number
+  }): boolean {
+    const open = this.#open ?? {
+      firstEventAt: TIMESTAMP_PLACEHOLDER,
+      lastEventAt: TIMESTAMP_PLACEHOLDER,
+      entries: [],
+      childSnapshots: [],
+      coalescedEventCount: 0,
+      duplicateEventCount: 0,
+      rejectedEventCount: 0,
+    }
     const entries =
-      overrides?.entry !== undefined ? [...this.#open.entries, overrides.entry] : this.#open.entries
-    const snapshot = overrides?.snapshot
+      candidate.entry !== undefined ? [...open.entries, candidate.entry] : open.entries
+    const snapshot = candidate.snapshot
     const childSnapshots =
       snapshot !== undefined
         ? [
-            ...this.#open.childSnapshots.filter(
-              (candidate) => candidate.delegationId !== snapshot.delegationId
+            ...open.childSnapshots.filter(
+              (present) => present.delegationId !== snapshot.delegationId
             ),
             snapshot,
           ].toSorted((left, right) => compareCodePointOrder(left.delegationId, right.delegationId))
-        : this.#open.childSnapshots
-    return this.#variableBodySize({ entries, childSnapshots })
-  }
-
-  #exceedsFreshPacketBudget(delegationId: string, snapshot: ChildProgressSnapshot): boolean {
-    const knownChild = this.#open?.childSnapshots.some(
-      (candidate) => candidate.delegationId === delegationId
-    )
-    if (!knownChild && (this.#open?.childSnapshots.length ?? 0) >= this.#maximumChildren) {
-      return true
+        : open.childSnapshots
+    const body = {
+      schemaVersion: 2 as const,
+      parentExecutionId: this.#parentExecutionId,
+      sequence: this.#sequence + 1,
+      firstEventAt: open.firstEventAt,
+      lastEventAt: open.lastEventAt,
+      entries,
+      childSnapshots,
+      coalescedEventCount: open.coalescedEventCount + (candidate.coalescedDelta ?? 0),
+      duplicateEventCount: open.duplicateEventCount,
+      rejectedEventCount: open.rejectedEventCount,
     }
-    return this.#projectedSize({ snapshot }) > this.#maximumBytes
-  }
-
-  #exceedsGrownPacketBudget(
-    current: ChildProgressSnapshot,
-    merged: ChildProgressSnapshot
-  ): boolean {
-    if (!this.#open) return false
-    const grown = this.#projectedSize({ snapshot: merged })
-    const currentSize = this.#projectedSize({ snapshot: current })
-    return grown > currentSize && grown > this.#maximumBytes
+    const projected = encoder.encode(
+      canonicalJsonStringify({ ...body, contentDigest: DIGEST_PLACEHOLDER })
+    ).byteLength
+    return projected <= this.#maximumBytes
   }
 
   #replaceSnapshotInOpenWindow(snapshot: ChildProgressSnapshot): void {
@@ -663,7 +750,7 @@ export class ChildProgressEvidenceBuffer {
   }
 
   #appendEntry(entry: ChildProgressEvidenceEntry): boolean {
-    if (this.#projectedSize({ entry }) > this.#maximumBytes) return false
+    if (!this.#fitsInPacket({ entry })) return false
     this.#withOpenWindow((open) => {
       open.entries.push(entry)
     })
@@ -684,8 +771,9 @@ export class ChildProgressEvidenceBuffer {
     if (!open || isEmptyWindow(open)) return undefined
     this.#sequence += 1
     const body = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       parentExecutionId: this.#parentExecutionId,
+      sequence: this.#sequence,
       firstEventAt: open.firstEventAt,
       lastEventAt: open.lastEventAt,
       entries: open.entries,
@@ -696,7 +784,6 @@ export class ChildProgressEvidenceBuffer {
     }
     return {
       ...body,
-      sequence: this.#sequence,
       contentDigest: childProgressEvidenceDigest(body),
     }
   }
@@ -731,21 +818,25 @@ function toEntry(event: ChildProgressEvidenceEvent): ChildProgressEvidenceEntry 
   })
 }
 
-/** Deterministic content digest over a packet body (every field but the digest itself). */
+/**
+ * Deterministic content digest over a packet body: every field except the
+ * digest itself, including the sequence (format v2).
+ */
 export function childProgressEvidenceDigest(
-  body: Omit<ChildProgressEvidencePacket, 'contentDigest' | 'sequence'>
+  body: Omit<ChildProgressEvidencePacket, 'contentDigest'>
 ): string {
   return `sha256:${createHash('sha256').update(canonicalJsonStringify(body)).digest('hex')}`
 }
 
 /**
  * Validates a packet as received by the workspace lead and re-derives its
- * content digest. Returns the parsed packet; throws on tampering or
- * structural violations so downstream code can trust the identity fields.
+ * content digest. Returns the parsed packet; throws on tampering (including
+ * sequence edits) or structural violations so downstream code can trust the
+ * identity fields.
  */
 export function parseChildProgressEvidencePacket(packet: unknown): ChildProgressEvidencePacket {
   const parsed = ChildProgressEvidencePacketSchema.parse(packet)
-  const { contentDigest, sequence: _sequence, ...body } = parsed
+  const { contentDigest, ...body } = parsed
   const expected = childProgressEvidenceDigest(body)
   if (expected !== contentDigest) {
     throw new ChildProgressEvidenceError(
@@ -762,6 +853,12 @@ export function parseChildProgressEvidencePacket(packet: unknown): ChildProgress
  * supplies the delivery identity (`eventId`) and the delegation's monotonic
  * `generation` (the delegation record revision is a suitable mark); both are
  * intentionally not inferred, because redelivery policy is the owner's.
+ *
+ * Cancellation reasons are passed through only when the producer actually
+ * knows one (for example `parent_cancelled` from cascade cancellation);
+ * ordinary child-originated cancellations carry no reason in the delegation
+ * pipeline and the adapter preserves that uncertainty instead of inventing a
+ * reason.
  */
 export function delegationEventToEvidenceEvent(input: {
   readonly event: DelegationEvent
@@ -790,10 +887,10 @@ export function delegationEventToEvidenceEvent(input: {
     typeof details['terminalResultRef'] === 'string' ? details['terminalResultRef'] : undefined
   const failureCode =
     typeof details['failureCode'] === 'string' ? details['failureCode'] : undefined
-  const cancelReason =
-    input.event.type === 'delegation.cancelled' && typeof details['reason'] === 'string'
-      ? details['reason']
-      : undefined
+  const parsedCancelReason = CancelReasonSchema.safeParse(
+    input.event.type === 'delegation.cancelled' ? details['reason'] : undefined
+  )
+  const cancelReason = parsedCancelReason.success ? parsedCancelReason.data : undefined
   return ChildProgressEvidenceEventSchema.parse({
     eventId: input.eventId,
     parentExecutionId: input.event.parentExecutionId,
@@ -805,7 +902,7 @@ export function delegationEventToEvidenceEvent(input: {
     observedAt: input.event.occurredAt,
     ...(terminalResultRef ? { terminalResultRef } : {}),
     ...(failureCode ? { failure: { classification: 'unknown', code: failureCode } } : {}),
-    ...(cancelReason ? { cancelReason } : {}),
+    ...(cancelReason !== undefined ? { cancelReason } : {}),
     ...(input.interaction ? { interaction: input.interaction } : {}),
     ...(input.metrics ? { metrics: input.metrics } : {}),
   })
