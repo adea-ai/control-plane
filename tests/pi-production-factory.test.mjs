@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createProductionFactoryFixture } from './pi-production-factory.fixture.mjs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -243,3 +243,21 @@ test('source identity resolves from owning repository when invoked from a foreig
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// Resolve the root script's declared dependencies before any configuration or effects.
+test('root launcher resolves dependencies and fails closed before unconfigured startup', () => {
+  const env = { ...process.env }
+  delete env.PI_PRODUCTION_FACTORY_TEST_CONFIG
+  delete env.PI_PRODUCTION_FACTORY_PRODUCT_ASSERTION
+  const result = spawnSync(process.execPath, ['scripts/pi-production-factory-candidate.mjs'], {
+    cwd: new URL('..', import.meta.url),
+    env,
+    encoding: 'utf8',
+    timeout: 10000,
+  })
+  expect(result.error).toBeUndefined()
+  expect(result.status).toBe(1)
+  expect(result.stdout).toBe('')
+  expect(result.stderr).toContain('TEST_PRODUCTION_FACTORY_CONFIGURATION_REQUIRED')
+  expect(result.stderr).not.toContain('Cannot find package')
+}, 30000)
