@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.78.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.77.1...workspace-v1.78.0) (2026-10-08)
+
+
+### Features
+
+* **models:** retain Pi lead payer confirmation across send boundaries ([#962](https://github.com/adea-ai/control-plane/issues/962)) ([8135624](https://github.com/adea-ai/control-plane/commit/813562406f26259027154a40e8566ebbe5a797ab))
+
+
+### Bug Fixes
+
+* **models:** break funding authorization import cycle ([#965](https://github.com/adea-ai/control-plane/issues/965)) ([e7ac922](https://github.com/adea-ai/control-plane/commit/e7ac922b0e42b91b11f5557a9df1195ed6d9c090))
+
 ## [1.77.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.77.0...workspace-v1.77.1) (2026-10-08)
 
 
