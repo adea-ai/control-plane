@@ -35,6 +35,30 @@ export type {
   AcpTransport,
   AcpTransportCall,
 } from './acp-driver-types.js'
+export {
+  AuthenticationModeSchema,
+  ExecutorHarnessSchema,
+  ExecutorObservationSchema,
+  ExecutorQualificationEvaluator,
+  ExecutorQualificationEvidenceSchema,
+  ExecutionLocationSchema,
+  GovernedNativePathSchema,
+  NativeInstallationEvidenceSchema,
+  TransportStateSchema,
+} from './qualification.js'
+export type {
+  AuthenticationMode,
+  DisabledGovernedNativePath,
+  ExecutorHarness,
+  ExecutorObservation,
+  ExecutorQualification,
+  ExecutorQualificationEvidence,
+  ExecutorQualificationFailure,
+  ExecutionLocation,
+  GovernedNativePath,
+  NativeInstallationEvidence,
+  TransportState,
+} from './qualification.js'
 
 /**
  * ACP protocol state machine. Shared protocol state lives on the instance in a
