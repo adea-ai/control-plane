@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { SqlitePiChildContinuationRepository } from './sqlite-child-continuations.ts'
+import { SqlitePiChildContinuationRepository } from '../apps/control-api/src/pi-durable/sqlite-child-continuations.ts'
 test('missing current metadata and authority cannot retain a continuation', async () => {
   const repository = new SqlitePiChildContinuationRepository({
     workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
@@ -15,8 +15,8 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { ChildProgressInputSchema, DelegationRecordSchema } from '@control-plane/orchestration'
-import { toolRequestDigest } from '../../../../packages/tool-execution/src/tool-execution.ts'
-import { ToolCallSchema } from '../../../../packages/tool-sdk/src/index.ts'
+import { toolRequestDigest } from '@control-plane/tool-execution'
+import { ToolCallSchema } from '../packages/tool-sdk/dist/index.js'
 import {
   SqlitePersistenceProvider,
   SqliteExecutionRepository,
@@ -30,17 +30,17 @@ import {
   createFixture,
   delegationInput,
   ids,
-} from '../../../../packages/orchestration/src/delegation-fixtures.mjs'
-import { piDurableToolSourceKey } from '../../../../packages/pi-durable-adapter/src/tool-source.ts'
+} from '../packages/orchestration/src/delegation-fixtures.mjs'
+import { piDurableToolSourceKey } from '@control-plane/pi-durable-adapter'
 import {
   piChildContinuationRequestDigest,
   piChildContinuationAdmissionDigest,
   piChildContinuationStartRequestDigest,
-} from '../../../../packages/pi-durable-adapter/src/child-continuation.ts'
+} from '@control-plane/pi-durable-adapter'
 import {
   workspaceInput,
   currentSnapshot,
-} from '../../../../packages/orchestration/src/delegation-workspace-fixtures.mjs'
+} from '../packages/orchestration/src/delegation-workspace-fixtures.mjs'
 const parentAttemptId = 'att_01JABCDEF0123456789ABCDEFG'
 const at = '2026-08-25T18:03:00.000Z'
 const expiresAt = '2026-08-25T18:09:00.000Z'
