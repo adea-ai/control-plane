@@ -28,9 +28,14 @@ test('SQLite credential repository satisfies the vault conformance sequence', as
         { secretCanary: canary }
       )
     } finally {
-      await persistence.close()
+      // A full directory byte scan needs the explicit stable cold-checkpoint contract.
+      persistence.close({ checkpoint: true })
     }
-    for (const file of await readdir(directory)) {
+    const files = await readdir(directory)
+    expect(files).toEqual(['state.sqlite'])
+    // Statement finalization may occur between directory enumeration and byte reads.
+    Bun.gc(true)
+    for (const file of files) {
       const bytes = await readFile(join(directory, file))
       expect(bytes.includes(Buffer.from(canary))).toBe(false)
     }
