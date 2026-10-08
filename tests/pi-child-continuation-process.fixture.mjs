@@ -695,21 +695,20 @@ export async function initialWorker(directory, mode, baseUrl) {
           const generation = fastNativeInspection.tasks.find(
             (item) => item.record.kind === 'pi.generation'
           )
-          let grantDenied = false
-          let grantDenialCode
-          try {
-            await ports.repository.retain(grant)
-          } catch (error) {
-            grantDenied = true
-            grantDenialCode = error instanceof Error ? error.message : 'NON_ERROR_RETENTION_FAILURE'
-          }
+          const retention = await observeProcessFastTerminalRetention({
+            ports,
+            grant,
+            terminalRow,
+            nativeTask: generation?.record,
+            readSnapshot: () =>
+              inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports),
+          })
           fastTerminalSnapshot = {
-            ...(await inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports)),
+            ...retention.snapshot,
             stage: 'fast_terminal_snapshot',
             childNativeState: terminalRow.state,
             childNativeTask: generation?.record ?? null,
-            grantDenied,
-            ...(grantDenialCode ? { grantDenialCode } : {}),
+            ...retention.observation,
             physicalSendCount,
             source: input.source,
             sourceRequestDigest: piChildContinuationRequestDigest(request),
@@ -823,6 +822,69 @@ export class ProcessPhysicalSendPendingError extends Error {
   constructor() {
     super('PI_PROCESS_PHYSICAL_SEND_PENDING')
     this.name = 'ProcessPhysicalSendPendingError'
+  }
+}
+
+/** Observe the real retention result after native completion; never manufacture a denial. */
+export async function observeProcessFastTerminalRetention({
+  ports,
+  grant,
+  terminalRow,
+  nativeTask,
+  readSnapshot,
+}) {
+  assert.equal(terminalRow.state, 'completed')
+  assert.deepEqual(terminalRow.admission.handle, grant.child.handle)
+  assert.equal(nativeTask?.kind, 'pi.generation')
+  assert.equal(nativeTask.state.status, 'terminal')
+  assert.equal(nativeTask.state.outcome.status, 'completed')
+  const before = await readSnapshot()
+  assert.deepEqual(before.handle, grant.child.handle)
+  assert.equal(before.grant, null)
+  assert.ok(['running', 'awaiting_input'].includes(before.parentState))
+  assert.equal(before.modelUsageCount, 1)
+  assert.equal(before.openHoldCount, 0)
+  ports.resetPersistenceFailure()
+  let result
+  let rejection
+  try {
+    result = await ports.repository.retain(grant)
+  } catch (error) {
+    rejection = error
+  }
+  const original = ports.persistenceFailure()
+  if (result !== undefined) {
+    assert.equal(rejection, undefined)
+    assert.equal(original, undefined, 'a successful retain cannot hide a transaction failure')
+    assert.deepEqual(result.grant, grant)
+    const snapshot = await readSnapshot()
+    assert.deepEqual(snapshot.grant, grant)
+    return { snapshot, observation: { retentionOutcome: 'allowed', grantDenied: false } }
+  }
+  for (const error of [rejection, original]) {
+    assert.ok(error instanceof Error, 'terminal denial must have fresh transaction provenance')
+    assert.equal(error.message, 'PI_CHILD_CONTINUATION_DENIED')
+    assert.equal(error.code, undefined, 'storage failure cannot qualify as terminal denial')
+    assert.equal(error.errcode, undefined, 'SQLite failure cannot qualify as terminal denial')
+  }
+  const snapshot = await readSnapshot()
+  assert.equal(snapshot.grant, null)
+  assert.deepEqual(snapshot.handle, before.handle)
+  assert.equal(snapshot.parentState, before.parentState)
+  assert.equal(snapshot.modelUsageCount, before.modelUsageCount)
+  assert.equal(snapshot.openHoldCount, before.openHoldCount)
+  return {
+    snapshot,
+    observation: {
+      retentionOutcome: 'expected_terminal_denial',
+      grantDenied: true,
+      grantDenialCode: 'PI_CHILD_CONTINUATION_DENIED',
+      retentionRejection: {
+        code: 'PI_CHILD_CONTINUATION_DENIED',
+        classification: 'terminal_child',
+        persistenceFailureCode: null,
+      },
+    },
   }
 }
 
