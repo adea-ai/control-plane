@@ -14,3 +14,5 @@ export * from './versioning.js'
 export * from './workspace-catalog.js'
 
 export const packageName = 'contracts'
+
+export * from './model-connections.js'

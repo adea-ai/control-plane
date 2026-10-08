@@ -22,10 +22,15 @@
   },
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
+    "@control-plane/credential-vault": "workspace:*",
+    "@control-plane/deployment": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/policy": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*"
   },
   "engines": {
     "node": "24.21.0"

@@ -230,3 +230,5 @@ export {
 
 export * from './graphs/graph-administration.service.js'
 export * from './catalog/workspace-catalog.service.js'
+
+export * from './models/model-connections.service.js'

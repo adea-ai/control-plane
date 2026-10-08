@@ -25,6 +25,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/memory-writeback": "workspace:*",
+    "@control-plane/model-gateway": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",

@@ -41,6 +41,7 @@
     "@control-plane/events": "workspace:*",
     "@control-plane/execution-plan": "workspace:*",
     "@control-plane/memory-writeback": "workspace:*",
+    "@control-plane/model-gateway": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/production-readiness": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",

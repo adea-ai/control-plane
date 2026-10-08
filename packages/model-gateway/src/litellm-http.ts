@@ -38,7 +38,7 @@ export const RecordedModelSpendingAuthorizationSchema = z
     alias: Reference,
     policySnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     currency: z.literal('USD'),
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
     maximumMicrounits: Amount,
     maximumTokens: Amount,
     issuedAt: z.iso.datetime(),
@@ -341,7 +341,7 @@ export class LedgerLiteLlmHttpClient implements LiteLlmClientPort {
       )
       if (
         allocation.currency !== grant.currency ||
-        (grant.fundingSource === 'hq_managed' &&
+        (grant.fundingSource !== 'external_subscription' &&
           allocation.maximumMicrounits > grant.maximumMicrounits) ||
         allocation.maximumTokens > grant.maximumTokens
       )

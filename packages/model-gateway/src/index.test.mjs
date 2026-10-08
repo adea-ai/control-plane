@@ -323,3 +323,94 @@ describe('managed model gateway', () => {
     expect(adapter.requests).toHaveLength(0)
   })
 })
+
+test('pinned BYO request never falls back to another account after a retryable provider error', async () => {
+  const { selection } = await import('./selection-fixtures.mjs')
+  const { ModelProviderError } = await import('./index.ts')
+  const registry = new ModelRouteRegistry()
+  const first = new FakeModelAdapter()
+  first.complete = async () => {
+    throw new ModelProviderError('RATE_LIMIT', true)
+  }
+  const second = new FakeModelAdapter()
+  registry.register({
+    ...deployment,
+    deploymentId: 'byo.one',
+    fundingSource: 'byo_api',
+    selection,
+    credentialRef: `vault://${selection.credentialRef}/1`,
+  })
+  registry.register({
+    ...deployment,
+    deploymentId: 'byo.two',
+    fundingSource: 'byo_api',
+    priority: 20,
+    adapterRef: 'second',
+    selection: {
+      ...selection,
+      accountRef: 'other-account',
+      connectionRef: `mconn_${'3'.repeat(32)}`,
+    },
+    credentialRef: `vault://${selection.credentialRef}/1`,
+  })
+  const gateway = new ManagedModelGateway({
+    registry,
+    adapters: new Map([
+      ['litellm-primary', first],
+      ['second', second],
+    ]),
+    decisionPoint: allowPdp,
+    selectionService: { assertReady: async () => {} },
+  })
+  await expect(
+    gateway.complete(request({ fundingSource: 'byo_api', selection }))
+  ).rejects.toMatchObject({ code: 'PROVIDER_FAILED' })
+  expect(second.requests).toHaveLength(0)
+  await expect(gateway.complete(request({ fundingSource: 'byo_api' }))).rejects.toMatchObject({
+    code: 'INVALID_REQUEST',
+  })
+})
+
+test('pinned dispatch denies revoked authority or a deployment that changes model/account/location', async () => {
+  const { selection } = await import('./selection-fixtures.mjs')
+  for (const delta of [
+    { accountRef: 'other' },
+    { location: 'agent_hq_cloud' },
+    { credentialRevision: 2 },
+    { providerModel: 'different' },
+  ]) {
+    const registry = new ModelRouteRegistry()
+    registry.register({
+      ...deployment,
+      fundingSource: 'byo_api',
+      selection: { ...selection, ...delta },
+      credentialRef: `vault://${selection.credentialRef}/1`,
+    })
+    const adapter = new FakeModelAdapter()
+    const gateway = new ManagedModelGateway({
+      registry,
+      adapters: new Map([['litellm-primary', adapter]]),
+      decisionPoint: allowPdp,
+      selectionService: { assertReady: async () => {} },
+    })
+    await expect(
+      gateway.complete(request({ fundingSource: 'byo_api', selection }))
+    ).rejects.toMatchObject({ code: 'MODEL_UNAVAILABLE' })
+    expect(adapter.requests).toHaveLength(0)
+  }
+  const { registry, adapter } = await fixture()
+  const gateway = new ManagedModelGateway({
+    registry,
+    adapters: new Map([['litellm-primary', adapter]]),
+    decisionPoint: allowPdp,
+    selectionService: {
+      assertReady: async () => {
+        throw new Error('revoked-secret-canary')
+      },
+    },
+  })
+  await expect(
+    gateway.complete(request({ fundingSource: 'byo_api', selection }))
+  ).rejects.toMatchObject({ code: 'MODEL_POLICY_DENIED' })
+  expect(adapter.requests).toHaveLength(0)
+})

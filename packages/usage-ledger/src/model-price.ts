@@ -22,7 +22,7 @@ export const ModelPriceSnapshotSchema = z
     model: ReferenceSchema,
     version: ReferenceSchema,
     currency: z.literal('USD'),
-    fundingSource: z.enum(['hq_managed', 'external_subscription']),
+    fundingSource: z.enum(['hq_managed', 'external_subscription', 'byo_api']),
     validFrom: z.iso.datetime(),
     validUntil: z.iso.datetime(),
     maximumInputTokens: AmountSchema.positive(),
@@ -67,7 +67,7 @@ const UsageSchema = z
 export interface ModelRequestQuote {
   readonly requestDigest: string
   readonly priceSnapshotDigest: string
-  readonly fundingSource: 'hq_managed' | 'external_subscription'
+  readonly fundingSource: 'hq_managed' | 'external_subscription' | 'byo_api'
   readonly currency: 'USD'
   readonly maximumInputTokens: number
   readonly maximumOutputTokens: number
@@ -136,7 +136,7 @@ export class PinnedModelPrice {
         return Object.freeze({
           costMicrounits: priceTokens(snapshot, inputTokens, cachedInputTokens, outputTokens),
           tokens: inputTokens + outputTokens,
-          costExact: snapshot.fundingSource === 'hq_managed',
+          costExact: snapshot.fundingSource !== 'external_subscription',
         })
       },
     })

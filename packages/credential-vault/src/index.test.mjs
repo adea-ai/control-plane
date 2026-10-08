@@ -351,3 +351,50 @@ describe('connector credential vault', () => {
     ).rejects.toThrow('SECRET_MISSING')
   })
 })
+
+test('pinned model lease rejects a rotated revision before secret resolution', async () => {
+  const { vault } = await fixture()
+  await vault.rotate(ids.credential, 'rotation-secret-canary-1234', 'svc_admin')
+  await expect(vault.lease(leaseRequest({ expectedCredentialRevision: 1 }))).rejects.toMatchObject({
+    code: 'CREDENTIAL_REVISION_CONFLICT',
+  })
+})
+
+test('credential expiry is checked again at use even when the lease has not yet expired', async () => {
+  const { InMemoryCredentialVaultRepository } = await import('./index.ts')
+  const repository = new InMemoryCredentialVaultRepository()
+  const provider = new InMemorySecretProvider()
+  let now = '2026-08-25T09:00:00.000Z'
+  const vault = new CredentialVault({
+    provider,
+    repository,
+    decisionPoint: allowPdp,
+    now: () => now,
+  })
+  await vault.create({
+    credentialId: ids.credential,
+    workspaceId: ids.workspace,
+    connectorRef: 'model:one',
+    provider: 'openai',
+    secret,
+    createdAt: now,
+  })
+  const lease = await vault.lease(leaseRequest())
+  const stored = await repository.getCredential(ids.credential)
+  await repository.updateCredential(
+    { ...stored, metadata: { ...stored.metadata, expiresAt: '2026-08-25T09:01:00.000Z' } },
+    { revision: 1, status: 'active' }
+  )
+  now = '2026-08-25T09:01:30.000Z'
+  let invoked = false
+  await expect(
+    vault.use(
+      lease.capabilityRef,
+      { workspaceId: ids.workspace, operation: 'issues.create', resourceRef: 'tool:github.issues' },
+      () => {
+        invoked = true
+      }
+    )
+  ).rejects.toMatchObject({ code: 'CREDENTIAL_EXPIRED' })
+  expect(invoked).toBe(false)
+})
