@@ -913,7 +913,7 @@ export async function expectedProcessResumeDenial(directory, ports, authority, h
 }
 
 /** Exact no-send proof for this test worker; unknown physical dispatch never qualifies. */
-export async function assertProcessNoSend(directory, authority, engine, ledger) {
+export async function assertProcessNoSend(directory, authority, engine, ledger, usageStore) {
   const evidence = readProcessEvidence(directory).filter(
     (event) => event.stage === 'before_reservation'
   )
@@ -961,7 +961,17 @@ export async function assertProcessNoSend(directory, authority, engine, ledger) 
       )
       .digest('hex')
     assert.equal(holds[0].source.sourceId, `pi-inference:${identity}`)
-    assert.equal(holds[0].source.idempotencyKey, `pi-inference:${identity}:dispatch`)
+    const dispatchKey = `pi-inference:${identity}:dispatch`
+    const effect = await usageStore.transaction(authority.request.attemptBudget.workspaceId, (tx) =>
+      tx.getEffect(dispatchKey)
+    )
+    assert.ok(effect, 'the exact physical dispatch effect must remain recorded')
+    assert.equal(effect.idempotencyKey, dispatchKey)
+    assert.equal(effect.workspaceId, authority.request.attemptBudget.workspaceId)
+    assert.equal(effect.executionId, authority.request.executionId)
+    // Ledger entries carry a derived usage key. Bind to the canonical effect's
+    // exact recorded result instead of comparing that key with the raw operation key.
+    assert.deepEqual(effect.result, holds[0])
     assert.equal(holds[0].attemptId, authority.request.attemptId)
     assert.equal(holds[0].reservationKey, authority.request.attemptBudget.reservationKey)
     assert.equal(entries.filter((entry) => entry.kind === 'model_release').length, 0)
@@ -1178,8 +1188,9 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       process.stdout.write(`${JSON.stringify(snapshot)}\n`)
       return snapshot
     }
+    const usageStore = new ports.sqlite.SqliteDurableUsageStore(ports.provider)
     const ledger = new DurableUsageLedger({
-      store: new ports.sqlite.SqliteDurableUsageStore(ports.provider),
+      store: usageStore,
       now: () => '2026-08-25T18:01:00.000Z',
     })
     const assertAuthority = (input) => ports.authority.assertAuthority(input)
@@ -1269,7 +1280,7 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       reconcileInference: async (input) => {
         try {
           await ports.authority.assertResume(input, row.admission.handle)
-          await assertProcessNoSend(directory, input, probe, ledger)
+          await assertProcessNoSend(directory, input, probe, ledger, usageStore)
           reconciled = true
           return 'safe_to_resume'
         } catch (error) {
