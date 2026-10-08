@@ -4,6 +4,7 @@ import {
   assertJ1DeniedRecovery,
   assertJ1QuarantinedRecovery,
   assertJ1ConcurrentRecovery,
+  assertJ1ImmutableReplay,
 } from './j1-unfinished-child-process.fixture.mjs'
 
 async function completeParentAndKill(harness, mode = 'before_reservation') {
@@ -92,6 +93,7 @@ test('J1 retained continuation replay preserves exact bytes and expiry does not 
     expect(replay.grant).toEqual(original.grant)
     expect(replay.replayOriginalRetained).toBe(true)
     expect(replay.replayChangedDenied).toBe(true)
+    assertJ1ImmutableReplay(replay)
     await harness.setClock(original.grant.expiresAt)
     const expired = await recover(harness)
     expect(expired.grant).toEqual(original.grant)
@@ -108,10 +110,17 @@ test('J1 retained continuation replay preserves exact bytes and expiry does not 
 }, 60000)
 
 test('J1 concurrent recovery owners cannot duplicate the unfinished child physical send', async () => {
-  const harness = await createUnfinishedChildProcessHarness()
+  const harness = await createUnfinishedChildProcessHarness({ holdResponsesForRecovery: true })
   try {
     const original = await completeParentAndKill(harness)
-    const contenders = await Promise.all([recover(harness), recover(harness)])
+    const pendingContenders = Promise.all([recover(harness), recover(harness)])
+    pendingContenders.catch(() => {})
+    await harness.waitFor((rows) => {
+      const constructed = rows.filter((row) => row.stage === 'recovery_runtime_constructed')
+      return new Set(constructed.map((row) => row.pid)).size === 2
+    })
+    harness.releaseResponses()
+    const contenders = await pendingContenders
     assertJ1ConcurrentRecovery(contenders)
     for (const contender of contenders) {
       expect(contender.handle).toEqual(original.grant.child.handle)
@@ -246,4 +255,27 @@ test('J1 proof oracle requires typed canonical denials and real concurrent recov
     assertJ1ConcurrentRecovery([completed, { ...competing, pid: completed.pid }])
   ).toThrow()
   expect(() => assertJ1ConcurrentRecovery([completed, { ...competing, pid: 0 }])).toThrow()
+})
+
+test('J1 proof oracle rejects storage failures masquerading as immutable replay conflicts', () => {
+  const legacy = { replayOriginalRetained: true, replayChangedDenied: true }
+  expect(legacy.replayChangedDenied).toBe(true)
+  expect(() => assertJ1ImmutableReplay(legacy)).toThrow()
+  const proven = {
+    ...legacy,
+    replayMutationRejections: ['expiresAt', 'requestDigest', 'externalSessionId'].map(
+      (mutation) => ({
+        mutation,
+        code: 'PI_CHILD_CONTINUATION_DENIED',
+        classification: 'immutable_conflict',
+        persistenceFailureCode: null,
+      })
+    ),
+  }
+  expect(() => assertJ1ImmutableReplay(proven)).not.toThrow()
+  for (const failure of ['SQLITE_BUSY', 5, 'ENOENT']) {
+    const unrelated = structuredClone(proven)
+    unrelated.replayMutationRejections[1].persistenceFailureCode = failure
+    expect(() => assertJ1ImmutableReplay(unrelated)).toThrow()
+  }
 })

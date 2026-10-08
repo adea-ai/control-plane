@@ -147,7 +147,8 @@ export async function registerProcessSourceHooks() {
   })
 }
 
-export async function createChildProcessTransport({ ambiguous = false } = {}) {
+export async function createChildProcessTransport({ ambiguous = false, beforeResponse } = {}) {
+  assert.ok(beforeResponse === undefined || typeof beforeResponse === 'function')
   const requests = []
   let release
   const pending = new Promise((resolve) => {
@@ -159,6 +160,8 @@ export async function createChildProcessTransport({ ambiguous = false } = {}) {
     const body = JSON.parse(raw)
     assert.equal(body.model, 'separate-child-model')
     requests.push(body)
+    // Test-owned response readiness only; close releases this wait independently.
+    if (beforeResponse) await Promise.race([beforeResponse(), pending])
     if (ambiguous) await pending
     if (response.destroyed) return
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -823,6 +826,39 @@ export class ProcessPhysicalSendPendingError extends Error {
   }
 }
 
+export async function assertProcessReplayMutationRejected({
+  ports,
+  grant,
+  changed,
+  mutation,
+  readWinner,
+}) {
+  assert.ok(['expiresAt', 'requestDigest', 'externalSessionId'].includes(mutation))
+  assert.notDeepEqual(changed, grant)
+  assert.deepEqual(await readWinner(), grant)
+  ports.resetPersistenceFailure()
+  let rejection
+  try {
+    await ports.repository.retain(changed)
+  } catch (error) {
+    rejection = error
+  }
+  const original = ports.persistenceFailure()
+  for (const error of [rejection, original]) {
+    assert.ok(error instanceof Error, 'immutable conflict must have transaction provenance')
+    assert.equal(error.message, 'PI_CHILD_CONTINUATION_DENIED')
+    assert.equal(error.code, undefined, 'storage failure cannot qualify as immutable conflict')
+    assert.equal(error.errcode, undefined, 'SQLite failure cannot qualify as immutable conflict')
+  }
+  assert.deepEqual(await readWinner(), grant)
+  return {
+    mutation,
+    code: 'PI_CHILD_CONTINUATION_DENIED',
+    classification: 'immutable_conflict',
+    persistenceFailureCode: null,
+  }
+}
+
 function recoveryEvidence(outcome, boundary, extra = {}) {
   return {
     schemaVersion: 'pi-child-recovery-evidence/v1',
@@ -1070,30 +1106,43 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       assert.equal(originalReplay.replayed, true)
       assert.deepEqual(originalReplay.grant, grant)
       assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
-      let replayChangedDenied = true
-      for (const changed of [
-        { ...grant, expiresAt: '2026-08-25T18:09:01.000Z' },
-        { ...grant, requestDigest: `sha256:${'d'.repeat(64)}` },
-        {
-          ...grant,
-          child: {
-            ...grant.child,
-            handle: { ...grant.child.handle, externalSessionId: 'changed-session' },
+      const replayMutationRejections = []
+      for (const [mutation, changed] of [
+        ['expiresAt', { ...grant, expiresAt: '2026-08-25T18:09:01.000Z' }],
+        ['requestDigest', { ...grant, requestDigest: `sha256:${'d'.repeat(64)}` }],
+        [
+          'externalSessionId',
+          {
+            ...grant,
+            child: {
+              ...grant.child,
+              handle: {
+                ...grant.child.handle,
+                externalSessionId:
+                  grant.child.handle.externalSessionId === 'ses_01JABCDEF0123456789ABCDEFG'
+                    ? 'ses_01JABCDEF0123456789ABCDEFH'
+                    : 'ses_01JABCDEF0123456789ABCDEFG',
+              },
+            },
           },
-        },
+        ],
       ]) {
-        try {
-          await ports.repository.retain(changed)
-          replayChangedDenied = false
-        } catch {
-          /* Real immutable repository rejects replacement. */
-        }
+        replayMutationRejections.push(
+          await assertProcessReplayMutationRejected({
+            ports,
+            grant,
+            changed,
+            mutation,
+            readWinner: () => readProcessGrantMetadata(ports, descriptor.request.attemptId),
+          })
+        )
       }
       assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
       const snapshot = {
         ...(await inspectProcessSnapshot(directory, observer, ports)),
         replayOriginalRetained: true,
-        replayChangedDenied,
+        replayChangedDenied: replayMutationRejections.length === 3,
+        replayMutationRejections,
       }
       appendProcessEvidence(directory, snapshot)
       process.stdout.write(`${JSON.stringify(snapshot)}\n`)
@@ -1229,6 +1278,11 @@ export async function recoveryWorker(directory, mode, baseUrl) {
           return 'unresolved'
         }
       },
+    })
+    appendProcessEvidence(directory, {
+      stage: 'recovery_runtime_constructed',
+      pid: process.pid,
+      handle: row.admission.handle,
     })
     if (runtime.recoveryBlocked.length) throw new Error('PI_PROCESS_UNEXPECTED_RECOVERY_BLOCK')
     await runtime.adapter.drain()

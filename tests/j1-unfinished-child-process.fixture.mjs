@@ -11,6 +11,20 @@ const worker = fileURLToPath(
 )
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+export function assertJ1ImmutableReplay(snapshot) {
+  assert.equal(snapshot.replayOriginalRetained, true)
+  assert.equal(snapshot.replayChangedDenied, true)
+  assert.deepEqual(
+    snapshot.replayMutationRejections,
+    ['expiresAt', 'requestDigest', 'externalSessionId'].map((mutation) => ({
+      mutation,
+      code: 'PI_CHILD_CONTINUATION_DENIED',
+      classification: 'immutable_conflict',
+      persistenceFailureCode: null,
+    }))
+  )
+}
+
 export function assertJ1DeniedRecovery(snapshot, reason) {
   assert.ok(['PI_CHILD_CONTINUATION_REJECTED', 'PI_CHILD_CONTINUATION_DENIED'].includes(reason))
   const classification =
@@ -79,11 +93,18 @@ export function assertJ1ConcurrentRecovery(snapshots) {
 export async function createUnfinishedChildProcessHarness(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'j1-unfinished-child-'))
   const children = new Set()
+  let releaseResponses = () => {}
+  const responseGate = new Promise((resolve) => {
+    releaseResponses = resolve
+  })
   let transport
   try {
     const { createChildProcessTransport } =
       await import('./pi-child-continuation-process.fixture.mjs')
-    transport = await createChildProcessTransport(options)
+    transport = await createChildProcessTransport({
+      ...options,
+      ...(options.holdResponsesForRecovery ? { beforeResponse: () => responseGate } : {}),
+    })
   } catch (error) {
     await rm(directory, { recursive: true, force: true })
     throw error
@@ -162,6 +183,7 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
     start,
     waitFor,
     kill,
+    releaseResponses,
     async setClock(now) {
       await writeFile(join(directory, 'current-time.json'), JSON.stringify(now))
     },
@@ -177,6 +199,7 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
           await exit.catch(() => {})
         })
       )
+      releaseResponses()
       await transport.close()
       if (process.env.J1_PROOF_EVIDENCE_DIR) {
         const target = join(process.env.J1_PROOF_EVIDENCE_DIR, basename(directory))
