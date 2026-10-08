@@ -47,6 +47,7 @@ function executionScopeTrigger(
     AND length(json_extract(NEW.value, '${path}.workspaceId')) > 0
     AND json_type(NEW.value, '${scope}.schemaVersion') = 'integer'
     AND json_extract(NEW.value, '${scope}.schemaVersion') = 1
+    AND (SELECT count(*) FROM json_each(NEW.value, '${scope}')) = CASE json_extract(NEW.value, '${scope}.kind') WHEN 'workspace' THEN 2 WHEN 'project' THEN 3 ELSE 0 END
     AND (NEW.namespace <> 'command-inbox' OR (
       json_type(NEW.value, '$.callerPrincipalId') = 'text'
       AND json_type(NEW.value, '$.operation') = 'text'
@@ -65,9 +66,14 @@ function executionScopeTrigger(
     BEFORE ${action} ON control_plane_records
     WHEN NEW.namespace IN (${namespaces}) AND (
       (json_type(NEW.value, '${scope}') IS NOT NULL AND NOT coalesce((${valid}), 0))
-      OR (NEW.namespace = 'execution-plans' AND (
+      OR (NEW.namespace IN ('execution-plans', 'context-packages') AND (
         (json_extract(NEW.value, '$.schemaVersion') = 2 AND json_type(NEW.value, '${scope}') IS NULL)
         OR (json_extract(NEW.value, '$.schemaVersion') = 1 AND json_type(NEW.value, '${scope}') IS NOT NULL)
+      ))
+      OR (NEW.namespace = 'context-packages' AND (
+        json_type(NEW.value, '$.executionScope') IS NOT NULL
+        OR (json_type(NEW.value, '${scope}') IS NULL AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0))
+        OR (json_extract(NEW.value, '$.schemaVersion') = 2 AND json_extract(NEW.value, '${scope}.kind') <> 'workspace')
       ))
     )
     BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`
@@ -91,6 +97,7 @@ export const EXECUTION_SCOPE_STATEMENTS = {
         ['command', '$', "'command-inbox'"],
         ['correlation', '$.correlation', "'executions', 'execution-plans', 'execution-events'"],
         ['cancellation', '$.request', "'execution-cancellation-receipts'"],
+        ['context', '$.projectState', "'context-packages'"],
       ].map(([suffix, path, namespaces]) => [
         `control_plane_records_scope_${suffix}_${action.toLowerCase()}`,
         executionScopeTrigger(action, suffix!, path!, namespaces!),

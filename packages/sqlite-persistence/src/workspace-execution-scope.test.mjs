@@ -14,11 +14,13 @@ import {
   ContextPackageCompiler,
   contextPackageSerializationFixtures,
   bindProjectContextPackageToWorkspaceParent,
+  deriveContextPackage,
 } from '@control-plane/context'
 import {
   ExecutionPlanCompiler,
   ExecutionPlanAcceptanceValidator,
   deriveExecutionPlanWithAuthority,
+  deriveExecutionPlan,
 } from '@control-plane/execution-plan'
 import {
   createExecutionPlanTestFixture,
@@ -65,6 +67,38 @@ function workspaceFixture() {
     }),
   }
 }
+function projectFixture(workspaceId = id('wsp')) {
+  const legacy = contextPackageSerializationFixtures.futurePi
+  const context = new ContextPackageCompiler('1.0.0').compile({
+    objective: legacy.objective,
+    projectState: {
+      schemaVersion: 1,
+      workspaceId,
+      projectId: id('prj'),
+      revision: 4,
+      items: [],
+      createdAt: at,
+      updatedAt: at,
+    },
+    expectedProjectStateRevision: 4,
+    candidates: [],
+    artifacts: [],
+    constraints: legacy.constraints,
+    permissions: [],
+    successCriteria: legacy.successCriteria,
+    returnContract: legacy.returnContract,
+    budgets: legacy.budgets,
+    compiledAt: legacy.compiledAt,
+  })
+  const input = createExecutionPlanTestFixtureInputs({ contextPackage: context })
+  return {
+    context,
+    plan: new ExecutionPlanCompiler('1.0.0').compile({
+      ...input,
+      correlation: { ...input.correlation, workspaceId },
+    }),
+  }
+}
 function commandInput(plan) {
   const { requestId, ...correlation } = plan.correlation
   return {
@@ -84,9 +118,9 @@ function commandInput(plan) {
     retentionExpiresAt: expiry,
   }
 }
-function service(provider, tail = 'G') {
+function service(provider, tail = 'G', budgetAdmission = true) {
   return new CommandInboxService({
-    repository: new SqliteCommandAcceptanceRepository(provider, { budgetAdmission: true }),
+    repository: new SqliteCommandAcceptanceRepository(provider, { budgetAdmission }),
     executionIdFactory: () => id('exe', tail),
     executionPlanValidator: {
       validate: async () => true,
@@ -594,3 +628,163 @@ test('independent SQLite connections admit one workspace owner under contention 
     }
   })
 }, 15_000)
+
+for (const foreign of [true, false]) {
+  test(`repair: unbudgeted explicit child rejects ${foreign ? 'foreign project owner' : 'standalone same-workspace plan'}`, async () => {
+    await fixture(async ({ provider }) => {
+      const parent = foreign ? projectFixture(id('wsp', 'H')) : workspaceFixture()
+      await seed(provider, parent.context, parent.plan)
+      const acceptedParent = await service(provider, 'G', false).acceptExecution(
+        commandInput(parent.plan)
+      )
+      const child = workspaceFixture()
+      await seed(provider, child.context, child.plan)
+      const request = {
+        ...commandInput(child.plan),
+        commandId: id('cmd', 'H'),
+        idempotencyKey: 'unbudgeted-invalid-child-0001',
+        parentExecutionId: acceptedParent.execution.executionId,
+      }
+      await expect(service(provider, 'H', false).acceptExecution(request)).rejects.toThrow(
+        'INVALID_EXECUTION_PLAN_REFERENCE'
+      )
+      for (const namespace of ['command-inbox', 'executions'])
+        expect(await provider.transaction((tx) => tx.list(namespace))).toHaveLength(1)
+      expect(await provider.transaction((tx) => tx.list('usage-budgets'))).toHaveLength(0)
+    })
+  })
+}
+
+test('repair: unbudgeted explicit child verifies narrowed immutable ancestry without opening a ledger budget', async () => {
+  await fixture(async ({ provider }) => {
+    const parent = workspaceFixture()
+    await seed(provider, parent.context, parent.plan)
+    const acceptedParent = await service(provider, 'G', false).acceptExecution(
+      commandInput(parent.plan)
+    )
+    const context = deriveContextPackage(parent.context, {
+      objective: 'Narrow child context',
+      allowedStateItemIds: [],
+      allowedArtifactIds: [],
+      budgets: parent.context.budgets,
+      successCriteria: parent.context.successCriteria,
+      returnContract: parent.context.returnContract,
+      compiledAt: parent.context.compiledAt,
+    })
+    const plan = deriveExecutionPlan(parent.plan, {
+      correlation: {
+        ...parent.plan.correlation,
+        taskId: id('tsk', 'H'),
+        requestId: id('req', 'H'),
+      },
+      contextPackage: context,
+      constraints: parent.plan.constraints,
+      runtimeRequirements: parent.plan.runtimeRequirements,
+      outputContract: parent.plan.outputContract,
+      compiledAt: parent.plan.compiledAt,
+    })
+    await seed(provider, context, plan)
+    const accepted = await service(provider, 'H', false).acceptExecution({
+      ...commandInput(plan),
+      commandId: id('cmd', 'H'),
+      idempotencyKey: 'unbudgeted-valid-child-0001',
+      parentExecutionId: acceptedParent.execution.executionId,
+    })
+    expect(accepted.execution.parentExecutionId).toBe(acceptedParent.execution.executionId)
+    expect(await provider.transaction((tx) => tx.list('executions'))).toHaveLength(2)
+    expect(await provider.transaction((tx) => tx.list('usage-budgets'))).toHaveLength(0)
+  })
+})
+
+test('repair: legacy event spelling cannot bypass an explicit workspace owner', async () => {
+  await fixture(async ({ provider }) => {
+    const { context, plan } = workspaceFixture()
+    await seed(provider, context, plan)
+    const owner = await service(provider).acceptExecution(commandInput(plan))
+    const { executionScope: _ignored, ...legacyCorrelation } = owner.execution.correlation
+    const draft = {
+      eventId: id('evt'),
+      executionId: owner.execution.executionId,
+      type: 'execution.progressed',
+      schemaVersion: 1,
+      correlation: {
+        ...legacyCorrelation,
+        projectId: id('prj'),
+        commandId: id('cmd'),
+        traceId: id('trc'),
+      },
+      payload: { progress: 25 },
+      occurredAt: at,
+      recordedAt: at,
+      retentionExpiresAt: expiry,
+    }
+    const events = new SqliteExecutionEventRepository(provider)
+    await expect(events.append(draft)).rejects.toThrow('SQLITE_EXECUTION_EVENT_SCOPE_MISMATCH')
+    expect(await events.queryAfter(owner.execution.executionId, 0, 10)).toEqual([])
+  })
+})
+
+test('repair: retained workspace event tombstone rejects replay after its owner was deleted', async () => {
+  await fixture(async ({ provider }) => {
+    const { context, plan } = workspaceFixture()
+    await seed(provider, context, plan)
+    const owner = await service(provider).acceptExecution(commandInput(plan))
+    const draft = {
+      eventId: id('evt'),
+      executionId: owner.execution.executionId,
+      type: 'execution.progressed',
+      schemaVersion: 1,
+      correlation: { ...owner.execution.correlation, commandId: id('cmd'), traceId: id('trc') },
+      payload: { progress: 25 },
+      occurredAt: at,
+      recordedAt: at,
+      retentionExpiresAt: expiry,
+    }
+    const events = new SqliteExecutionEventRepository(provider)
+    const event = await events.append(draft)
+    await provider.transaction((tx) =>
+      tx.delete('executions', storedId(owner.execution.executionId))
+    )
+    expect(await events.append(draft)).toBeUndefined()
+    await provider.transaction(async (tx) => {
+      await tx.put({
+        namespace: 'retired-execution-event-ids',
+        id: storedId(event.eventId),
+        value: {
+          eventId: event.eventId,
+          executionId: event.executionId,
+          sequence: event.sequence,
+          retiredAt: expiry,
+        },
+      })
+      await tx.delete('execution-events', storedId(event.eventId))
+      await tx.delete('executions', storedId(owner.execution.executionId))
+    })
+    expect(await events.append(draft)).toBeUndefined()
+    expect(await events.queryAfter(owner.execution.executionId, 0, 10)).toEqual([])
+  })
+})
+
+test('repair: legitimate historical project events retain their scope and query identity', async () => {
+  await fixture(async ({ provider }) => {
+    const { context, plan } = projectFixture()
+    await seed(provider, context, plan)
+    const owner = await service(provider, 'G', false).acceptExecution(commandInput(plan))
+    const draft = {
+      eventId: id('evt'),
+      executionId: owner.execution.executionId,
+      type: 'execution.progressed',
+      schemaVersion: 1,
+      correlation: { ...owner.execution.correlation, commandId: id('cmd'), traceId: id('trc') },
+      payload: { progress: 25 },
+      occurredAt: at,
+      recordedAt: at,
+      retentionExpiresAt: expiry,
+    }
+    const events = new SqliteExecutionEventRepository(provider)
+    const event = await events.append(draft)
+    expect(event.correlation.projectId).toBe(id('prj'))
+    expect(event.correlation.executionScope).toBeUndefined()
+    expect(await events.queryAfter(owner.execution.executionId, 0, 10)).toEqual([event])
+  })
+})

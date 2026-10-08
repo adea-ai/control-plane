@@ -223,9 +223,10 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
             !executionScopesEqual(execution.correlation, storedPlan.correlation))
         )
           throw new CommandInboxError('INVALID_EXECUTION_PLAN_REFERENCE')
-        const allowance = this.#budgetAdmission
-          ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
-          : undefined
+        const allowance =
+          this.#budgetAdmission || execution.correlation.executionScope !== undefined
+            ? await this.#admissionAllowance(transaction, command, execution, storedPlan)
+            : undefined
         await transaction.put({
           namespace: namespaces.commands,
           id: commandId,
@@ -241,7 +242,7 @@ export class SqliteCommandAcceptanceRepository implements CommandAcceptanceRepos
           id: recordId(execution.executionId),
           value: commandId,
         })
-        if (allowance !== undefined) {
+        if (this.#budgetAdmission && allowance !== undefined) {
           await SqliteDurableUsageStore.withTransaction(
             transaction,
             allowance.workspaceId,

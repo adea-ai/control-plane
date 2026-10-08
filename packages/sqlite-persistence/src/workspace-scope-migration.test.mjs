@@ -127,3 +127,60 @@ test('workspace admission index cannot be bypassed with missing identity fields'
     database.close()
   }
 })
+
+test('repair: raw context package scope constraints reject version, flat and owner mismatches', () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    applyMigrations(database)
+    const valid = {
+      schemaVersion: 2,
+      projectState: { workspaceId: command.workspaceId, executionScope: workspace, revision: 4 },
+    }
+    insert(database, 'context-packages', 'valid-context', valid)
+    const legacy = {
+      schemaVersion: 1,
+      projectState: { workspaceId: command.workspaceId, projectId: project.projectId, revision: 4 },
+    }
+    insert(database, 'context-packages', 'legacy-context', legacy)
+    for (const invalid of [
+      { ...valid, schemaVersion: 1 },
+      { ...valid, projectState: { ...valid.projectState, workspaceId: null } },
+      {
+        ...valid,
+        projectState: {
+          ...valid.projectState,
+          projectId: project.projectId,
+          executionScope: project,
+        },
+      },
+      { ...legacy, schemaVersion: 2 },
+      { ...legacy, executionScope: workspace },
+      { ...legacy, projectState: { ...legacy.projectState, projectId: null } },
+      { ...valid, projectState: { ...valid.projectState, projectId: null } },
+      { ...valid, projectState: { ...valid.projectState, projectId: project.projectId } },
+      {
+        ...valid,
+        projectState: { ...valid.projectState, executionScope: { ...workspace, schemaVersion: 2 } },
+      },
+      {
+        ...valid,
+        projectState: { ...valid.projectState, executionScope: { ...workspace, extra: true } },
+      },
+      {
+        ...valid,
+        projectState: { ...valid.projectState, projectId: 'prj_other', executionScope: project },
+      },
+    ]) {
+      expect(() => insert(database, 'context-packages', JSON.stringify(invalid), invalid)).toThrow(
+        'SQLITE_EXECUTION_SCOPE_INVALID'
+      )
+      expect(() =>
+        database
+          .prepare('UPDATE control_plane_records SET value = ? WHERE id = ?')
+          .run(JSON.stringify(invalid), 'valid-context')
+      ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+    }
+  } finally {
+    database.close()
+  }
+})

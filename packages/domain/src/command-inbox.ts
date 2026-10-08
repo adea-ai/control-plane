@@ -365,12 +365,16 @@ export class CommandInboxService {
     const scope = scopeFromInput(parsed)
     const existing = await this.repository.get(scope)
     const admitted = existing ?? { ...scope, executionPlan: parsed.executionPlan }
+    // Explicit project requests retain historical project replay keys. When an
+    // old command wins that key, require current authority for its exact pin
+    // without adding scope fields to the historical command or execution.
+    const admittedScope = admitted.executionScope ?? parsed.correlation.executionScope
     if (
-      admitted.executionScope !== undefined &&
+      admittedScope !== undefined &&
       !(await this.#executionPlanValidator.authorizeScope?.({
         workspaceId: admitted.workspaceId,
         projectId: admitted.projectId,
-        executionScope: admitted.executionScope,
+        executionScope: admittedScope,
         executionPlan: admitted.executionPlan,
         callerPrincipalId: admitted.callerPrincipalId,
       }))
@@ -458,12 +462,13 @@ export class CommandInboxService {
       await this.repository.verifyAdmission?.(result.command, result.execution)
       // A concurrent winner may have a different retained pin than the input.
       // Recheck its current authority, rather than carrying the loser's grant.
-      if (result.command.executionScope !== undefined) {
+      const winnerScope = result.command.executionScope ?? parsed.correlation.executionScope
+      if (winnerScope !== undefined) {
         const replayInput = {
           executionPlan: result.command.executionPlan,
           workspaceId: result.command.workspaceId,
           projectId: result.command.projectId,
-          executionScope: result.command.executionScope,
+          executionScope: winnerScope,
           taskId: result.command.taskId,
           agentId: result.command.agentId,
           callerPrincipalId: result.command.callerPrincipalId,

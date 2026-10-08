@@ -215,6 +215,74 @@ test('CommandInbox requires explicit current authority, converges concurrent adm
   ).toBe(false)
 })
 
+test.each([false, true])(
+  'explicit project replay checks the retained legacy pin and current scope even after a race: %s',
+  async (race) => {
+    const legacy = createExecutionPlanTestFixture()
+    const input = createExecutionPlanTestFixtureInputs()
+    const explicit = compiler.compile({
+      ...input,
+      correlation: {
+        ...input.correlation,
+        executionScope: {
+          schemaVersion: 1,
+          kind: 'project',
+          projectId: input.correlation.projectId,
+        },
+      },
+    })
+    const repository = new InMemoryCommandAcceptanceRepository()
+    const legacyValidator = { validate: async () => true, authorize: async () => true }
+    const makeInbox = (validator, store = repository) =>
+      new CommandInboxService({
+        repository: store,
+        executionIdFactory: () => id('exe', 'H'),
+        now: () => at,
+        executionPlanValidator: validator,
+      })
+    const admitted = await makeInbox(legacyValidator).acceptExecution(command(legacy))
+    const targetStore = race
+      ? {
+          get: async () => undefined,
+          getByExecutionId: (value) => repository.getByExecutionId(value),
+          getExecution: (value) => repository.getExecution(value),
+          compareAndSet: (version, value) => repository.compareAndSet(version, value),
+          accept: (value, execution) => repository.accept(value, execution),
+        }
+      : repository
+    await expect(
+      makeInbox(legacyValidator, targetStore).acceptExecution(command(explicit))
+    ).rejects.toThrow('INVALID_EXECUTION_PLAN_REFERENCE')
+    const observed = []
+    const authority = {
+      ...legacyValidator,
+      authorizeScope: async (value) => {
+        observed.push(value)
+        // The input plan is allowed; the retained legacy winner is revoked.
+        return value.executionPlan.schemaVersion === 2
+      },
+    }
+    await expect(
+      makeInbox(authority, targetStore).acceptExecution(command(explicit))
+    ).rejects.toThrow('INVALID_EXECUTION_PLAN_REFERENCE')
+    expect(observed.at(-1).executionPlan).toEqual(pin(legacy))
+    expect(observed.at(-1).executionScope).toEqual(explicit.correlation.executionScope)
+    const allowed = {
+      ...legacyValidator,
+      authorizeScope: async (value) =>
+        currentExecutionScopeAllows({ readCurrent: async () => snapshot(value) }, value, at),
+    }
+    const replay = await makeInbox(allowed, targetStore).acceptExecution(command(explicit))
+    expect(replay.replayed).toBe(true)
+    expect(replay.command).toEqual(admitted.command)
+    expect(replay.execution).toEqual(admitted.execution)
+    expect(replay.command.executionScope).toBeUndefined()
+    expect(repository.executionCount).toBe(1)
+    // An unchanged legacy request still has its historical validator behavior.
+    expect((await makeInbox(legacyValidator).acceptExecution(command(legacy))).replayed).toBe(true)
+  }
+)
+
 test('workspace to real project child requires narrowed current authority and retained structural proof', async () => {
   const { base, contextCompiler, context, plan, projectId } = fixture()
   const projectContext = contextCompiler.compile({

@@ -41,6 +41,8 @@ import { createIsolatedTestDatabase, integrationTestTimeout } from './testing.ts
 import { commandInbox } from './schema/commands.ts'
 import { executionPlans } from './schema/execution-plans.ts'
 import { executions } from './schema/executions.ts'
+import { usageBudgetStates } from './schema/usage-budget-state.ts'
+import { usageLedgerEntries } from './schema/usage-ledger.ts'
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
 const time = '2026-10-08T12:00:00.000Z'
@@ -114,6 +116,39 @@ function workspacePlan() {
     plan: new ExecutionPlanCompiler('1.0.0').compile({
       ...input,
       correlation: { ...correlation, executionScope: workspaceScope },
+    }),
+  }
+}
+
+function projectPlan(workspaceId) {
+  const source = contextPackageSerializationFixtures.futurePi
+  const context = new ContextPackageCompiler('1.0.0').compile({
+    objective: 'Run a standalone project execution',
+    projectState: {
+      schemaVersion: 1,
+      workspaceId,
+      projectId: legacyPlan.correlation.projectId,
+      revision: 1,
+      items: [],
+      createdAt: time,
+      updatedAt: time,
+    },
+    expectedProjectStateRevision: 1,
+    candidates: [],
+    artifacts: [],
+    constraints: { ...source.constraints, allowedArtifactIds: [] },
+    permissions: [],
+    successCriteria: source.successCriteria,
+    returnContract: source.returnContract,
+    budgets: source.budgets,
+    compiledAt: source.compiledAt,
+  })
+  const input = createExecutionPlanTestFixtureInputs({ contextPackage: context })
+  return {
+    context,
+    plan: new ExecutionPlanCompiler('1.0.0').compile({
+      ...input,
+      correlation: { ...input.correlation, workspaceId },
     }),
   }
 }
@@ -517,6 +552,133 @@ describe.skipIf(!enabled)('PostgreSQL workspace execution scope migration and co
       (await new PostgresExecutionRepository(database).getExecution(child.execution.executionId))
         .correlation
     ).toEqual(childPlan.correlation)
+  })
+
+  for (const foreign of [true, false]) {
+    test(`default unbudgeted explicit child rejects ${foreign ? 'foreign project owner' : 'standalone same-workspace plan'} atomically`, async () => {
+      const parent = foreign ? projectPlan('wsp_01JABCDEF0123456789ABCDEFH') : workspace
+      await new PostgresContextPackageRepository(database).put(parent.context)
+      await new PostgresExecutionPlanRepository(database).put(parent.plan)
+      const repository = new PostgresCommandAcceptanceRepository(database)
+      const parentInput = pair(parent.plan, `unbudgeted-parent-${foreign}`)
+      expect((await repository.accept(parentInput.command, parentInput.execution)).outcome).toBe(
+        'accepted'
+      )
+      const child = pair(workspace.plan, `unbudgeted-invalid-child-${foreign}`)
+      child.execution = ExecutionSchema.parse({
+        ...child.execution,
+        parentExecutionId: parentInput.execution.executionId,
+      })
+      await expect(repository.accept(child.command, child.execution)).rejects.toThrow(
+        'INVALID_EXECUTION_PLAN_REFERENCE'
+      )
+      expect(await repository.get(child.command)).toBeUndefined()
+      expect(
+        await new PostgresExecutionRepository(database).getExecution(child.execution.executionId)
+      ).toBeUndefined()
+      expect(
+        await database
+          .select()
+          .from(usageBudgetStates)
+          .where(eq(usageBudgetStates.executionId, child.execution.executionId))
+      ).toEqual([])
+      expect(
+        await database
+          .select()
+          .from(usageLedgerEntries)
+          .where(eq(usageLedgerEntries.executionId, child.execution.executionId))
+      ).toEqual([])
+    })
+  }
+
+  test('default unbudgeted explicit child verifies async narrowed real-project ancestry without reserving budget', async () => {
+    const projects = new PostgresProjectStateRepository(database)
+    const projectId = legacyPlan.correlation.projectId
+    const workspaceId = workspace.plan.correlation.workspaceId
+    await projects.create({
+      schemaVersion: 1,
+      workspaceId,
+      projectId,
+      revision: 1,
+      items: [],
+      createdAt: time,
+      updatedAt: time,
+    })
+    const context = bindProjectContextPackageToWorkspaceParent(
+      workspace.context,
+      contextPackageSerializationFixtures.futurePi
+    )
+    const plan = await deriveExecutionPlanWithAuthority(
+      workspace.plan,
+      {
+        correlation: {
+          ...workspace.plan.correlation,
+          projectId,
+          executionScope: { schemaVersion: 1, kind: 'project', projectId },
+          taskId: id('tsk'),
+          requestId: id('req'),
+        },
+        contextPackage: context,
+        constraints: workspace.plan.constraints,
+        runtimeRequirements: workspace.plan.runtimeRequirements.filter(
+          ({ capability }) => capability !== 'execution.scope.workspace.v1'
+        ),
+        outputContract: workspace.plan.outputContract,
+        compiledAt: workspace.plan.compiledAt,
+      },
+      {
+        callerPrincipalId: 'svc_workspace-scope-fixture',
+        now: time,
+        authority: {
+          readCurrent: async (input) => {
+            const project =
+              input.executionScope.kind === 'project'
+                ? await projects.get(input.workspaceId, input.executionScope.projectId)
+                : undefined
+            return {
+              workspaceId: input.workspaceId,
+              executionScope: input.executionScope,
+              callerPrincipalId: input.callerPrincipalId,
+              executionPlan: input.executionPlan,
+              principalActive: true,
+              grantActive: true,
+              allowedPrincipalIds: [input.callerPrincipalId],
+              expiresAt: '2026-11-08T12:00:00.000Z',
+              ...(project === undefined ? {} : { projectWorkspaceId: project.workspaceId }),
+            }
+          },
+        },
+      }
+    )
+    await new PostgresContextPackageRepository(database).put(context)
+    await new PostgresExecutionPlanRepository(database).put(plan)
+    const parent = pair(workspace.plan, 'unbudgeted-valid-parent')
+    const child = pair(plan, 'unbudgeted-valid-child')
+    child.execution = ExecutionSchema.parse({
+      ...child.execution,
+      parentExecutionId: parent.execution.executionId,
+    })
+    const repository = new PostgresCommandAcceptanceRepository(database)
+    expect((await repository.accept(parent.command, parent.execution)).outcome).toBe('accepted')
+    expect((await repository.accept(child.command, child.execution)).outcome).toBe('accepted')
+    expect(
+      await new PostgresExecutionRepository(database).getExecution(child.execution.executionId)
+    ).toEqual(child.execution)
+    expect((await repository.accept(child.command, child.execution)).outcome).toBe('duplicate')
+    for (const execution of [parent.execution, child.execution]) {
+      expect(
+        await database
+          .select()
+          .from(usageBudgetStates)
+          .where(eq(usageBudgetStates.executionId, execution.executionId))
+      ).toEqual([])
+      expect(
+        await database
+          .select()
+          .from(usageLedgerEntries)
+          .where(eq(usageLedgerEntries.executionId, execution.executionId))
+      ).toEqual([])
+    }
   })
 
   test('workspace progress replay keeps scope and event effects reject cross-workspace correlation', async () => {

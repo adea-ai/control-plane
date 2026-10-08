@@ -24,10 +24,14 @@ adapters and project-only operations fail closed before project reads/effects.
 R1 owns the runtime capability enum, opt-in Pi adapter, SDK lead operations and
 Node admission composition.
 
-This main-based kernel change depends on runtime draft #949 at
-`c1fe684a0e4fd2cd5b3cd93347fe99f940d76633`. Qualification uses its immutable
-capability enum and compatibility-schema overlay; those runtime-owned changes
-are excluded from the kernel commit. A composed candidate must run fresh gates.
+The capability prerequisite is the enum and compatibility schema from runtime
+draft #949 at `c1fe684a0e4fd2cd5b3cd93347fe99f940d76633`. Local qualification
+uses those immutable overlays, excluded from this kernel commit. The forward
+publication order is an independently qualified minimal capability prerequisite
+on main, then this kernel on that canonical dependency, then the full runtime
+composition on the canonical kernel. The original full runtime draft is not a
+merge prerequisite. Required exact-head gates must run after canonical
+dependencies are present; overlay checks alone cannot qualify a published head.
 
 Context version 2 retains the `projectState` property name for repository
 compatibility but carries workspace scope with no project ID or state items.
@@ -49,6 +53,9 @@ capability declarations are only targets/support metadata.
 Explicit CommandInbox admission/replay requires `authorizeScope`. Legacy
 custom validators without that method reject explicit scope. Current authority
 is checked even when the historical workspace plan has been retired. Exact
+project retries that normalize to a legacy key check current scope authority
+against the retained winner's original plan pin, including concurrent replay.
+The retained command and execution keep their historical serialization. Exact
 plan validation and current catalog policy continue to apply. Effects must
 recheck current authority through their adapter/composition owner; the retained
 marker alone cannot grant authority. Existing native model broker and per-send
@@ -76,6 +83,13 @@ scope through restarts and CAS. Workspace execution retention targets carry an
 explicit scope marker so unrelated project holds do not become workspace
 holds; incomplete historical targets retain fail-closed behavior. Retention,
 cleanup and outcome ownership gates remain applicable.
+
+Explicit child lineage checks apply even when optional budget reservation is
+disabled. Disabling ledger reservation does not disable owner, plan or context
+narrowing checks. Event replay checks retained identities before requiring a
+live owner; a new event cannot hide a workspace owner's scope by supplying
+legacy project fields. SQLite context scope constraints also cover the nested
+`projectState` representation.
 
 ## Qualification and rollout
 
