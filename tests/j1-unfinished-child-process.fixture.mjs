@@ -11,6 +11,26 @@ const worker = fileURLToPath(
 )
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+export function assertJ1FastTerminalRetention(snapshot) {
+  assert.equal(snapshot.stage, 'fast_terminal_snapshot')
+  assert.equal(snapshot.childNativeState, 'completed')
+  assert.equal(snapshot.childNativeTask.kind, 'pi.generation')
+  assert.equal(snapshot.childNativeTask.state.status, 'terminal')
+  assert.equal(snapshot.childNativeTask.state.outcome.status, 'completed')
+  assert.equal(snapshot.modelUsageCount, 1)
+  assert.equal(snapshot.openHoldCount, 0)
+  assert.ok(['running', 'awaiting_input'].includes(snapshot.parentState))
+  assert.equal(snapshot.retentionOutcome, 'expected_terminal_denial')
+  assert.equal(snapshot.grantDenied, true)
+  assert.equal(snapshot.grantDenialCode, 'PI_CHILD_CONTINUATION_DENIED')
+  assert.equal(snapshot.grant, null)
+  assert.deepEqual(snapshot.retentionRejection, {
+    code: 'PI_CHILD_CONTINUATION_DENIED',
+    classification: 'terminal_child',
+    persistenceFailureCode: null,
+  })
+}
+
 export function assertJ1ImmutableReplay(snapshot) {
   assert.equal(snapshot.replayOriginalRetained, true)
   assert.equal(snapshot.replayChangedDenied, true)

@@ -5,6 +5,7 @@ import {
   assertJ1QuarantinedRecovery,
   assertJ1ConcurrentRecovery,
   assertJ1ImmutableReplay,
+  assertJ1FastTerminalRetention,
 } from './j1-unfinished-child-process.fixture.mjs'
 
 async function completeParentAndKill(harness, mode = 'before_reservation') {
@@ -278,4 +279,62 @@ test('J1 proof oracle rejects storage failures masquerading as immutable replay 
     unrelated.replayMutationRejections[1].persistenceFailureCode = failure
     expect(() => assertJ1ImmutableReplay(unrelated)).toThrow()
   }
+})
+
+test('J1 fast native child terminal before grant retention cannot acquire continuation authority', async () => {
+  const harness = await createUnfinishedChildProcessHarness()
+  try {
+    const worker = harness.start('fast_child_terminal_before_grant', 'bun')
+    const snapshot = await harness.waitFor(
+      (rows) =>
+        rows.find((row) => row.stage === 'fast_terminal_snapshot' && row.pid === worker.child.pid),
+      worker
+    )
+    expect((await worker.exit).code).toBe(0)
+    assertJ1FastTerminalRetention(snapshot)
+    expect(harness.transport.requests).toHaveLength(1)
+    expect(snapshot.inboxTerminalCount).toBe(0)
+    const { piDurableToolSourceKey } = await import('@control-plane/pi-durable-adapter')
+    expect(snapshot.source.sourceKey).toBe(piDurableToolSourceKey(snapshot.source.source))
+    expect(snapshot.sourceRequestDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
+    expect((await harness.descriptor()).grant).toBeUndefined()
+  } finally {
+    await harness.close()
+  }
+}, 60000)
+
+test('J1 fast-terminal oracle rejects allowed grants and unrelated storage denials', () => {
+  const terminal = {
+    stage: 'fast_terminal_snapshot',
+    childNativeState: 'completed',
+    childNativeTask: {
+      kind: 'pi.generation',
+      state: { status: 'terminal', outcome: { status: 'completed' } },
+    },
+    modelUsageCount: 1,
+    openHoldCount: 0,
+    parentState: 'running',
+    retentionOutcome: 'expected_terminal_denial',
+    grantDenied: true,
+    grantDenialCode: 'PI_CHILD_CONTINUATION_DENIED',
+    grant: null,
+    retentionRejection: {
+      code: 'PI_CHILD_CONTINUATION_DENIED',
+      classification: 'terminal_child',
+      persistenceFailureCode: null,
+    },
+  }
+  expect(() => assertJ1FastTerminalRetention(terminal)).not.toThrow()
+  expect(() =>
+    assertJ1FastTerminalRetention({ ...terminal, retentionOutcome: 'allowed', grant: {} })
+  ).toThrow()
+  expect(() =>
+    assertJ1FastTerminalRetention({
+      ...terminal,
+      retentionRejection: { ...terminal.retentionRejection, persistenceFailureCode: 'SQLITE_BUSY' },
+    })
+  ).toThrow()
+  expect(() =>
+    assertJ1FastTerminalRetention({ ...terminal, childNativeState: 'running' })
+  ).toThrow()
 })
