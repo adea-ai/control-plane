@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.27.0...local-control-plane-v1.27.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **runtime:** route native Pi through ledger-backed model broker ([#934](https://github.com/adea-ai/control-plane/issues/934)) ([2780e4c](https://github.com/adea-ai/control-plane/commit/2780e4c364dbb634b6196f499d58cbbfdc578fb0))
+
 ## [1.27.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.26.0...local-control-plane-v1.27.0) (2026-10-07)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.8.0...managed-pi-adapter-v1.8.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **runtime:** route native Pi through ledger-backed model broker ([#934](https://github.com/adea-ai/control-plane/issues/934)) ([2780e4c](https://github.com/adea-ai/control-plane/commit/2780e4c364dbb634b6196f499d58cbbfdc578fb0))
+
 ## [1.8.0](https://github.com/adea-ai/control-plane/compare/managed-pi-adapter-v1.7.2...managed-pi-adapter-v1.8.0) (2026-10-07)
 
 
