@@ -1,5 +1,15 @@
 export { createCurrentModelConnectionComposition } from './models/current-model-composition.js'
 export {
+  createProductionPiLeadComposition,
+  type ProductionPiLeadCompositionOptions,
+} from './models/production-model-composition.js'
+export { ProductionLeadProductEvidenceSchema } from './models/production-lead-product.js'
+export { createProductionProductHttpReader } from './models/production-product-http.js'
+import {
+  createProductionPiLeadComposition,
+  type ProductionPiLeadCompositionOptions,
+} from './models/production-model-composition.js'
+export {
   createPiLeadModelAdmissionReadiness,
   type PiLeadModelAdmissionInput,
 } from './models/pi-lead-model-readiness.js'
@@ -45,6 +55,7 @@ import type {
 export const serviceName = 'control-api'
 
 export interface ControlApiStartOptions {
+  readonly piDurableProduction?: ProductionPiLeadCompositionOptions
   readonly piDurableLeadService?: PiDurableLeadService
   readonly graphAdministrationService?: GraphAdministrationService
   readonly workspaceCatalogService?: WorkspaceCatalogService
@@ -79,6 +90,8 @@ export interface StartedControlApi {
 }
 
 export async function start(options: ControlApiStartOptions = {}): Promise<StartedControlApi> {
+  if (options.piDurableProduction && options.piDurableLeadService)
+    throw new Error('PI_PRODUCTION_CONFIGURATION_CONFLICT')
   const logger = options.logger ?? jsonLogger
   let application: NestFastifyApplication | undefined
   let memoryWrites: MemoryWriteApplication | undefined
@@ -148,10 +161,25 @@ export async function start(options: ControlApiStartOptions = {}): Promise<Start
         options.marketplaceRegistryService ?? cloudComposition?.marketplaceRegistryService
       const marketplaceInstallationService =
         options.marketplaceInstallationService ?? cloudComposition?.marketplaceInstallationService
+      if (options.piDurableProduction && !serviceAuthenticator)
+        throw new Error('PI_PRODUCTION_AUTHENTICATION_REQUIRED')
+      const production = options.piDurableProduction
+        ? await createProductionPiLeadComposition(options.piDurableProduction)
+        : undefined
+      if (production) registerResource('pi-durable-production', () => production.close())
       application = await createControlApiApplication({
-        ...(options.piDurableLeadService === undefined
+        ...(production
+          ? {
+              modelConnectionService: production.modelConnectionService,
+              piLeadPublicationService: production.publicationService,
+            }
+          : {}),
+        ...((production?.piDurableLeadService ?? options.piDurableLeadService) === undefined
           ? {}
-          : { piDurableLeadService: options.piDurableLeadService }),
+          : {
+              piDurableLeadService:
+                production?.piDurableLeadService ?? options.piDurableLeadService,
+            }),
         ...(graphAdministrationService === undefined ? {} : { graphAdministrationService }),
         ...(workspaceCatalogService === undefined ? {} : { workspaceCatalogService }),
         ...(credentialAdministrationService === undefined

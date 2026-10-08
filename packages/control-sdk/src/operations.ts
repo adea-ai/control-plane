@@ -13,6 +13,8 @@ import {
   PiDurableLeadCancelResponseSchema,
 } from '@control-plane/runtime-sdk'
 import {
+  PiLeadPublicationRequestSchema,
+  PiLeadPublicationResponseSchema,
   ModelSelectionFundingRequestSchema,
   ModelSelectionFundingResponseSchema,
   ModelConnectionCreateRequestSchema,
@@ -98,6 +100,13 @@ import {
 } from '@control-plane/contracts'
 
 export const ControlApiOperations = Object.freeze({
+  getPiDurableLeadPublication: {
+    operation: 'pi-durable.lead.publication.current',
+    method: 'POST',
+    path: '/v1/pi-durable/lead-publication/current',
+    requestSchema: PiLeadPublicationRequestSchema,
+    responseSchema: PiLeadPublicationResponseSchema,
+  },
   getModelSelectionFunding: {
     operation: 'model-selection.funding.get',
     method: 'POST',

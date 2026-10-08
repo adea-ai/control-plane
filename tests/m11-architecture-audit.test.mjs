@@ -71,6 +71,7 @@ const publicOperations = [
   'pi-durable.lead.lookup',
   'pi-durable.lead.prepare',
   'pi-durable.lead.progress',
+  'pi-durable.lead.publication.current',
   'pi-durable.lead.status',
   'profile.resolve',
   'project-state.initialize',
