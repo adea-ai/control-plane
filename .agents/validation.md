@@ -19,7 +19,7 @@ bun run test:acceptance  # Complete M1 foundation, Terraform, and container acce
 
 `bun test` (bare) is scoped to `tests/` via `bunfig.toml`; per-package tests run through `turbo run test` in `bun run test`.
 
-`bun run requirements:check` fails closed against current GitHub issue state: every non-verified requirements or architecture gap must reference an open M11 issue. It therefore requires GitHub connectivity; private-repository use also requires `GH_TOKEN` or `GITHUB_TOKEN`. Inability to query GitHub is an unverified check, not a pass.
+`bun run requirements:check` fails closed against current GitHub issue identities. Non-verified source, profile, requirement, and prior-audit gaps must reference open `adea-ai/control-plane` issues in repository milestone #11 (M11). Additional architecture gaps follow the same rule, with the BYO model-selection successor #931 permitted in milestone #20; that exception cannot move a legacy ledger gap out of M11. Milestone display titles are informational. The check requires GitHub connectivity; private-repository use also requires `GH_TOKEN` or `GITHUB_TOKEN`. Inability to query GitHub is an unverified check, not a pass.
 
 Database integration tests require a live PostgreSQL instance:
 

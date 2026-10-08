@@ -381,7 +381,10 @@ export async function listGitHubIssues(options = {}) {
         .map((issue) => ({
           number: issue.number,
           title: issue.title,
-          milestone: issue.milestone && { title: issue.milestone.title },
+          milestone: issue.milestone && {
+            number: issue.milestone.number,
+            title: issue.milestone.title,
+          },
           url: issue.html_url,
           state: String(issue.state).toUpperCase(),
           closedAt: issue.closed_at,
@@ -394,34 +397,61 @@ export async function listGitHubIssues(options = {}) {
 
 export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues = []) {
   const issueByNumber = new Map(issues.map((issue) => [issue.number, issue]))
-  const gapIssues = [
-    ...[
-      ...ledger.sources,
-      ...ledger.deploymentProfiles,
-      ...ledger.requirements,
-      ...ledger.priorMilestoneAudits,
-    ]
-      .map(({ gap }) => gap?.issue)
-      .filter((issue) => issue !== undefined),
-    ...additionalGapIssues,
+  const legacyGapIssues = [
+    ...ledger.sources,
+    ...ledger.deploymentProfiles,
+    ...ledger.requirements,
+    ...ledger.priorMilestoneAudits,
   ]
+    .map(({ gap }) => gap?.issue)
+    .filter((issue) => issue !== undefined)
+  const gapIssues = [...legacyGapIssues, ...additionalGapIssues]
   if (gapIssues.length > 0) gapIssues.push(197)
   const invalidGapIssues = [...new Set(gapIssues)].flatMap((issueNumber) => {
     const issue = issueByNumber.get(issueNumber)
-    if (issue?.state === 'OPEN' && (issue.milestone?.title ?? '').startsWith('M11:')) return []
+    // Authorized R2 architecture successor: https://github.com/adea-ai/control-plane/issues/931.
+    // This never moves a legacy requirement/source/audit gap out of original M11 (#11).
+    const expectedMilestone =
+      issueNumber === 931 && additionalGapIssues.includes(931) && !legacyGapIssues.includes(931)
+        ? 20
+        : 11
+    if (
+      issue?.state === 'OPEN' &&
+      isCanonicalControlPlaneIssue(issue) &&
+      issue.milestone?.number === expectedMilestone
+    )
+      return []
     return [
       `#${issueNumber} (${issue?.state ?? 'MISSING'}, ${issue?.milestone?.title ?? 'no milestone'})`,
     ]
   })
   if (invalidGapIssues.length > 0) {
-    throw new Error(`Gap issues must be open and assigned to M11: ${invalidGapIssues.join(', ')}`)
+    throw new Error(
+      `Gap issues must be open in their authorized Control Plane milestone: ${invalidGapIssues.join(', ')}`
+    )
   }
+  // Repository numbers are stable through roadmap ordering/title changes. #10 is M12;
+  // historical M10 is repository milestone #12, not #10.
+  const priorMilestones = new Map([
+    [1, 'M1'],
+    [2, 'M2'],
+    [3, 'M3'],
+    [4, 'M4'],
+    [5, 'M5'],
+    [6, 'M6'],
+    [7, 'M7'],
+    [8, 'M8'],
+    [9, 'M9'],
+    [12, 'M10'],
+  ])
   const inventory = issues
-    .filter(({ milestone }) => /^M(?:10|[1-9]):/.test(milestone?.title ?? ''))
+    .filter(
+      (issue) => isCanonicalControlPlaneIssue(issue) && priorMilestones.has(issue.milestone?.number)
+    )
     .map((issue) => ({
       issue: issue.number,
       title: issue.title,
-      milestone: issue.milestone.title.match(/^M(?:10|[1-9])/)?.[0],
+      milestone: priorMilestones.get(issue.milestone.number),
       closedAt: issue.closedAt,
       url: issue.url,
     }))
@@ -446,6 +476,14 @@ export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues 
       milestone: issue.milestone,
     })),
   }
+}
+
+function isCanonicalControlPlaneIssue(issue) {
+  return (
+    Number.isSafeInteger(issue.number) &&
+    issue.number > 0 &&
+    issue.url === `https://github.com/adea-ai/control-plane/issues/${issue.number}`
+  )
 }
 
 export async function renderRequirementsReport(ledger) {
