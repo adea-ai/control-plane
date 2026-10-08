@@ -200,7 +200,10 @@ test('conflicting receipt replay and receipt reuse roll back outcome and event a
     })
     await host.reconcile(request.attemptId)
     expect(() =>
-      journal.settle(receipt(journal.epoch, { result: { ...result, output: 'changed' } }))
+      journal.settle(
+        request.attemptId,
+        receipt(journal.epoch, { result: { ...result, output: 'changed' } })
+      )
     ).toThrow('CLOUDFLARE_SETTLEMENT_REPLAY_CONFLICT')
     const second = {
       ...task,
@@ -213,10 +216,60 @@ test('conflicting receipt replay and receipt reuse roll back outcome and event a
     journal.admit(second, 43)
     journal.transition(second.request.attemptId, 'accepted', 'running')
     journal.transition(second.request.attemptId, 'running', 'reconciliation_required')
-    expect(() => journal.settle(receipt(journal.epoch, { task: second }))).toThrow()
+    expect(() =>
+      journal.settle(second.request.attemptId, receipt(journal.epoch, { task: second }))
+    ).toThrow()
     expect(journal.get(second.request.attemptId).state).toBe('reconciliation_required')
     expect(journal.events(second.request.attemptId)).toHaveLength(3)
     expect(f.db.query('SELECT * FROM cp_pi_settlements').all()).toHaveLength(1)
+  } finally {
+    f.db.close()
+  }
+})
+
+test('an authorized attempt cannot settle a revoked sibling through a misrouted exact receipt', async () => {
+  const f = fixture()
+  try {
+    const { journal } = await interrupted(f)
+    const siblingRequest = {
+      ...request,
+      attemptId: 'att_00000000000000000000000002',
+      idempotencyKey: 'sibling-start',
+      attemptBudget: {
+        ...request.attemptBudget,
+        attemptId: 'att_00000000000000000000000002',
+        reservationKey: 'runtime-attempt:att_00000000000000000000000002',
+      },
+    }
+    const sibling = {
+      ...task,
+      canonicalActorPrincipalId: 'user:00000000-0000-0000-0000-000000000002',
+      request: siblingRequest,
+    }
+    journal.admit(sibling, 43)
+    journal.transition(siblingRequest.attemptId, 'accepted', 'running')
+    journal.transition(siblingRequest.attemptId, 'running', 'reconciliation_required')
+    const before = f.db.query('SELECT * FROM cp_pi_tasks ORDER BY attempt_id').all()
+    const beforeEvents = f.db.query('SELECT * FROM cp_pi_events ORDER BY sequence').all()
+    const checked = []
+    const currentAuthority = f.authority.assertCurrent
+    f.authority.assertCurrent = async (accepted, owner, boundary) => {
+      checked.push(accepted.request.attemptId)
+      if (accepted.request.attemptId === siblingRequest.attemptId)
+        throw new Error('SIBLING_REVOKED')
+      await currentAuthority(accepted, owner, boundary)
+    }
+    const host = new CloudflarePiHost(journal, pins, f.authority, f.openEngine, {
+      readSettlement: async () => receipt(journal.epoch, { task: sibling }),
+    })
+    await expect(host.reconcile(request.attemptId)).rejects.toThrow(
+      'CLOUDFLARE_SETTLEMENT_IDENTITY_DENIED'
+    )
+    expect(checked.every((attemptId) => attemptId === request.attemptId)).toBe(true)
+    expect(f.db.query('SELECT * FROM cp_pi_tasks ORDER BY attempt_id').all()).toEqual(before)
+    expect(f.db.query('SELECT * FROM cp_pi_events ORDER BY sequence').all()).toEqual(beforeEvents)
+    expect(f.db.query('SELECT * FROM cp_pi_settlements').all()).toEqual([])
+    expect(f.counts().opens).toBe(0)
   } finally {
     f.db.close()
   }

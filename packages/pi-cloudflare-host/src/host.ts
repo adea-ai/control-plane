@@ -91,7 +91,7 @@ export class CloudflarePiHost {
     // Fence revocation/owner replacement while the trusted reader awaited its ledger.
     await this.assertCurrent(record.task, 'reconcile')
     if (receipt === undefined) return this.journal.get(attemptId)
-    return this.journal.settle(JSON.parse(stableJson(receipt)))
+    return this.journal.settle(attemptId, JSON.parse(stableJson(receipt)))
   }
 
   wake(attemptId: string): Promise<CloudflareTaskRecord> {

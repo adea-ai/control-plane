@@ -246,10 +246,10 @@ export class CloudflareOwnerJournal {
   }
 
   /** Atomic receipt/outcome/event commit; never transitions interrupted work back to running. */
-  settle(receipt: CloudflareSettlementReceipt): CloudflareTaskRecord {
+  settle(attemptId: string, receipt: CloudflareSettlementReceipt): CloudflareTaskRecord {
     return this.storage.transactionSync(() => {
       this.assertOwner()
-      const attemptId = receipt.task.request.attemptId
+      // The authorized request selects the target; ledger output cannot redirect settlement.
       const current = this.get(attemptId)
       assertSettlementReceipt(
         receipt,
