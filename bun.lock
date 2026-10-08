@@ -44,7 +44,7 @@
     },
     "apps/control-api": {
       "name": "@control-plane/control-api",
-      "version": "1.22.0",
+      "version": "1.23.0",
       "dependencies": {
         "@control-plane/bootstrap": "workspace:*",
         "@control-plane/config": "workspace:*",
@@ -122,6 +122,7 @@
         "@control-plane/control-api": "workspace:*",
         "@control-plane/deployment": "workspace:*",
         "@control-plane/domain": "workspace:*",
+        "@control-plane/events": "workspace:*",
         "@control-plane/execution-plan": "workspace:*",
         "@control-plane/langgraph-adapter": "workspace:*",
         "@control-plane/managed-pi-adapter": "workspace:*",
@@ -399,7 +400,7 @@
     },
     "packages/model-gateway": {
       "name": "@control-plane/model-gateway",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "dependencies": {
         "@control-plane/contracts": "workspace:*",
         "@control-plane/credential-vault": "workspace:*",
@@ -436,7 +437,7 @@
     },
     "packages/pi-cloudflare-host": {
       "name": "@control-plane/pi-cloudflare-host",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@control-plane/runtime-sdk": "workspace:*",
         "@earendil-works/chord": "1.1.0",
