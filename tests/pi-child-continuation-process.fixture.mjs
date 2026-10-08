@@ -147,7 +147,8 @@ export async function registerProcessSourceHooks() {
   })
 }
 
-export async function createChildProcessTransport({ ambiguous = false } = {}) {
+export async function createChildProcessTransport({ ambiguous = false, beforeResponse } = {}) {
+  assert.ok(beforeResponse === undefined || typeof beforeResponse === 'function')
   const requests = []
   let release
   const pending = new Promise((resolve) => {
@@ -159,6 +160,8 @@ export async function createChildProcessTransport({ ambiguous = false } = {}) {
     const body = JSON.parse(raw)
     assert.equal(body.model, 'separate-child-model')
     requests.push(body)
+    // Test-owned response readiness only; close releases this wait independently.
+    if (beforeResponse) await Promise.race([beforeResponse(), pending])
     if (ambiguous) await pending
     if (response.destroyed) return
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -1229,6 +1232,11 @@ export async function recoveryWorker(directory, mode, baseUrl) {
           return 'unresolved'
         }
       },
+    })
+    appendProcessEvidence(directory, {
+      stage: 'recovery_runtime_constructed',
+      pid: process.pid,
+      handle: row.admission.handle,
     })
     if (runtime.recoveryBlocked.length) throw new Error('PI_PROCESS_UNEXPECTED_RECOVERY_BLOCK')
     await runtime.adapter.drain()
