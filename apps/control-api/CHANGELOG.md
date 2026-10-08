@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.0...control-api-v1.24.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
 ## [1.24.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.23.0...control-api-v1.24.0) (2026-10-08)
 
 
