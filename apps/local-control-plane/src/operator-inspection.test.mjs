@@ -1,13 +1,16 @@
-import { expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DatabaseSync } from 'node:sqlite'
 import { ExecutionLifecycleService } from '@control-plane/domain'
+import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
-import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
+import {
+  createExecutionPlanTestFixture,
+  createExecutionPlanTestFixtureInputs,
+} from '@control-plane/execution-plan/testing'
 import {
   SqliteContextPackageRepository,
   SqliteExecutionEventRepository,
@@ -19,7 +22,12 @@ import {
   SqliteRuntimeCommandRepository,
   SqliteRuntimeDiscoveryRepository,
 } from '@control-plane/sqlite-persistence'
-import { createSqliteRecordReader, inspectStuckJobs } from './operator-inspection.ts'
+import {
+  createSqliteRecordReader,
+  hasWalSidecar,
+  inspectStuckJobs,
+  openReadOnlyInspectionDatabase,
+} from './operator-inspection.ts'
 
 // Deterministic clock: every seeded timestamp is written at 12:00-12:19 and the
 // inspection reads at 12:20 with the default 15 minute staleness threshold.
@@ -35,8 +43,26 @@ const W3 = 'wsp_01CRZ3NDEKTSV4RRFFQ69G5FAW'
 const PRJ1 = plan.correlation.projectId
 const PRJ_Z = 'prj_01ZRZ3NDEKTSV4RRFFQ69G5FAW'
 
+// A second profile pinned by a second plan in the same workspace, so profile
+// filtering must provably separate executions (and their human waits) instead
+// of aggregating them.
+const PROFILE_B = {
+  profileId: 'prf_01BRZ3NDEKTSV4RRFFQ69G5FAW',
+  profileVersionId: 'pfv_01BRZ3NDEKTSV4RRFFQ69G5FAW',
+}
+const planBInputs = createExecutionPlanTestFixtureInputs()
+planBInputs.profile = { ...planBInputs.profile, ...PROFILE_B }
+const planB = new ExecutionPlanCompiler('1.0.0').compile(planBInputs)
+
+const SAFE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ' // 32 chars, no I/L/O/U
 const id = (prefix, letter) => `${prefix}_01${letter}RZ3NDEKTSV4RRFFQ69G5FAV`
-const idN = (prefix, n) => `${prefix}_01${String(n).padStart(2, '0')}RZ3NDEKTSV4RRFFQ69G5FA`
+const idN = (prefix, n) => {
+  if (!Number.isInteger(n) || n < 0 || n > SAFE_ALPHABET.length ** 2 - 1)
+    throw new Error(`idN out of range: ${n}`)
+  const high = SAFE_ALPHABET[Math.floor(n / SAFE_ALPHABET.length)]
+  const low = SAFE_ALPHABET[n % SAFE_ALPHABET.length]
+  return `${prefix}_01${high}${low}RZ3NDEKTSV4RRFFQ69G5FA`
+}
 const recordId = (value) => `r-${createHash('sha256').update(value).digest('hex')}`
 
 const EXE = {
@@ -47,8 +73,9 @@ const EXE = {
   revoked: id('exe', 'E'),
   missing: id('exe', 'F'),
   healthy: id('exe', 'G'),
-  ghostAttempt: id('exe', 'H'),
-  otherWorkspace: id('exe', 'J'),
+  humanProfileB: id('exe', 'H'),
+  ghostAttempt: id('exe', 'J'),
+  otherWorkspace: id('exe', 'K'),
 }
 const ATT = {
   stuck: id('att', 'A'),
@@ -58,24 +85,35 @@ const ATT = {
   revoked: id('att', 'E'),
   missing: id('att', 'F'),
   healthy: id('att', 'G'),
+  humanProfileB: id('att', 'H'),
 }
 const CMD = {
   stuck: id('cmd', 'A'),
   generation: id('cmd', 'D'),
   healthy: id('cmd', 'G'),
+  currentGeneration: id('cmd', 'F'),
 }
 const RTC = {
   stuck: id('rtc', 'A'),
   revoked: id('rtc', 'E'),
   missing: id('rtc', 'F'),
+  commandOnly: id('rtc', 'B'),
 }
 const SES = {
   stuck: id('ses', 'A'),
   revoked: id('ses', 'E'),
   missing: id('ses', 'F'),
 }
+// Runtime nodes own the channels; gateway channel connection ids are
+// transport-local gwc_ values and never equal any rtc_ runtime connection id.
 const NODE = id('rnr', 'A')
-const INT = { human: id('int', 'B') }
+const NODE_B = id('rnr', 'B')
+const CHANNELS = {
+  nodeAGeneration1: { gatewayInstanceId: 'gateway-instance-01', connectionId: 'gwc_5c1e2a7b-0001' },
+  nodeAGeneration2: { gatewayInstanceId: 'gateway-instance-01', connectionId: 'gwc_5c1e2a7b-0002' },
+  nodeBGeneration1: { gatewayInstanceId: 'gateway-instance-02', connectionId: 'gwc_9d4f8e0c-0001' },
+}
+const INT = { human: id('int', 'B'), humanProfileB: id('int', 'H') }
 const EVT = { effects: id('evt', 'C') }
 const RTD = id('rtd', 'A')
 const ART = id('art', 'G')
@@ -84,35 +122,40 @@ const PRF_Z = 'prf_01ZRZ3NDEKTSV4RRFFQ69G5FAW'
 const EVENT_CANARY = 'sqlinspect-canary-secret-9153'
 const PROMPT_CANARY = 'Private approval context canary-9271'
 
+const LARGE_OTHER_WORKSPACE_EXECUTIONS = 900
+const LIMIT_FIXTURE_EXECUTIONS = 25
+
+let directory
 let databasePath
-let provider
 
 async function seed() {
-  const directory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-'))
+  directory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-'))
   databasePath = join(directory, 'control-plane.sqlite')
-  provider = new SqlitePersistenceProvider({ path: databasePath })
+  const provider = new SqlitePersistenceProvider({ path: databasePath })
   await provider.migrate()
 
   await new SqliteContextPackageRepository(provider).put(
     contextPackageSerializationFixtures.futurePi
   )
   await new SqliteExecutionPlanRepository(provider).put(plan)
+  await new SqliteExecutionPlanRepository(provider).put(planB)
 
   const lifecycle = new ExecutionLifecycleService(new SqliteExecutionRepository(provider))
   const commands = new SqliteRuntimeCommandRepository(provider)
   const discovery = new SqliteRuntimeDiscoveryRepository(provider)
   const interactions = new SqliteInteractionRepository(provider)
   const events = new SqliteExecutionEventRepository(provider)
+  const planPin = (compiledPlan) => ({
+    executionPlanId: compiledPlan.executionPlanId,
+    contentDigest: compiledPlan.contentDigest,
+    schemaVersion: compiledPlan.schemaVersion,
+  })
 
-  const createExecution = (executionId, at) =>
+  const createExecution = (executionId, at, compiledPlan = plan) =>
     lifecycle.createExecution({
       executionId,
-      correlation: plan.correlation,
-      executionPlan: {
-        executionPlanId: plan.executionPlanId,
-        contentDigest: plan.contentDigest,
-        schemaVersion: plan.schemaVersion,
-      },
+      correlation: compiledPlan.correlation,
+      executionPlan: planPin(compiledPlan),
       acceptedAt: at,
       deadlineAt: DEADLINE,
     })
@@ -187,26 +230,33 @@ async function seed() {
     retentionExpiresAt: '2099-01-01T00:00:00.000Z',
   })
 
-  // Stale generation + delivery stall: the channel has moved to generation 2
-  // while a dispatched command still reports generation 1 after four attempts.
+  // Stale generation + delivery stall: node A's channel has moved to
+  // generation 2 on a new gwc_ gateway channel while a dispatched command
+  // still reports generation 1 after four attempts. Correlation is per node,
+  // never by joining rtc_ runtime connection ids to gwc_ channel ids.
   await createExecution(EXE.generation, T0)
   await createAttempt(EXE.generation, ATT.generation, '2026-08-30T12:00:02.000Z', {
     runtimeConnectionId: RTC.stuck,
   })
-  await new SqliteRuntimeChannelSequenceRepository(provider).reserve({
-    channel: {
-      workspaceId: W1,
-      nodeId: NODE,
-      gatewayInstanceId: 'gateway-1',
-      connectionId: RTC.stuck,
-      channelGeneration: 2,
-      protocolVersion: { major: 1, minor: 0 },
-      connectedAt: T0,
-      lastHeartbeatAt: T0,
-    },
-    count: 1,
-    minimum: 1,
-  })
+  const sequenceRepository = new SqliteRuntimeChannelSequenceRepository(provider)
+  const reserveChannel = (node, channel, channelGeneration) =>
+    sequenceRepository.reserve({
+      channel: {
+        workspaceId: W1,
+        nodeId: node,
+        gatewayInstanceId: channel.gatewayInstanceId,
+        connectionId: channel.connectionId,
+        channelGeneration,
+        protocolVersion: { major: 1, minor: 0 },
+        connectedAt: T0,
+        lastHeartbeatAt: T0,
+      },
+      count: 1,
+      minimum: 1,
+    })
+  await reserveChannel(NODE, CHANNELS.nodeAGeneration1, 1)
+  await reserveChannel(NODE, CHANNELS.nodeAGeneration2, 2)
+  await reserveChannel(NODE_B, CHANNELS.nodeBGeneration1, 1)
   await commands.create({
     commandId: CMD.generation,
     executionId: EXE.generation,
@@ -247,11 +297,34 @@ async function seed() {
 
   // Missing access: the attempt references a connection and session the local
   // store has no projection for, plus a healthy recent execution that must not
-  // be reported as stuck.
+  // be reported as stuck, and a command already on its node's current
+  // generation (which must not be flagged stale).
   await createExecution(EXE.missing, T0)
   await createAttempt(EXE.missing, ATT.missing, '2026-08-30T12:00:02.000Z', {
     runtimeConnectionId: RTC.missing,
     externalSessionId: SES.missing,
+  })
+  await commands.create({
+    commandId: CMD.currentGeneration,
+    executionId: EXE.missing,
+    attemptId: ATT.missing,
+    nodeId: NODE_B,
+    runtimeConnectionId: RTC.commandOnly,
+    workspaceId: W1,
+    idempotencyKey: 'inspection:current-generation:command:1',
+    payloadHash: `sha256:${'e'.repeat(64)}`,
+    commandEnvelope: { operation: 'run' },
+    issuedAt: '2026-08-30T12:19:00.000Z',
+    expiresAt: DEADLINE,
+    status: 'dispatched',
+    version: 1,
+    deliveryAttempts: 1,
+    lastChannelGeneration: 1,
+    lastSequence: 1,
+    firstDispatchedAt: '2026-08-30T12:19:00.000Z',
+    lastDispatchedAt: '2026-08-30T12:19:00.000Z',
+    createdAt: '2026-08-30T12:19:00.000Z',
+    updatedAt: '2026-08-30T12:19:00.000Z',
   })
   await createExecution(EXE.healthy, T0)
   await createAttempt(EXE.healthy, ATT.healthy, '2026-08-30T12:19:30.000Z')
@@ -286,14 +359,35 @@ async function seed() {
     sessionModel(SES.stuck, RTC.stuck, '2026-08-30T12:00:00.000Z')
   )
 
+  // Profile isolation: a second pending approval on a plan that pins the other
+  // profile, so an empty profile selection must not report this workspace-wide
+  // human wait (and vice versa).
+  await createExecution(EXE.humanProfileB, T0, planB)
+  await createAttempt(EXE.humanProfileB, ATT.humanProfileB, '2026-08-30T12:00:03.000Z')
+  await interactions.insert({
+    interactionId: INT.humanProfileB,
+    executionId: EXE.humanProfileB,
+    attemptId: ATT.humanProfileB,
+    kind: 'approval',
+    prompt: { title: PROMPT_CANARY },
+    allowedActions: ['approve', 'deny', 'cancel'],
+    allowedPrincipalIds: ['svc-operator'],
+    state: 'pending',
+    version: 1,
+    requestedAt: '2026-08-30T12:00:06.000Z',
+    expiresAt: '2026-08-30T12:30:00.000Z',
+  })
+
   // Raw records: an execution whose latest attempt and plan do not exist, an
-  // execution in another workspace, deterministic limit fixtures, and
+  // execution in another workspace, a large unrelated cross-workspace block
+  // that the scan must continue through, deterministic limit fixtures, and
   // malformed records that must be counted but never emitted.
   await provider.transaction(async (transaction) => {
-    await transaction.put({
-      namespace: 'executions',
-      id: recordId(EXE.ghostAttempt),
-      value: rawExecution({
+    const put = (namespace, id_, value) => transaction.put({ namespace, id: recordId(id_), value })
+    await put(
+      'executions',
+      EXE.ghostAttempt,
+      rawExecution({
         executionId: EXE.ghostAttempt,
         acceptedAt: T0,
         updatedAt: T0,
@@ -304,12 +398,12 @@ async function seed() {
           contentDigest: `sha256:${'d'.repeat(64)}`,
           schemaVersion: plan.schemaVersion,
         },
-      }),
-    })
-    await transaction.put({
-      namespace: 'executions',
-      id: recordId(EXE.otherWorkspace),
-      value: rawExecution({
+      })
+    )
+    await put(
+      'executions',
+      EXE.otherWorkspace,
+      rawExecution({
         executionId: EXE.otherWorkspace,
         workspaceId: W2,
         projectId: PRJ_Z,
@@ -318,34 +412,52 @@ async function seed() {
         requestId: id('req', 'J'),
         acceptedAt: T0,
         updatedAt: T0,
-      }),
-    })
-    for (let index = 0; index < 25; index += 1) {
-      const executionId = idN('exe', 10 + index)
-      await transaction.put({
-        namespace: 'executions',
-        id: recordId(executionId),
-        value: rawExecution({
+      })
+    )
+    for (let index = 0; index < LARGE_OTHER_WORKSPACE_EXECUTIONS; index += 1) {
+      const executionId = idN('exe', 100 + index)
+      await put(
+        'executions',
+        executionId,
+        rawExecution({
+          executionId,
+          workspaceId: W2,
+          projectId: PRJ_Z,
+          taskId: id('tsk', 'J'),
+          agentId: id('agt', 'J'),
+          requestId: id('req', 'J'),
+          acceptedAt: T0,
+          updatedAt: T0,
+        })
+      )
+    }
+    for (let index = 0; index < LIMIT_FIXTURE_EXECUTIONS; index += 1) {
+      const executionId = idN('exe', index)
+      await put(
+        'executions',
+        executionId,
+        rawExecution({
           executionId,
           acceptedAt: T0,
           updatedAt: `2026-08-30T12:0${Math.floor(index / 5)}:${String((index % 5) * 11).padStart(2, '0')}.000Z`,
-        }),
-      })
+        })
+      )
     }
-    await transaction.put({
-      namespace: 'executions',
-      id: recordId('malformed-execution'),
-      value: { broken: true },
-    })
-    await transaction.put({
-      namespace: 'runtime-commands',
-      id: recordId('malformed-command'),
-      value: { broken: 'command' },
-    })
+    await put('executions', 'malformed-execution', { broken: true })
+    await put('runtime-commands', 'malformed-command', { broken: 'command' })
   })
 
   provider.close()
 }
+
+beforeAll(async () => {
+  await seed()
+})
+
+afterAll(async () => {
+  if (readOnlyDatabase !== undefined) readOnlyDatabase.close()
+  if (directory !== undefined) await rm(directory, { recursive: true, force: true })
+})
 
 function connectionModel(runtimeConnectionId, observedAt, status = 'available') {
   const revoked = status === 'revoked'
@@ -447,36 +559,67 @@ function rawExecution({
 }
 
 let readOnlyDatabase
-function inspect(options) {
+async function openReadOnly() {
   if (readOnlyDatabase === undefined)
-    readOnlyDatabase = new DatabaseSync(databasePath, { readOnly: true })
-  return inspectStuckJobs(createSqliteRecordReader(readOnlyDatabase), {
+    readOnlyDatabase = await openReadOnlyInspectionDatabase(databasePath)
+  return readOnlyDatabase
+}
+
+async function inspect(options) {
+  const reader = createSqliteRecordReader(await openReadOnly())
+  return inspectStuckJobs(reader, {
     workspaceId: W1,
     now: INSPECT_AT,
     ...options,
   })
 }
 
-test('seeds the deterministic inspection fixture', async () => {
-  await seed()
-  expect(databasePath).toBeDefined()
+test('pages namespaces with continuation until exhausted', async () => {
+  const reader = createSqliteRecordReader(await openReadOnly())
+  const seen = []
+  let unparseable = 0
+  let afterId
+  for (let pages = 0; ; pages += 1) {
+    const page = reader.pageRecords('executions', 7, afterId)
+    unparseable += page.unparseableJsonCount
+    for (const record of page.records) {
+      seen.push(record.id)
+      expect(record.id > (afterId ?? '')).toBe(true)
+    }
+    if (page.nextAfterId === null) {
+      expect(pages).toBeGreaterThan(100)
+      break
+    }
+    afterId = page.nextAfterId
+  }
+  expect(new Set(seen).size).toBe(seen.length)
+  // 34 in-scope + 900 large unrelated + 1 other-workspace + 1 malformed row.
+  expect(seen.length + unparseable).toBe(936)
 })
 
-test('correlates stuck executions with explicit states, ages and availability', () => {
-  const report = inspect()
+test('correlates stuck executions with explicit states, ages and availability', async () => {
+  const report = await inspect()
   expect(report.readOnly).toBe(true)
-  expect(report.scope).toEqual({
-    workspaceId: W1,
-    projectId: null,
-    profileId: null,
+  expect(report.scope).toEqual({ workspaceId: W1, projectId: null, profileId: null })
+  expect(report.thresholds).toEqual({
+    staleAfterSeconds: 900,
+    limit: 20,
+    maxScanMatches: 10000,
+    maxScanRows: 100000,
+    scanPageSize: 512,
   })
+  expect(report.summary.complete).toBe(true)
+  expect(report.summary.incompleteScans).toEqual([])
   const byId = new Map(report.executions.map((view) => [view.executionId, view]))
 
   // Healthy execution is counted in scope but never reported as stuck.
-  expect(report.summary.executionsInScope).toBe(33)
+  expect(report.summary.inScope.executions).toBe(34)
+  expect(report.summary.inScope.stuckCandidates).toBe(33)
+  expect(report.summary.selected.stuckCandidates).toBe(33)
   expect(byId.has(EXE.healthy)).toBe(false)
 
-  // Stuck cluster: expired job, stalled dispatch, interrupted attempt, stale execution.
+  // Stuck cluster: expired job, stalled dispatch, interrupted attempt, stale
+  // execution.
   const stuck = byId.get(EXE.stuck)
   expect(stuck.stuckReasons).toEqual([
     'attempt_interrupted',
@@ -528,7 +671,8 @@ test('correlates stuck executions with explicit states, ages and availability', 
   })
   expect(human.approvals.pending[0].pendingAgeMs).toBeGreaterThan(15 * 60 * 1000)
 
-  // Effects backlog surfaces pending publication age.
+  // Effects backlog surfaces pending publication age. This is a backlog
+  // signal only, never complete settlement evidence.
   const effects = byId.get(EXE.effects)
   expect(effects.stuckReasons).toContain('effects_pending')
   expect(effects.effects).toMatchObject({
@@ -539,8 +683,8 @@ test('correlates stuck executions with explicit states, ages and availability', 
   })
   expect(effects.effects.oldestPendingAgeMs).toBeGreaterThan(15 * 60 * 1000)
 
-  // Stale generation and delivery stall (the execution is also stale and its
-  // attempt interrupted; both are expected alongside the job-level reasons).
+  // Stale generation and delivery stall, correlated per node even though every
+  // gwc_ gateway channel id differs from every rtc_ runtime connection id.
   const generation = byId.get(EXE.generation)
   expect(generation.stuckReasons).toContain('delivery_stalled')
   expect(generation.stuckReasons).toContain('stale_generation')
@@ -550,6 +694,14 @@ test('correlates stuck executions with explicit states, ages and availability', 
     deliveryAttempts: 4,
     expired: false,
     staleGeneration: true,
+  })
+
+  // A command already on its node's current generation is not flagged stale.
+  const missing = byId.get(EXE.missing)
+  expect(missing.jobs.listed).toHaveLength(1)
+  expect(missing.jobs.listed[0]).toMatchObject({
+    commandId: CMD.currentGeneration,
+    staleGeneration: false,
   })
 
   // Revoked access is surfaced explicitly, never blanked.
@@ -568,7 +720,6 @@ test('correlates stuck executions with explicit states, ages and availability', 
   })
 
   // Missing projections stay explicit.
-  const missing = byId.get(EXE.missing)
   expect(missing.connection).toMatchObject({
     availability: 'missing',
     runtimeConnectionId: RTC.missing,
@@ -586,51 +737,78 @@ test('correlates stuck executions with explicit states, ages and availability', 
     reason: 'plan_missing_or_out_of_scope',
   })
 
-  // Aggregates.
-  expect(report.summary.stuckCandidates).toBe(
-    report.executions.length + report.summary.remainingStuckCandidates
+  // Aggregates: workspace-wide totals live in inScope; with no profile filter
+  // the selected totals mirror them.
+  expect(report.summary.selected.stuckCandidates).toBe(
+    report.executions.length + report.summary.selected.remainingStuckCandidates
   )
-  expect(report.summary.awaitingHumanPendingCount).toBe(1)
-  expect(report.summary.oldestPendingInteractionAgeMs).toBeGreaterThan(15 * 60 * 1000)
-  expect(report.summary.oldestStuckAgeMs).toBeGreaterThan(15 * 60 * 1000)
+  expect(report.summary.inScope.awaitingHumanPendingCount).toBe(2)
+  expect(report.summary.inScope.oldestPendingInteractionAgeMs).toBeGreaterThan(15 * 60 * 1000)
+  expect(report.summary.inScope.oldestStuckAgeMs).toBeGreaterThan(15 * 60 * 1000)
+  expect(report.summary.selected.oldestStuckAgeMs).toBe(report.summary.inScope.oldestStuckAgeMs)
 })
 
-test('keeps workspaces isolated and never emits out-of-scope identifiers', () => {
-  const report = inspect()
-  expect(report.summary.outOfScopeExecutionRecords).toBeGreaterThanOrEqual(1)
+test('keeps workspaces isolated and never emits out-of-scope identifiers', async () => {
+  const report = await inspect()
+  expect(report.summary.inScope.outOfScopeExecutions).toBe(1 + LARGE_OTHER_WORKSPACE_EXECUTIONS)
   const serialized = JSON.stringify(report)
   expect(serialized).not.toContain(W2)
   expect(serialized).not.toContain(EXE.otherWorkspace)
 
-  const other = inspect({ workspaceId: W2 })
-  expect(other.summary.executionsInScope).toBe(1)
-  expect(other.executions.map((view) => view.executionId)).toEqual([EXE.otherWorkspace])
+  const other = await inspect({ workspaceId: W2 })
+  expect(other.summary.complete).toBe(true)
+  expect(other.summary.inScope.executions).toBe(1 + LARGE_OTHER_WORKSPACE_EXECUTIONS)
+  expect(other.summary.inScope.stuckCandidates).toBe(1 + LARGE_OTHER_WORKSPACE_EXECUTIONS)
+  expect(other.executions).toHaveLength(20)
+  expect(other.executions.map((view) => view.executionId)).not.toContain(EXE.stuck)
   expect(other.executions[0].stuckReasons).toEqual(['execution_stale'])
 })
 
-test('reports an explicit empty state for a workspace without records', () => {
-  const report = inspect({ workspaceId: W3 })
-  expect(report.summary.executionsInScope).toBe(0)
-  expect(report.summary.stuckCandidates).toBe(0)
-  expect(report.summary.remainingStuckCandidates).toBe(0)
-  expect(report.executions).toEqual([])
-  expect(report.summary.oldestStuckAgeMs).toBeNull()
+test('continues through a large unrelated cross-workspace block', async () => {
+  // The default scan must keep walking through more than two full pages of
+  // unrelated workspace records and still find every in-scope execution.
+  const report = await inspect({ limit: 100 })
+  expect(report.summary.complete).toBe(true)
+  expect(report.summary.inScope.executions).toBe(34)
+  expect(report.summary.inScope.stuckCandidates).toBe(33)
 })
 
-test('narrows to a project scope only when selected', () => {
-  const inProject = inspect({ projectId: PRJ1 })
-  expect(inProject.summary.executionsInScope).toBeGreaterThan(0)
-  const otherProject = inspect({ projectId: PRJ_Z })
-  expect(otherProject.summary.executionsInScope).toBe(0)
+test('reports an explicit empty state for a workspace without records', async () => {
+  const report = await inspect({ workspaceId: W3 })
+  expect(report.summary.complete).toBe(true)
+  // Out-of-scope records are counted explicitly even for an empty selection;
+  // they are never identified.
+  expect(report.summary.inScope).toEqual({
+    executions: 0,
+    outOfScopeExecutions: 34 + 1 + LARGE_OTHER_WORKSPACE_EXECUTIONS,
+    stuckCandidates: 0,
+    oldestStuckAgeMs: null,
+    awaitingHumanPendingCount: 0,
+    oldestPendingInteractionAgeMs: null,
+  })
+  expect(report.summary.selected).toEqual({
+    stuckCandidates: 0,
+    remainingStuckCandidates: 0,
+    executionsListed: 0,
+    oldestStuckAgeMs: null,
+  })
+  expect(report.executions).toEqual([])
+})
+
+test('narrows to a project scope only when selected', async () => {
+  const inProject = await inspect({ projectId: PRJ1 })
+  expect(inProject.summary.inScope.executions).toBeGreaterThan(0)
+  const otherProject = await inspect({ projectId: PRJ_Z })
+  expect(otherProject.summary.inScope.executions).toBe(0)
   expect(otherProject.executions).toEqual([])
 })
 
-test('bounds results and orders stuck candidates oldest first', () => {
-  const report = inspect({ limit: 5 })
+test('bounds results and orders stuck candidates oldest first', async () => {
+  const report = await inspect({ limit: 5 })
   expect(report.thresholds.limit).toBe(5)
   expect(report.executions).toHaveLength(5)
-  expect(report.summary.stuckCandidates).toBeGreaterThan(5)
-  expect(report.summary.remainingStuckCandidates).toBe(report.summary.stuckCandidates - 5)
+  expect(report.summary.selected.stuckCandidates).toBe(33)
+  expect(report.summary.selected.remainingStuckCandidates).toBe(28)
   const ages = report.executions.map((view) => view.oldestEvidenceAgeMs)
   for (let index = 1; index < ages.length; index += 1)
     expect(ages[index - 1] >= ages[index]).toBe(true)
@@ -640,15 +818,66 @@ test('leaves the database bytes untouched', async () => {
   const before = createHash('sha256')
     .update(await readFile(databasePath))
     .digest('hex')
-  inspect()
+  await inspect()
   const after = createHash('sha256')
     .update(await readFile(databasePath))
     .digest('hex')
   expect(after).toBe(before)
 })
 
-test('never emits record payload content or secrets', () => {
-  const serialized = JSON.stringify(inspect())
+test('inspects a copy whose WAL header has no shared-memory sidecar', async () => {
+  // After a graceful launcher stop the -wal/-shm sidecars are gone while the
+  // database header stays in WAL mode; a driver-level read-only open cannot
+  // create the shared-memory file in that state, so the helper falls back to a
+  // verified byte-copy. Simulate that state deterministically on an isolated
+  // copy (main database plus any live -wal, never the -shm) instead of
+  // touching the shared fixture.
+  const { copyFile, readdir } = await import('node:fs/promises')
+  const listSnapshotDirectories = async () =>
+    (await readdir(tmpdir()))
+      .toSorted()
+      .filter((entry) => entry.startsWith('operator-inspection-snapshot-'))
+  const snapshotDirectoriesBefore = await listSnapshotDirectories()
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-wal-'))
+  try {
+    const statePath = join(stateDirectory, 'control-plane.sqlite')
+    await copyFile(databasePath, statePath)
+    const copiedWal = await hasWalSidecar(databasePath)
+    if (copiedWal) await copyFile(`${databasePath}-wal`, `${statePath}-wal`)
+    const before = createHash('sha256')
+      .update(await readFile(statePath))
+      .digest('hex')
+    const handle = await openReadOnlyInspectionDatabase(statePath)
+    try {
+      const report = inspectStuckJobs(createSqliteRecordReader(handle), {
+        workspaceId: W1,
+        now: INSPECT_AT,
+      })
+      expect(report.summary.inScope.executions).toBe(34)
+    } finally {
+      handle.close()
+    }
+    const after = createHash('sha256')
+      .update(await readFile(statePath))
+      .digest('hex')
+    expect(after).toBe(before)
+    // The inspected database file is byte-identical, and the directory holds
+    // only the SQLite-owned set: the database, the -wal we reproduced, and at
+    // most the -shm SQLite itself maintains for WAL reads. The private
+    // snapshot directory is always removed.
+    const entries = (await readdir(stateDirectory)).toSorted()
+    const allowed = ['control-plane.sqlite', 'control-plane.sqlite-shm', 'control-plane.sqlite-wal']
+    expect(entries.every((entry) => allowed.includes(entry))).toBe(true)
+    if (!copiedWal) expect(entries).not.toContain('control-plane.sqlite-wal')
+    const snapshotDirectoriesAfter = await listSnapshotDirectories()
+    expect(snapshotDirectoriesAfter).toEqual(snapshotDirectoriesBefore)
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('never emits record payload content or secrets', async () => {
+  const serialized = JSON.stringify(await inspect())
   expect(serialized).not.toContain(EVENT_CANARY)
   expect(serialized).not.toContain(PROMPT_CANARY)
   // The seeded plan definition carries this instruction; only its digest may
@@ -658,8 +887,8 @@ test('never emits record payload content or secrets', () => {
   expect(serialized).not.toContain('payload')
 })
 
-test('filters by profile while reporting unattributed executions explicitly', () => {
-  const filtered = inspect({ profileId: plan.profile.profileId, limit: 100 })
+test('filters by profile while reporting unattributed executions explicitly', async () => {
+  const filtered = await inspect({ profileId: plan.profile.profileId, limit: 100 })
   expect(filtered.profileResolution.filtered).toBe(true)
   expect(
     filtered.executions.every(
@@ -670,16 +899,59 @@ test('filters by profile while reporting unattributed executions explicitly', ()
   ).toBe(true)
   expect(filtered.profileResolution.unattributedExecutionIds).toContain(EXE.ghostAttempt)
 
-  const none = inspect({ profileId: PRF_Z, limit: 100 })
+  const none = await inspect({ profileId: PRF_Z, limit: 100 })
   expect(none.executions).toEqual([])
   expect(none.profileResolution.unattributedExecutionIds).toContain(EXE.ghostAttempt)
 })
 
-test('counts malformed records without emitting them', () => {
-  const report = inspect()
+test('separates profile-scoped totals from workspace-wide totals', async () => {
+  // Selecting profile A: the other profile's execution and human wait stay in
+  // the workspace-wide totals but never enter the selected totals or listing;
+  // the plan-less ghost execution is reported as unattributed instead.
+  const profileA = await inspect({ profileId: plan.profile.profileId, limit: 100 })
+  expect(profileA.summary.inScope.stuckCandidates).toBe(33)
+  expect(profileA.summary.inScope.awaitingHumanPendingCount).toBe(2)
+  expect(profileA.summary.selected.stuckCandidates).toBe(31)
+  expect(profileA.executions.some((view) => view.executionId === EXE.humanProfileB)).toBe(false)
+
+  // Selecting profile B: the selection contains only profile B's execution,
+  // while the workspace-wide totals stay whole and explicitly reported.
+  const profileB = await inspect({ profileId: PROFILE_B.profileId, limit: 100 })
+  expect(profileB.summary.inScope.stuckCandidates).toBe(33)
+  expect(profileB.summary.inScope.awaitingHumanPendingCount).toBe(2)
+  expect(profileB.summary.selected.stuckCandidates).toBe(1)
+  expect(profileB.executions.map((view) => view.executionId)).toEqual([EXE.humanProfileB])
+  expect(profileB.executions[0].stuckReasons).toContain('awaiting_human')
+
+  // Without a filter the selected totals mirror the workspace-wide ones.
+  const unfiltered = await inspect({ limit: 100 })
+  expect(unfiltered.profileResolution.filtered).toBe(false)
+  expect(unfiltered.summary.selected.stuckCandidates).toBe(
+    unfiltered.summary.inScope.stuckCandidates
+  )
+})
+
+test('counts malformed records without emitting them', async () => {
+  const report = await inspect()
   expect(report.summary.malformedRecords['executions']).toBeGreaterThanOrEqual(1)
   expect(report.summary.malformedRecords['runtime-commands']).toBeGreaterThanOrEqual(1)
   expect(JSON.stringify(report)).not.toContain('"broken"')
+})
+
+test('reports incomplete scans instead of confidently narrow results', async () => {
+  const report = await inspect({ maxScanMatches: 2, limit: 100 })
+  expect(report.summary.complete).toBe(false)
+  expect(report.thresholds.maxScanMatches).toBe(2)
+  const executionsScan = report.summary.incompleteScans.find(
+    (scan) => scan.namespace === 'executions'
+  )
+  expect(executionsScan).toMatchObject({ reason: 'match_budget_reached' })
+  expect(executionsScan.lastSeenRecordId).toMatch(/^r-[0-9a-f]{64}$/)
+  // The walk stopped at the budget: the report counts exactly what it walked,
+  // and the incompleteness is explicit rather than an unnoticed shortfall.
+  expect(report.summary.inScope.executions).toBe(2)
+  expect(report.summary.selected.stuckCandidates).toBe(report.summary.inScope.stuckCandidates)
+  expect(report.executions).toHaveLength(2)
 })
 
 async function runCli(arguments_, timeoutMs = 10000) {
@@ -727,7 +999,7 @@ async function runCli(arguments_, timeoutMs = 10000) {
 test('packaged operator command inspects a private data directory read-only', async () => {
   const { code, stdout, stderr } = await runCli([
     '--data-dir',
-    databasePath.replace(/\/control-plane\.sqlite$/, ''),
+    directory,
     '--workspace',
     W1,
     '--limit',
@@ -746,7 +1018,6 @@ test('packaged operator command inspects a private data directory read-only', as
 })
 
 test('packaged operator command fails closed without a scope', async () => {
-  const directory = databasePath.replace(/\/control-plane\.sqlite$/, '')
   const missingScope = await runCli(['--data-dir', directory])
   expect(missingScope.code).toBe(1)
   expect(missingScope.stderr).toBe('LOCAL_OPERATOR_INSPECTION_FAILED\n')
@@ -758,15 +1029,15 @@ test('packaged operator command fails closed without a scope', async () => {
 })
 
 test('packaged operator command refuses unprotected targets', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-open-'))
+  const openDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-open-'))
   try {
-    const unprotected = join(directory, 'unprotected.sqlite')
+    const unprotected = join(openDirectory, 'unprotected.sqlite')
     await writeFile(unprotected, 'not a database', { mode: 0o644 })
-    const { code, stderr } = await runCli(['--data-dir', directory, '--workspace', W1])
+    const { code, stderr } = await runCli(['--data-dir', openDirectory, '--workspace', W1])
     expect(code).toBe(1)
     expect(stderr).toBe('LOCAL_OPERATOR_INSPECTION_FAILED\n')
     await chmod(unprotected, 0o600)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await rm(openDirectory, { recursive: true, force: true })
   }
 })

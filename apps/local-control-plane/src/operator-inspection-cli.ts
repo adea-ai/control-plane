@@ -1,5 +1,4 @@
 import { lstat } from 'node:fs/promises'
-import { DatabaseSync } from 'node:sqlite'
 import { isAbsolute, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { IdentifierSchemas } from '@control-plane/contracts'
@@ -9,14 +8,17 @@ import {
   MAX_RESULT_LIMIT,
   MAX_STALE_AFTER_SECONDS,
   MIN_STALE_AFTER_SECONDS,
+  openReadOnlyInspectionDatabase,
+  type InspectionDatabaseHandle,
 } from './operator-inspection.js'
 
 // Offline operator authority is possession of the private database directory.
-// This command is strictly read-only: the database is opened with SQLite
-// `readOnly`, nothing is migrated, and only parameterized SELECT statements
+// This command is strictly read-only: the operator database is either opened
+// with SQLite `readOnly` or byte-copied into a private snapshot that carries
+// `query_only`, nothing is migrated, and only parameterized SELECT statements
 // run. It never retries, cancels, reconciles or redeploys anything, and it
 // never grants service credentials, catalog approval or context access.
-let database: DatabaseSync | undefined
+let database: InspectionDatabaseHandle | undefined
 try {
   const { values } = parseArgs({
     options: {
@@ -68,7 +70,7 @@ try {
     (process.getuid !== undefined && databaseStat.uid !== process.getuid())
   )
     throw new Error('INVALID_TARGET')
-  database = new DatabaseSync(databasePath, { readOnly: true })
+  database = await openReadOnlyInspectionDatabase(databasePath)
   const report = inspectStuckJobs(createSqliteRecordReader(database), {
     workspaceId,
     ...(projectId === undefined ? {} : { projectId }),

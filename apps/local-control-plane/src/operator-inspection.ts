@@ -12,6 +12,12 @@ import {
 } from '@control-plane/domain'
 import { ExecutionEventSchema } from '@control-plane/events'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import { constants } from 'node:fs'
+import { copyFile, lstat, mkdtemp } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { DatabaseSync } from 'node:sqlite'
 import { z, type ZodType } from 'zod'
 
 /**
@@ -30,8 +36,17 @@ import { z, type ZodType } from 'zod'
  * inspection never answers "unknown" with a blank field.
  */
 
-/** Records examined per namespace before the scan is bounded. */
-export const MAX_SCAN_RECORDS = 10_000
+/** Records fetched per continuation page while walking a namespace. */
+export const SCAN_PAGE_SIZE = 512
+/** Raw rows examined per namespace before the scan reports itself incomplete. */
+export const MAX_SCAN_ROWS = 100_000
+/**
+ * In-scope records retained per namespace. The budget counts only records that
+ * belong to the selected workspace (and project), so unrelated workspaces can
+ * never push a selected workspace out of the scan; the walk continues through
+ * them until the namespace is exhausted.
+ */
+export const MAX_SCAN_MATCHES = 10_000
 /** Listed stuck executions per report. */
 export const DEFAULT_RESULT_LIMIT = 20
 export const MAX_RESULT_LIMIT = 100
@@ -87,6 +102,12 @@ export const LocalStuckJobInspectionOptionsSchema = z
       .min(MIN_STALE_AFTER_SECONDS)
       .max(MAX_STALE_AFTER_SECONDS)
       .default(DEFAULT_STALE_AFTER_SECONDS),
+    /**
+     * Diagnostic bound on in-scope records retained per namespace. It only
+     * moves the bound within hard limits; an exhausted budget is always
+     * reported as an incomplete scan, never as an empty result.
+     */
+    maxScanMatches: z.number().int().min(1).max(1_000_000).default(MAX_SCAN_MATCHES),
     /** Deterministic inspection clock; defaults to wall time. */
     now: z.iso.datetime().optional(),
   })
@@ -156,6 +177,14 @@ const ApprovalsViewSchema = z.object({
   resolvedTerminalCount: z.number().int().nonnegative(),
 })
 
+/**
+ * Effect (execution-event) publication view. Counts cover persisted,
+ * unarchived execution events in this store only: this is a backlog signal,
+ * NOT complete protected-effect settlement evidence. Archived events leave the
+ * window, delivery to subscribers and downstream settlement receipts live
+ * outside this store, and a zero backlog therefore proves nothing about
+ * whether every protected effect actually settled.
+ */
 const EffectsViewSchema = z.object({
   availability: availabilitySchema,
   pendingCount: z.number().int().nonnegative(),
@@ -213,19 +242,54 @@ export const StuckJobInspectionReportSchema = z
     thresholds: z.object({
       staleAfterSeconds: z.number().int().positive(),
       limit: z.number().int().positive(),
-      maxScanRecords: z.number().int().positive(),
+      maxScanMatches: z.number().int().positive(),
+      maxScanRows: z.number().int().positive(),
+      scanPageSize: z.number().int().positive(),
     }),
-    summary: z.object({
-      executionsInScope: z.number().int().nonnegative(),
-      outOfScopeExecutionRecords: z.number().int().nonnegative(),
-      stuckCandidates: z.number().int().nonnegative(),
-      remainingStuckCandidates: z.number().int().nonnegative(),
-      oldestStuckAgeMs: NullableInt,
-      awaitingHumanPendingCount: z.number().int().nonnegative(),
-      oldestPendingInteractionAgeMs: NullableInt,
-      malformedRecords: z.record(z.string(), z.number().int().nonnegative()),
-      scanTruncatedNamespaces: z.array(z.string()),
-    }),
+    summary: z
+      .object({
+        /** False when any namespace walk stopped before exhausting the store. */
+        complete: z.boolean(),
+        /**
+         * Totals scoped to the selected workspace (and project), before any
+         * profile filtering. These describe the authorized scope as a whole.
+         */
+        inScope: z.object({
+          executions: z.number().int().nonnegative(),
+          outOfScopeExecutions: z.number().int().nonnegative(),
+          stuckCandidates: z.number().int().nonnegative(),
+          oldestStuckAgeMs: NullableInt,
+          awaitingHumanPendingCount: z.number().int().nonnegative(),
+          oldestPendingInteractionAgeMs: NullableInt,
+        }),
+        /**
+         * Totals after profile filtering (identical to `inScope` counters when
+         * no profile was selected). Only `selected` describes what the report
+         * lists; workspace-wide human-wait and execution totals live in
+         * `inScope` even when the selection is empty.
+         */
+        selected: z.object({
+          stuckCandidates: z.number().int().nonnegative(),
+          remainingStuckCandidates: z.number().int().nonnegative(),
+          executionsListed: z.number().int().nonnegative(),
+          oldestStuckAgeMs: NullableInt,
+        }),
+        malformedRecords: z.record(z.string(), z.number().int().nonnegative()),
+        /**
+         * Namespaces whose walk stopped before exhausting the store, with the
+         * last examined record id and the budget that stopped it. An incomplete
+         * scan means every count and candidate list in this report is a lower
+         * bound — never read an empty or small result as confident.
+         */
+        incompleteScans: z.array(
+          z.object({
+            namespace: z.string(),
+            reason: z.enum(['match_budget_reached', 'row_budget_reached']),
+            lastSeenRecordId: z.string(),
+          })
+        ),
+      })
+      .strict(),
     executions: z.array(ExecutionViewSchema),
     profileResolution: z.object({
       filtered: z.boolean(),
@@ -249,45 +313,150 @@ export interface StoredRecord {
   readonly value: unknown
 }
 
-export interface NamespaceScan {
+export interface RecordPage {
   readonly records: readonly StoredRecord[]
   readonly unparseableJsonCount: number
-  readonly truncated: boolean
+  /**
+   * Id of the last record on the page, for continuation; `null` when the
+   * namespace is exhausted (this page was the final one).
+   */
+  readonly nextAfterId: string | null
 }
 
 export interface ReadOnlyRecordReader {
-  listRecords(namespace: string, bound: number): NamespaceScan
+  pageRecords(namespace: string, pageSize: number, afterId?: string): RecordPage
 }
 
 /**
- * Wraps a read-only SQLite handle. The statement is a fixed parameterized
- * `SELECT`; the caller is responsible for opening the database itself in
+ * Wraps a read-only SQLite handle. The statements are fixed parameterized
+ * `SELECT`s; the caller is responsible for opening the database itself in
  * read-only mode (the CLI does, via `DatabaseSync(..., { readOnly: true })`).
+ * Paging is keyed on the record id ordering so walkers can continue through
+ * arbitrarily long namespaces instead of truncating up front.
  */
 export function createSqliteRecordReader(store: ReadOnlyRecordStore): ReadOnlyRecordReader {
+  const firstPage = store.prepare(
+    'SELECT id, value FROM control_plane_records WHERE namespace = ? ORDER BY id LIMIT ?'
+  )
+  const nextPage = store.prepare(
+    'SELECT id, value FROM control_plane_records WHERE namespace = ? AND id > ? ORDER BY id LIMIT ?'
+  )
   return {
-    listRecords(namespace: string, bound: number): NamespaceScan {
-      const rows = store
-        .prepare(
-          'SELECT id, value FROM control_plane_records WHERE namespace = ? ORDER BY id LIMIT ?'
-        )
-        .all(namespace, bound + 1) as Array<{ id?: unknown; value?: unknown }>
-      const truncated = rows.length > bound
+    pageRecords(namespace: string, pageSize: number, afterId?: string): RecordPage {
+      const rows = (
+        afterId === undefined
+          ? firstPage.all(namespace, pageSize + 1)
+          : nextPage.all(namespace, afterId, pageSize + 1)
+      ) as Array<{ id?: unknown; value?: unknown }>
+      const hasMore = rows.length > pageSize
+      const pageRows = hasMore ? rows.slice(0, pageSize) : rows
       const records: StoredRecord[] = []
       let unparseableJsonCount = 0
-      for (const row of truncated ? rows.slice(0, bound) : rows) {
+      let lastId: string | null = null
+      for (const row of pageRows) {
         if (typeof row?.id !== 'string') {
           unparseableJsonCount += 1
           continue
         }
+        lastId = row.id
         try {
           records.push({ id: row.id, value: JSON.parse(String(row?.value)) })
         } catch {
           unparseableJsonCount += 1
         }
       }
-      return { records, unparseableJsonCount, truncated }
+      return {
+        records,
+        unparseableJsonCount,
+        nextAfterId: hasMore && lastId !== null ? lastId : null,
+      }
     },
+  }
+}
+
+/** The subset of a SQLite handle the inspection consumes. */
+export interface InspectionDatabaseHandle {
+  prepare(query: string): { all(...parameters: unknown[]): unknown[] }
+  close(): void
+}
+
+/** The SQLite-owned write-ahead-log sidecar path for a database file. */
+const walSidecarOf = (databasePath: string) => `${databasePath}-wal`
+
+async function probeDeferredOpen(database: DatabaseSync): Promise<void> {
+  // Bun defers the SQLite open until the first statement; force it so the
+  // caller sees open failures here rather than mid-walk.
+  database.prepare('SELECT count(*) AS n FROM sqlite_master').get()
+}
+
+/**
+ * Opens an operator database for inspection without ever opening it writable.
+ *
+ * The primary path is a driver-level read-only open (`readOnly: true`) whose
+ * deferred open is probed immediately. That path cannot serve a database whose
+ * header is in WAL mode but whose `-wal`/`-shm` sidecars are already gone —
+ * the exact state after a graceful launcher stop, where the final connection
+ * checkpoints and removes the sidecars. For that state the command falls back
+ * to a verified byte-copy of the database (and any `-wal` still present) into
+ * a private 0700 temporary directory; the copy is opened with SQLite
+ * `query_only` enforced before any other statement, and the operator database
+ * itself is only ever read as bytes and never opened writable by SQLite.
+ */
+export async function openReadOnlyInspectionDatabase(
+  databasePath: string
+): Promise<InspectionDatabaseHandle> {
+  const databaseStat = await lstat(databasePath)
+  if (!databaseStat.isFile() || databaseStat.isSymbolicLink())
+    throw new Error('INSPECTION_DATABASE_INVALID')
+  try {
+    const direct = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      await probeDeferredOpen(direct)
+      return direct
+    } catch (probeError) {
+      try {
+        direct.close()
+      } catch {
+        // The deferred open failed; closing the unused handle is best effort.
+      }
+      throw probeError
+    }
+  } catch {
+    // Fall through to the snapshot path.
+  }
+  const snapshotDirectory = await mkdtemp(join(tmpdir(), 'operator-inspection-snapshot-'))
+  const snapshotPath = join(snapshotDirectory, basename(databasePath))
+  await copyFile(databasePath, snapshotPath, constants.COPYFILE_EXCL)
+  const walPath = walSidecarOf(databasePath)
+  try {
+    if ((await lstat(walPath)).isFile()) await copyFile(walPath, `${snapshotPath}-wal`)
+  } catch {
+    // No write-ahead log sidecar: nothing further to copy.
+  }
+  let snapshot: DatabaseSync
+  try {
+    snapshot = new DatabaseSync(snapshotPath)
+    snapshot.exec('PRAGMA query_only = ON')
+    await probeDeferredOpen(snapshot)
+  } catch (error) {
+    rmSync(snapshotDirectory, { recursive: true, force: true })
+    throw error
+  }
+  return {
+    prepare: (query: string) => snapshot.prepare(query),
+    close: () => {
+      snapshot.close()
+      rmSync(snapshotDirectory, { recursive: true, force: true })
+    },
+  }
+}
+
+/** True when the database still has a write-ahead log sidecar on disk. */
+export async function hasWalSidecar(databasePath: string): Promise<boolean> {
+  try {
+    return (await lstat(walSidecarOf(databasePath))).isFile()
+  } catch {
+    return false
   }
 }
 
@@ -316,59 +485,99 @@ export function inspectStuckJobs(
   const nowMs = Date.parse(parsedOptions.now ?? new Date().toISOString())
   const staleAfterMs = parsedOptions.staleAfterSeconds * 1000
   const malformedRecords = new Map<string, number>()
-  const truncatedNamespaces = new Set<string>()
+  const incompleteScans: z.output<
+    typeof StuckJobInspectionReportSchema
+  >['summary']['incompleteScans'] = []
 
-  const scan = (namespace: string) => {
-    const result = reader.listRecords(namespace, MAX_SCAN_RECORDS)
-    if (result.truncated) truncatedNamespaces.add(namespace)
-    return result
+  /**
+   * Walks a namespace with continuation until the namespace is exhausted or a
+   * budget stops the walk. Budgets count scoped matches (and raw rows), never
+   * unrelated records alone, so a selected workspace behind any number of
+   * unrelated rows is still found; an early stop is reported as an incomplete
+   * scan instead of silently narrowing the result.
+   */
+  const walkNamespace = (
+    namespace: string,
+    matchBudget: number,
+    onRecord: (record: StoredRecord) => boolean
+  ): { matches: number; malformed: number; incomplete: boolean } => {
+    let afterId: string | undefined
+    let matches = 0
+    let malformed = 0
+    let rows = 0
+    let incomplete: (typeof incompleteScans)[number] | null = null
+    while (incomplete === null) {
+      const page = reader.pageRecords(namespace, SCAN_PAGE_SIZE, afterId)
+      malformed += page.unparseableJsonCount
+      const lastRowId = page.records.at(-1)?.id ?? null
+      for (const record of page.records) {
+        rows += 1
+        if (onRecord(record)) matches += 1
+        const exhausted = record.id === lastRowId && page.nextAfterId === null
+        if (!exhausted && (rows >= MAX_SCAN_ROWS || matches >= matchBudget)) {
+          incomplete = {
+            namespace,
+            reason: rows >= MAX_SCAN_ROWS ? 'row_budget_reached' : 'match_budget_reached',
+            lastSeenRecordId: record.id,
+          }
+          break
+        }
+      }
+      if (incomplete !== null) break
+      if (page.nextAfterId === null) break
+      afterId = page.nextAfterId
+    }
+    if (incomplete !== null) incompleteScans.push(incomplete)
+    return { matches, malformed, incomplete: incomplete !== null }
   }
 
   // Executions carry the workspace scope; every other record joins through them.
-  const executionScan = scan('executions')
   const executions = new Map<string, z.output<typeof ExecutionSchema>>()
   let outOfScopeExecutionRecords = 0
-  let executionMalformed = executionScan.unparseableJsonCount
-  for (const record of executionScan.records) {
+  let executionMalformed = 0
+  const executionWalk = walkNamespace('executions', parsedOptions.maxScanMatches, (record) => {
     const parsed = ExecutionSchema.safeParse(record.value)
     if (!parsed.success) {
       executionMalformed += 1
-      continue
+      return false
     }
     if (parsed.data.correlation.workspaceId !== parsedOptions.workspaceId) {
       outOfScopeExecutionRecords += 1
-      continue
+      return false
     }
     if (
       parsedOptions.projectId !== undefined &&
       parsed.data.correlation.projectId !== parsedOptions.projectId
     )
-      continue
+      return false
     executions.set(parsed.data.executionId, parsed.data)
-  }
-  if (executionMalformed > 0) malformedRecords.set('executions', executionMalformed)
+    return true
+  })
+  if (executionWalk.malformed + executionMalformed > 0)
+    malformedRecords.set('executions', executionWalk.malformed + executionMalformed)
 
   const joinByExecution = <T>(
     namespace: string,
     schema: ZodType<T>,
     executionIdOf: (parsed: T) => string
-  ): { byExecution: Map<string, T[]>; malformedCount: number } => {
-    const result = scan(namespace)
+  ): Map<string, T[]> => {
     const byExecution = new Map<string, T[]>()
-    let malformedCount = result.unparseableJsonCount
-    for (const record of result.records) {
+    let malformedCount = 0
+    const walk = walkNamespace(namespace, parsedOptions.maxScanMatches, (record) => {
       const parsed = schema.safeParse(record.value)
       if (!parsed.success) {
         malformedCount += 1
-        continue
+        return false
       }
-      if (!executions.has(executionIdOf(parsed.data))) continue
+      if (!executions.has(executionIdOf(parsed.data))) return false
       const existing = byExecution.get(executionIdOf(parsed.data))
       if (existing === undefined) byExecution.set(executionIdOf(parsed.data), [parsed.data])
       else existing.push(parsed.data)
-    }
-    if (malformedCount > 0) malformedRecords.set(namespace, malformedCount)
-    return { byExecution, malformedCount }
+      return true
+    })
+    if (walk.malformed + malformedCount > 0)
+      malformedRecords.set(namespace, walk.malformed + malformedCount)
+    return byExecution
   }
 
   const attempts = joinByExecution(
@@ -388,30 +597,34 @@ export function inspectStuckJobs(
   )
 
   // Runtime commands carry their own workspace scope.
-  const runtimeCommandScan = scan('runtime-commands')
   const commandsByExecution = new Map<string, z.output<typeof RuntimeCommandRecordSchema>[]>()
-  let runtimeCommandMalformed = runtimeCommandScan.unparseableJsonCount
-  for (const record of runtimeCommandScan.records) {
+  let runtimeCommandMalformed = 0
+  const commandWalk = walkNamespace('runtime-commands', parsedOptions.maxScanMatches, (record) => {
     const parsed = RuntimeCommandRecordSchema.safeParse(record.value)
     if (!parsed.success) {
       runtimeCommandMalformed += 1
-      continue
+      return false
     }
-    if (parsed.data.workspaceId !== parsedOptions.workspaceId) continue
-    if (!executions.has(parsed.data.executionId)) continue
+    if (parsed.data.workspaceId !== parsedOptions.workspaceId) return false
+    if (!executions.has(parsed.data.executionId)) return false
     const existing = commandsByExecution.get(parsed.data.executionId)
     if (existing === undefined) commandsByExecution.set(parsed.data.executionId, [parsed.data])
     else existing.push(parsed.data)
-  }
-  if (runtimeCommandMalformed > 0) malformedRecords.set('runtime-commands', runtimeCommandMalformed)
+    return true
+  })
+  if (commandWalk.malformed + runtimeCommandMalformed > 0)
+    malformedRecords.set('runtime-commands', commandWalk.malformed + runtimeCommandMalformed)
 
-  // Current channel generations per (workspace, node, gateway, connection),
-  // from the durable sequence reservations. Used only for the stale-generation
-  // flag; unparseable entries stay explicit as `unknown`.
-  const generationScan = scan('runtime-channel-sequences')
+  // Current channel generations per (workspace, node), from the durable
+  // sequence reservations. Channel ownership is claimed per node, so the
+  // authoritative current generation for a node is the highest generation
+  // reserved across that node's gateway channels; the gateway channel
+  // connection id (gwc_…) is transport-local and is never joined to a
+  // command's runtimeConnectionId. Unparseable entries stay explicit as
+  // unknown (staleGeneration: null).
   const currentGenerations = new Map<string, number>()
-  let generationMalformed = generationScan.unparseableJsonCount
-  for (const record of generationScan.records) {
+  let generationMalformed = 0
+  walkNamespace('runtime-channel-sequences', parsedOptions.maxScanMatches, (record) => {
     const value = record.value as { identity?: unknown; next?: unknown } | null
     if (
       value === null ||
@@ -420,104 +633,101 @@ export function inspectStuckJobs(
       typeof value.next !== 'number'
     ) {
       generationMalformed += 1
-      continue
+      return false
     }
     let identity: unknown
     try {
       identity = JSON.parse(value.identity)
     } catch {
       generationMalformed += 1
-      continue
+      return false
     }
-    if (
-      !Array.isArray(identity) ||
-      identity.length !== 5 ||
-      identity[0] !== parsedOptions.workspaceId
-    )
-      continue
+    if (!Array.isArray(identity) || identity.length !== 5) return false
+    const workspace = identity[0]
     const node = identity[1]
-    const connection = identity[3]
     const generation = identity[4]
     if (
+      typeof workspace !== 'string' ||
       typeof node !== 'string' ||
-      typeof connection !== 'string' ||
       typeof generation !== 'number'
     ) {
       generationMalformed += 1
-      continue
+      return false
     }
-    const key = `${node}|${connection}`
+    if (workspace !== parsedOptions.workspaceId) return false
+    const key = `${workspace}|${node}`
     const known = currentGenerations.get(key)
     if (known === undefined || generation > known) currentGenerations.set(key, generation)
-  }
+    return true
+  })
   if (generationMalformed > 0)
     malformedRecords.set('runtime-channel-sequences', generationMalformed)
 
   // Runtime discovery projections (connections and external sessions).
-  const connectionScan = scan('runtime-discovery-connections')
   const connectionsById = new Map<
     string,
     z.output<typeof RuntimeConnectionDiscoveryReadModelSchema>
   >()
-  let connectionMalformed = connectionScan.unparseableJsonCount
-  for (const record of connectionScan.records) {
+  let connectionMalformed = 0
+  walkNamespace('runtime-discovery-connections', parsedOptions.maxScanMatches, (record) => {
     const value = record.value as { workspaceId?: unknown; model?: unknown } | null
     if (value === null || typeof value !== 'object' || typeof value.workspaceId !== 'string') {
       connectionMalformed += 1
-      continue
+      return false
     }
-    if (value.workspaceId !== parsedOptions.workspaceId) continue
+    if (value.workspaceId !== parsedOptions.workspaceId) return false
     const parsed = RuntimeConnectionDiscoveryReadModelSchema.safeParse(value.model)
     if (!parsed.success) {
       connectionMalformed += 1
-      continue
+      return false
     }
     connectionsById.set(parsed.data.runtimeConnectionId, parsed.data)
-  }
+    return true
+  })
   if (connectionMalformed > 0)
     malformedRecords.set('runtime-discovery-connections', connectionMalformed)
 
-  const sessionScan = scan('runtime-discovery-sessions')
   const sessionsById = new Map<string, z.output<typeof ExternalSessionDiscoveryReadModelSchema>>()
-  let sessionMalformed = sessionScan.unparseableJsonCount
-  for (const record of sessionScan.records) {
+  let sessionMalformed = 0
+  walkNamespace('runtime-discovery-sessions', parsedOptions.maxScanMatches, (record) => {
     const value = record.value as { workspaceId?: unknown; model?: unknown } | null
     if (value === null || typeof value !== 'object' || typeof value.workspaceId !== 'string') {
       sessionMalformed += 1
-      continue
+      return false
     }
-    if (value.workspaceId !== parsedOptions.workspaceId) continue
+    if (value.workspaceId !== parsedOptions.workspaceId) return false
     const parsed = ExternalSessionDiscoveryReadModelSchema.safeParse(value.model)
     if (!parsed.success) {
       sessionMalformed += 1
-      continue
+      return false
     }
     sessionsById.set(parsed.data.externalSessionId, parsed.data)
-  }
+    return true
+  })
   if (sessionMalformed > 0) malformedRecords.set('runtime-discovery-sessions', sessionMalformed)
 
   // Plans resolve the profile pin for each execution.
-  const planScan = scan('execution-plans')
   const plansById = new Map<
     string,
     { profileId: string; profileVersionId: string; digest: string }
   >()
-  let planMalformed = planScan.unparseableJsonCount
-  for (const record of planScan.records) {
+  let planMalformed = 0
+  walkNamespace('execution-plans', parsedOptions.maxScanMatches, (record) => {
     let plan: ReturnType<typeof assertExecutionPlanIntegrity>
     try {
       plan = assertExecutionPlanIntegrity(record.value)
     } catch {
       planMalformed += 1
-      continue
+      return false
     }
-    if (plan.correlation.workspaceId !== parsedOptions.workspaceId) continue
+    if (plan.correlation.workspaceId !== parsedOptions.workspaceId) return false
     plansById.set(plan.executionPlanId, {
       profileId: plan.profile.profileId,
       profileVersionId: plan.profile.profileVersionId,
       digest: plan.contentDigest,
     })
-  }
+    return true
+  })
   if (planMalformed > 0) malformedRecords.set('execution-plans', planMalformed)
 
   const candidates: z.output<typeof ExecutionViewSchema>[] = []
@@ -558,7 +768,7 @@ export function inspectStuckJobs(
       stuckReasons.add('cancelling_stalled')
 
     // Attempt correlation.
-    const executionAttempts = attempts.byExecution.get(execution.executionId) ?? []
+    const executionAttempts = attempts.get(execution.executionId) ?? []
     const latestStored =
       execution.latestAttemptId === undefined
         ? undefined
@@ -628,7 +838,7 @@ export function inspectStuckJobs(
         stuckReasons.add('delivery_stalled')
       let staleGeneration: boolean | null = null
       if (command.lastChannelGeneration !== undefined) {
-        const known = currentGenerations.get(`${command.nodeId}|${command.runtimeConnectionId}`)
+        const known = currentGenerations.get(`${command.workspaceId}|${command.nodeId}`)
         staleGeneration = known === undefined ? null : command.lastChannelGeneration < known
         if (staleGeneration) stuckReasons.add('stale_generation')
       }
@@ -729,7 +939,7 @@ export function inspectStuckJobs(
     }
 
     // Interaction (approval/input) correlation — human latency.
-    const executionInteractions = interactions.byExecution.get(execution.executionId) ?? []
+    const executionInteractions = interactions.get(execution.executionId) ?? []
     const pendingViews: z.output<typeof PendingInteractionViewSchema>[] = []
     let unlistedPending = 0
     let respondedCount = 0
@@ -759,7 +969,7 @@ export function inspectStuckJobs(
     }
 
     // Effect (execution event) publication correlation.
-    const executionEvents = events.byExecution.get(execution.executionId) ?? []
+    const executionEvents = events.get(execution.executionId) ?? []
     let pendingEffects = 0
     let failedEffects = 0
     let quarantinedEffects = 0
@@ -890,6 +1100,15 @@ export function inspectStuckJobs(
   })
   const limited = ordered.slice(0, parsedOptions.limit)
 
+  const oldestAgeAmong = (views: typeof candidates): number | null =>
+    views.reduce<number | null>(
+      (oldest, view) =>
+        view.oldestEvidenceAgeMs !== null && (oldest === null || view.oldestEvidenceAgeMs > oldest)
+          ? view.oldestEvidenceAgeMs
+          : oldest,
+      null
+    )
+
   const report: StuckJobInspectionReport = {
     schemaVersion: 1,
     command: 'local.operator.inspection.stuck-jobs',
@@ -903,33 +1122,35 @@ export function inspectStuckJobs(
     thresholds: {
       staleAfterSeconds: parsedOptions.staleAfterSeconds,
       limit: parsedOptions.limit,
-      maxScanRecords: MAX_SCAN_RECORDS,
+      maxScanMatches: parsedOptions.maxScanMatches,
+      maxScanRows: MAX_SCAN_ROWS,
+      scanPageSize: SCAN_PAGE_SIZE,
     },
     summary: {
-      executionsInScope,
-      outOfScopeExecutionRecords,
-      stuckCandidates: selected.length,
-      remainingStuckCandidates: Math.max(0, ordered.length - limited.length),
-      oldestStuckAgeMs:
-        ordered.length === 0
-          ? null
-          : ordered.reduce<number | null>(
-              (oldest, view) =>
-                view.oldestEvidenceAgeMs !== null &&
-                (oldest === null || view.oldestEvidenceAgeMs > oldest)
-                  ? view.oldestEvidenceAgeMs
-                  : oldest,
-              null
-            ),
-      awaitingHumanPendingCount,
-      oldestPendingInteractionAgeMs,
+      complete: incompleteScans.length === 0,
+      // Workspace-and-project scoped totals, independent of profile filtering.
+      inScope: {
+        executions: executionsInScope,
+        outOfScopeExecutions: outOfScopeExecutionRecords,
+        stuckCandidates: candidates.length,
+        oldestStuckAgeMs: oldestAgeAmong(candidates),
+        awaitingHumanPendingCount,
+        oldestPendingInteractionAgeMs,
+      },
+      // Totals after profile filtering; only these describe `executions`.
+      selected: {
+        stuckCandidates: selected.length,
+        remainingStuckCandidates: Math.max(0, ordered.length - limited.length),
+        executionsListed: limited.length,
+        oldestStuckAgeMs: oldestAgeAmong(selected),
+      },
       malformedRecords: Object.fromEntries(
         [...malformedRecords.entries()].toSorted((left, right) =>
           compareCodePointOrder(left[0], right[0])
         )
       ),
-      scanTruncatedNamespaces: [...truncatedNamespaces].toSorted((left, right) =>
-        compareCodePointOrder(left, right)
+      incompleteScans: incompleteScans.toSorted((left, right) =>
+        compareCodePointOrder(left.namespace, right.namespace)
       ),
     },
     executions: limited,
