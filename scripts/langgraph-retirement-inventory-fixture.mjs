@@ -87,10 +87,12 @@ function alphaNodes() {
  * - injectUnclassifiedCheckpoint: writes a well-formed checkpoint row whose
  *   thread name cannot be parsed into a workspace/execution pair.
  * - mutateRunningPlanGraphIdentity: rewrites the running execution's retained
- *   plan record in place so its graph identity is unusable —
- *   'missing-graph-id' (reference without graphDefinitionId),
- *   'missing-graph-version' (non-string graphVersion), or
- *   'missing-graph-reference' (no graph selection at all).
+ *   plan record in place — 'missing-graph-id' (reference without
+ *   graphDefinitionId), 'blank-graph-id' (empty-string graphDefinitionId),
+ *   'missing-graph-version' (non-string graphVersion), 'invalid-graph-version'
+ *   (nonempty but canonically invalid graphVersion), or
+ *   'missing-graph-reference' (no graph selection at all: a legal non-graph
+ *   workflow, not malformed identity).
  */
 export async function createInventoryFixtureStore({
   now = () => new Date(FIXTURE_AT),
@@ -348,10 +350,14 @@ async function seedCancelledExecution({ plans, lifecycle, graph, executionId, pl
 }
 
 /**
- * Rewrites the running execution's retained plan record in place so its graph
- * identity is missing or malformed. This simulates a corrupted plan row that
- * can no longer be attributed to a workflow: the inventory must never benignly
- * bucket such a plan as an unknown graph or a non-graph workflow.
+ * Rewrites the running execution's retained plan record in place. The
+ * malformed-identity mutations ('missing-graph-id', 'blank-graph-id',
+ * 'missing-graph-version', 'invalid-graph-version') simulate corrupted plan
+ * rows that can no longer be attributed to a workflow: the inventory must
+ * never benignly bucket such a plan as an unknown graph. The
+ * 'missing-graph-reference' mutation instead removes the graph selection the
+ * way a legal non-graph workflow plan looks: no selection at all, which is
+ * never malformed identity evidence.
  */
 async function mutatePlanGraphIdentity(provider, lifecycle, mutation) {
   const execution = await lifecycle.getExecution(ids.executionRunning)
@@ -362,7 +368,9 @@ async function mutatePlanGraphIdentity(provider, lifecycle, mutation) {
     if (record === undefined) throw new Error('fixture plan record missing')
     const plan = record.value
     if (mutation === 'missing-graph-id') delete plan.graph.reference.graphDefinitionId
+    else if (mutation === 'blank-graph-id') plan.graph.reference.graphDefinitionId = ''
     else if (mutation === 'missing-graph-version') plan.graph.reference.graphVersion = 1
+    else if (mutation === 'invalid-graph-version') plan.graph.reference.graphVersion = '?'
     else if (mutation === 'missing-graph-reference') delete plan.graph
     else throw new Error(`unknown plan graph identity mutation: ${mutation}`)
     await transaction.put({

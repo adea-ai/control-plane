@@ -28,6 +28,11 @@ import { isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { Database } from 'bun:sqlite'
+// Canonical graph reference validation: the same schema the execution-plan
+// compiler enforces when it writes a plan's graph selection. Validity of a
+// retained plan's graph identity is decided by this contract, never by
+// ad-hoc truthiness.
+import { GraphReferenceSchema } from '@control-plane/contracts'
 
 export const OBSERVATION_STATUS = Object.freeze({
   OBSERVED: 'observed',
@@ -591,15 +596,21 @@ function collectCatalogCallers(database, context) {
 
 /**
  * Execution plans index: the only durable graph reference on the execution
- * path. A plan whose graph identity is missing or malformed — no graph
- * selection, or a reference without a usable graphDefinitionId or
- * graphVersion — is never silently excluded or benignly bucketed as an
- * unknown graph or a non-graph workflow: it is recorded as
- * attribution-incomplete evidence that conservatively blocks retirement.
+ * path. Canonical reference validation — the plan compiler's own
+ * GraphReferenceSchema — decides validity, never ad-hoc truthiness:
+ * - A plan with no graph selection at all is a legal non-graph workflow. It is
+ *   counted separately (inFlightNonGraph) and never blocks a graph's
+ *   retirement.
+ * - A plan carrying a graph selection whose reference fails canonical
+ *   validation — a missing or blank graphDefinitionId, a nonempty but invalid
+ *   graphVersion, a malformed contentDigest — is attribution-incomplete
+ *   evidence that conservatively blocks retirement: it is never silently
+ *   excluded or benignly bucketed as an unknown graph or a non-graph workflow.
  */
 function collectPlanGraphReferences(database, context) {
   const planGraphs = new Map()
   const plansWithMalformedGraphIdentity = new Set()
+  const nonGraphPlans = new Set()
   let planCount = 0
   let malformedPlans = 0
   let readError
@@ -611,25 +622,19 @@ function collectPlanGraphReferences(database, context) {
         malformedPlans += 1
         return
       }
-      const graph = record.value?.graph?.reference
-      const graphDefinitionId =
-        graph !== null && typeof graph === 'object' ? graph.graphDefinitionId : undefined
-      const graphVersion =
-        graph !== null && typeof graph === 'object' ? graph.graphVersion : undefined
-      if (
-        typeof graphDefinitionId !== 'string' ||
-        graphDefinitionId.length === 0 ||
-        typeof graphVersion !== 'string' ||
-        graphVersion.length === 0
-      ) {
+      const graphSelection = record.value?.graph
+      if (graphSelection === undefined) {
+        // The canonical compiler writes either a valid graph selection or none:
+        // absence is a legal non-graph workflow, not malformed identity.
+        nonGraphPlans.add(planId)
+        return
+      }
+      const parsed = GraphReferenceSchema.safeParse(graphSelection?.reference)
+      if (!parsed.success) {
         plansWithMalformedGraphIdentity.add(planId)
         return
       }
-      planGraphs.set(planId, {
-        graphDefinitionId,
-        graphVersion,
-        contentDigest: typeof graph.contentDigest === 'string' ? graph.contentDigest : 'unknown',
-      })
+      planGraphs.set(planId, parsed.data)
     })
   } catch {
     readError = 'NAMESPACE_SCAN_FAILED'
@@ -637,6 +642,7 @@ function collectPlanGraphReferences(database, context) {
   return {
     planGraphs,
     plansWithMalformedGraphIdentity,
+    nonGraphPlans,
     planCount,
     malformedPlans,
     readError,
@@ -656,6 +662,7 @@ function collectExecutions(database, context) {
   const inFlightEntries = []
   let inFlightPlansMissing = 0
   let inFlightPlansWithMalformedGraphIdentity = 0
+  let inFlightNonGraph = 0
   let inFlightAttributed = 0
   try {
     scanNamespaceRecords(database, NAMESPACES.executions, context, (record) => {
@@ -678,6 +685,7 @@ function collectExecutions(database, context) {
       const planKnown = planId !== undefined && planIndex.planGraphs.has(planId)
       const planIdentityMalformed =
         planId !== undefined && planIndex.plansWithMalformedGraphIdentity.has(planId) === true
+      const planNonGraph = planId !== undefined && planIndex.nonGraphPlans.has(planId) === true
       const graphReference = planKnown ? planIndex.planGraphs.get(planId) : undefined
       let graphKey
       if (graphReference !== undefined) {
@@ -693,13 +701,18 @@ function collectExecutions(database, context) {
       executionStatesById.set(executionId, { inFlight, workspaceId })
       if (!inFlight) return
       if (planIdentityMalformed) {
-        // The plan exists but its graph identity is missing or malformed: the
-        // execution cannot be attributed to any workflow. It is never benignly
-        // bucketed as a non-graph workflow or an unknown graph — the real
-        // graph cannot pass a retire check while this stays unresolved.
+        // The plan exists but its graph identity fails canonical validation:
+        // the execution cannot be attributed to any workflow. It is never
+        // benignly bucketed as a non-graph workflow or an unknown graph — the
+        // real graph cannot pass a retire check while this stays unresolved.
         inFlightPlansWithMalformedGraphIdentity += 1
       } else if (planKnown) {
         inFlightAttributed += 1
+      } else if (planNonGraph) {
+        // A legal non-graph workflow: the retained plan is integrity-valid and
+        // carries no graph selection. Counted separately; it never becomes
+        // malformed evidence and never blocks a graph's retirement.
+        inFlightNonGraph += 1
       } else {
         // A retained in-flight execution whose plan is gone cannot be
         // attributed to a workflow: an explicit incompleteness, never silence.
@@ -763,6 +776,7 @@ function collectExecutions(database, context) {
       terminal: rowCount - inFlightTotal - malformedCount,
       inFlightAttributed,
       inFlightPlansWithMalformedGraphIdentity,
+      inFlightNonGraph,
       inFlightPlansMissing,
       byState: mapCountsToObject(byState),
     },
@@ -794,6 +808,7 @@ function failedExecutionsSection(identity, observedAt, limits) {
       terminal: 0,
       inFlightAttributed: 0,
       inFlightPlansWithMalformedGraphIdentity: 0,
+      inFlightNonGraph: 0,
       inFlightPlansMissing: 0,
     },
     entries: [],
@@ -1025,6 +1040,7 @@ export function buildInventoryManifest({
     : {
         planGraphs: new Map(),
         plansWithMalformedGraphIdentity: new Set(),
+        nonGraphPlans: new Set(),
         planCount: 0,
         malformedPlans: 0,
         readError: 'STORE_UNAVAILABLE',
@@ -1303,6 +1319,7 @@ function emptyExecutionsSection(identity, observedAt, normalizedLimits) {
       terminal: 0,
       inFlightAttributed: 0,
       inFlightPlansWithMalformedGraphIdentity: 0,
+      inFlightNonGraph: 0,
       inFlightPlansMissing: 0,
     },
     entries: [],
@@ -1428,15 +1445,19 @@ const DISPOSITION_EVIDENCE_MATRIX = Object.freeze({
  * Retirement (`retire`) additionally blocks while the store's evidence does
  * not support a zero-live-work conclusion: running executions whose plan
  * vanished are unattributable (IN_FLIGHT_EXECUTION_WITHOUT_PLAN); a retained
- * plan whose graph identity is missing or malformed leaves its executions
- * unattributable (PLAN_GRAPH_IDENTITY_MALFORMED) — the real graph cannot pass
- * while that attribution is unresolved; an executions section that was not
+ * plan whose graph identity is missing or fails canonical reference
+ * validation leaves its executions unattributable
+ * (PLAN_GRAPH_IDENTITY_MALFORMED) — the real graph cannot pass while that
+ * attribution is unresolved; an executions section that was not
  * fully read (incomplete, stale, truncated, malformed, or out of scope) means
  * a zero in-flight count is not trustworthy attribution
  * (IN_FLIGHT_ATTRIBUTION_INCOMPLETE); and checkpoint evidence that is not
  * fully read or carries orphan/unclassified threads leaves resume-state
  * coverage unresolved (CHECKPOINT_EVIDENCE_INCOMPLETE /
  * CHECKPOINT_EVIDENCE_UNKNOWN). Missing attribution is never counted as zero.
+ * A retained plan with no graph selection at all is a legal non-graph
+ * workflow: it is counted as inFlightNonGraph and never blocks a graph's
+ * retirement.
  */
 export function validateDispositions(document, manifest) {
   if (document === null || typeof document !== 'object' || !Array.isArray(document.dispositions))
@@ -1637,9 +1658,11 @@ is workspace-scoped):
 
 Retire verdicts block while execution or checkpoint evidence is not fully read
 (incomplete, stale, truncated, or out of scope), any running execution lost its
-plan, any retained plan's graph identity is missing or malformed, or checkpoint
-threads are orphaned/unclassified — unattributed in-flight work and resume
-state are never counted as zero.
+plan, any retained plan's graph identity is missing or fails canonical
+reference validation, or checkpoint threads are orphaned/unclassified —
+unattributed in-flight work and resume state are never counted as zero. A
+retained plan with no graph selection is a legal non-graph workflow and never
+blocks retirement.
 
 Output: a single deterministic JSON manifest on stdout. Failures print one
 sanitized LANGGRAPH_RETIREMENT_INVENTORY_FAILED:<CODE> line on stderr.

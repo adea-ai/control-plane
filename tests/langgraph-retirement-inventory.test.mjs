@@ -912,21 +912,38 @@ describe('langgraph retirement inventory', () => {
       )
     })
 
-    test('a running plan with no graph selection is malformed evidence, not a non-graph workflow', async () => {
+    test('an integrity-valid plan with no graph selection is a legal non-graph workflow', async () => {
       await withFixtureStore(
         { mutateRunningPlanGraphIdentity: 'missing-graph-reference' },
         async ({ store }) => {
           const manifest = buildManifest(store)
           const executions = manifest.sections.executions
-          // The benign non-graph bucket is gone: a plan without a graph
-          // selection is attribution-incomplete evidence, conservatively
-          // blocking retirement for every workflow in the store.
-          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
-          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          // Reviewer-directed semantic change: a plan whose integrity is valid
+          // but that carries no graph selection is a legal non-graph workflow.
+          // It is counted separately (inFlightNonGraph) and neither flags
+          // malformed graph identity nor blocks any graph's retirement.
+          expect(executions.counts.inFlightNonGraph).toBe(1)
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(0)
+          expect(executions.reasons).not.toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.OBSERVED)
+          // The running execution stays pinned to its retained plan and keeps
+          // the store's in-flight evidence honest: the zero-live-work claim is
+          // still not available.
+          expect(executions.counts.inFlight).toBe(1)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].executionPlan).toBeDefined()
+          expect(manifest.epistemics.retainedWorkClassification).toBe('present')
+          expect(manifest.epistemics.zeroLiveWorkClaim.claimAllowed).toBe(false)
+          // A graph with no other in-flight work can be retired: legal
+          // non-graph plans never block graph retire verdicts.
           const report = validateDispositions(
             {
               dispositions: [
-                fullProposal('retire'),
+                fullProposal('retire', {
+                  requiredBehavior: undefined,
+                  replacementEvidence: undefined,
+                  inFlightAcknowledged: undefined,
+                }),
                 {
                   ...fullProposal('retire', {
                     graphDefinitionId: 'graph:inventory-beta',
@@ -939,8 +956,55 @@ describe('langgraph retirement inventory', () => {
             },
             manifest
           )
-          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual(['blocked', 'blocked'])
-          expect(report.verdicts[1].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
+            'approved',
+            'approved',
+          ])
+          expect(report.summary).toEqual({ total: 2, approved: 2, rejected: 0, blocked: 0 })
+        }
+      )
+    })
+
+    test('a nonempty but invalid graph version is malformed identity, not an attribution', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'invalid-graph-version' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // Canonical reference validation decides validity: '?' is a nonempty
+          // string but not a canonical graph version, so the retained plan is
+          // malformed-identity evidence — never attributed to a graph version
+          // that no catalog entry could match (which would silently approve the
+          // real graph's retirement while a running execution still pins it).
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightAttributed).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+          expect(executions.entries[0].graphWorkflow).toBe(false)
+          expect(executions.entries[0].graphReference).toBeUndefined()
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        }
+      )
+    })
+
+    test('a blank graph id on a retained plan remains malformed identity evidence', async () => {
+      await withFixtureStore(
+        { mutateRunningPlanGraphIdentity: 'blank-graph-id' },
+        async ({ store }) => {
+          const manifest = buildManifest(store)
+          const executions = manifest.sections.executions
+          // Missing and blank graph ids stay malformed evidence under the
+          // corrected semantics: only a plan with no graph selection at all is
+          // a legal non-graph workflow.
+          expect(executions.counts.inFlightPlansWithMalformedGraphIdentity).toBe(1)
+          expect(executions.counts.inFlightNonGraph).toBe(0)
+          expect(executions.reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('PLAN_GRAPH_IDENTITY_MALFORMED')
         }
       )
     })
