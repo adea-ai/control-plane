@@ -160,9 +160,8 @@ for (const fault of [
           runtimeAdmissions: 1,
           fundingConfirmations: 1,
         })
-        expect(
-          (await f.host.evidence(f.intentId)).modelHolds.some((hold) => hold.status === 'open')
-        ).toBe(true)
+        const before = await f.host.evidence(f.intentId)
+        expect(before.modelHolds.some((hold) => hold.status === 'open')).toBe(true)
         if (fault === 'payer-revision') await f.host.changePayer(f.intentId)
         else if (fault === 'transport-revoked') f.host.revoke()
         else f.host.setScopeFault(fault)
@@ -171,14 +170,27 @@ for (const fault of [
         expect(f.host.metrics().providerRequests).toBe(0)
         expect(f.host.metrics().fundingConfirmations).toBe(1)
         expect(f.host.fundingEvidence()[0].funding).toEqual(first.funding)
-        if (fault !== 'transport-revoked') {
-          const status = (
-            await f.sdk.getPiDurableLeadStatus(
-              f.host.read('pi-durable.lead.status', { dispatchId: accepted.dispatchId }, null)
-            )
-          ).data.status
+        const after = await f.host.evidence(f.intentId)
+        const retainedHoldPins = (holds) => holds.map(({ status: _status, ...pin }) => pin)
+        expect(retainedHoldPins(after.modelHolds)).toEqual(retainedHoldPins(before.modelHolds))
+        expect(after.metrics.providerRequests).toBe(0)
+        expect(JSON.stringify(after)).not.toContain('test-only-not-provider-credential')
+        const readStatus = () =>
+          f.sdk.getPiDurableLeadStatus(
+            f.host.read('pi-durable.lead.status', { dispatchId: accepted.dispatchId }, null)
+          )
+        if (fault === 'payer-revision') {
+          const status = (await readStatus()).data.status
           expect(status.state).not.toBe('completed')
           expect(JSON.stringify(status)).not.toContain('test-only-not-provider-credential')
+        } else if (fault === 'transport-revoked') {
+          await expect(readStatus()).rejects.toMatchObject({
+            code: 'SERVICE_CREDENTIAL_REVOKED',
+            status: 401,
+          })
+        } else {
+          // Expired/revoked actors have no authority to inspect runtime status.
+          await expect(readStatus()).rejects.toMatchObject({ code: 'PI_LEAD_UNAVAILABLE' })
         }
       }),
     30000
