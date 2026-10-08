@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { CloudflarePiRuntimeAdapter } from './adapter.ts'
-import { CloudflareOwnerJournal } from './owner.ts'
+import { CloudflareOwnerJournal, stableJson } from './owner.ts'
 import { CloudflarePiHost } from './host.ts'
 import { fixture, pins, request, result, task } from './test-fixtures.mjs'
 function adapter(host, now = () => 100) {
@@ -152,14 +152,60 @@ test('actual additive migration retains historical JSON without invented handles
   try {
     await f.host.accept(request, 42)
     const before = f.db.query('SELECT body FROM cp_pi_tasks').get().body
-    f.db.exec(
-      'ALTER TABLE cp_pi_tasks DROP COLUMN accepted_at; ALTER TABLE cp_pi_tasks DROP COLUMN handle_id; ALTER TABLE cp_pi_events DROP COLUMN occurred_at'
-    )
+    // Construct the actual pre-facade schema. Each statement must succeed independently;
+    // Bun's multi-statement exec can conceal an indexed-column DROP failure.
+    f.db.query('DROP TABLE cp_pi_tasks').run()
+    f.db.query('DROP TABLE cp_pi_events').run()
+    f.db.query('DROP TABLE cp_pi_cancel_requests').run()
+    f.db
+      .query(
+        'CREATE TABLE cp_pi_tasks (attempt_id TEXT PRIMARY KEY, replay_key TEXT NOT NULL UNIQUE, body TEXT NOT NULL, state TEXT NOT NULL, epoch INTEGER NOT NULL, result TEXT, observed_result TEXT)'
+      )
+      .run()
+    f.db
+      .query(
+        'CREATE TABLE cp_pi_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, state TEXT NOT NULL)'
+      )
+      .run()
+    f.db
+      .query(
+        'INSERT INTO cp_pi_tasks(attempt_id, replay_key, body, state, epoch) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(request.attemptId, request.idempotencyKey, before, 'accepted', f.journal.epoch)
+    f.db
+      .query('INSERT INTO cp_pi_events(attempt_id, state) VALUES (?, ?)')
+      .run(request.attemptId, 'accepted')
+    expect(
+      f.db
+        .query('PRAGMA table_info(cp_pi_tasks)')
+        .all()
+        .map((row) => row.name)
+    ).not.toContain('handle_id')
+    expect(
+      f.db
+        .query('PRAGMA table_info(cp_pi_events)')
+        .all()
+        .map((row) => row.name)
+    ).not.toContain('occurred_at')
+    expect(
+      f.db.query('SELECT name FROM sqlite_master WHERE name = ?').get('cp_pi_handle_identity')
+    ).toBeNull()
     const journal = new CloudflareOwnerJournal(f.storage, pins),
       runtime = adapter(new CloudflarePiHost(journal, pins, f.authority, f.openEngine))
     await expect(runtime.start(request)).rejects.toThrow('CLOUDFLARE_HISTORICAL_HANDLE_UNAVAILABLE')
     expect(f.db.query('SELECT body FROM cp_pi_tasks').get().body).toBe(before)
     expect(journal.get(request.attemptId).acceptedAt).toBeUndefined()
+    expect(journal.get(request.attemptId).handleId).toBeUndefined()
+    expect(stableJson(journal.get(request.attemptId).task)).toBe(before)
+    expect(journal.events(request.attemptId)).toEqual([{ sequence: 1, state: 'accepted' }])
+    expect(f.db.query('SELECT accepted_at, handle_id FROM cp_pi_tasks').get()).toEqual({
+      accepted_at: null,
+      handle_id: null,
+    })
+    expect(f.db.query('SELECT occurred_at FROM cp_pi_events').get()).toEqual({ occurred_at: null })
+    expect(
+      f.db.query('SELECT name FROM sqlite_master WHERE name = ?').get('cp_pi_handle_identity').name
+    ).toBe('cp_pi_handle_identity')
     expect(() => journal.timedEvents(request.attemptId)).toThrow(
       'CLOUDFLARE_HISTORICAL_TIMING_UNAVAILABLE'
     )
