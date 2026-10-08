@@ -17,6 +17,14 @@ async function recover(harness, mode = 'recover') {
     worker
   )
   expect((await worker.exit).code).toBe(0)
+  expect(snapshot.productionMode).toBe('emitted')
+  expect(snapshot.productionSourceHooksRegistered).toBe(false)
+  expect(snapshot.productionModulePaths.length).toBeGreaterThan(0)
+  for (const path of snapshot.productionModulePaths) {
+    expect(path).toContain('/dist/')
+    expect(path.endsWith('.js')).toBe(true)
+    expect(path).not.toContain('/src/')
+  }
   return snapshot
 }
 

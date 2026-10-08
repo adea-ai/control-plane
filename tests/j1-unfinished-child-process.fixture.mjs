@@ -38,7 +38,11 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
     const args = runtime === 'bun' ? [] : ['--experimental-transform-types']
     const child = spawn(command, [...args, worker, directory, mode, transport.baseUrl], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      env: {
+        ...process.env,
+        NODE_NO_WARNINGS: '1',
+        PI_CHILD_PROCESS_EMITTED: runtime === 'node' ? 'true' : 'false',
+      },
     })
     let output = ''
     let stdout = ''
