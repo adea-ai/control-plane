@@ -93,6 +93,7 @@
     "@control-plane/sdk": "workspace:*",
     "@control-plane/secrets": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
