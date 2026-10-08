@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.80.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.79.0...workspace-v1.80.0) (2026-10-08)
+
+
+### Features
+
+* retain governed Pi child admission and report-back ([#929](https://github.com/adea-ai/control-plane/issues/929)) ([06efbc3](https://github.com/adea-ai/control-plane/commit/06efbc3b8d7246d1a2b0f3978bcfd44d13ac8205))
+
 ## [1.79.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.78.0...workspace-v1.79.0) (2026-10-08)
 
 
