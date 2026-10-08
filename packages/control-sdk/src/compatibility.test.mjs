@@ -61,6 +61,12 @@ describe('Control API generated contract', () => {
       '/v1/runtime-connections/get',
       '/v1/runtime-connections/list',
       '/v1/runtimes/list',
+      '/v3/pi-durable/lead-dispatches/cancel',
+      '/v3/pi-durable/lead-dispatches/dispatch',
+      '/v3/pi-durable/lead-dispatches/lookup',
+      '/v3/pi-durable/lead-dispatches/prepare',
+      '/v3/pi-durable/lead-dispatches/progress',
+      '/v3/pi-durable/lead-dispatches/status',
     ])
   })
 

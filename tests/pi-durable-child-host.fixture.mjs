@@ -49,6 +49,7 @@ export async function createGovernedChildHostFixture({
   reserveChildBudget,
   sourceKey = `pi-tool:${'a'.repeat(64)}`,
   retainAdmission = true,
+  initializeParentRunning = true,
   onCommandAuthority,
   workspace,
   principalRef = 'user:original',
@@ -69,22 +70,24 @@ export async function createGovernedChildHostFixture({
     queuedAt: '2026-08-25T18:00:01.000Z',
     runtime: { runtimeConnectionId: connectionId },
   })
-  let parent = await f.lifecycle.getExecution(ids.parentExecutionId)
-  for (const state of ['queued', 'starting', 'running'])
-    parent = await f.lifecycle.transitionExecution({
-      executionId: parent.executionId,
-      expectedVersion: parent.version,
-      to: state,
-      transitionedAt: '2026-08-25T18:00:02.000Z',
-    })
-  let attempt = await f.executions.getAttempt(parentAttemptId)
-  for (const state of ['starting', 'running'])
-    attempt = await f.lifecycle.transitionAttempt({
-      attemptId: parentAttemptId,
-      expectedVersion: attempt.version,
-      to: state,
-      transitionedAt: '2026-08-25T18:00:02.000Z',
-    })
+  if (initializeParentRunning) {
+    let parent = await f.lifecycle.getExecution(ids.parentExecutionId)
+    for (const state of ['queued', 'starting', 'running'])
+      parent = await f.lifecycle.transitionExecution({
+        executionId: parent.executionId,
+        expectedVersion: parent.version,
+        to: state,
+        transitionedAt: '2026-08-25T18:00:02.000Z',
+      })
+    let attempt = await f.executions.getAttempt(parentAttemptId)
+    for (const state of ['starting', 'running'])
+      attempt = await f.lifecycle.transitionAttempt({
+        attemptId: parentAttemptId,
+        expectedVersion: attempt.version,
+        to: state,
+        transitionedAt: '2026-08-25T18:00:02.000Z',
+      })
+  }
   const starts = []
   const sessions = new Map()
   const runtime = {

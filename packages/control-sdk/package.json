@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@control-plane/contracts": "workspace:^",
+    "@control-plane/runtime-sdk": "workspace:^",
     "zod": "4.6.5"
   },
   "engines": {

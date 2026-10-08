@@ -29,6 +29,10 @@ const repositoryGroups = {
     'tests/m11-standalone-e2e.test.mjs',
     'tests/pi-durable-child-host.test.mjs',
     'tests/pi-durable-delegation-recovery.test.mjs',
+    'tests/pi-durable-canonical-authority.test.mjs',
+    'tests/pi-durable-execution-model-composition.test.mjs',
+    'tests/pi-durable-governed-child-composition.test.mjs',
+    'tests/pi-durable-workspace-scope.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
   ],
   smoke: [

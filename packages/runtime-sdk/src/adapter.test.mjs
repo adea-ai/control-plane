@@ -50,6 +50,43 @@ test('cancelled status preserves authoritative usage without a completed result'
 })
 
 describe('runtime usage accounting provenance', () => {
+  test('accepts BYO API charges only with exact matching USD cost', () => {
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 2,
+      durationMs: 3,
+      cost: { amount: '0.000123', currency: 'USD' },
+      accounting: {
+        schemaVersion: 1,
+        sourceId: 'byo-provider-record:01',
+        fundingSource: 'byo_api',
+        currency: 'USD',
+        chargedMicrounits: 123,
+        costExact: true,
+      },
+    }
+    expect(RuntimeUsageSchema.parse(usage)).toEqual(usage)
+    expect(RuntimeUsageAccountingSchema.parse(usage.accounting)).toEqual(usage.accounting)
+    expect(RuntimeUsageSchema.parse({ ...usage, cost: undefined }).accounting).toEqual(
+      usage.accounting
+    )
+    for (const cost of [
+      { amount: '0.000124', currency: 'USD' },
+      { amount: '0.0001231', currency: 'USD' },
+      { amount: '0.000123', currency: 'EUR' },
+    ]) {
+      const result = RuntimeUsageSchema.safeParse({ ...usage, cost })
+      expect(result.success).toBe(false)
+      expect(result.error.issues.some((issue) => issue.path[0] === 'cost')).toBe(true)
+    }
+    expect(
+      RuntimeUsageSchema.safeParse({
+        ...usage,
+        accounting: { ...usage.accounting, costExact: false },
+      }).success
+    ).toBe(false)
+  })
+
   test('keeps legacy usage unchanged and accepts exact HQ and explicit external accounting', () => {
     const legacy = { inputTokens: 4, outputTokens: 2, durationMs: 7 }
     expect(RuntimeUsageSchema.parse(legacy)).toEqual(legacy)
