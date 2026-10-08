@@ -12,7 +12,7 @@ import {
 } from '@control-plane/domain'
 import { ExecutionEventSchema } from '@control-plane/events'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
-import { constants } from 'node:fs'
+import { constants, type Stats } from 'node:fs'
 import { copyFile, lstat, mkdtemp } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -317,8 +317,16 @@ export interface RecordPage {
   readonly records: readonly StoredRecord[]
   readonly unparseableJsonCount: number
   /**
-   * Id of the last record on the page, for continuation; `null` when the
-   * namespace is exhausted (this page was the final one).
+   * Raw rows the page examined before any parsing. Damaged records count
+   * toward scan bounds exactly like parsed ones, so a corrupt namespace can
+   * never walk past the row budget unnoticed.
+   */
+  readonly rawRowCount: number
+  /**
+   * Id of the last raw row on the page, for continuation; `null` only when
+   * the namespace is exhausted (this page was the final one). It is keyed on
+   * raw rows, so unparseable values can never turn more pages into an
+   * apparently exhausted namespace.
    */
   readonly nextAfterId: string | null
 }
@@ -331,8 +339,9 @@ export interface ReadOnlyRecordReader {
  * Wraps a read-only SQLite handle. The statements are fixed parameterized
  * `SELECT`s; the caller is responsible for opening the database itself in
  * read-only mode (the CLI does, via `DatabaseSync(..., { readOnly: true })`).
- * Paging is keyed on the record id ordering so walkers can continue through
- * arbitrarily long namespaces instead of truncating up front.
+ * Paging is keyed on the raw record id ordering so walkers can continue
+ * through arbitrarily long namespaces — including ones full of damaged
+ * records — instead of truncating up front.
  */
 export function createSqliteRecordReader(store: ReadOnlyRecordStore): ReadOnlyRecordReader {
   const firstPage = store.prepare(
@@ -352,23 +361,29 @@ export function createSqliteRecordReader(store: ReadOnlyRecordStore): ReadOnlyRe
       const pageRows = hasMore ? rows.slice(0, pageSize) : rows
       const records: StoredRecord[] = []
       let unparseableJsonCount = 0
-      let lastId: string | null = null
+      let continuationId: string | null = null
       for (const row of pageRows) {
         if (typeof row?.id !== 'string') {
           unparseableJsonCount += 1
           continue
         }
-        lastId = row.id
+        continuationId = row.id
         try {
           records.push({ id: row.id, value: JSON.parse(String(row?.value)) })
         } catch {
           unparseableJsonCount += 1
         }
       }
+      // Continuation is keyed on raw ids precisely so damaged values cannot
+      // truncate a walk. A page with more rows but no usable id cannot be
+      // continued safely, so it fails loudly instead of reporting exhaustion.
+      if (hasMore && continuationId === null)
+        throw new Error('INSPECTION_SCAN_CONTINUATION_UNUSABLE')
       return {
         records,
         unparseableJsonCount,
-        nextAfterId: hasMore && lastId !== null ? lastId : null,
+        rawRowCount: pageRows.length,
+        nextAfterId: hasMore ? continuationId : null,
       }
     },
   }
@@ -390,6 +405,40 @@ async function probeDeferredOpen(database: DatabaseSync): Promise<void> {
 }
 
 /**
+ * Copies a still-present write-ahead-log sidecar into the snapshot.
+ *
+ * A genuinely absent sidecar is the normal checkpointed graceful-stop state
+ * and is safe to proceed without. Anything else is not: an existing sidecar
+ * that cannot be stat'd, is not a regular file, or cannot be fully copied
+ * would hide committed records from the snapshot while the report could still
+ * claim completeness, so every one of those states fails the open instead of
+ * degrading into a silently truncated inspection.
+ */
+async function copyWalSidecarIntoSnapshot(
+  databasePath: string,
+  snapshotPath: string
+): Promise<void> {
+  const walPath = walSidecarOf(databasePath)
+  let walStat: Stats | undefined
+  try {
+    walStat = await lstat(walPath)
+  } catch (statError) {
+    if ((statError as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
+    throw new Error('INSPECTION_WAL_SIDECAR_UNAVAILABLE', { cause: statError })
+  }
+  if (!walStat.isFile() || walStat.isSymbolicLink())
+    throw new Error('INSPECTION_WAL_SIDECAR_INVALID')
+  try {
+    await copyFile(walPath, `${snapshotPath}-wal`, constants.COPYFILE_EXCL)
+  } catch (copyError) {
+    // An interrupted or denied copy must never be accepted as an absent WAL:
+    // a partial snapshot would drop committed records from the report while
+    // it still claimed completeness.
+    throw new Error('INSPECTION_WAL_SIDECAR_UNAVAILABLE', { cause: copyError })
+  }
+}
+
+/**
  * Opens an operator database for inspection without ever opening it writable.
  *
  * The primary path is a driver-level read-only open (`readOnly: true`) whose
@@ -401,6 +450,14 @@ async function probeDeferredOpen(database: DatabaseSync): Promise<void> {
  * a private 0700 temporary directory; the copy is opened with SQLite
  * `query_only` enforced before any other statement, and the operator database
  * itself is only ever read as bytes and never opened writable by SQLite.
+ *
+ * The fallback fails closed: an absent write-ahead log is the normal
+ * checkpointed state, but an existing one that cannot be stat'd, is not a
+ * regular file, or cannot be fully copied fails the open with
+ * `INSPECTION_WAL_SIDECAR_UNAVAILABLE` or `INSPECTION_WAL_SIDECAR_INVALID`
+ * rather than inspecting a snapshot that would silently miss committed
+ * records. Every failed attempt removes its private snapshot directory and
+ * leaves the operator's files byte-identical.
  */
 export async function openReadOnlyInspectionDatabase(
   databasePath: string
@@ -425,29 +482,34 @@ export async function openReadOnlyInspectionDatabase(
     // Fall through to the snapshot path.
   }
   const snapshotDirectory = await mkdtemp(join(tmpdir(), 'operator-inspection-snapshot-'))
-  const snapshotPath = join(snapshotDirectory, basename(databasePath))
-  await copyFile(databasePath, snapshotPath, constants.COPYFILE_EXCL)
-  const walPath = walSidecarOf(databasePath)
   try {
-    if ((await lstat(walPath)).isFile()) await copyFile(walPath, `${snapshotPath}-wal`)
-  } catch {
-    // No write-ahead log sidecar: nothing further to copy.
-  }
-  let snapshot: DatabaseSync
-  try {
-    snapshot = new DatabaseSync(snapshotPath)
-    snapshot.exec('PRAGMA query_only = ON')
-    await probeDeferredOpen(snapshot)
+    const snapshotPath = join(snapshotDirectory, basename(databasePath))
+    await copyFile(databasePath, snapshotPath, constants.COPYFILE_EXCL)
+    await copyWalSidecarIntoSnapshot(databasePath, snapshotPath)
+    const snapshot = new DatabaseSync(snapshotPath)
+    try {
+      snapshot.exec('PRAGMA query_only = ON')
+      await probeDeferredOpen(snapshot)
+    } catch (openError) {
+      try {
+        snapshot.close()
+      } catch {
+        // The probe failed; closing the unused handle is best effort.
+      }
+      throw openError
+    }
+    return {
+      prepare: (query: string) => snapshot.prepare(query),
+      close: () => {
+        snapshot.close()
+        rmSync(snapshotDirectory, { recursive: true, force: true })
+      },
+    }
   } catch (error) {
+    // The snapshot directory is owned by this attempt alone: every failure
+    // removes it so no partial snapshot is ever returned or left behind.
     rmSync(snapshotDirectory, { recursive: true, force: true })
     throw error
-  }
-  return {
-    prepare: (query: string) => snapshot.prepare(query),
-    close: () => {
-      snapshot.close()
-      rmSync(snapshotDirectory, { recursive: true, force: true })
-    },
   }
 }
 
@@ -491,10 +553,11 @@ export function inspectStuckJobs(
 
   /**
    * Walks a namespace with continuation until the namespace is exhausted or a
-   * budget stops the walk. Budgets count scoped matches (and raw rows), never
-   * unrelated records alone, so a selected workspace behind any number of
-   * unrelated rows is still found; an early stop is reported as an incomplete
-   * scan instead of silently narrowing the result.
+   * budget stops the walk. Budgets count scoped matches and raw rows — before
+   * any parsing — never unrelated records alone, so a selected workspace
+   * behind any number of unrelated rows is still found and a namespace flooded
+   * with damaged records still stops at the bound. An early stop is reported
+   * as an incomplete scan instead of silently narrowing the result.
    */
   const walkNamespace = (
     namespace: string,
@@ -509,9 +572,9 @@ export function inspectStuckJobs(
     while (incomplete === null) {
       const page = reader.pageRecords(namespace, SCAN_PAGE_SIZE, afterId)
       malformed += page.unparseableJsonCount
+      rows += page.rawRowCount
       const lastRowId = page.records.at(-1)?.id ?? null
       for (const record of page.records) {
-        rows += 1
         if (onRecord(record)) matches += 1
         const exhausted = record.id === lastRowId && page.nextAfterId === null
         if (!exhausted && (rows >= MAX_SCAN_ROWS || matches >= matchBudget)) {
@@ -521,6 +584,16 @@ export function inspectStuckJobs(
             lastSeenRecordId: record.id,
           }
           break
+        }
+      }
+      // Pages that parse to no record at all still consumed their raw rows:
+      // stop the walk at the bound even when nothing on the page was
+      // parseable, and only while the namespace provably continues.
+      if (incomplete === null && page.nextAfterId !== null && rows >= MAX_SCAN_ROWS) {
+        incomplete = {
+          namespace,
+          reason: 'row_budget_reached',
+          lastSeenRecordId: page.nextAfterId,
         }
       }
       if (incomplete !== null) break

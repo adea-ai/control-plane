@@ -1,9 +1,21 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { appendFile, mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
+import {
+  appendFile,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 import { ExecutionLifecycleService } from '@control-plane/domain'
 import { ExecutionPlanCompiler } from '@control-plane/execution-plan'
 import { contextPackageSerializationFixtures } from '@control-plane/context'
@@ -565,6 +577,72 @@ async function openReadOnly() {
   return readOnlyDatabase
 }
 
+const sha256File = async (path) =>
+  createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
+
+const listSnapshotDirectories = async () =>
+  (await readdir(tmpdir()))
+    .toSorted()
+    .filter((entry) => entry.startsWith('operator-inspection-snapshot-'))
+
+/**
+ * A store double that returns raw rows the way SQLite would, so the real
+ * reader (and its pagination and parsing) can be exercised over damaged
+ * records without a database file.
+ */
+function rawRowStore(rowsByNamespace) {
+  return {
+    prepare() {
+      return {
+        all(...parameters) {
+          const rows = rowsByNamespace[parameters[0]] ?? []
+          if (parameters.length === 2) return rows.slice(0, parameters[1])
+          const afterId = parameters[1]
+          const limit = parameters[2]
+          let start = rows.length
+          for (let index = 0; index < rows.length; index += 1) {
+            if (String(rows[index].id) > afterId) {
+              start = index
+              break
+            }
+          }
+          return rows.slice(start, start + limit)
+        },
+      }
+    },
+  }
+}
+
+/**
+ * Commits one extra in-scope execution into a copied store so the record
+ * lives only in the write-ahead log, then detaches the shared-memory index
+ * so a driver-level read-only open cannot attach to the live writer and the
+ * byte-copy fallback path must serve the inspection. The copied store keeps
+ * the fixture's own sidecar state: pages may still live in the source -wal.
+ */
+async function copyFixtureStoreWithLiveWriter(statePath) {
+  await copyFile(databasePath, statePath)
+  if (await hasWalSidecar(databasePath)) await copyFile(`${databasePath}-wal`, `${statePath}-wal`)
+  const writer = new DatabaseSync(statePath)
+  const walOnlyExecutionId = id('exe', 'M')
+  writer
+    .prepare(
+      `INSERT INTO control_plane_records (namespace, id, revision, value, updated_at)
+       VALUES ('executions', ?, 1, ?, ?)`
+    )
+    .run(
+      recordId(walOnlyExecutionId),
+      JSON.stringify(
+        rawExecution({ executionId: walOnlyExecutionId, acceptedAt: T0, updatedAt: T0 })
+      ),
+      T0
+    )
+  rmSync(`${statePath}-shm`, { force: true })
+  return writer
+}
+
 async function inspect(options) {
   const reader = createSqliteRecordReader(await openReadOnly())
   return inspectStuckJobs(reader, {
@@ -832,11 +910,6 @@ test('inspects a copy whose WAL header has no shared-memory sidecar', async () =
   // verified byte-copy. Simulate that state deterministically on an isolated
   // copy (main database plus any live -wal, never the -shm) instead of
   // touching the shared fixture.
-  const { copyFile, readdir } = await import('node:fs/promises')
-  const listSnapshotDirectories = async () =>
-    (await readdir(tmpdir()))
-      .toSorted()
-      .filter((entry) => entry.startsWith('operator-inspection-snapshot-'))
   const snapshotDirectoriesBefore = await listSnapshotDirectories()
   const stateDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-wal-'))
   try {
@@ -844,9 +917,7 @@ test('inspects a copy whose WAL header has no shared-memory sidecar', async () =
     await copyFile(databasePath, statePath)
     const copiedWal = await hasWalSidecar(databasePath)
     if (copiedWal) await copyFile(`${databasePath}-wal`, `${statePath}-wal`)
-    const before = createHash('sha256')
-      .update(await readFile(statePath))
-      .digest('hex')
+    const before = await sha256File(statePath)
     const handle = await openReadOnlyInspectionDatabase(statePath)
     try {
       const report = inspectStuckJobs(createSqliteRecordReader(handle), {
@@ -857,10 +928,7 @@ test('inspects a copy whose WAL header has no shared-memory sidecar', async () =
     } finally {
       handle.close()
     }
-    const after = createHash('sha256')
-      .update(await readFile(statePath))
-      .digest('hex')
-    expect(after).toBe(before)
+    expect(await sha256File(statePath)).toBe(before)
     // The inspected database file is byte-identical, and the directory holds
     // only the SQLite-owned set: the database, the -wal we reproduced, and at
     // most the -shm SQLite itself maintains for WAL reads. The private
@@ -874,6 +942,148 @@ test('inspects a copy whose WAL header has no shared-memory sidecar', async () =
   } finally {
     await rm(stateDirectory, { recursive: true, force: true })
   }
+})
+
+test('surfaces committed WAL-only records through the snapshot fallback', async () => {
+  // The fallback exists so committed records that still live only in the
+  // write-ahead log are never lost to the report: a copyable sidecar must be
+  // carried into the snapshot and recovered.
+  const snapshotDirectoriesBefore = await listSnapshotDirectories()
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-wal-live-'))
+  let writer
+  try {
+    const statePath = join(stateDirectory, 'control-plane.sqlite')
+    writer = await copyFixtureStoreWithLiveWriter(statePath)
+    const databaseBefore = await sha256File(statePath)
+    const walBefore = await sha256File(`${statePath}-wal`)
+    const handle = await openReadOnlyInspectionDatabase(statePath)
+    try {
+      const report = inspectStuckJobs(createSqliteRecordReader(handle), {
+        workspaceId: W1,
+        now: INSPECT_AT,
+      })
+      expect(report.summary.complete).toBe(true)
+      expect(report.summary.inScope.executions).toBe(34 + 1)
+    } finally {
+      handle.close()
+    }
+    // The inspected source files stay byte-identical, including the WAL that
+    // still belongs to the live writer.
+    expect(await sha256File(statePath)).toBe(databaseBefore)
+    expect(await sha256File(`${statePath}-wal`)).toBe(walBefore)
+    expect(await listSnapshotDirectories()).toEqual(snapshotDirectoriesBefore)
+  } finally {
+    writer?.close()
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('fails closed when an existing WAL sidecar cannot be copied', async () => {
+  // An unreadable but existing sidecar carries committed records; proceeding
+  // without it would drop them from the report while it still claimed
+  // completeness, so the open must fail instead.
+  const snapshotDirectoriesBefore = await listSnapshotDirectories()
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-wal-denied-'))
+  let writer
+  try {
+    const statePath = join(stateDirectory, 'control-plane.sqlite')
+    const walPath = `${statePath}-wal`
+    writer = await copyFixtureStoreWithLiveWriter(statePath)
+    const databaseBefore = await sha256File(statePath)
+    const walBefore = await sha256File(walPath)
+    await chmod(walPath, 0o000)
+    try {
+      await expect(openReadOnlyInspectionDatabase(statePath)).rejects.toThrow(
+        'INSPECTION_WAL_SIDECAR_UNAVAILABLE'
+      )
+    } finally {
+      await chmod(walPath, 0o600)
+    }
+    // The failure never leaked a partial snapshot and never touched the
+    // operator's files.
+    expect(await sha256File(walPath)).toBe(walBefore)
+    expect(await sha256File(statePath)).toBe(databaseBefore)
+    expect(await listSnapshotDirectories()).toEqual(snapshotDirectoriesBefore)
+  } finally {
+    writer?.close()
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('fails closed when the WAL sidecar exists but is not a regular file', async () => {
+  const snapshotDirectoriesBefore = await listSnapshotDirectories()
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'cp-operator-inspection-wal-dir-'))
+  try {
+    const statePath = join(stateDirectory, 'control-plane.sqlite')
+    await copyFile(databasePath, statePath)
+    await mkdir(`${statePath}-wal`)
+    const databaseBefore = await sha256File(statePath)
+    await expect(openReadOnlyInspectionDatabase(statePath)).rejects.toThrow(
+      'INSPECTION_WAL_SIDECAR_INVALID'
+    )
+    expect(await sha256File(statePath)).toBe(databaseBefore)
+    expect(await listSnapshotDirectories()).toEqual(snapshotDirectoriesBefore)
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('keys page continuation on raw record ids so damaged pages cannot truncate the walk', () => {
+  const reader = createSqliteRecordReader(
+    rawRowStore({
+      executions: [
+        { id: 'r-001', value: '{"broken": true' },
+        { id: 'r-002', value: '{broken' },
+        { id: 'r-003', value: '{also-broken' },
+        { id: 'r-004', value: '{still-broken' },
+        { id: 'r-005', value: '{last-broken' },
+      ],
+    })
+  )
+  const first = reader.pageRecords('executions', 2)
+  expect(first.records).toEqual([])
+  expect(first.rawRowCount).toBe(2)
+  expect(first.unparseableJsonCount).toBe(2)
+  expect(first.nextAfterId).toBe('r-002')
+  const second = reader.pageRecords('executions', 2, first.nextAfterId)
+  expect(second.rawRowCount).toBe(2)
+  expect(second.unparseableJsonCount).toBe(2)
+  expect(second.nextAfterId).toBe('r-004')
+  const third = reader.pageRecords('executions', 2, second.nextAfterId)
+  expect(third.rawRowCount).toBe(1)
+  expect(third.unparseableJsonCount).toBe(1)
+  expect(third.nextAfterId).toBe(null)
+})
+
+test('fails a walk loudly when a page cannot produce a usable continuation id', () => {
+  const reader = createSqliteRecordReader(
+    rawRowStore({
+      executions: [
+        { id: 7, value: '{}' },
+        { id: 8, value: '{}' },
+        { id: 9, value: '{}' },
+      ],
+    })
+  )
+  expect(() => reader.pageRecords('executions', 2)).toThrow('INSPECTION_SCAN_CONTINUATION_UNUSABLE')
+})
+
+test('stops scans at the raw-row budget on damaged namespaces', () => {
+  // A namespace flooded with unparseable rows must still consume the raw-row
+  // budget: before raw rows were counted, the walk paged through every row
+  // with a zeroed budget and reported the damaged store as complete.
+  const damagedRows = Array.from({ length: 150_000 }, (_, index) => ({
+    id: `damaged-${String(index).padStart(6, '0')}`,
+    value: '{broken',
+  }))
+  const reader = createSqliteRecordReader(rawRowStore({ executions: damagedRows }))
+  const report = inspectStuckJobs(reader, { workspaceId: W1, now: INSPECT_AT })
+  expect(report.summary.complete).toBe(false)
+  const scan = report.summary.incompleteScans.find((entry) => entry.namespace === 'executions')
+  expect(scan).toMatchObject({ reason: 'row_budget_reached' })
+  expect(scan.lastSeenRecordId).toMatch(/^damaged-\d{6}$/)
+  expect(report.summary.malformedRecords['executions']).toBeGreaterThanOrEqual(100_000)
+  expect(report.summary.inScope.executions).toBe(0)
 })
 
 test('never emits record payload content or secrets', async () => {

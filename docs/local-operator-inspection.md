@@ -15,6 +15,13 @@ fences, reconciles or redeploys anything, grants no service credential, catalog 
 access, and infers no provider cost from usage data. Privileged controls (reconciliation triggers,
 admission stops, revocation and fencing) remain separate operator procedures.
 
+The byte-copy fallback fails closed. An absent write-ahead log is the normal checkpointed-stop
+state and is safe to inspect without; an existing `-wal` that cannot be examined, is not a regular
+file, or cannot be fully copied fails the command (exit 1) instead of inspecting a snapshot that
+would silently miss records committed only in that log. A partially copied snapshot is never
+presented as complete, every failed attempt removes only its own private temporary directory, and
+the operator's database files stay byte-identical.
+
 ```sh
 bun apps/local-control-plane/dist/operator-inspection-cli.js \
   --data-dir /absolute/private/control-plane-data \
@@ -82,11 +89,15 @@ actually settled.
 Namespaces are walked with continuation: pages are fetched by record-id order until the namespace
 is exhausted or a budget stops the walk. Budgets count in-scope (workspace-matching) records and
 raw rows — never unrelated records alone — so a selected workspace behind any number of unrelated
-rows is still found in full. A walk that stops early is reported in `summary.incompleteScans` with
-the namespace, the budget that stopped it (`match_budget_reached` or `row_budget_reached`) and the
-last examined record id, and `summary.complete` becomes `false`. An incomplete scan means every
-count and candidate list in the report is a lower bound; the report never presents a truncated
-correlation as confident, and an empty result is never produced by truncation silently.
+rows is still found in full. Raw rows count before any parsing: damaged or corrupt records consume
+the row budget exactly like parsed ones, and continuation is keyed on raw record ids, so a
+namespace flooded with unparseable values still stops at the bound instead of walking past it and
+reporting the damaged store as complete. A walk that stops early is reported in
+`summary.incompleteScans` with the namespace, the budget that stopped it (`match_budget_reached` or
+`row_budget_reached`) and the last examined record id, and `summary.complete` becomes `false`. An
+incomplete scan means every count and candidate list in the report is a lower bound; the report
+never presents a truncated correlation as confident, and an empty result is never produced by
+truncation silently.
 
 Results are additionally bounded: at most `--limit` executions (default 20, maximum 100), ordered
 oldest-evidence first with `summary.selected.remainingStuckCandidates` reporting the rest; job and
