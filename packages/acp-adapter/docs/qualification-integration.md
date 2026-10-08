@@ -38,7 +38,9 @@ keys.
   specific path is allow-listed by evidence; governed paths additionally require
   `policyEnforced: true` (pre-effect policy enforcement) in the evidence.
 - The codex route must exactly match the pinned ACP build identity
-  (`pinnedAcpBuild`); fixture-valued installation evidence cannot activate it.
+  (`pinnedAcpBuild`), including the pinned `codexVersion` harness version;
+  fixture-valued installation evidence and evidence/observation pairs jointly
+  claiming an unpinned version cannot activate it.
 
 ## Call-sites later milestones must add
 

@@ -375,6 +375,22 @@ describe('executor qualification', () => {
     }
   })
 
+  test('codex harness version is pinned: joint unpinned claims cannot qualify', () => {
+    // Evidence and observation agreeing on an unpinned codex version must not
+    // qualify while the installation stays pinned to the shipped Codex version.
+    const result = evaluatorFor('codex', { harnessVersion: '9.99.9' }).evaluate(
+      observation('codex', { harnessVersion: '9.99.9' })
+    )
+    expect(result.qualified).toBe(false)
+    expect(result.failure).toEqual({
+      reason: 'evidence_mismatch',
+      field: 'deploymentPin',
+      detail: 'DEPLOYMENT_PIN_CHANGED',
+    })
+    expect(result.capabilities).toEqual([])
+    expect(result.usageReporting).toBe(false)
+  })
+
   test('unqualifiable harnesses and malformed observations fail closed as invalid evidence', () => {
     // Pi is not a supported ACP route and can never be qualified here.
     for (const malformed of [

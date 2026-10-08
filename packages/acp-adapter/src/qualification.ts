@@ -367,11 +367,14 @@ export class ExecutorQualificationEvaluator {
         failure: { reason: 'evidence_expired', expiredAt: record.validUntil },
       }
     }
-    // The codex route additionally must match the pinned ACP build exactly;
-    // fixture or otherwise-fake installation evidence can never qualify it.
+    // The codex route additionally must match the pinned ACP build exactly —
+    // installation identity and the pinned Codex version alike. Fixture or
+    // otherwise-fake installation evidence, and evidence/observation pairs
+    // jointly claiming an unpinned version, can never qualify it.
     if (
       observed.harness === 'codex' &&
-      !nativeInstallationMatches(observed.nativeInstallation, pinnedCodexInstallation)
+      (!nativeInstallationMatches(observed.nativeInstallation, pinnedCodexInstallation) ||
+        observed.harnessVersion !== pinnedAcpBuild.codexVersion)
     ) {
       return {
         ...unqualified,
