@@ -37,7 +37,19 @@ import { ExecutionPlanPinSchema, MarketplacePluginReferenceSchema } from './exec
  * - Receipt evidence restates the receipt identity the runtime event effect
  *   sink persists (`commandId`, `messageKind`, `messageSequence`,
  *   `frameHash`, `outcome`); every effect must resolve to one retained
- *   applied receipt with the same frame hash.
+ *   applied receipt with the same frame hash. Retained effects and receipts
+ *   are one-to-one: duplicate receipt identities are conflict-checked (frame
+ *   hash AND outcome) before any map is built — a map can never silently
+ *   dedupe a disagreement or let last-write-wins decide — two effects cannot
+ *   share one receipt identity, one effect cannot be claimed by two receipt
+ *   identities, and every retained receipt must be referenced by exactly one
+ *   effect.
+ * - Tool pins are compared on the COMPLETE pin (definition id, version id,
+ *   content digest, operation), and the proposed approval subject must match
+ *   the subject the accepted decision covers.
+ * - Unhashable input (Date, BigInt, cyclic structures) produces the typed
+ *   `malformed_evidence` rejection; the assessor never throws and the
+ *   rejection never echoes the offending value.
  * - Settlement evidence must resolve to exactly ONE logical settlement id per
  *   settlement key, including across recorded restarts.
  *
@@ -311,7 +323,16 @@ function rejection(
 }
 
 function evidenceDigest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
+  try {
+    return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
+  } catch {
+    // Unhashable evidence (Date, BigInt, cyclic structures) must yield a typed
+    // rejection, never a throw — and the digest must never echo the offending
+    // value, so it hashes a fixed value-free marker instead.
+    return `sha256:${createHash('sha256')
+      .update('replacement-compatibility:unhashable-evidence')
+      .digest('hex')}`
+  }
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -366,7 +387,10 @@ interface ApprovalAssessment {
   readonly rejections: ReplacementCompatibilityRejection[]
 }
 
-function assessApproval(retained: RetainedWorkflowEvidence): ApprovalAssessment {
+function assessApproval(
+  retained: RetainedWorkflowEvidence,
+  proposed: ProposedReplacementEvidence
+): ApprovalAssessment {
   const subject = retained.approvalSubject
   const rejections: ReplacementCompatibilityRejection[] = []
   if (subject.contentDigest !== retained.implementationPin.contentDigest) {
@@ -376,6 +400,20 @@ function assessApproval(retained: RetainedWorkflowEvidence): ApprovalAssessment 
         'approval_before_effect',
         `approvalSubject:${subject.versionId}`,
         'Approval subject digest does not bind to the pinned implementation digest'
+      )
+    )
+  }
+  // The approval the replacement carries must be the approval the accepted
+  // decision actually covers: a proposed approval subject that does not match
+  // the retained (decision-bound) subject is evidence divergence, not a new
+  // authorization.
+  if (!sameJson(proposed.approvalSubject, retained.approvalSubject)) {
+    rejections.push(
+      rejection(
+        'version_drift',
+        'approval_before_effect',
+        `approvalSubject:${proposed.approvalSubject.versionId}`,
+        'Proposed approval subject does not match the subject the accepted decision covers'
       )
     )
   }
@@ -441,7 +479,64 @@ function assessRetainedEffectCoherence(
   const rejections: ReplacementCompatibilityRejection[] = []
   const keyPrefix = `${retained.workflowId}:${retained.lifecyclePolicyVersion}:`
   const seenKeys = new Set<string>()
-  const receipts = new Map(retained.receipts.map((receipt) => [receiptKeyOf(receipt), receipt]))
+  // Conflicting duplicate receipts are detected BEFORE any receipt map is
+  // built: constructing the map first would silently dedupe a conflicting
+  // duplicate and let last-write-wins decide which outcome the evidence
+  // supports.
+  const receiptIdentities = new Map<string, RetainedReceiptEvidence[]>()
+  for (const receipt of retained.receipts) {
+    const identity = receiptKeyOf(receipt)
+    const group = receiptIdentities.get(identity)
+    if (group === undefined) receiptIdentities.set(identity, [receipt])
+    else group.push(receipt)
+  }
+  for (const [identity, group] of receiptIdentities) {
+    // Every identity group holds at least one receipt by construction.
+    const first = group.at(0)
+    if (first === undefined) continue
+    const divergent = group.some(
+      (receipt) => receipt.frameHash !== first.frameHash || receipt.outcome !== first.outcome
+    )
+    if (divergent) {
+      rejections.push(
+        rejection(
+          'conflicting_receipt',
+          'receipt_linkage',
+          identity,
+          'Duplicate retained receipts share an identity but disagree on the frame hash or outcome'
+        )
+      )
+    }
+  }
+  const receipts = new Map(
+    [...receiptIdentities.entries()].map(([identity, group]) => [identity, group[0]])
+  )
+  // One-to-one effect/receipt identities: two retained effects must never
+  // share one receipt identity, and one effect must never be claimed by two
+  // receipt identities (two receipts asserting the same effect frame hash) —
+  // effects cannot disappear through aliasing.
+  const effectClaimsByReceipt = new Map<string, number>()
+  const receiptIdentitiesByFrameHash = new Map<string, Set<string>>()
+  for (const [identity, group] of receiptIdentities) {
+    const first = group.at(0)
+    if (first === undefined) continue
+    const frameHash = first.frameHash
+    const claiming = receiptIdentitiesByFrameHash.get(frameHash)
+    if (claiming === undefined) receiptIdentitiesByFrameHash.set(frameHash, new Set([identity]))
+    else claiming.add(identity)
+  }
+  for (const [frameHash, claiming] of receiptIdentitiesByFrameHash) {
+    if (claiming.size > 1) {
+      rejections.push(
+        rejection(
+          'ambiguous_effect',
+          'receipt_linkage',
+          frameHash,
+          `${claiming.size} retained receipt identities claim the same effect frame hash`
+        )
+      )
+    }
+  }
   for (const effect of retained.effects) {
     if (!effect.effectKey.startsWith(keyPrefix)) {
       rejections.push(
@@ -464,13 +559,15 @@ function assessRetainedEffectCoherence(
       )
     }
     seenKeys.add(effect.effectKey)
-    const receipt = receipts.get(receiptKeyOf(effect.receipt))
+    const identity = receiptKeyOf(effect.receipt)
+    effectClaimsByReceipt.set(identity, (effectClaimsByReceipt.get(identity) ?? 0) + 1)
+    const receipt = receipts.get(identity)
     if (receipt === undefined) {
       rejections.push(
         rejection(
           'missing_evidence',
           'receipt_linkage',
-          receiptKeyOf(effect.receipt),
+          identity,
           'Retained effect has no retained receipt'
         )
       )
@@ -481,7 +578,7 @@ function assessRetainedEffectCoherence(
         rejection(
           'ambiguous_effect',
           'receipt_linkage',
-          receiptKeyOf(effect.receipt),
+          identity,
           'Retained effect and receipt disagree on the frame hash'
         )
       )
@@ -491,7 +588,7 @@ function assessRetainedEffectCoherence(
         rejection(
           'conflicting_receipt',
           'receipt_linkage',
-          receiptKeyOf(effect.receipt),
+          identity,
           'Retained receipt records a terminal conflict'
         )
       )
@@ -500,24 +597,36 @@ function assessRetainedEffectCoherence(
         rejection(
           'ambiguous_effect',
           'receipt_linkage',
-          receiptKeyOf(effect.receipt),
+          identity,
           'Retained receipt records an out-of-order (uncertain) application'
         )
       )
     }
   }
-  for (const [firstIndex, left] of retained.receipts.entries()) {
-    for (const right of retained.receipts.slice(firstIndex + 1)) {
-      if (receiptKeyOf(left) === receiptKeyOf(right) && left.frameHash !== right.frameHash) {
-        rejections.push(
-          rejection(
-            'conflicting_receipt',
-            'receipt_linkage',
-            receiptKeyOf(left),
-            'Two retained receipts share an identity but disagree on the frame hash'
-          )
+  for (const [identity, claims] of effectClaimsByReceipt) {
+    if (claims > 1) {
+      rejections.push(
+        rejection(
+          'ambiguous_effect',
+          'receipt_linkage',
+          identity,
+          `${claims} retained effects share one retained receipt identity`
         )
-      }
+      )
+    }
+  }
+  // Cardinality: every retained receipt identity must be claimed by exactly
+  // one effect; an unreferenced receipt is unaccounted-for evidence.
+  for (const identity of receiptIdentities.keys()) {
+    if (!effectClaimsByReceipt.has(identity)) {
+      rejections.push(
+        rejection(
+          'missing_evidence',
+          'receipt_linkage',
+          identity,
+          'Retained receipt is not referenced by any retained effect'
+        )
+      )
     }
   }
   return rejections
@@ -716,9 +825,16 @@ function deepFreeze<Value>(value: Value): Value {
  * I/O, and returns a frozen advisory report with no authorization surface.
  */
 export function assessReplacementCompatibility(input: unknown): ReplacementCompatibilityReport {
-  const parseResult = ReplacementCompatibilityEvidenceSchema.safeParse(input)
-  if (!parseResult.success) {
-    const issue = parseResult.error.issues[0]
+  // A cyclic (or otherwise unassessable) structure can crash the parser
+  // itself. That is typed malformed evidence, never an exception surface.
+  let parseResult: ReturnType<typeof ReplacementCompatibilityEvidenceSchema.safeParse> | undefined
+  try {
+    parseResult = ReplacementCompatibilityEvidenceSchema.safeParse(input)
+  } catch {
+    parseResult = undefined
+  }
+  if (parseResult === undefined || !parseResult.success) {
+    const issue = parseResult?.error.issues[0]
     return divergentReport({
       evidenceProvenance: 'unverified',
       qualification: 'not-qualified',
@@ -728,7 +844,9 @@ export function assessReplacementCompatibility(input: unknown): ReplacementCompa
         'malformed_evidence',
         'evidence_provenance',
         'envelope',
-        `Evidence envelope failed schema validation at ${issue?.path.map(String).join('.') || 'root'}`
+        parseResult === undefined
+          ? 'Evidence envelope could not be assessed (unassessable structure)'
+          : `Evidence envelope failed schema validation at ${issue?.path.map(String).join('.') || 'root'}`
       ),
     })
   }
@@ -779,11 +897,14 @@ export function assessReplacementCompatibility(input: unknown): ReplacementCompa
     ),
     ...pinDriftRejections('input_pin', 'inputPin', retained.inputPin, proposed.inputPin)
   )
+  // Tool pins are compared on the COMPLETE pin — definition id, version id,
+  // content digest and operation — so a replacement that keeps the coarse
+  // reference but drifts the definition id or digest is evidence-divergent.
   if (
     pinnedSetDiffers(
       retained.toolPins,
       proposed.toolPins,
-      (pin) => `${pin.toolVersionId}:${pin.operation}`
+      (pin) => `${pin.toolDefinitionId}:${pin.toolVersionId}:${pin.contentDigest}:${pin.operation}`
     )
   ) {
     rejections.push(
@@ -857,7 +978,7 @@ export function assessReplacementCompatibility(input: unknown): ReplacementCompa
     }
   }
 
-  rejections.push(...assessApproval(retained).rejections)
+  rejections.push(...assessApproval(retained, proposed).rejections)
   rejections.push(...assessRetainedEffectCoherence(retained))
   rejections.push(...assessReceiptLinkage(retained, proposed))
   rejections.push(...assessSettlement(retained, proposed))

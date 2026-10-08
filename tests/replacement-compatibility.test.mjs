@@ -261,6 +261,27 @@ describe('replacement compatibility (report-only, M16.02 #939)', () => {
     }
   })
 
+  test('tool pin drift is compared on the complete pin, including definition id and digest', () => {
+    const cases = [
+      {
+        mutated: [{ ...toolPins()[0], toolDefinitionId: `tld_${'Z'.repeat(26)}` }],
+      },
+      {
+        mutated: [{ ...toolPins()[0], contentDigest: hex('b') }],
+      },
+    ]
+    for (const { mutated } of cases) {
+      const report = assessReplacementCompatibility(
+        fixtureEnvelope(retainedEvidence(), proposedEvidence({ toolPins: mutated }))
+      )
+      expect(report.outcome).toBe('evidence-divergent')
+      const finding = findingFor(report, 'tool_pins')
+      expect(finding?.outcome).toBe('divergent')
+      expect(finding?.rejections[0]?.family).toBe('version_drift')
+      expect(finding?.rejections[0]?.detail).toContain('tool pins')
+    }
+  })
+
   test('revoked graph authority and rejected approvals are rejected', () => {
     const revokedGraph = assessReplacementCompatibility(
       fixtureEnvelope(retainedEvidence({ graphReference: graphReference('revoked') }))
@@ -309,6 +330,65 @@ describe('replacement compatibility (report-only, M16.02 #939)', () => {
     expect(findingFor(terminalConflict, 'receipt_linkage')?.rejections[0]?.family).toBe(
       'conflicting_receipt'
     )
+  })
+
+  test('conflicting duplicate receipt outcomes are detected before maps are built; agreeing duplicates stay benign', () => {
+    // The conflicting duplicate is ordered LAST-WRITTEN-FIRST: the applied
+    // entry is last, so a receipt map built before conflict detection would
+    // silently keep the applied outcome (last-write-wins) and hide the
+    // disagreement.
+    const conflictingOutcomes = assessReplacementCompatibility(
+      fixtureEnvelope(
+        retainedEvidence({
+          receipts: [
+            ...retainedReceipts(),
+            {
+              commandId: COMMAND_ID,
+              messageKind: 'terminal',
+              messageSequence: 3,
+              frameHash: hex(8),
+              outcome: 'out_of_order',
+            },
+            {
+              commandId: COMMAND_ID,
+              messageKind: 'terminal',
+              messageSequence: 3,
+              frameHash: hex(8),
+              outcome: 'applied',
+            },
+          ],
+        })
+      )
+    )
+    expect(conflictingOutcomes.outcome).toBe('evidence-divergent')
+    expect(
+      (findingFor(conflictingOutcomes, 'receipt_linkage')?.rejections ?? []).some(
+        (rejection) =>
+          rejection.family === 'conflicting_receipt' &&
+          rejection.detail.includes('disagree on the frame hash or outcome')
+      )
+    ).toBe(true)
+
+    // Duplicate receipts that agree on the frame hash and outcome keep the
+    // existing benign semantics: no conflicting receipt is reported.
+    const agreeingDuplicate = assessReplacementCompatibility(
+      fixtureEnvelope(
+        retainedEvidence({
+          receipts: [
+            ...retainedReceipts(),
+            {
+              commandId: COMMAND_ID,
+              messageKind: 'terminal',
+              messageSequence: 3,
+              frameHash: hex(8),
+              outcome: 'applied',
+            },
+          ],
+        })
+      )
+    )
+    expect(familiesOf(agreeingDuplicate)).not.toContain('conflicting_receipt')
+    expect(agreeingDuplicate.outcome).toBe('evidence-equivalent')
   })
 
   test('one logical settlement survives restart evidence; double settlement is ambiguous', () => {
@@ -385,6 +465,104 @@ describe('replacement compatibility (report-only, M16.02 #939)', () => {
     expect(familiesOf(remapped)).toContain('ambiguous_effect')
   })
 
+  test('retained effects and receipts stay one-to-one: aliasing and cardinality mismatches are rejected', () => {
+    const toProposed = (effects) =>
+      effects.map((effect) => ({
+        operation: effect.effectKey.slice(EFFECT_KEY_PREFIX.length),
+        effectKey: effect.effectKey,
+        kind: effect.kind,
+        receipt: effect.receipt,
+      }))
+
+    // Two retained effects share ONE receipt identity with frame hashes made
+    // consistent, and the proposed side links only the deduped view: before
+    // the one-to-one rule, the aliased effect silently disappeared from the
+    // comparison and the report stayed evidence-equivalent.
+    const aliasedEffects = retainedEffects()
+    aliasedEffects[1] = {
+      ...aliasedEffects[1],
+      frameHash: hex(6),
+      receipt: { commandId: COMMAND_ID, messageKind: 'progress', messageSequence: 1 },
+    }
+    const aliasedRetained = retainedEvidence({
+      effects: aliasedEffects,
+      receipts: [retainedReceipts()[0], retainedReceipts()[2]],
+    })
+    const aliased = assessReplacementCompatibility(
+      fixtureEnvelope(
+        aliasedRetained,
+        proposedEvidence({ effects: toProposed([aliasedEffects[1], aliasedEffects[2]]) })
+      )
+    )
+    expect(aliased.outcome).toBe('evidence-divergent')
+    expect(
+      (findingFor(aliased, 'receipt_linkage')?.rejections ?? []).some(
+        (rejection) =>
+          rejection.family === 'ambiguous_effect' &&
+          rejection.detail.includes('share one retained receipt identity')
+      )
+    ).toBe(true)
+
+    // One retained effect claimed by TWO receipt identities: two receipts
+    // assert the same effect frame hash, so no receipt can be ruled out as
+    // the effect's source. The unclaimed twin is also a cardinality mismatch.
+    const twinEffects = [retainedEffects()[0], retainedEffects()[2]]
+    const twinReceipts = [
+      retainedReceipts()[0],
+      {
+        commandId: COMMAND_ID,
+        messageKind: 'progress',
+        messageSequence: 4,
+        frameHash: hex(6),
+        outcome: 'applied',
+      },
+      retainedReceipts()[2],
+    ]
+    const twin = assessReplacementCompatibility(
+      fixtureEnvelope(
+        retainedEvidence({ effects: twinEffects, receipts: twinReceipts }),
+        proposedEvidence({ effects: toProposed(twinEffects) })
+      )
+    )
+    expect(twin.outcome).toBe('evidence-divergent')
+    expect(
+      (findingFor(twin, 'receipt_linkage')?.rejections ?? []).some(
+        (rejection) =>
+          rejection.family === 'ambiguous_effect' &&
+          rejection.detail.includes('claim the same effect frame hash')
+      )
+    ).toBe(true)
+    expect(familiesOf(twin)).toContain('missing_evidence')
+
+    // Cardinality mismatch: a retained receipt no effect references cannot be
+    // accounted for; effects cannot disappear through aliasing in either
+    // direction.
+    const mismatch = assessReplacementCompatibility(
+      fixtureEnvelope(
+        retainedEvidence({
+          receipts: [
+            ...retainedReceipts(),
+            {
+              commandId: COMMAND_ID,
+              messageKind: 'progress',
+              messageSequence: 5,
+              frameHash: hex('9'),
+              outcome: 'applied',
+            },
+          ],
+        })
+      )
+    )
+    expect(mismatch.outcome).toBe('evidence-divergent')
+    expect(
+      (findingFor(mismatch, 'receipt_linkage')?.rejections ?? []).some(
+        (rejection) =>
+          rejection.family === 'missing_evidence' &&
+          rejection.detail.includes('not referenced by any retained effect')
+      )
+    ).toBe(true)
+  })
+
   test('missing evidence is rejected with typed reasons instead of throwing', () => {
     const noApproval = assessReplacementCompatibility(
       fixtureEnvelope(retainedEvidence({ approvals: [] }))
@@ -430,6 +608,40 @@ describe('replacement compatibility (report-only, M16.02 #939)', () => {
     ).toBe(true)
   })
 
+  test('unhashable evidence inputs return a typed rejection, never a throw or an echo', () => {
+    const cases = [
+      ['date', () => new Date('2026-02-01T00:00:00.000Z')],
+      ['bigint', () => ({ provenance: { evidenceKind: 1n } })],
+      [
+        'cyclic',
+        () => {
+          const cyclic = {}
+          cyclic.self = cyclic
+          return cyclic
+        },
+      ],
+    ]
+    const digests = new Set()
+    for (const [, build] of cases) {
+      const report = assessReplacementCompatibility(build())
+      expect(report.outcome).toBe('evidence-divergent')
+      expect(report.rejections).toHaveLength(1)
+      expect(report.rejections[0]?.family).toBe('malformed_evidence')
+      expect(report.evidenceProvenance).toBe('unverified')
+      expect(report.qualification).toBe('not-qualified')
+      expect(report.subject.retainedEvidenceDigest).toMatch(/^sha256:[a-f0-9]{64}$/)
+      digests.add(report.subject.retainedEvidenceDigest)
+      const serialized = JSON.stringify(report)
+      // The typed rejection never echoes the offending value: no input Date
+      // string, no BigInt digit run, no cyclic structure marker.
+      expect(serialized).not.toContain('2026-02-01T00:00:00.000Z')
+      expect(serialized).not.toContain('[object Object]')
+    }
+    // Unhashable inputs hash a fixed, value-free marker: the digest carries no
+    // echo of the rejected input and stays deterministic across shapes.
+    expect(digests.size).toBe(1)
+  })
+
   test('stale approval bindings are rejected', () => {
     const staleRevision = assessReplacementCompatibility(
       fixtureEnvelope(
@@ -451,6 +663,27 @@ describe('replacement compatibility (report-only, M16.02 #939)', () => {
     expect(findingFor(unboundDigest, 'approval_before_effect')?.rejections[0]?.detail).toContain(
       'pinned implementation digest'
     )
+  })
+
+  test('the proposed approval subject must match the subject the accepted decision covers', () => {
+    for (const mutated of [
+      { ...approvalSubject(), revision: 8 },
+      { ...approvalSubject(), versionId: `pfv_${'D'.repeat(26)}` },
+      { ...approvalSubject(), contentDigest: hex('c') },
+    ]) {
+      const report = assessReplacementCompatibility(
+        fixtureEnvelope(retainedEvidence(), proposedEvidence({ approvalSubject: mutated }))
+      )
+      expect(report.outcome).toBe('evidence-divergent')
+      const finding = findingFor(report, 'approval_before_effect')
+      expect(finding?.outcome).toBe('divergent')
+      expect(finding?.rejections.map((rejection) => rejection.family)).toContain('version_drift')
+      expect(
+        finding?.rejections.some((rejection) =>
+          rejection.detail.includes('the subject the accepted decision covers')
+        )
+      ).toBe(true)
+    }
   })
 
   test('approval-before-effect ordering is enforced', () => {
