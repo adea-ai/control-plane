@@ -71,3 +71,26 @@ test('a revoked first task cannot starve valid later work in an alarm batch', as
     f.db.close()
   }
 })
+
+test('public facade composes actual durable owner alarm/storage lifecycle with retained handles', async () => {
+  const f = fixture()
+  try {
+    const owner = reopen(f),
+      runtime = owner.runtimeAdapter()
+    const handle = await runtime.start(request)
+    expect((await runtime.status(handle)).state).toBe('starting')
+    expect(f.counts().opens).toBe(0)
+    await owner.alarm()
+    expect((await runtime.status(handle)).state).toBe('completed')
+    const values = []
+    for await (const event of runtime.progress(handle)) values.push(event)
+    expect(values.map((event) => event.data.state)).toEqual(['starting', 'running', 'completed'])
+    expect(values.every((event) => event.occurredAt === handle.startedAt)).toBe(true)
+    const restarted = reopen(f).runtimeAdapter()
+    expect(await restarted.start(request)).toEqual(handle)
+    expect((await restarted.status(handle)).state).toBe('completed')
+    expect(f.counts().sends).toBe(1)
+  } finally {
+    f.db.close()
+  }
+})
