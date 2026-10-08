@@ -1,5 +1,13 @@
-import { RuntimeExecutionResultSchema, RuntimeStartRequestSchema } from '@control-plane/runtime-sdk'
-import type { RuntimeExecutionResult, RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import {
+  RuntimeCancelRequestSchema,
+  RuntimeExecutionResultSchema,
+  RuntimeStartRequestSchema,
+} from '@control-plane/runtime-sdk'
+import type {
+  RuntimeCancelRequest,
+  RuntimeExecutionResult,
+  RuntimeStartRequest,
+} from '@control-plane/runtime-sdk'
 import type { CloudflareReconciliationAuthority } from './reconciliation.js'
 import { CloudflareOwnerJournal, stableJson } from './owner.js'
 import type { CloudflareAcceptedTask, CloudflareOwnerPins, CloudflareTaskRecord } from './owner.js'
@@ -60,21 +68,16 @@ export class CloudflarePiHost {
     return this.journal.events(attemptId, afterSequence)
   }
 
-  async cancel(attemptId: string): Promise<CloudflareTaskRecord> {
+  async timedEvents(attemptId: string, afterSequence = 0) {
+    await this.read(attemptId)
+    return this.journal.timedEvents(attemptId, afterSequence)
+  }
+
+  async cancel(attemptId: string, request?: RuntimeCancelRequest): Promise<CloudflareTaskRecord> {
+    const parsed = request === undefined ? undefined : RuntimeCancelRequestSchema.parse(request)
     const record = await this.read(attemptId)
     await this.assertCurrent(record.task, 'cancel')
-    const current = this.journal.get(attemptId)
-    if (
-      current.state === 'completed' ||
-      current.state === 'cancelled' ||
-      current.state === 'cancelling'
-    )
-      return current
-    return this.journal.transition(
-      attemptId,
-      current.state,
-      current.state === 'accepted' ? 'cancelled' : 'cancelling'
-    )
+    return this.journal.cancel(attemptId, parsed)
   }
 
   async reconcile(attemptId: string): Promise<CloudflareTaskRecord> {
