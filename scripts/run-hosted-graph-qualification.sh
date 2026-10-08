@@ -23,7 +23,10 @@ docker_command() {
 }
 
 record_test() {
-  printf '{"owner":"%s","container":"%s","state":"planned","scriptPid":%s,"ports":[19070,19080,33330,33331],"test":{"command":"timeout 480s bun test hosted-graph.integration.test.mjs","pid":%s,"state":"%s","exitCode":%s}}\n' "$fixture_owner" "$container_name" "$$" "${test_pid:-null}" "$1" "${2:-null}" > "$fixture_root/resources.json"
+  # Readers can inspect ownership while the child starts or exits. Publish a
+  # complete replacement so they never observe a truncated state transition.
+  printf '{"owner":"%s","container":"%s","state":"planned","scriptPid":%s,"ports":[19070,19080,33330,33331],"test":{"command":"timeout 480s bun test hosted-graph.integration.test.mjs","pid":%s,"state":"%s","exitCode":%s}}\n' "$fixture_owner" "$container_name" "$$" "${test_pid:-null}" "$1" "${2:-null}" > "$fixture_root/resources.json.tmp"
+  mv -f -- "$fixture_root/resources.json.tmp" "$fixture_root/resources.json"
 }
 
 cleanup() {

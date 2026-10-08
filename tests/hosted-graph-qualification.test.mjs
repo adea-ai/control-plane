@@ -175,7 +175,9 @@ async function fixture(operation) {
       ledgerDelay,
       `printf() {
   if [[ "\${FAKE_SLOW_LEDGER:-}" == true && "$1" == *'"test":'* && "\${@: -2:1}" == running ]]; then
-    /bin/sleep 0.2
+    : > "$FAKE_STATE.ledger-writing"
+    while [[ ! -f "$FAKE_STATE.ownership-read" ]]; do /bin/sleep 0.01; done
+    /bin/sleep 0.05
   fi
   builtin printf "$@"
 }\n`
@@ -262,7 +264,7 @@ async function fixture(operation) {
 }
 
 const fakeCommands = String.raw`
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const command = basename(process.argv[1])
@@ -321,6 +323,10 @@ if (command === 'docker') {
   } else throw new Error('unexpected Docker command')
 }
 if (command === 'bun') {
+  if (process.env.FAKE_SLOW_LEDGER === 'true') {
+    while (!existsSync(process.env.FAKE_STATE + '.ledger-writing')) await Bun.sleep(1)
+    writeFileSync(process.env.FAKE_STATE + '.ownership-read', '')
+  }
   const testLedger = JSON.parse(readFileSync(resolve(process.env.HOSTED_GRAPH_TEST_PUBLIC_KEY_FILE, '..', 'resources.json'), 'utf8'))
   if (!['planned', 'running'].includes(testLedger.test?.state)) throw new Error('test not recorded before startup')
   if (process.env.RUN_DATABASE_INTEGRATION !== 'true' || process.env.RUN_HOSTED_GRAPH_RESTATE_INTEGRATION !== 'true') throw new Error('qualification flags missing')

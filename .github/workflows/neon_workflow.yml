@@ -42,6 +42,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: node .github/scripts/neon-migration-gate.mjs
 
   verify_neon_preview:
