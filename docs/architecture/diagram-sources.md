@@ -1,7 +1,7 @@
 # Control Plane Diagram Sources
 
 Status: Canonical repository companion source
-Last reviewed: 2026-09-26 (Local durability correction; full canonical audit remains open)
+Last reviewed: 2026-10-08 (planned Pi target source parity; full canonical audit remains open)
 
 These Mermaid definitions are the version-controlled Control Plane companion to the canonical Google Drive diagram catalog. If the two sources diverge, update both in the same architecture reconciliation pass.
 
@@ -14,6 +14,88 @@ These Mermaid definitions are the version-controlled Control Plane companion to 
 5. Co-located Local runtime/provider access must not traverse Runtime Gateway.
 6. M9 managed cloud is Railway + Neon + R2 + Restate; M10 adds Local/Hosted adapters without changing core semantics.
 7. Owner-approved #548: Local uses embedded SQLite durable execution without Restate; managed cloud and Hosted retain Restate behind the same workflow contracts.
+
+## Pi Durable planned targets — 8 October 2026
+
+Status: Selected target specification; implementation and profile qualification remain unverified.
+
+The following definitions match P1–P3 in the [canonical Diagram Sources catalog](https://docs.google.com/document/d/163gbj0YZZA2dakPDTDJv9VlRzbwVC7KoZM5kix6YB7U), revision 83. They describe the intended migration, not deployed topology. Existing Local, Hosted and managed-cloud support remains until replacement behavior, retention and rollback gates qualify. No historical source or embedded image is replaced here.
+
+### Target P1. Global conversations and scoped execution
+
+Owning documents: Adea PRD, System Architecture Overview, Adea TDD, Control Plane TDD. Target captions must identify this as planned, not delivered. Sources P1–P3 supersede older target runtime topology for this migration; existing repository boundaries and optional Cortana remain.
+
+Canonical revision 83, source lines 901–918.
+
+```mermaid
+flowchart TB
+    UI["Adea Desktop / Web / Mobile"] --> NAV["Global Agents and Conversations"]
+    NAV --> ACL["Conversation audience and Agent enlistment grants"]
+    ACL --> LOG[("One canonical conversation message log")]
+    ACL --> CTX["Isolated context per conversation and Agent"]
+    CTX --> PI["Cloud Pi Durable / PiHarness lead"]
+    PI --> JOB["Durable product job admission and receipt"]
+    UI -->|"Direct project/session; no lead model call"| JOB
+    JOB --> POLICY["Immutable authority / approvals / budgets / effect identity"]
+    POLICY --> ADAPTER["Capability-qualified Pi / ACP / native adapters"]
+    ADAPTER --> CLOUD["Cloud compatible compute"]
+    ADAPTER --> DEVICE["Local / registered remote / self-hosted executor"]
+    CLOUD --> OUT[("Retained job outcome / receipts / artifacts")]
+    DEVICE --> OUT
+    OUT --> PUB["Revalidate audience and resource authority"]
+    PUB --> LOG
+    WS["Workspace-owned persona / memory / accounts / projects"] -->|"Only explicit authorized scope"| POLICY
+    MEM["Optional Cortana / other provider / none"] -->|"Bounded authorized context"| CTX
+```
+
+### Target P2. Cross-workspace group isolation
+
+Owning documents: Adea TDD and Security & Trust Model. Conversation membership is not workspace membership. Shared output is an authorized disclosure; private tool results and memory are not pooled.
+
+Canonical revision 83, source lines 923–935.
+
+```mermaid
+flowchart LR
+    GROUP[("One shared group transcript and audience")]
+    GROUP --> A["Agent A context for this group"]
+    GROUP --> B["Agent B context for this group"]
+    WA["Workspace A memory / tools / jobs"] -->|"A-scoped grants"| A
+    WB["Workspace B memory / tools / jobs"] -->|"B-scoped grants"| B
+    A --> PA["Audience and artifact publication check"]
+    B --> PB["Audience and artifact publication check"]
+    PA --> GROUP
+    PB --> GROUP
+    TURN["Addressed durable turns / causal IDs / bounded hops"] --> A
+    TURN --> B
+    NOTE["Agent replies do not broadcast-trigger all Agents"]
+```
+
+### Target P3. Job recovery and retirement gate
+
+Owning documents: Control Plane TDD, Execution Consistency, Evaluation Plan. Durable result handling survives lead-turn abort. Legacy graph/runtime removal follows evidence, not the absence of imports.
+
+Canonical revision 83, source lines 940–953.
+
+```mermaid
+flowchart TB
+    ADMIT["Idempotent authorized admission"] --> RECEIPT[("Job / attempt / accepted authority")]
+    RECEIPT --> EXEC["Qualified executor; pre-effect policy"]
+    EXEC --> APPROVAL{"Exact current approval where required"}
+    APPROVAL -->|"Approved"| EFFECT["Stable effect key and destination operation"]
+    APPROVAL -->|"Pending / expired / revoked"| WAIT["Durable waiting or blocked state"]
+    EFFECT --> CERTAIN{"Outcome known?"}
+    CERTAIN -->|"Yes"| RESULT[("Retained receipt and outcome")]
+    CERTAIN -->|"No"| RECON["Reconcile; no blind duplicate effect"]
+    RECON --> RESULT
+    RESULT --> OUTBOX["Deduplicated authorized publication"]
+    LEGACY["Legacy graph/runtime inventory; stop new admissions"] --> DRAIN["Drain / retain / export pinned evidence"]
+    DRAIN --> GATE["Parity / retention / rollback gates"]
+    GATE --> REMOVE["Remove LangGraph and eligible Cloud-only plumbing"]
+```
+
+## Retained pre-migration references
+
+The definitions below preserve the earlier execution and portability baseline. Restate/LangGraph as permanent future engines is superseded by the selected Pi target; active support is retained until qualified cutover. These definitions alone do not certify a current deployment or recovery result.
 
 ## Control Plane TDD: Execution & Orchestration
 
