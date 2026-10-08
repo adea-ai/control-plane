@@ -42,6 +42,52 @@ export function readProcessEvidence(directory) {
     : []
 }
 
+// Emitted recovery uses explicit compiled module paths and ordinary package exports.
+// Initial Bun admission still imports a test fixture with direct production source imports.
+const processProductionModules = new Map([
+  [
+    '../packages/pi-durable-adapter/src/child-continuation-authority.ts',
+    '../packages/pi-durable-adapter/dist/child-continuation-authority.js',
+  ],
+  [
+    '../packages/pi-durable-adapter/src/child-continuation.ts',
+    '../packages/pi-durable-adapter/dist/child-continuation.js',
+  ],
+  [
+    '../packages/pi-durable-adapter/src/composition.ts',
+    '../packages/pi-durable-adapter/dist/composition.js',
+  ],
+  [
+    '../packages/pi-durable-adapter/src/pi-engine.ts',
+    '../packages/pi-durable-adapter/dist/pi-engine.js',
+  ],
+  [
+    '../packages/pi-durable-adapter/src/journal.ts',
+    '../packages/pi-durable-adapter/dist/journal.js',
+  ],
+  [
+    '../packages/pi-durable-adapter/src/usage-authority.ts',
+    '../packages/pi-durable-adapter/dist/usage-authority.js',
+  ],
+  [
+    '../apps/control-api/src/pi-durable/sqlite-child-continuations.ts',
+    '../apps/control-api/dist/pi-durable/sqlite-child-continuations.js',
+  ],
+  [
+    '../apps/control-api/src/pi-durable/child-progress-scanner.ts',
+    '../apps/control-api/dist/pi-durable/child-progress-scanner.js',
+  ],
+])
+
+export async function importProcessProduction(source) {
+  const emitted = processProductionModules.get(source)
+  assert.ok(emitted, 'Unknown process production module')
+  const target = process.env.PI_CHILD_PROCESS_EMITTED === 'true' ? emitted : source
+  const url = new URL(target, import.meta.url)
+  assert.ok(existsSync(fileURLToPath(url)), `Missing process production module: ${target}`)
+  return import(url.href)
+}
+
 /** Node strip/transform-types must load this worktree, including emitted .js source imports. */
 export async function registerProcessSourceHooks() {
   const { registerHooks } = await import('node:module')
@@ -201,11 +247,15 @@ const actor = 'user:original-canonical-actor'
 export async function continuationPorts(directory, journal) {
   const sqlite = await import('@control-plane/sqlite-persistence')
   const { createPiChildContinuationAuthority, readPiChildContinuationJournal } =
-    await import('../packages/pi-durable-adapter/src/child-continuation-authority.ts')
-  const { assertCurrentPiChildContinuation } =
-    await import('../packages/pi-durable-adapter/src/child-continuation.ts')
-  const { SqlitePiChildContinuationRepository } =
-    await import('../apps/control-api/src/pi-durable/sqlite-child-continuations.ts')
+    await importProcessProduction(
+      '../packages/pi-durable-adapter/src/child-continuation-authority.ts'
+    )
+  const { assertCurrentPiChildContinuation } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/child-continuation.ts'
+  )
+  const { SqlitePiChildContinuationRepository } = await importProcessProduction(
+    '../apps/control-api/src/pi-durable/sqlite-child-continuations.ts'
+  )
   const provider = new sqlite.SqlitePersistenceProvider({
     path: join(directory, 'canonical.sqlite'),
   })
@@ -292,15 +342,18 @@ export async function continuationPorts(directory, journal) {
 export async function initialWorker(directory, mode, baseUrl) {
   const { createGovernedChildCompositionFixture } =
     await import('./pi-durable-governed-child-composition.fixture.mjs')
-  const { createNodePiDurableRuntime } =
-    await import('../packages/pi-durable-adapter/src/composition.ts')
-  const { createPiDurableEngine } = await import('../packages/pi-durable-adapter/src/pi-engine.ts')
+  const { createNodePiDurableRuntime } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/composition.ts'
+  )
+  const { createPiDurableEngine } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/pi-engine.ts'
+  )
   const {
     piChildContinuationAdmissionDigest,
     piChildContinuationStartRequestDigest,
     piChildContinuationRequestDigest,
     PiChildContinuationGrantSchema,
-  } = await import('../packages/pi-durable-adapter/src/child-continuation.ts')
+  } = await importProcessProduction('../packages/pi-durable-adapter/src/child-continuation.ts')
   const { InteractionService } = await import('@control-plane/domain')
   let childRuntime,
     childEngine,
@@ -489,8 +542,9 @@ export async function initialWorker(directory, mode, baseUrl) {
 
 /** Read-only metadata; this does not qualify a grant for sending or resuming. */
 export async function readProcessGrantMetadata(ports, attemptId) {
-  const { PiChildContinuationGrantSchema } =
-    await import('../packages/pi-durable-adapter/src/child-continuation.ts')
+  const { PiChildContinuationGrantSchema } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/child-continuation.ts'
+  )
   return ports.provider.transaction(async (tx) => {
     const row = await tx.get('pi-child-continuations', processRecordId(attemptId))
     if (!row) return null
@@ -607,8 +661,9 @@ export async function publishProcessTerminal(directory, ports, runtime) {
   const { DelegationService, CanonicalDelegationRuntimeBridge } =
     await import('@control-plane/orchestration')
   const { ExecutionLifecycleService } = await import('@control-plane/domain')
-  const { PiDurableChildProgressScanner } =
-    await import('../apps/control-api/src/pi-durable/child-progress-scanner.ts')
+  const { PiDurableChildProgressScanner } = await importProcessProduction(
+    '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
+  )
   const descriptor = ports.descriptor()
   const grant = await readProcessGrantMetadata(ports, descriptor.request.attemptId)
   assert.ok(grant)
@@ -681,12 +736,18 @@ export async function publishProcessTerminal(directory, ports, runtime) {
 }
 
 export async function recoveryWorker(directory, mode, baseUrl) {
-  const { SqliteDurableJournal } = await import('../packages/pi-durable-adapter/src/journal.ts')
-  const { createNodePiDurableRuntime } =
-    await import('../packages/pi-durable-adapter/src/composition.ts')
-  const { createPiDurableEngine } = await import('../packages/pi-durable-adapter/src/pi-engine.ts')
-  const { createPiDurableUsageAuthority } =
-    await import('../packages/pi-durable-adapter/src/usage-authority.ts')
+  const { SqliteDurableJournal } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/journal.ts'
+  )
+  const { createNodePiDurableRuntime } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/composition.ts'
+  )
+  const { createPiDurableEngine } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/pi-engine.ts'
+  )
+  const { createPiDurableUsageAuthority } = await importProcessProduction(
+    '../packages/pi-durable-adapter/src/usage-authority.ts'
+  )
   const { DurableUsageLedger, PinnedModelPrice } = await import('@control-plane/usage-ledger')
   const observer = new SqliteDurableJournal(join(directory, 'child-runtime', 'authority.sqlite'))
   let runtime, probe, ports
@@ -886,7 +947,8 @@ export async function recoveryWorker(directory, mode, baseUrl) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [directory, mode, baseUrl] = process.argv.slice(2)
-  if (!globalThis.Bun) await registerProcessSourceHooks()
+  if (!globalThis.Bun && process.env.PI_CHILD_PROCESS_EMITTED !== 'true')
+    await registerProcessSourceHooks()
   if (['before_reservation', 'ambiguous_send', 'before_grant_retention'].includes(mode))
     await initialWorker(directory, mode, baseUrl)
   else await recoveryWorker(directory, mode, baseUrl)
