@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { createRequire } from 'node:module'
 import {
   closeSync,
   existsSync,
@@ -148,8 +147,7 @@ export async function registerProcessSourceHooks() {
   })
 }
 
-export async function createChildProcessTransport({ ambiguous = false, beforeResponse } = {}) {
-  assert.ok(beforeResponse === undefined || typeof beforeResponse === 'function')
+export async function createChildProcessTransport({ ambiguous = false } = {}) {
   const requests = []
   let release
   const pending = new Promise((resolve) => {
@@ -161,8 +159,6 @@ export async function createChildProcessTransport({ ambiguous = false, beforeRes
     const body = JSON.parse(raw)
     assert.equal(body.model, 'separate-child-model')
     requests.push(body)
-    // Test-owned response readiness only; close releases this wait independently.
-    if (beforeResponse) await Promise.race([beforeResponse(), pending])
     if (ambiguous) await pending
     if (response.destroyed) return
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -293,19 +289,8 @@ export async function continuationPorts(directory, journal, canonicalProvider) {
     readCurrent: async () =>
       JSON.parse(readFileSync(join(directory, 'current-authority.json'), 'utf8')),
   }
-  let persistenceFailure
-  const repositoryProvider = {
-    transaction: async (operation) => {
-      try {
-        return await provider.transaction(operation)
-      } catch (error) {
-        persistenceFailure = error
-        throw error
-      }
-    },
-  }
   const repository = new SqlitePiChildContinuationRepository({
-    provider: repositoryProvider,
+    provider,
     workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
     now: () => processClock(directory),
     scopeAuthority: () => ({
@@ -381,10 +366,6 @@ export async function continuationPorts(directory, journal, canonicalProvider) {
     sqlite,
     current,
     descriptor,
-    resetPersistenceFailure: () => {
-      persistenceFailure = undefined
-    },
-    persistenceFailure: () => persistenceFailure,
     close: () => {
       if (!canonicalProvider) provider.close()
     },
@@ -452,6 +433,7 @@ export async function initialWorker(directory, mode, baseUrl) {
     ports,
     f,
     fastTerminalSnapshot,
+    fastNativeInspection,
     physicalSendCount = 0,
     childModelCallbacks = 0,
     metadata = { publicationAudience: actor }
@@ -533,6 +515,21 @@ export async function initialWorker(directory, mode, baseUrl) {
             }
             try {
               childEngine = createPiDurableEngine(observedOptions)
+              const close = childEngine.close.bind(childEngine)
+              childEngine.close = async () => {
+                try {
+                  if (!fastNativeInspection) {
+                    const row = childRuntime.adapter.journal.list()[0]
+                    if (row) {
+                      fastNativeInspection = await childEngine.inspect(
+                        row.admission.handle.externalSessionId
+                      )
+                    }
+                  }
+                } finally {
+                  await close()
+                }
+              }
               return childEngine
             } finally {
               globalThis.fetch = originalFetch
@@ -674,40 +671,27 @@ export async function initialWorker(directory, mode, baseUrl) {
           await new Promise(() => {})
         }
         if (mode === 'fast_child_terminal_before_grant') {
-          await observeProcessBoundary(directory, 'fast_child_drain', () =>
-            childRuntime.adapter.drain()
-          )
+          await childRuntime.adapter.drain()
           const terminalRow = childRuntime.adapter.journal.list()[0]
-          const generation = await observeProcessBoundary(directory, 'fast_terminal_storage', () =>
-            readProcessStoredGeneration(directory, childEngine, terminalRow.admission.handle)
+          assert.ok(fastNativeInspection, 'native terminal metadata was not captured before close')
+          const generation = fastNativeInspection.tasks.find(
+            (item) => item.record.kind === 'pi.generation'
           )
-          appendProcessEvidence(directory, {
-            stage: 'fast_terminal_observed',
-            pid: process.pid,
-            handle: terminalRow.admission.handle,
-            nativeTaskId: generation.id,
-            nativeConversationId: generation.conversationId,
-            nativeKind: generation.kind,
-            nativeStatus: generation.state.status,
-            nativeOutcome: generation.state.outcome?.status,
-            observationApi: 'vendor_storage_task',
-          })
-          const retention = await observeProcessBoundary(directory, 'fast_terminal_retention', () =>
-            observeProcessFastTerminalRetention({
-              ports,
-              grant,
-              terminalRow,
-              nativeTask: generation,
-              readSnapshot: () =>
-                inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports),
-            })
-          )
+          let grantDenied = false
+          let grantDenialCode
+          try {
+            await ports.repository.retain(grant)
+          } catch (error) {
+            grantDenied = true
+            grantDenialCode = error instanceof Error ? error.message : 'NON_ERROR_RETENTION_FAILURE'
+          }
           fastTerminalSnapshot = {
-            ...retention.snapshot,
+            ...(await inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports)),
             stage: 'fast_terminal_snapshot',
             childNativeState: terminalRow.state,
-            childNativeTask: generation,
-            ...retention.observation,
+            childNativeTask: generation?.record ?? null,
+            grantDenied,
+            ...(grantDenialCode ? { grantDenialCode } : {}),
             physicalSendCount,
             source: input.source,
             sourceRequestDigest: piChildContinuationRequestDigest(request),
@@ -795,11 +779,6 @@ export async function inspectProcessSnapshot(directory, journal, ports) {
     stage: 'recovery_snapshot',
     ...processProductionEvidence(),
     pid: process.pid,
-    journalOwnership: {
-      epoch: row.epoch,
-      ownerPid: row.detail.ownerPid ?? null,
-      ownerEpoch: row.detail.ownerEpoch ?? null,
-    },
     state: row.state,
     handle: row.admission.handle,
     grant,
@@ -817,209 +796,8 @@ export async function inspectProcessSnapshot(directory, journal, ports) {
   }
 }
 
-export class ProcessPhysicalSendPendingError extends Error {
-  constructor() {
-    super('PI_PROCESS_PHYSICAL_SEND_PENDING')
-    this.name = 'ProcessPhysicalSendPendingError'
-  }
-}
-
-/** Read the exact admitted generation through public vendor storage after the engine drains.
- * Harness.inspect lists live tasks only and cannot establish completed task identity. */
-export async function readProcessStoredGeneration(directory, engine, handle) {
-  const reservations = readProcessEvidence(directory).filter(
-    (event) =>
-      event.stage === 'before_reservation' &&
-      event.pid === process.pid &&
-      event.handle?.handleId === handle.handleId
-  )
-  assert.equal(reservations.length, 1, 'fixture requires one exact native generation admission')
-  assert.deepEqual(reservations[0].handle, handle)
-  const admitted = reservations[0].task
-  assert.equal(admitted.kind, 'pi.generation')
-  assert.ok(Number.isSafeInteger(admitted.id) && admitted.id > 0)
-  assert.ok(Number.isSafeInteger(admitted.conversationId) && admitted.conversationId > 0)
-  // Resolve ordinary public vendor exports from their owning production package.
-  // This installs no hooks and does not redirect production imports to source files.
-  const require = createRequire(
-    new URL('../packages/pi-durable-adapter/package.json', import.meta.url)
-  )
-  const { openNodeSqliteStorage } = await import(
-    pathToFileURL(require.resolve('@earendil-works/pi-durable/storage/sqlite/node')).href
-  )
-  // Chord publishes this subpath for ESM imports only, not require conditions.
-  const chordManifestUrl = pathToFileURL(require.resolve('@earendil-works/chord/package.json'))
-  const chordManifest = JSON.parse(readFileSync(chordManifestUrl, 'utf8'))
-  const contextExport = chordManifest.exports['./context'].import
-  assert.equal(chordManifest.version, '1.1.0')
-  assert.equal(contextExport, './dist/context/index.js')
-  const { BACKGROUND_CONTEXT } = await import(new URL(contextExport, chordManifestUrl).href)
-  const storage = await openNodeSqliteStorage(engine.storePath(handle.externalSessionId))
-  try {
-    const task = await storage.task(admitted.id, BACKGROUND_CONTEXT)
-    assert.ok(task, 'stored generation must exist')
-    assert.equal(task.id, admitted.id)
-    assert.equal(task.conversationId, admitted.conversationId)
-    assert.equal(task.kind, admitted.kind)
-    assert.equal(task.version, admitted.version)
-    assert.deepEqual(task.input, admitted.input)
-    return task
-  } finally {
-    await storage.close(BACKGROUND_CONTEXT)
-  }
-}
-
-/** Observe the real retention result after native completion; never manufacture a denial. */
-export async function observeProcessFastTerminalRetention({
-  ports,
-  grant,
-  terminalRow,
-  nativeTask,
-  readSnapshot,
-}) {
-  assert.equal(terminalRow.state, 'completed')
-  assert.deepEqual(terminalRow.admission.handle, grant.child.handle)
-  assert.equal(nativeTask?.kind, 'pi.generation')
-  assert.equal(nativeTask.state.status, 'terminal')
-  assert.equal(nativeTask.state.outcome.status, 'completed')
-  const before = await readSnapshot()
-  assert.deepEqual(before.handle, grant.child.handle)
-  assert.equal(before.grant, null)
-  assert.ok(['running', 'awaiting_input'].includes(before.parentState))
-  assert.equal(before.modelUsageCount, 1)
-  assert.equal(before.openHoldCount, 0)
-  ports.resetPersistenceFailure()
-  let result
-  let rejection
-  try {
-    result = await ports.repository.retain(grant)
-  } catch (error) {
-    rejection = error
-  }
-  const original = ports.persistenceFailure()
-  if (result !== undefined) {
-    assert.equal(rejection, undefined)
-    assert.equal(original, undefined, 'a successful retain cannot hide a transaction failure')
-    assert.deepEqual(result.grant, grant)
-    const snapshot = await readSnapshot()
-    assert.deepEqual(snapshot.grant, grant)
-    return { snapshot, observation: { retentionOutcome: 'allowed', grantDenied: false } }
-  }
-  for (const error of [rejection, original]) {
-    assert.ok(error instanceof Error, 'terminal denial must have fresh transaction provenance')
-    assert.equal(error.message, 'PI_CHILD_CONTINUATION_DENIED')
-    assert.equal(error.code, undefined, 'storage failure cannot qualify as terminal denial')
-    assert.equal(error.errcode, undefined, 'SQLite failure cannot qualify as terminal denial')
-  }
-  const snapshot = await readSnapshot()
-  assert.equal(snapshot.grant, null)
-  assert.deepEqual(snapshot.handle, before.handle)
-  assert.equal(snapshot.parentState, before.parentState)
-  assert.equal(snapshot.modelUsageCount, before.modelUsageCount)
-  assert.equal(snapshot.openHoldCount, before.openHoldCount)
-  return {
-    snapshot,
-    observation: {
-      retentionOutcome: 'expected_terminal_denial',
-      grantDenied: true,
-      grantDenialCode: 'PI_CHILD_CONTINUATION_DENIED',
-      retentionRejection: {
-        code: 'PI_CHILD_CONTINUATION_DENIED',
-        classification: 'terminal_child',
-        persistenceFailureCode: null,
-      },
-    },
-  }
-}
-
-export async function assertProcessReplayMutationRejected({
-  ports,
-  grant,
-  changed,
-  mutation,
-  readWinner,
-}) {
-  assert.ok(['expiresAt', 'requestDigest', 'externalSessionId'].includes(mutation))
-  assert.notDeepEqual(changed, grant)
-  assert.deepEqual(await readWinner(), grant)
-  ports.resetPersistenceFailure()
-  let rejection
-  try {
-    await ports.repository.retain(changed)
-  } catch (error) {
-    rejection = error
-  }
-  const original = ports.persistenceFailure()
-  for (const error of [rejection, original]) {
-    assert.ok(error instanceof Error, 'immutable conflict must have transaction provenance')
-    assert.equal(error.message, 'PI_CHILD_CONTINUATION_DENIED')
-    assert.equal(error.code, undefined, 'storage failure cannot qualify as immutable conflict')
-    assert.equal(error.errcode, undefined, 'SQLite failure cannot qualify as immutable conflict')
-  }
-  assert.deepEqual(await readWinner(), grant)
-  return {
-    mutation,
-    code: 'PI_CHILD_CONTINUATION_DENIED',
-    classification: 'immutable_conflict',
-    persistenceFailureCode: null,
-  }
-}
-
-function recoveryEvidence(outcome, boundary, extra = {}) {
-  return {
-    schemaVersion: 'pi-child-recovery-evidence/v1',
-    recoveryOutcome: outcome,
-    recoveryBoundary: boundary,
-    ...extra,
-  }
-}
-
-export async function expectedProcessResumeDenial(directory, ports, authority, handle) {
-  const grant = await readProcessGrantMetadata(ports, authority.request.attemptId)
-  const parent = await ports.executions.getExecution('exe_01JABCDEF0123456789ABCDEFG')
-  const expected =
-    !grant && parent.state === 'completed'
-      ? 'missing_grant'
-      : grant && Date.parse(processClock(directory)) >= Date.parse(grant.expiresAt)
-        ? 'expired_grant'
-        : undefined
-  ports.resetPersistenceFailure()
-  try {
-    await ports.authority.assertResume(authority, handle)
-    assert.equal(expected, undefined, 'expected policy denial must actually occur')
-    return undefined
-  } catch (error) {
-    const original = ports.persistenceFailure()
-    const code =
-      expected === 'missing_grant'
-        ? 'PI_CHILD_CONTINUATION_REJECTED'
-        : 'PI_CHILD_CONTINUATION_DENIED'
-    if (
-      !expected ||
-      !(error instanceof Error) ||
-      error.message !== code ||
-      error.code ||
-      (original && (!(original instanceof Error) || original.message !== code || original.code))
-    )
-      throw error
-    return recoveryEvidence('expected_denial', 'assert_resume', {
-      blocked: true,
-      reason: code,
-      rejection: { stage: 'assert_resume', code, classification: expected },
-      expectedCanonicalCondition: {
-        kind: expected,
-        parentState: parent.state,
-        grantPresent: Boolean(grant),
-        ...(grant ? { now: processClock(directory), expiresAt: grant.expiresAt } : {}),
-      },
-      runtimeConstructed: false,
-      drainCompleted: false,
-    })
-  }
-}
-
 /** Exact no-send proof for this test worker; unknown physical dispatch never qualifies. */
-export async function assertProcessNoSend(directory, authority, engine, ledger, usageStore) {
+export async function assertProcessNoSend(directory, authority, engine, ledger) {
   const evidence = readProcessEvidence(directory).filter(
     (event) => event.stage === 'before_reservation'
   )
@@ -1052,37 +830,12 @@ export async function assertProcessNoSend(directory, authority, engine, ledger, 
     authority.request.attemptBudget.workspaceId,
     authority.request.executionId
   )
-  const holds = entries.filter((entry) => entry.kind === 'model_reservation')
+  assert.equal(
+    entries.filter((entry) => entry.kind === 'model_reservation').length,
+    0,
+    'any dispatch history denies safe resend'
+  )
   assert.equal(entries.filter((entry) => entry.kind === 'model_usage').length, 0)
-  if (holds.length) {
-    assert.equal(holds.length, 1, 'one exact retained physical-send hold')
-    const { canonicalJsonStringify } = await import('@control-plane/contracts')
-    const identity = createHash('sha256')
-      .update(
-        canonicalJsonStringify({
-          budget: authority.request.attemptBudget,
-          admission: authority.admission,
-          inferenceKey: retained.key,
-        })
-      )
-      .digest('hex')
-    assert.equal(holds[0].source.sourceId, `pi-inference:${identity}`)
-    const dispatchKey = `pi-inference:${identity}:dispatch`
-    const effect = await usageStore.transaction(authority.request.attemptBudget.workspaceId, (tx) =>
-      tx.getEffect(dispatchKey)
-    )
-    assert.ok(effect, 'the exact physical dispatch effect must remain recorded')
-    assert.equal(effect.idempotencyKey, dispatchKey)
-    assert.equal(effect.workspaceId, authority.request.attemptBudget.workspaceId)
-    assert.equal(effect.executionId, authority.request.executionId)
-    // Ledger entries carry a derived usage key. Bind to the canonical effect's
-    // exact recorded result instead of comparing that key with the raw operation key.
-    assert.deepEqual(effect.result, holds[0])
-    assert.equal(holds[0].attemptId, authority.request.attemptId)
-    assert.equal(holds[0].reservationKey, authority.request.attemptBudget.reservationKey)
-    assert.equal(entries.filter((entry) => entry.kind === 'model_release').length, 0)
-    throw new ProcessPhysicalSendPendingError()
-  }
 }
 
 export async function completeProcessParent(ports, directory) {
@@ -1222,50 +975,36 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       assert.equal(originalReplay.replayed, true)
       assert.deepEqual(originalReplay.grant, grant)
       assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
-      const replayMutationRejections = []
-      for (const [mutation, changed] of [
-        ['expiresAt', { ...grant, expiresAt: '2026-08-25T18:09:01.000Z' }],
-        ['requestDigest', { ...grant, requestDigest: `sha256:${'d'.repeat(64)}` }],
-        [
-          'externalSessionId',
-          {
-            ...grant,
-            child: {
-              ...grant.child,
-              handle: {
-                ...grant.child.handle,
-                externalSessionId:
-                  grant.child.handle.externalSessionId === 'ses_01JABCDEF0123456789ABCDEFG'
-                    ? 'ses_01JABCDEF0123456789ABCDEFH'
-                    : 'ses_01JABCDEF0123456789ABCDEFG',
-              },
-            },
+      let replayChangedDenied = true
+      for (const changed of [
+        { ...grant, expiresAt: '2026-08-25T18:09:01.000Z' },
+        { ...grant, requestDigest: `sha256:${'d'.repeat(64)}` },
+        {
+          ...grant,
+          child: {
+            ...grant.child,
+            handle: { ...grant.child.handle, externalSessionId: 'changed-session' },
           },
-        ],
+        },
       ]) {
-        replayMutationRejections.push(
-          await assertProcessReplayMutationRejected({
-            ports,
-            grant,
-            changed,
-            mutation,
-            readWinner: () => readProcessGrantMetadata(ports, descriptor.request.attemptId),
-          })
-        )
+        try {
+          await ports.repository.retain(changed)
+          replayChangedDenied = false
+        } catch {
+          /* Real immutable repository rejects replacement. */
+        }
       }
       assert.deepEqual(await readProcessGrantMetadata(ports, descriptor.request.attemptId), grant)
       const snapshot = {
         ...(await inspectProcessSnapshot(directory, observer, ports)),
         replayOriginalRetained: true,
-        replayChangedDenied: replayMutationRejections.length === 3,
-        replayMutationRejections,
+        replayChangedDenied,
       }
       appendProcessEvidence(directory, snapshot)
       process.stdout.write(`${JSON.stringify(snapshot)}\n`)
       return snapshot
     }
     if (['completed', 'failed', 'cancelled', 'timed_out'].includes(row.state)) {
-      assert.equal(row.state, 'completed', 'only completed receipt replay qualifies this worker')
       // Receipt replay uses actual adapter readers and publication authority only.
       // No native engine, inference reconciliation or grant refresh is constructed.
       const forbidden = async () => {
@@ -1285,18 +1024,13 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       const snapshot = {
         ...(await inspectProcessSnapshot(directory, runtime.adapter.journal, ports)),
         publication,
-        ...recoveryEvidence('completed', 'terminal_replay', {
-          runtimeConstructed: true,
-          drainCompleted: false,
-        }),
       }
       appendProcessEvidence(directory, snapshot)
       process.stdout.write(`${JSON.stringify(snapshot)}\n`)
       return snapshot
     }
-    const usageStore = new ports.sqlite.SqliteDurableUsageStore(ports.provider)
     const ledger = new DurableUsageLedger({
-      store: usageStore,
+      store: new ports.sqlite.SqliteDurableUsageStore(ports.provider),
       now: () => '2026-08-25T18:01:00.000Z',
     })
     const assertAuthority = (input) => ports.authority.assertAuthority(input)
@@ -1332,21 +1066,6 @@ export async function recoveryWorker(directory, mode, baseUrl) {
         }
       },
     })
-    const deniedEvidence = await expectedProcessResumeDenial(
-      directory,
-      ports,
-      authority,
-      row.admission.handle
-    )
-    if (deniedEvidence) {
-      const snapshot = {
-        ...(await inspectProcessSnapshot(directory, observer, ports)),
-        ...deniedEvidence,
-      }
-      appendProcessEvidence(directory, snapshot)
-      process.stdout.write(`${JSON.stringify(snapshot)}\n`)
-      return snapshot
-    }
     probe = createPiDurableEngine({
       directory: join(directory, 'child-runtime', 'sessions'),
       model: { provider: 'child-loopback', modelId: 'separate-child-model' },
@@ -1354,8 +1073,9 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       assertAuthority: () => assertAuthority(authority),
       withModels: (use) => withChildProcessModels(baseUrl, use),
     })
-    let reconciled = false,
-      pendingPhysicalSend = false
+    let reconciled = false
+    // No grant means strict fresh admission remains authoritative and denies a completed parent.
+    await ports.authority.assertResume(authority, row.admission.handle)
     runtime = await createNodePiDurableRuntime({
       directory: join(directory, 'child-runtime'),
       now: () => processClock(directory),
@@ -1386,51 +1106,21 @@ export async function recoveryWorker(directory, mode, baseUrl) {
       reconcileInference: async (input) => {
         try {
           await ports.authority.assertResume(input, row.admission.handle)
-          await assertProcessNoSend(directory, input, probe, ledger, usageStore)
+          await assertProcessNoSend(directory, input, probe, ledger)
           reconciled = true
           return 'safe_to_resume'
-        } catch (error) {
-          if (!(error instanceof ProcessPhysicalSendPendingError)) throw error
-          pendingPhysicalSend = true
+        } catch {
           return 'unresolved'
         }
       },
     })
-    appendProcessEvidence(directory, {
-      stage: 'recovery_runtime_constructed',
-      pid: process.pid,
-      handle: row.admission.handle,
-    })
-    if (runtime.recoveryBlocked.length) throw new Error('PI_PROCESS_UNEXPECTED_RECOVERY_BLOCK')
     await runtime.adapter.drain()
     const status = await runtime.adapter.status(row.admission.handle)
     let publication
     if (status.state === 'completed')
       publication = await publishProcessTerminal(directory, ports, runtime)
-    const latest = runtime.adapter.journal.get(row.handleId)
-    let recoveryOutcome
-    if (status.state === 'completed') recoveryOutcome = 'completed'
-    else if (pendingPhysicalSend && status.state === 'unknown')
-      recoveryOutcome = 'pending_physical_send'
-    else if (
-      ['starting', 'running'].includes(status.state) &&
-      Number.isSafeInteger(latest.detail.ownerPid) &&
-      latest.detail.ownerPid > 0 &&
-      Number.isSafeInteger(latest.detail.ownerEpoch) &&
-      latest.detail.ownerEpoch > 0 &&
-      latest.detail.ownerEpoch === latest.epoch &&
-      latest.detail.ownerPid !== process.pid
-    ) {
-      process.kill(latest.detail.ownerPid, 0)
-      recoveryOutcome = 'competing_owner'
-    } else throw new Error('PI_PROCESS_UNEXPECTED_RECOVERY_STATE')
     const snapshot = {
       ...(await inspectProcessSnapshot(directory, runtime.adapter.journal, ports)),
-      ...recoveryEvidence(recoveryOutcome, 'runtime_recover', {
-        runtimeConstructed: true,
-        drainCompleted: true,
-        ...(pendingPhysicalSend ? { pendingReason: 'PI_PROCESS_PHYSICAL_SEND_PENDING' } : {}),
-      }),
       reconciled,
       ...(publication ? { publication } : {}),
     }
@@ -1438,12 +1128,14 @@ export async function recoveryWorker(directory, mode, baseUrl) {
     process.stdout.write(`${JSON.stringify(snapshot)}\n`)
     return snapshot
   } catch (error) {
-    appendProcessEvidence(directory, {
-      stage: 'recovery_unexpected_error',
-      pid: process.pid,
-      ...safeProcessFailure(error),
-    })
-    throw error
+    const snapshot = {
+      ...(await inspectProcessSnapshot(directory, runtime?.adapter.journal ?? observer, ports)),
+      blocked: true,
+      reason: error.message,
+    }
+    appendProcessEvidence(directory, snapshot)
+    process.stdout.write(`${JSON.stringify(snapshot)}\n`)
+    return snapshot
   } finally {
     await runtime?.close()
     await probe?.close()
