@@ -862,6 +862,7 @@ export async function expectedProcessResumeDenial(directory, ports, authority, h
       throw error
     return recoveryEvidence('expected_denial', 'assert_resume', {
       blocked: true,
+      reason: code,
       rejection: { stage: 'assert_resume', code, classification: expected },
       expectedCanonicalCondition: {
         kind: expected,
