@@ -294,6 +294,87 @@ describe('executor qualification', () => {
     expect(serialized).not.toMatch(/secret|apikey|token|password/i)
   })
 
+  test('contending evidence records for one route deny as conflict in both array orders', () => {
+    const active = evidence('opencode')
+    const revoked = evidence('opencode', { revokedAt: '2026-10-01T00:00:00.000Z' })
+    for (const records of [
+      [active, revoked],
+      [revoked, active],
+    ]) {
+      const result = new ExecutorQualificationEvaluator(records, now).evaluate(
+        observation('opencode')
+      )
+      expect(result.qualified).toBe(false)
+      expect(result.failure).toEqual({
+        reason: 'evidence_conflict',
+        detail: 'EVIDENCE_ROUTE_CONTENTION',
+      })
+      expect(result.capabilities).toEqual([])
+      expect(result.governedNativePaths).toEqual([])
+      expect(result.usageReporting).toBe(false)
+    }
+  })
+
+  test('distinct local-device and remote-host routes stay evaluable regardless of record order', () => {
+    const local = evidence('opencode')
+    const remote = evidence('opencode', {
+      location: 'remote_host',
+      configurationDigest: digest('a'),
+    })
+    const remoteObservation = observation('opencode', {
+      location: 'remote_host',
+      configurationDigest: digest('a'),
+    })
+    for (const records of [
+      [local, remote],
+      [remote, local],
+    ]) {
+      const evaluator = new ExecutorQualificationEvaluator(records, now)
+      const localResult = evaluator.evaluate(observation('opencode'))
+      expect(localResult.qualified).toBe(true)
+      expect(localResult.failure).toBeNull()
+      expect(localResult.governedNativePaths).toEqual(['mcp', 'shell'])
+
+      const remoteResult = evaluator.evaluate(remoteObservation)
+      expect(remoteResult.qualified).toBe(true)
+      expect(remoteResult.failure).toBeNull()
+      expect(remoteResult.capabilities).toEqual(localResult.capabilities)
+    }
+  })
+
+  test('route drift under multi-record evidence denies with content-attributed reasons in both orders', () => {
+    const local = evidence('opencode')
+    const remote = evidence('opencode', {
+      location: 'remote_host',
+      configurationDigest: digest('a'),
+    })
+    for (const records of [
+      [local, remote],
+      [remote, local],
+    ]) {
+      const evaluator = new ExecutorQualificationEvaluator(records, now)
+      const driftedDigest = evaluator.evaluate(
+        observation('opencode', { configurationDigest: digest('d') })
+      )
+      expect(driftedDigest.qualified).toBe(false)
+      expect(driftedDigest.failure).toEqual({
+        reason: 'evidence_mismatch',
+        field: 'configurationDigest',
+        detail: expect.any(String),
+      })
+
+      const driftedVersion = evaluator.evaluate(
+        observation('opencode', { harnessVersion: '9.99.9' })
+      )
+      expect(driftedVersion.qualified).toBe(false)
+      expect(driftedVersion.failure).toEqual({
+        reason: 'evidence_mismatch',
+        field: 'harnessVersion',
+        detail: expect.any(String),
+      })
+    }
+  })
+
   test('unqualifiable harnesses and malformed observations fail closed as invalid evidence', () => {
     // Pi is not a supported ACP route and can never be qualified here.
     for (const malformed of [
