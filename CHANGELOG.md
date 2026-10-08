@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.4...workspace-v1.73.5) (2026-10-08)
+
+
+### Bug Fixes
+
+* **ci:** retain verification and stable audit identity gates ([#946](https://github.com/adea-ai/control-plane/issues/946)) ([821be7d](https://github.com/adea-ai/control-plane/commit/821be7d817f566662142c04cda8141d7b300a571))
+
 ## [1.73.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.73.3...workspace-v1.73.4) (2026-10-08)
 
 
