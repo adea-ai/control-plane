@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.3.0...credential-vault-v1.4.0) (2026-10-08)
+
+
+### Features
+
+* **models:** add pinned BYO model connections and selection ([#948](https://github.com/adea-ai/control-plane/issues/948)) ([465aa72](https://github.com/adea-ai/control-plane/commit/465aa72870b5dccdba8adb32b0caeb261f74518c))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.2.1...credential-vault-v1.3.0) (2026-10-07)
 
 

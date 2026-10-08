@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/adea-ai/control-plane/compare/database-v1.41.2...database-v1.42.0) (2026-10-08)
+
+
+### Features
+
+* **models:** add pinned BYO model connections and selection ([#948](https://github.com/adea-ai/control-plane/issues/948)) ([465aa72](https://github.com/adea-ai/control-plane/commit/465aa72870b5dccdba8adb32b0caeb261f74518c))
+
 ## [1.41.2](https://github.com/adea-ai/control-plane/compare/database-v1.41.1...database-v1.41.2) (2026-10-08)
 
 
