@@ -105,6 +105,25 @@ export class RecoveryOwner {
             throw new Error('QUALIFICATION_AUTHORITY_DENIED')
         },
       },
+      sessionAuthority: {
+        assertCurrent: async (sessions, owner) => {
+          if (
+            env.SESSION_REVOKED === 'true' ||
+            owner.conversationId !== env.OWNER.idFromName('context-a').toString()
+          )
+            throw new Error('QUALIFICATION_SESSION_AUTHORITY_DENIED')
+          for (const session of sessions) {
+            if (
+              session.binding.schemaVersion !== 1 ||
+              session.binding.sessionId !== id('ses') ||
+              session.binding.nativeConversationId !== 1 ||
+              session.binding.attemptId !== request.attemptId ||
+              stableJson(session.task) !== stableJson(accepted)
+            )
+              throw new Error('QUALIFICATION_SESSION_BINDING_DENIED')
+          }
+        },
+      },
       reconciliation: env.EFFECTS
         ? {
             readSettlement: async (task, owner, recoveryEpoch) => {
@@ -220,6 +239,25 @@ export class RecoveryOwner {
         events.push(event)
       return Response.json(events)
     }
+    if (action === 'session-bind') {
+      await this.owner.bindSession({
+        schemaVersion: 1,
+        sessionId: id('ses'),
+        nativeConversationId: 1,
+        attemptId: request.attemptId,
+      })
+      return Response.json({ bound: true })
+    }
+    if (action === 'session-load' || action === 'session-list')
+      return Response.json(
+        await this.owner
+          .runtimeAdapter()
+          .session(
+            action === 'session-list'
+              ? { operation: 'list' }
+              : { operation: 'load', sessionId: id('ses') }
+          )
+      )
     if (action === 'accept') return Response.json(await this.owner.accept(request))
     if (action === 'wake') {
       await this.owner.alarm()

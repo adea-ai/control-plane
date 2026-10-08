@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.1...control-api-v1.25.0) (2026-10-08)
+
+
+### Features
+
+* pi-child-continuation ([#981](https://github.com/adea-ai/control-plane/issues/981)) ([a9d8228](https://github.com/adea-ai/control-plane/commit/a9d8228d70ee6eb6234204c24c9b46dc2fc38d7a))
+
+## [1.24.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.24.0...control-api-v1.24.1) (2026-10-08)
+
+
+### Tests
+
+* compose stored model selections with prepared lead host ([#983](https://github.com/adea-ai/control-plane/issues/983)) ([357f41c](https://github.com/adea-ai/control-plane/commit/357f41c32331788cf5a3d6bf05ef4044e17fb383))
+
 ## [1.24.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.23.0...control-api-v1.24.0) (2026-10-08)
 
 
