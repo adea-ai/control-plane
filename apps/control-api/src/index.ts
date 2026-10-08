@@ -239,3 +239,6 @@ export * from './catalog/workspace-catalog.service.js'
 export * from './models/model-connections.service.js'
 
 export * from './models/recorded-model-funding.js'
+export * from './models/canonical-model-host.js'
+export * from './models/sqlite-funding-confirmations.js'
+export * from './models/canonical-model-composition.js'
