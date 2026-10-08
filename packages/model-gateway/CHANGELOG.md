@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.3.0...model-gateway-v1.4.0) (2026-10-08)
+
+
+### Features
+
+* **models:** bind current execution authority and recorded payer reads ([#957](https://github.com/adea-ai/control-plane/issues/957)) ([85449ba](https://github.com/adea-ai/control-plane/commit/85449baf3ea9c57997954246bf40a7e4d5589312))
+
 ## [1.3.0](https://github.com/adea-ai/control-plane/compare/model-gateway-v1.2.4...model-gateway-v1.3.0) (2026-10-08)
 
 

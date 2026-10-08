@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.13.0...sdk-v1.14.0) (2026-10-08)
+
+
+### Features
+
+* **models:** bind current execution authority and recorded payer reads ([#957](https://github.com/adea-ai/control-plane/issues/957)) ([85449ba](https://github.com/adea-ai/control-plane/commit/85449baf3ea9c57997954246bf40a7e4d5589312))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.12.0...sdk-v1.13.0) (2026-10-08)
 
 
