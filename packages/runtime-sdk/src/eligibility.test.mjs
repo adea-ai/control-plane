@@ -122,6 +122,71 @@ describe('runtime eligibility', () => {
     })
   })
 
+  test('requires explicit supported workspace scope capability for workspace execution', () => {
+    const capability = 'execution.scope.workspace.v1'
+    const base = input()
+    const executionPlan = {
+      ...base.executionPlan,
+      runtimeRequirements: [{ capability, necessity: 'required' }],
+    }
+    const cases = [
+      [[], 'REQUIRED_CAPABILITY_MISSING'],
+      [[{ name: capability, support: 'unsupported' }], 'REQUIRED_CAPABILITY_MISSING'],
+      [[{ name: capability, support: 'degraded' }], 'REQUIRED_CAPABILITY_INSUFFICIENT'],
+    ]
+
+    for (const [capabilities, code] of cases) {
+      const decision = evaluateRuntimeEligibility(
+        input({
+          executionPlan,
+          candidate: {
+            ...base.candidate,
+            connection: { ...base.candidate.connection, capabilities },
+          },
+        })
+      )
+      expect(decision).toMatchObject({
+        eligible: false,
+        mode: 'ineligible',
+        reasons: [{ code, capability }],
+      })
+    }
+  })
+
+  test('workspace capability support does not override a revoked project grant', () => {
+    const capability = 'execution.scope.workspace.v1'
+    const base = input()
+    const request = input({
+      executionPlan: {
+        ...base.executionPlan,
+        runtimeRequirements: [{ capability, necessity: 'required' }],
+      },
+      candidate: {
+        ...base.candidate,
+        connection: {
+          ...base.candidate.connection,
+          capabilities: [{ name: capability, support: 'supported' }],
+        },
+      },
+    })
+
+    expect(evaluateRuntimeEligibility(request)).toMatchObject({
+      eligible: true,
+      mode: 'full',
+      reasons: [],
+    })
+    expect(
+      evaluateRuntimeEligibility({
+        ...request,
+        localProjectGrant: { required: true, status: 'revoked', grantRef: 'grant:project-1' },
+      })
+    ).toMatchObject({
+      eligible: false,
+      mode: 'ineligible',
+      reasons: [{ code: 'LOCAL_PROJECT_GRANT_REVOKED' }],
+    })
+  })
+
   test('rejects offline, stale, revoked, incompatible, and unverified candidates', () => {
     const cases = [
       [{ nodeStatus: 'offline' }, 'RUNTIME_NODE_OFFLINE'],
