@@ -35,6 +35,7 @@ import {
   createProductionFactoryModels,
   ProductionFactoryModelTarget,
 } from './pi-production-factory-models.fixture.mjs'
+import { countProductionProductReads } from './pi-production-factory-provenance.fixture.mjs'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const digest = (value) =>
@@ -194,7 +195,6 @@ export async function createProductionFactoryFixture(options = {}) {
     await mkdir(fundingDirectory, { mode: 0o700 })
     const rawProduct = {
       readCurrent: async (input) => {
-        state.productReads++
         if (
           state.revoked ||
           input.workspaceId !== workspaceId ||
@@ -208,9 +208,10 @@ export async function createProductionFactoryFixture(options = {}) {
     }
     // The production reader remains strict HTTPS/3 selectors. The optional injected test transport
     // may reach an owned real Adea handler; it is not HTTPS/deployment qualification.
-    const product = options.productHttp
-      ? createProductionProductHttpReader(options.productHttp)
-      : rawProduct
+    const product = countProductionProductReads(
+      options.productHttp ? createProductionProductHttpReader(options.productHttp) : rawProduct,
+      state
+    )
     const scopeAuthority = {
       readCurrent: async (input) =>
         state.revoked
@@ -578,6 +579,7 @@ export async function createProductionFactoryFixture(options = {}) {
       command,
       read,
       close,
+      rawProductEvidence: (intentId) => structuredClone(source.get(intentId)),
       setIntent: (intentId = randomUUID()) => {
         source.set(intentId, {
           schemaVersion: 'pi-lead-intent/v1',

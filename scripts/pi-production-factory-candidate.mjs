@@ -1,10 +1,10 @@
 // TEST ONLY. Uses the actual production factory and HTTP application, never a fixture lead service.
 import 'reflect-metadata'
-import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { createProductionFactoryFixture } from '../tests/pi-production-factory.fixture.mjs'
 import { createProductionFactoryServiceAuthenticator } from '../tests/pi-production-factory-auth.fixture.mjs'
 import { createControlApiApplication } from '../apps/control-api/src/application.ts'
+import { productionFactorySourceIdentity } from '../tests/pi-production-factory-provenance.fixture.mjs'
 
 const config = JSON.parse(process.env.PI_PRODUCTION_FACTORY_TEST_CONFIG ?? 'null')
 const productCredential = process.env.PI_PRODUCTION_FACTORY_PRODUCT_ASSERTION
@@ -60,7 +60,7 @@ try {
   const metadata = {
     serviceName: 'control-api',
     version: 'test-candidate',
-    commitSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    commitSha: productionFactorySourceIdentity(),
     environment: 'test',
   }
   app = await createControlApiApplication({
