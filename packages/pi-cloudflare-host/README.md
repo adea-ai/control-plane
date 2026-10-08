@@ -100,6 +100,18 @@ It denies outbound traffic and cleans up its own instance and temporary storage.
 The alpha API is required for its explicit Durable Object hibernating eviction
 control; it is not a production dependency.
 
+The pinned Miniflare release requires vulnerable `sharp` and `undici` versions.
+Repository overrides select the published patch versions `sharp` **0.35.5** and
+`undici` **7.29.1**, preserving Miniflare/workerd and Pi/Chord pins. This addresses
+[sharp's upstream librsvg advisory](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)
+and undici's [WebSocket handshake](https://github.com/advisories/GHSA-rfgv-xxqx-mfg5)
+and [BalancedPool TLS-options](https://github.com/advisories/GHSA-w293-vg96-wgc3)
+advisories. The latest inspected Miniflare alpha still pinned vulnerable sharp,
+so upgrading Miniflare alone could not clear the audit. Native image compatibility,
+custom connector rejection, and actual workerd qualification must pass after this
+constrained override; auditing remains enabled for all dependencies, including
+existing LangGraph/LangSmith paths that use undici.
+
 `tests/worker.mjs` is a local-only qualification entry. It supplies deterministic
 server fixtures and never registers a production route. Its intended checks are
 actual SQLite/Pi storage on workerd, WebSocket attachments across hibernation,
