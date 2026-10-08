@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.33.1...sqlite-persistence-v1.33.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* **usage:** pin model quotes and reject dispatch replay ([#927](https://github.com/adea-ai/control-plane/issues/927)) ([7a66d2e](https://github.com/adea-ai/control-plane/commit/7a66d2ec97102f0a391b58581eaa2eef53be6c93))
+
 ## [1.33.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.33.0...sqlite-persistence-v1.33.1) (2026-10-07)
 
 
