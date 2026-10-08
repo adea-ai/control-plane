@@ -15,6 +15,22 @@ const ledgerUrl = new URL(
 const reportUrl = new URL('../docs/requirements/control-plane-requirements.md', import.meta.url)
 const ledger = JSON.parse(await readFile(ledgerUrl, 'utf8'))
 const clone = (value) => JSON.parse(JSON.stringify(value))
+const emptyIssueLedger = () => ({
+  sources: [],
+  deploymentProfiles: [],
+  requirements: [],
+  priorIssueInventory: [],
+  priorMilestoneAudits: [],
+})
+const canonicalIssue = (number, milestone = 11, changes = {}) => ({
+  number,
+  state: 'OPEN',
+  title: `Issue ${number}`,
+  closedAt: null,
+  url: `https://github.com/adea-ai/control-plane/issues/${number}`,
+  milestone: { number: milestone, title: 'Roadmap display title can change' },
+  ...changes,
+})
 
 const normativeSources = [
   'Project Index',
@@ -35,6 +51,81 @@ const normativeSources = [
 ]
 
 describe('M11.1 requirements ledger', () => {
+  test('renamed or translated M11 titles preserve canonical repository milestone authority', () => {
+    const input = emptyIssueLedger()
+    input.requirements.push({ id: 'legacy', gap: { issue: 188 } })
+    for (const title of ['09 · M11: Feature Completion & Production Audit', '审计']) {
+      expect(
+        refreshPriorMilestoneAudits(input, [
+          canonicalIssue(188, 11, { milestone: { number: 11, title } }),
+          canonicalIssue(197),
+        ]).requirements
+      ).toEqual(input.requirements)
+    }
+  })
+
+  test('gap state and repository/milestone identity fail closed despite an M11-looking title', () => {
+    const input = emptyIssueLedger()
+    input.requirements.push({ gap: { issue: 188 } })
+    const spoofedTitle = 'M11: Feature Completion & Production Audit'
+    for (const changes of [
+      { state: 'CLOSED' },
+      { url: 'https://github.com/another-owner/control-plane/issues/188' },
+      { url: 'https://github.com/adea-ai/another-repository/issues/188' },
+      { url: undefined },
+      { milestone: { number: 10, title: spoofedTitle } },
+      { milestone: { number: '11', title: spoofedTitle } },
+      { milestone: { number: -11, title: spoofedTitle } },
+      { milestone: { title: spoofedTitle } },
+      { milestone: null },
+    ]) {
+      expect(() =>
+        refreshPriorMilestoneAudits(input, [canonicalIssue(188, 11, changes), canonicalIssue(197)])
+      ).toThrow('authorized Control Plane milestone')
+    }
+    expect(() => refreshPriorMilestoneAudits(input, [canonicalIssue(197)])).toThrow('#188 (MISSING')
+  })
+
+  test('only the explicitly authorized R2 architecture gap can use successor milestone 20', () => {
+    const input = emptyIssueLedger()
+    expect(
+      refreshPriorMilestoneAudits(input, [canonicalIssue(931, 20), canonicalIssue(197)], [931])
+        .requirements
+    ).toEqual([])
+    for (const issue of [
+      canonicalIssue(931, 11),
+      canonicalIssue(931, 20, { state: 'CLOSED' }),
+      canonicalIssue(931, 20, { milestone: { title: 'M20' } }),
+    ]) {
+      expect(() => refreshPriorMilestoneAudits(input, [issue, canonicalIssue(197)], [931])).toThrow(
+        'authorized Control Plane milestone'
+      )
+    }
+    expect(() =>
+      refreshPriorMilestoneAudits(input, [canonicalIssue(932, 20), canonicalIssue(197)], [932])
+    ).toThrow('#932')
+    input.requirements.push({ gap: { issue: 931 } })
+    expect(() =>
+      refreshPriorMilestoneAudits(input, [canonicalIssue(931, 20), canonicalIssue(197)], [931])
+    ).toThrow('#931')
+  })
+
+  test('prior M10 inventory uses repository milestone 12 and excludes repository milestone 10', () => {
+    const input = emptyIssueLedger()
+    input.priorMilestoneAudits.push({ issue: 100, milestone: 'M10', assessment: 'preserved' })
+    const refreshed = refreshPriorMilestoneAudits(input, [
+      canonicalIssue(100, 12, {
+        state: 'CLOSED',
+        milestone: { number: 12, title: 'Reordered historical phase' },
+      }),
+      canonicalIssue(101, 10, { milestone: { number: 10, title: 'M10: Spoofed display title' } }),
+    ])
+    expect(
+      refreshed.priorIssueInventory.map(({ issue, milestone }) => ({ issue, milestone }))
+    ).toEqual([{ issue: 100, milestone: 'M10' }])
+    expect(refreshed.priorMilestoneAudits[0].assessment).toBe('preserved')
+  })
+
   test('a retrieved source cannot silently lose its atomic inventory', async () => {
     const changed = clone(ledger)
     delete changed.sources[0].atomicInventory
@@ -389,7 +480,7 @@ describe('M11.1 requirements ledger', () => {
               number: 188,
               title: 'Gap owner',
               state: 'open',
-              milestone: { title: 'M11: Feature Completion & Production Audit' },
+              milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
               html_url: 'https://github.com/owner/repository/issues/188',
               closed_at: null,
             },
@@ -404,7 +495,7 @@ describe('M11.1 requirements ledger', () => {
         number: 188,
         title: 'Gap owner',
         state: 'OPEN',
-        milestone: { title: 'M11: Feature Completion & Production Audit' },
+        milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
         url: 'https://github.com/owner/repository/issues/188',
         closedAt: null,
       },
@@ -432,28 +523,32 @@ describe('M11.1 requirements ledger', () => {
           {
             number: 188,
             state: 'CLOSED',
-            milestone: { title: 'M11: Feature Completion & Production Audit' },
+            url: 'https://github.com/adea-ai/control-plane/issues/188',
+            milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
           },
           {
             number: 192,
             state: 'CLOSED',
-            milestone: { title: 'M11: Feature Completion & Production Audit' },
+            url: 'https://github.com/adea-ai/control-plane/issues/192',
+            milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
           },
           {
             number: 194,
             state: 'OPEN',
-            milestone: { title: 'M12: Cross-Product Integration & Release' },
+            url: 'https://github.com/adea-ai/control-plane/issues/194',
+            milestone: { number: 10, title: 'M12: Cross-Product Integration & Release' },
           },
           {
             number: 197,
             state: 'OPEN',
-            milestone: { title: 'M11: Feature Completion & Production Audit' },
+            url: 'https://github.com/adea-ai/control-plane/issues/197',
+            milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
           },
         ],
         [192]
       )
     ).toThrow(
-      'Gap issues must be open and assigned to M11: #188 (CLOSED, M11: Feature Completion & Production Audit), #194 (OPEN, M12: Cross-Product Integration & Release), #192 (CLOSED, M11: Feature Completion & Production Audit)'
+      'Gap issues must be open in their authorized Control Plane milestone: #188 (CLOSED, M11: Feature Completion & Production Audit), #194 (OPEN, M12: Cross-Product Integration & Release), #192 (CLOSED, M11: Feature Completion & Production Audit)'
     )
   })
 
@@ -471,16 +566,18 @@ describe('M11.1 requirements ledger', () => {
         {
           number: 188,
           state: 'OPEN',
-          milestone: { title: 'M11: Feature Completion & Production Audit' },
+          url: 'https://github.com/adea-ai/control-plane/issues/188',
+          milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
         },
         {
           number: 197,
           state: 'CLOSED',
-          milestone: { title: 'M11: Feature Completion & Production Audit' },
+          url: 'https://github.com/adea-ai/control-plane/issues/197',
+          milestone: { number: 11, title: 'M11: Feature Completion & Production Audit' },
         },
       ])
     ).toThrow(
-      'Gap issues must be open and assigned to M11: #197 (CLOSED, M11: Feature Completion & Production Audit)'
+      'Gap issues must be open in their authorized Control Plane milestone: #197 (CLOSED, M11: Feature Completion & Production Audit)'
     )
   })
 
