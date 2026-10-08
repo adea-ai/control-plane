@@ -188,7 +188,7 @@ export async function createGovernedChildCompositionFixture(
     lead: { selectionRef: `msel_${'a'.repeat(32)}`, selectionRevision: 1 },
     child: { selectionRef: `msel_${'b'.repeat(32)}`, selectionRevision: 2 },
   }
-  let childRuntime, leadRuntime, host, childAdmission
+  let childRuntime, leadRuntime, host, childAdmission, childOptions
   const child = await childTransport(state)
   const parentNative = await createNativeEngineToolFixture({
     argumentsInput: { objective: workspace.command.objective },
@@ -339,7 +339,7 @@ export async function createGovernedChildCompositionFixture(
     },
   }
   try {
-    childRuntime = await createNodePiDurableRuntime({
+    childOptions = {
       ...shared,
       directory: join(directory, 'child-runtime'),
       resolveAdmission: async (request) => {
@@ -348,7 +348,8 @@ export async function createGovernedChildCompositionFixture(
         assert.ok(childAdmission, 'separate canonical child admission required')
         return childAdmission
       },
-    })
+    }
+    childRuntime = await createNodePiDurableRuntime(childOptions)
     host = await createGovernedChildHostFixture({
       storage,
       workspace,
@@ -545,8 +546,15 @@ export async function createGovernedChildCompositionFixture(
       get leadRuntime() {
         return leadRuntime
       },
-      childRuntime,
+      get childRuntime() {
+        return childRuntime
+      },
       scanner,
+      async reopenChild() {
+        await childRuntime.close()
+        childRuntime = await createNodePiDurableRuntime(childOptions)
+        return childRuntime
+      },
       async reopenLead() {
         await leadRuntime.close()
         leadRuntime = await createNodePiDurableRuntime(leadOptions)
