@@ -58,12 +58,21 @@ test.skipIf(!enabled)(
           new Response('Qualification denies external traffic', { status: 403 }),
       }
       mf = new Miniflare(convertV4MiniflareOptions(options))
-      async function json(path) {
-        const response = await mf.dispatchFetch(`http://qualification/${path}`)
+      async function json(path, init) {
+        const response = await mf.dispatchFetch(`http://qualification/${path}`, init)
         if (!response.ok)
           throw new Error(`QUALIFICATION_HTTP_${response.status}: ${await response.text()}`)
         return response.json()
       }
+      const handle = await json('context-a/public-start')
+      const publicRead = {
+        method: 'POST',
+        body: JSON.stringify({ handle }),
+        headers: { 'content-type': 'application/json' },
+      }
+      expect((await json('context-a/public-status', publicRead)).state).toBe('starting')
+      const firstEvents = await json('context-a/public-progress', publicRead)
+      expect(firstEvents[0].occurredAt).toBe(handle.startedAt)
       const accepted = await json('context-a/accept')
       expect(accepted.state).toBe('accepted')
       const replay = await json('context-a/accept')
@@ -72,6 +81,16 @@ test.skipIf(!enabled)(
       const before = await json('context-a/read')
       expect(before.result.output.planDigest).toBe(
         accepted.task.request.executionPlan.contentDigest
+      )
+      expect(await json('context-a/session-bind')).toEqual({ bound: true })
+      expect(await json('context-a/session-bind')).toEqual({ bound: true })
+      const session = (await json('context-a/session-load')).session
+      expect(session.state).toBe('active')
+      expect(
+        (await json('context-a/session-list')).sessions.map((value) => value.sessionId)
+      ).toEqual([session.sessionId])
+      expect((await mf.dispatchFetch('http://qualification/context-b/session-list')).status).toBe(
+        500
       )
       const summary = await json('context-a/summary')
       expect(summary.conversations).toHaveLength(1)
@@ -133,6 +152,21 @@ test.skipIf(!enabled)(
       expect(restarted.bootId).not.toBe(before.bootId)
       expect(restarted.revision).toBe('2')
       expect(restarted.result).toEqual(before.result)
+      expect(await json('context-a/public-start')).toEqual(handle)
+      expect((await json('context-a/public-status', publicRead)).result).toEqual(before.result)
+      const publicEvents = await json('context-a/public-progress', publicRead)
+      expect(publicEvents[0]).toEqual(firstEvents[0])
+      expect(publicEvents.map((event) => event.data.state)).toEqual([
+        'starting',
+        'running',
+        'completed',
+      ])
+      const pendingNative = (await json('context-a/summary')).nativeTasks
+      expect((await json('context-a/session-load')).session.sessionId).toBe(session.sessionId)
+      expect(
+        (await json('context-a/session-list')).sessions.map((value) => value.sessionId)
+      ).toEqual([session.sessionId])
+      expect((await json('context-a/summary')).nativeTasks).toEqual(pendingNative)
       const upgraded = await json(`context-a/finish?taskId=${checkpoint.taskId}`)
       expect(upgraded.conversationId).toBe(checkpoint.conversationId)
       expect(upgraded.task.version).toBe(2)
@@ -160,6 +194,21 @@ test.skipIf(!enabled)(
       )
       expect((await json('context-a/read')).result).toEqual(before.result)
       expect((await json('context-a/summary')).events).toEqual(summary.events)
+      await mf.dispose()
+      mf = undefined
+      mf = new Miniflare(
+        convertV4MiniflareOptions({
+          ...options,
+          bindings: { ...options.bindings, TASK_VERSION: '2', SESSION_REVOKED: 'true' },
+        })
+      )
+      expect((await mf.dispatchFetch('http://qualification/context-a/session-load')).status).toBe(
+        500
+      )
+      expect((await mf.dispatchFetch('http://qualification/context-a/session-list')).status).toBe(
+        500
+      )
+      expect((await json('context-a/read')).result).toEqual(before.result)
     } finally {
       socket?.close()
       await mf?.dispose()
