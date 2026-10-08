@@ -1,6 +1,6 @@
 // Test-owned process harness. Only children spawned here may be signalled.
 import { spawn } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -107,21 +107,25 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
         [...children].map(async ({ child, exit }) => {
           if (child.exitCode === null && child.signalCode === null) {
             child.kill('SIGKILL')
-            await exit.catch(() => {})
           }
+          await exit.catch(() => {})
         })
       )
       await transport.close()
       if (process.env.J1_PROOF_EVIDENCE_DIR) {
         const target = join(process.env.J1_PROOF_EVIDENCE_DIR, basename(directory))
         await mkdir(target, { recursive: true })
-        for (const name of ['process-evidence.jsonl', 'child-descriptor.json']) {
-          try {
-            await copyFile(join(directory, name), join(target, name))
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error
-          }
-        }
+        // All owned writers have exited. Retain the complete synthetic fixture,
+        // including SQLite WAL/SHM sidecars, before removing the original.
+        await cp(directory, join(target, 'fixture'), { recursive: true })
+        await writeFile(
+          join(target, 'transport-counters.json'),
+          JSON.stringify({
+            schemaVersion: 1,
+            capturedAfterOwnedExitAndTransportClose: true,
+            parsedChildModelRequests: transport.requests.length,
+          })
+        )
         await writeFile(
           join(target, 'worker-output.json'),
           JSON.stringify(
