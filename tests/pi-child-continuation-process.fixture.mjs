@@ -393,48 +393,63 @@ export async function continuationPorts(directory, journal, canonicalProvider) {
   }
 }
 
-function safeProcessFailure(error) {
-  const header = error instanceof Error ? `${error.name}: ${error.message}\n` : undefined
-  const frames = header && error.stack?.startsWith(header) ? error.stack.slice(header.length) : ''
+function captureProcessFailure(error) {
+  try {
+    const isError = error instanceof Error
+    const isObject = error !== null && (typeof error === 'object' || typeof error === 'function')
+    // Each possibly accessor-backed property is read once. Validation and
+    // output use only these captured values, never a second property read.
+    return {
+      isError,
+      name: isError ? error.name : undefined,
+      message: isError ? error.message : undefined,
+      stack: isError ? error.stack : undefined,
+      code: isObject ? error.code : undefined,
+      errcode: isObject ? error.errcode : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function serializeProcessFailure(captured) {
+  const { isError, name, message, stack, code } = captured
+  const header =
+    isError && typeof name === 'string' && typeof message === 'string'
+      ? `${name}: ${message}\n`
+      : undefined
+  const frames =
+    header && typeof stack === 'string' && stack.startsWith(header)
+      ? stack.slice(header.length)
+      : ''
   const source = frames
     .split('\n')
     .find((line) => line.trim().startsWith('at '))
     ?.match(/([A-Za-z0-9_.-]+\.(?:mjs|js|ts)):(\d+):(\d+)/)
-  const code =
-    error &&
-    typeof error === 'object' &&
-    typeof error.code === 'string' &&
-    /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
-      ? error.code
-      : undefined
   return {
     errorType:
-      error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
-        ? error.name
+      isError && typeof name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name)
+        ? name
         : 'UnclassifiedError',
-    ...(code ? { errorCode: code } : {}),
+    ...(typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? { errorCode: code } : {}),
     ...(source ? { sourceLocation: `${source[1]}:${source[2]}:${source[3]}` } : {}),
   }
 }
 
+function safeProcessFailure(error) {
+  return serializeProcessFailure(captureProcessFailure(error))
+}
+
 export function safeProcessRecoveryFailure(error) {
-  try {
-    const errcode =
-      error && typeof error === 'object' && Number.isSafeInteger(error.errcode)
-        ? error.errcode
-        : undefined
-    const policyCode =
-      error instanceof Error &&
-      ['PI_CHILD_CONTINUATION_DENIED', 'PI_CHILD_CONTINUATION_REJECTED'].includes(error.message)
-        ? error.message
-        : undefined
-    return {
-      ...safeProcessFailure(error),
-      ...(errcode !== undefined ? { errcode } : {}),
-      ...(policyCode ? { policyCode } : {}),
-    }
-  } catch {
-    return { errorType: 'UnclassifiedError' }
+  const captured = captureProcessFailure(error)
+  const { errcode, message, isError } = captured
+  return {
+    ...serializeProcessFailure(captured),
+    ...(Number.isSafeInteger(errcode) ? { errcode } : {}),
+    ...(isError &&
+    ['PI_CHILD_CONTINUATION_DENIED', 'PI_CHILD_CONTINUATION_REJECTED'].includes(message)
+      ? { policyCode: message }
+      : {}),
   }
 }
 
