@@ -115,9 +115,11 @@ describe('persistent Pi engine', () => {
     try {
       interrupted = worker(directory, 'interrupt')
       await interrupted.boundary
-      interrupted.child.kill('SIGKILL')
+      const signalSent = interrupted.child.kill('SIGKILL')
       const killed = await interrupted.complete
-      expect(killed.signal).toBe('SIGKILL')
+      const exitEvidence = JSON.stringify(killed)
+      expect(signalSent, exitEvidence).toBe(true)
+      expect(killed.signal, exitEvidence).toBe('SIGKILL')
       resumed = worker(directory, 'resume')
       const recovered = await resumed.complete
       expect(recovered.code, recovered.stderr).toBe(0)
@@ -131,8 +133,12 @@ describe('persistent Pi engine', () => {
       expect(payload.result.inferences[0].inferenceId).toBe(boundary.inferenceId)
       expect(payload.duplicate.inferences).toEqual(payload.result.inferences)
     } finally {
-      interrupted?.child.kill('SIGKILL')
-      resumed?.child.kill('SIGKILL')
+      const ownedWorkers = [interrupted, resumed].filter(Boolean)
+      for (const owned of ownedWorkers) {
+        if (owned.child.exitCode === null && owned.child.signalCode === null)
+          owned.child.kill('SIGKILL')
+      }
+      await Promise.allSettled(ownedWorkers.map((owned) => owned.complete))
       await rm(directory, { recursive: true, force: true })
     }
   }, 15000)
