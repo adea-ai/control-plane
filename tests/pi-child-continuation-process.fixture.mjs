@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
 import {
   closeSync,
   existsSync,
@@ -451,7 +452,6 @@ export async function initialWorker(directory, mode, baseUrl) {
     ports,
     f,
     fastTerminalSnapshot,
-    fastNativeInspection,
     physicalSendCount = 0,
     childModelCallbacks = 0,
     metadata = { publicationAudience: actor }
@@ -533,21 +533,6 @@ export async function initialWorker(directory, mode, baseUrl) {
             }
             try {
               childEngine = createPiDurableEngine(observedOptions)
-              const close = childEngine.close.bind(childEngine)
-              childEngine.close = async () => {
-                try {
-                  if (!fastNativeInspection) {
-                    const row = childRuntime.adapter.journal.list()[0]
-                    if (row) {
-                      fastNativeInspection = await childEngine.inspect(
-                        row.admission.handle.externalSessionId
-                      )
-                    }
-                  }
-                } finally {
-                  await close()
-                }
-              }
               return childEngine
             } finally {
               globalThis.fetch = originalFetch
@@ -689,25 +674,39 @@ export async function initialWorker(directory, mode, baseUrl) {
           await new Promise(() => {})
         }
         if (mode === 'fast_child_terminal_before_grant') {
-          await childRuntime.adapter.drain()
-          const terminalRow = childRuntime.adapter.journal.list()[0]
-          assert.ok(fastNativeInspection, 'native terminal metadata was not captured before close')
-          const generation = fastNativeInspection.tasks.find(
-            (item) => item.record.kind === 'pi.generation'
+          await observeProcessBoundary(directory, 'fast_child_drain', () =>
+            childRuntime.adapter.drain()
           )
-          const retention = await observeProcessFastTerminalRetention({
-            ports,
-            grant,
-            terminalRow,
-            nativeTask: generation?.record,
-            readSnapshot: () =>
-              inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports),
+          const terminalRow = childRuntime.adapter.journal.list()[0]
+          const generation = await observeProcessBoundary(directory, 'fast_terminal_storage', () =>
+            readProcessStoredGeneration(directory, childEngine, terminalRow.admission.handle)
+          )
+          appendProcessEvidence(directory, {
+            stage: 'fast_terminal_observed',
+            pid: process.pid,
+            handle: terminalRow.admission.handle,
+            nativeTaskId: generation.id,
+            nativeConversationId: generation.conversationId,
+            nativeKind: generation.kind,
+            nativeStatus: generation.state.status,
+            nativeOutcome: generation.state.outcome?.status,
+            observationApi: 'vendor_storage_task',
           })
+          const retention = await observeProcessBoundary(directory, 'fast_terminal_retention', () =>
+            observeProcessFastTerminalRetention({
+              ports,
+              grant,
+              terminalRow,
+              nativeTask: generation,
+              readSnapshot: () =>
+                inspectProcessSnapshot(directory, childRuntime.adapter.journal, ports),
+            })
+          )
           fastTerminalSnapshot = {
             ...retention.snapshot,
             stage: 'fast_terminal_snapshot',
             childNativeState: terminalRow.state,
-            childNativeTask: generation?.record ?? null,
+            childNativeTask: generation,
             ...retention.observation,
             physicalSendCount,
             source: input.source,
@@ -822,6 +821,51 @@ export class ProcessPhysicalSendPendingError extends Error {
   constructor() {
     super('PI_PROCESS_PHYSICAL_SEND_PENDING')
     this.name = 'ProcessPhysicalSendPendingError'
+  }
+}
+
+/** Read the exact admitted generation through public vendor storage after the engine drains.
+ * Harness.inspect lists live tasks only and cannot establish completed task identity. */
+export async function readProcessStoredGeneration(directory, engine, handle) {
+  const reservations = readProcessEvidence(directory).filter(
+    (event) =>
+      event.stage === 'before_reservation' &&
+      event.pid === process.pid &&
+      event.handle?.handleId === handle.handleId
+  )
+  assert.equal(reservations.length, 1, 'fixture requires one exact native generation admission')
+  assert.deepEqual(reservations[0].handle, handle)
+  const admitted = reservations[0].task
+  assert.equal(admitted.kind, 'pi.generation')
+  assert.ok(Number.isSafeInteger(admitted.id) && admitted.id > 0)
+  assert.ok(Number.isSafeInteger(admitted.conversationId) && admitted.conversationId > 0)
+  // Resolve ordinary public vendor exports from their owning production package.
+  // This installs no hooks and does not redirect production imports to source files.
+  const require = createRequire(
+    new URL('../packages/pi-durable-adapter/package.json', import.meta.url)
+  )
+  const { openNodeSqliteStorage } = await import(
+    pathToFileURL(require.resolve('@earendil-works/pi-durable/storage/sqlite/node')).href
+  )
+  // Chord publishes this subpath for ESM imports only, not require conditions.
+  const chordManifestUrl = pathToFileURL(require.resolve('@earendil-works/chord/package.json'))
+  const chordManifest = JSON.parse(readFileSync(chordManifestUrl, 'utf8'))
+  const contextExport = chordManifest.exports['./context'].import
+  assert.equal(chordManifest.version, '1.1.0')
+  assert.equal(contextExport, './dist/context/index.js')
+  const { BACKGROUND_CONTEXT } = await import(new URL(contextExport, chordManifestUrl).href)
+  const storage = await openNodeSqliteStorage(engine.storePath(handle.externalSessionId))
+  try {
+    const task = await storage.task(admitted.id, BACKGROUND_CONTEXT)
+    assert.ok(task, 'stored generation must exist')
+    assert.equal(task.id, admitted.id)
+    assert.equal(task.conversationId, admitted.conversationId)
+    assert.equal(task.kind, admitted.kind)
+    assert.equal(task.version, admitted.version)
+    assert.deepEqual(task.input, admitted.input)
+    return task
+  } finally {
+    await storage.close(BACKGROUND_CONTEXT)
   }
 }
 
