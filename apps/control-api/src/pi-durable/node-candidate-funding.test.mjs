@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { ControlPlaneClient } from '@control-plane/sdk'
 import { startNodePiDurableCandidateHost } from './node-candidate.fixture.mjs'
+
+const { ControlPlaneClient } = await import(
+  process.env.PI_CANDIDATE_SDK_ENTRY ?? '@control-plane/sdk'
+)
 
 async function fixture(body) {
   const host = await startNodePiDurableCandidateHost({ workspaceScope: true, prepareFunding: true })

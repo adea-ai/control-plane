@@ -1,5 +1,29 @@
 import { expect, test } from 'bun:test'
+import { ExecutionPlanCompiler, deriveExecutionPlan } from '@control-plane/execution-plan'
+import { createExecutionPlanTestFixtureInputs } from '@control-plane/execution-plan/testing'
 import { createPiLeadRuntimeAuthorityRouter } from './runtime-authority-router.ts'
+
+function requests() {
+  const inputs = createExecutionPlanTestFixtureInputs()
+  const parent = new ExecutionPlanCompiler('1.0.0').compile(inputs)
+  const child = deriveExecutionPlan(parent, {
+    correlation: {
+      ...parent.correlation,
+      taskId: 'tsk_01JBBCDEF0123456789ABCDEFG',
+      requestId: 'req_01JBBCDEF0123456789ABCDEFG',
+    },
+    contextPackage: inputs.contextPackage,
+    constraints: structuredClone(parent.constraints),
+    runtimeRequirements: structuredClone(parent.runtimeRequirements),
+    outputContract: parent.outputContract,
+    compiledAt: '2026-08-23T12:30:00.000Z',
+  })
+  expect(child.parentExecutionPlan).toEqual({
+    executionPlanId: parent.executionPlanId,
+    contentDigest: parent.contentDigest,
+  })
+  return { lead: { executionPlan: parent }, child: { executionPlan: child } }
+}
 
 test('lineage selects separate child admission and current authority without lead fallback', async () => {
   const calls = []
@@ -13,8 +37,7 @@ test('lineage selects separate child admission and current authority without lea
     },
   })
   const router = createPiLeadRuntimeAuthorityRouter(port('lead'), port('child'))
-  const lead = { executionPlan: {} }
-  const child = { executionPlan: { parentExecutionPlan: { executionPlanId: 'retained-parent' } } }
+  const { lead, child } = requests()
   expect(await router.resolveAdmission(lead)).toBe('lead')
   expect(await router.resolveAdmission(child)).toBe('child')
   await router.assertAuthority({ request: child })
@@ -37,7 +60,7 @@ test('missing or rejecting child authority never invokes lead admission', async 
       leadCalls++
     },
   }
-  const request = { executionPlan: { parentExecutionPlan: {} } }
+  const { child: request } = requests()
   const missing = createPiLeadRuntimeAuthorityRouter(lead)
   await expect(missing.resolveAdmission(request)).rejects.toThrow('PI_CHILD_AUTHORITY_REQUIRED')
   await expect(missing.assertAuthority({ request })).rejects.toThrow('PI_CHILD_AUTHORITY_REQUIRED')

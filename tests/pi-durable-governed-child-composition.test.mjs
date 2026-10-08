@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createGovernedChildCompositionFixture } from './governed-child-composition.fixture.mjs'
-import { PiDurableChildProgressScanner } from '../../../apps/control-api/src/pi-durable/child-progress-scanner.ts'
+import { createGovernedChildCompositionFixture } from './pi-durable-governed-child-composition.fixture.mjs'
+import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 
 async function fixture(run, options) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-governed-child-composed-'))

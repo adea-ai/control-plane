@@ -288,12 +288,14 @@ describe('Control Plane SDK public client', () => {
       dependencies: {
         '@control-plane/contracts': 'workspace:^',
         '@control-plane/runtime-sdk': 'workspace:^',
+        zod: '4.6.5',
       },
       publishConfig: { access: 'public', provenance: true },
     })
     expect(Object.keys(manifest.dependencies).toSorted()).toEqual([
       '@control-plane/contracts',
       '@control-plane/runtime-sdk',
+      'zod',
     ])
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(manifest.version).toBe(releaseManifest['packages/control-sdk'])

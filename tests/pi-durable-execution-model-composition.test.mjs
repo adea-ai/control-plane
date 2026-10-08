@@ -2,9 +2,9 @@ import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai'
-import { selection as selected } from '../../model-gateway/src/selection-fixtures.mjs'
-import { workspacePlan } from './workspace-scope.fixture.mjs'
-import { createPiExecutionBoundModelComposition } from './execution-model-composition.ts'
+import { selection as selected } from '../packages/model-gateway/src/selection-fixtures.mjs'
+import { workspacePlan } from './pi-durable-workspace-scope.fixture.mjs'
+import { createPiExecutionBoundModelComposition } from '../packages/pi-durable-adapter/src/execution-model-composition.ts'
 import { createExecutionBoundModelSelectionService } from '@control-plane/model-gateway'
 
 function fixture() {

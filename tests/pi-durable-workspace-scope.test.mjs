@@ -2,9 +2,13 @@ import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { PiDurableRuntimeAdapter } from './adapter.ts'
-import { fixture } from './adapter.test.mjs'
-import { workspacePlan, currentScope, explicitProjectPlan } from './workspace-scope.fixture.mjs'
+import { PiDurableRuntimeAdapter } from '../packages/pi-durable-adapter/src/adapter.ts'
+import { fixture } from '../packages/pi-durable-adapter/src/adapter.fixture.mjs'
+import {
+  workspacePlan,
+  currentScope,
+  explicitProjectPlan,
+} from './pi-durable-workspace-scope.fixture.mjs'
 
 function scoped(directory, overrides = {}, plan = workspacePlan()) {
   const base = fixture(directory)

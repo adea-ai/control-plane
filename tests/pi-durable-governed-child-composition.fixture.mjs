@@ -23,20 +23,20 @@ import {
   createGovernedChildHostFixture,
   parentAttemptId,
   identity,
-} from '../../../tests/pi-durable-child-host.fixture.mjs'
-import { ids } from '../../orchestration/src/delegation-fixtures.mjs'
+} from './pi-durable-child-host.fixture.mjs'
+import { ids } from '../packages/orchestration/src/delegation-fixtures.mjs'
 import {
   actor,
   now,
   workspaceInput,
   currentSnapshot,
-} from '../../orchestration/src/delegation-workspace-fixtures.mjs'
-import { createNodePiDurableRuntime } from './composition.ts'
-import { createPiDurableUsageAuthority } from './usage-authority.ts'
-import { createNativeEngineToolFixture } from './pi-engine-tools.loopback.fixture.mjs'
-import { PiDurableChildProgressScanner } from '../../../apps/control-api/src/pi-durable/child-progress-scanner.ts'
+} from '../packages/orchestration/src/delegation-workspace-fixtures.mjs'
+import { createNodePiDurableRuntime } from '../packages/pi-durable-adapter/src/composition.ts'
+import { createPiDurableUsageAuthority } from '../packages/pi-durable-adapter/src/usage-authority.ts'
+import { createNativeEngineToolFixture } from '../packages/pi-durable-adapter/src/pi-engine-tools.loopback.fixture.mjs'
+import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
 import { canonicalJsonStringify } from '@control-plane/contracts'
-import { SqlitePiLeadRunningLifecycle } from '../../../apps/control-api/src/pi-durable/lead-running-lifecycle.ts'
+import { SqlitePiLeadRunningLifecycle } from '../apps/control-api/src/pi-durable/lead-running-lifecycle.ts'
 
 function persistentStorage(provider) {
   return {
