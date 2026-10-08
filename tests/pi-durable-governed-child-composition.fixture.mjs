@@ -129,7 +129,11 @@ async function childTransport(state) {
 
 export async function createGovernedChildCompositionFixture(
   directory,
-  { revokeChildBeforeDispatch = false } = {}
+  {
+    revokeChildBeforeDispatch = false,
+    childRuntimeFactory = createNodePiDurableRuntime,
+    retainContinuation,
+  } = {}
 ) {
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
   await provider.migrate()
@@ -339,16 +343,19 @@ export async function createGovernedChildCompositionFixture(
     },
   }
   try {
-    childRuntime = await createNodePiDurableRuntime({
-      ...shared,
-      directory: join(directory, 'child-runtime'),
-      resolveAdmission: async (request) => {
-        assert.equal(request.executionId, ids.childExecutionId)
-        assert.equal(request.attemptId, ids.childAttemptId)
-        assert.ok(childAdmission, 'separate canonical child admission required')
-        return childAdmission
+    childRuntime = await childRuntimeFactory(
+      {
+        ...shared,
+        directory: join(directory, 'child-runtime'),
+        resolveAdmission: async (request) => {
+          assert.equal(request.executionId, ids.childExecutionId)
+          assert.equal(request.attemptId, ids.childAttemptId)
+          assert.ok(childAdmission, 'separate canonical child admission required')
+          return childAdmission
+        },
       },
-    })
+      { canonicalProvider: provider }
+    )
     host = await createGovernedChildHostFixture({
       storage,
       workspace,
@@ -456,6 +463,7 @@ export async function createGovernedChildCompositionFixture(
         },
       },
       governedDelegateChild: {
+        ...(retainContinuation ? { retainContinuation } : {}),
         prepare: async (authority, verified) => {
           await assertCurrent(authority)
           assert.equal(verified.objective, host.command.delegation.objective)
