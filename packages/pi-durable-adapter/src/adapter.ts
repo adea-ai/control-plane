@@ -740,10 +740,22 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
                     signal?.throwIfAborted()
                   },
                 })
-                return delegateChildOutcome(
+                const outcome = delegateChildOutcome(
                   await gate.execute(request, signal ? { signal } : {}),
                   request
                 )
+                if (outcome.state === 'succeeded' && governance.retainContinuation) {
+                  signal?.throwIfAborted()
+                  await governance.retainContinuation({
+                    authority: structuredClone(authority),
+                    source: structuredClone(verified),
+                    request: structuredClone(request),
+                    outcome: structuredClone(outcome),
+                  })
+                  await assertToolCurrent(verified.source)
+                  signal?.throwIfAborted()
+                }
+                return outcome
               } catch {
                 fail('PI_CHILD_DELEGATION_REJECTED', 'conflict')
               }

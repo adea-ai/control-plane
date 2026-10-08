@@ -129,7 +129,11 @@ async function childTransport(state) {
 
 export async function createGovernedChildCompositionFixture(
   directory,
-  { revokeChildBeforeDispatch = false } = {}
+  {
+    revokeChildBeforeDispatch = false,
+    childRuntimeFactory = createNodePiDurableRuntime,
+    retainContinuation,
+  } = {}
 ) {
   const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
   await provider.migrate()
@@ -339,7 +343,7 @@ export async function createGovernedChildCompositionFixture(
     },
   }
   try {
-    childRuntime = await createNodePiDurableRuntime({
+    childRuntime = await childRuntimeFactory({
       ...shared,
       directory: join(directory, 'child-runtime'),
       resolveAdmission: async (request) => {
@@ -456,6 +460,7 @@ export async function createGovernedChildCompositionFixture(
         },
       },
       governedDelegateChild: {
+        ...(retainContinuation ? { retainContinuation } : {}),
         prepare: async (authority, verified) => {
           await assertCurrent(authority)
           assert.equal(verified.objective, host.command.delegation.objective)

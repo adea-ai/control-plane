@@ -139,6 +139,17 @@ export interface PiDurableGovernedDelegateChildCompiler {
     authority: DurableExecutionAuthority,
     input: PiDurableVerifiedToolSource
   ) => Promise<DurableToolCallRequest>
+  /** Optional server-only continuation admission. Called after the governed
+   * child has a committed handle, before native Pi receives the outcome. The
+   * host must atomically retain current canonical lineage and approval; this
+   * callback never admits a new child or supplies provider/spending authority.
+   */
+  readonly retainContinuation?: (input: {
+    readonly authority: DurableExecutionAuthority
+    readonly source: PiDurableVerifiedToolSource
+    readonly request: DurableToolCallRequest
+    readonly outcome: PiDurableDelegateChildOutcome
+  }) => Promise<void>
 }
 
 export interface PiDurableRuntimeOptions {
