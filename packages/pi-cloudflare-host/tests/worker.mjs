@@ -42,20 +42,22 @@ const accepted = {
   request,
 }
 
-function taskDefinitions(version) {
+function taskDefinitions(version, beforeCommit) {
   const task = defineTask({
     name: 'cloudflare-qualification',
     version,
     initial: () => ({ phase: 'checkpoint' }),
     phases: {
-      checkpoint: async (runningTask, runtime, context) =>
-        runtime.commit(
+      checkpoint: async (runningTask, runtime, context) => {
+        await beforeCommit?.(runningTask.input)
+        return runtime.commit(
           () => ({
             status: 'terminal',
             outcome: { status: 'completed', result: runningTask.input },
           }),
           context
-        ),
+        )
+      },
     },
     abort: async (_runningTask, runtime, context) =>
       runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context),
@@ -103,8 +105,57 @@ export class RecoveryOwner {
             throw new Error('QUALIFICATION_AUTHORITY_DENIED')
         },
       },
+      reconciliation: env.EFFECTS
+        ? {
+            readSettlement: async (task, owner, recoveryEpoch) => {
+              const response = await env.EFFECTS.fetch('http://fixture/receipt')
+              if (response.status === 404) return undefined
+              if (!response.ok) throw new Error('QUALIFICATION_LEDGER_UNAVAILABLE')
+              const evidence = await response.json()
+              if (stableJson(evidence.task) !== stableJson(task))
+                throw new Error('QUALIFICATION_LEDGER_IDENTITY_DENIED')
+              return {
+                schemaVersion: 1,
+                receiptRef: evidence.receiptRef,
+                task: evidence.task,
+                owner,
+                recoveryEpoch,
+                disposition: 'completed',
+                result: evidence.result,
+              }
+            },
+          }
+        : undefined,
       openEngine: async (storage) => {
-        const definitions = taskDefinitions(1)
+        let activeTask, activeBeforeEffect
+        const definitions = taskDefinitions(
+          1,
+          env.EFFECTS
+            ? async (input) => {
+                if (
+                  !activeTask ||
+                  !activeBeforeEffect ||
+                  input.attemptId !== activeTask.request.attemptId ||
+                  input.planDigest !== activeTask.request.executionPlan.contentDigest
+                )
+                  throw new Error('QUALIFICATION_PENDING_TASK_NOT_AUTHORIZED')
+                await activeBeforeEffect()
+                // The real native Pi task phase stays running while its controlled effect ACK is held.
+                await env.EFFECTS.fetch('http://fixture/effect', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    task: activeTask,
+                    result: {
+                      outcome: 'completed',
+                      output: input,
+                      usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+                      artifacts: [],
+                    },
+                  }),
+                })
+              }
+            : undefined
+        )
         const harness = await Harness.open(
           storage,
           { models: createModels(), registry: definitions.registry },
@@ -112,26 +163,35 @@ export class RecoveryOwner {
         )
         return {
           run: async (task, beforeEffect) => {
+            activeTask = task
+            activeBeforeEffect = beforeEffect
             await beforeEffect()
             const root = await harness.root(BACKGROUND_CONTEXT)
             const taskId = await root.commit(
               (tx) =>
                 tx.createTask(
                   definitions.task,
-                  { planDigest: task.request.executionPlan.contentDigest },
+                  {
+                    planDigest: task.request.executionPlan.contentDigest,
+                    attemptId: task.request.attemptId,
+                  },
                   { ownership: { kind: 'conversation' } }
                 ),
               BACKGROUND_CONTEXT
             )
             const settled = await harness.waitForTask(taskId, BACKGROUND_CONTEXT)
-            return {
+            const result = {
               outcome: 'completed',
               output: settled.state.outcome.result,
               usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
               artifacts: [],
             }
+            return result
           },
-          close: () => harness.close(BACKGROUND_CONTEXT),
+          close: async () => {
+            if (env.EFFECTS) await env.EFFECTS.fetch('http://fixture/close', { method: 'POST' })
+            await harness.close(BACKGROUND_CONTEXT)
+          },
         }
       },
     })
@@ -146,11 +206,26 @@ export class RecoveryOwner {
       pair[1].serializeAttachment(this.pins)
       return new Response(null, { status: 101, webSocket: pair[0] })
     }
+    // Qualification-only public facade routes; not a production Worker transport.
+    if (action === 'public-start')
+      return Response.json(await this.owner.runtimeAdapter().start(request))
+    if (action === 'public-status' || action === 'public-progress') {
+      const input = await httpRequest.json()
+      const adapter = this.owner.runtimeAdapter()
+      if (action === 'public-status') return Response.json(await adapter.status(input.handle))
+      const events = []
+      for await (const event of adapter.progress(input.handle, {
+        afterSequence: input.afterSequence,
+      }))
+        events.push(event)
+      return Response.json(events)
+    }
     if (action === 'accept') return Response.json(await this.owner.accept(request))
     if (action === 'wake') {
       await this.owner.alarm()
       return Response.json(await this.owner.read(request.attemptId))
     }
+    if (action === 'reconcile') return Response.json(await this.owner.reconcile(request.attemptId))
     if (action === 'read')
       return Response.json({
         ...(await this.owner.read(request.attemptId)),
@@ -198,6 +273,7 @@ export class RecoveryOwner {
         return Response.json({
           conversations: (await storage.scanConversations({}, 100, undefined, BACKGROUND_CONTEXT))
             .items,
+          nativeTasks: (await storage.scanTasks({}, 100, undefined, BACKGROUND_CONTEXT)).items,
           events: this.ctx.storage.sql.exec('SELECT * FROM cp_pi_events').toArray(),
         })
       } finally {

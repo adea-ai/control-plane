@@ -1,4 +1,10 @@
-import type { RuntimeExecutionResult, RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import { assertSettlementReceipt } from './reconciliation.js'
+import type { CloudflareSettlementReceipt } from './reconciliation.js'
+import type {
+  RuntimeCancelRequest,
+  RuntimeExecutionResult,
+  RuntimeStartRequest,
+} from '@control-plane/runtime-sdk'
 
 /** Structural subset of a SQLite Durable Object; no Node/process dependencies. */
 export interface CloudflareOwnerStorage {
@@ -40,9 +46,12 @@ type TaskState =
 export interface CloudflareTaskRecord {
   readonly task: CloudflareAcceptedTask
   readonly epoch: number
+  readonly handleId?: string
+  readonly acceptedAt?: number
   readonly state: TaskState
   readonly result?: RuntimeExecutionResult
   readonly observedResult?: RuntimeExecutionResult
+  readonly settlement?: CloudflareSettlementReceipt
 }
 
 /** Deterministic JSON comparison only. Never rewrites or rehashes the canonical plan. */
@@ -69,7 +78,8 @@ export class CloudflareOwnerJournal {
 
   constructor(
     private readonly storage: CloudflareOwnerStorage,
-    pins: CloudflareOwnerPins
+    pins: CloudflareOwnerPins,
+    private readonly now: () => number = Date.now
   ) {
     if (
       pins.schemaVersion !== 1 ||
@@ -96,6 +106,31 @@ export class CloudflareOwnerJournal {
       storage.sql.exec(
         'CREATE TABLE IF NOT EXISTS cp_pi_wake (id INTEGER PRIMARY KEY CHECK (id = 1), due_at INTEGER NOT NULL)'
       )
+      storage.sql.exec(
+        'CREATE TABLE IF NOT EXISTS cp_pi_settlements (attempt_id TEXT PRIMARY KEY, receipt_ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL)'
+      )
+      // Additive nullable columns preserve historical records without inventing timestamps.
+      for (const [table, column] of [
+        ['cp_pi_tasks', 'accepted_at'],
+        ['cp_pi_events', 'occurred_at'],
+        ['cp_pi_tasks', 'handle_id'],
+      ]) {
+        if (
+          !storage.sql
+            .exec(`PRAGMA table_info(${table})`)
+            .toArray()
+            .some((row) => row['name'] === column)
+        )
+          storage.sql.exec(
+            `ALTER TABLE ${table} ADD COLUMN ${column} ${column === 'handle_id' ? 'TEXT' : 'INTEGER'}`
+          )
+      }
+      storage.sql.exec(
+        'CREATE UNIQUE INDEX IF NOT EXISTS cp_pi_handle_identity ON cp_pi_tasks(handle_id)'
+      )
+      storage.sql.exec(
+        'CREATE TABLE IF NOT EXISTS cp_pi_cancel_requests (attempt_id TEXT NOT NULL, replay_key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (attempt_id, replay_key))'
+      )
       const current = storage.sql
         .exec('SELECT pins, epoch FROM cp_pi_owner WHERE id = 1')
         .toArray()[0]
@@ -118,9 +153,10 @@ export class CloudflareOwnerJournal {
       )
       for (const task of interrupted)
         storage.sql.exec(
-          'INSERT INTO cp_pi_events (attempt_id, state) VALUES (?, ?)',
+          'INSERT INTO cp_pi_events (attempt_id, state, occurred_at) VALUES (?, ?, ?)',
           String(task['attempt_id']),
-          'reconciliation_required'
+          'reconciliation_required',
+          this.timestamp()
         )
       return epoch
     })
@@ -140,6 +176,8 @@ export class CloudflareOwnerJournal {
   }
 
   admit(task: CloudflareAcceptedTask, now: number): CloudflareTaskRecord {
+    if (!Number.isSafeInteger(now) || now < 0 || now > 8_640_000_000_000_000)
+      throw new Error('CLOUDFLARE_WAKE_TIME_INVALID')
     const body = stableJson(task)
     return this.storage.transactionSync(() => {
       this.assertOwner()
@@ -157,17 +195,20 @@ export class CloudflareOwnerJournal {
         return this.decode(rows[0])
       }
       this.storage.sql.exec(
-        'INSERT INTO cp_pi_tasks (attempt_id, replay_key, body, state, epoch) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO cp_pi_tasks (attempt_id, replay_key, body, state, epoch, accepted_at, handle_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
         attemptId,
         idempotencyKey,
         body,
         'accepted',
-        this.epoch
+        this.epoch,
+        now,
+        crypto.randomUUID()
       )
       this.storage.sql.exec(
-        'INSERT INTO cp_pi_events (attempt_id, state) VALUES (?, ?)',
+        'INSERT INTO cp_pi_events (attempt_id, state, occurred_at) VALUES (?, ?, ?)',
         attemptId,
-        'accepted'
+        'accepted',
+        now
       )
       this.markWake(now)
       return this.get(attemptId)
@@ -214,11 +255,42 @@ export class CloudflareOwnerJournal {
         attemptId
       )
       this.storage.sql.exec(
-        'INSERT INTO cp_pi_events (attempt_id, state) VALUES (?, ?)',
+        'INSERT INTO cp_pi_events (attempt_id, state, occurred_at) VALUES (?, ?, ?)',
         attemptId,
-        to
+        to,
+        this.timestamp()
       )
       return this.get(attemptId)
+    })
+  }
+
+  cancel(attemptId: string, request?: RuntimeCancelRequest): CloudflareTaskRecord {
+    return this.storage.transactionSync(() => {
+      const current = this.get(attemptId)
+      if (request) {
+        const body = stableJson(request)
+        const prior = this.storage.sql
+          .exec(
+            'SELECT body FROM cp_pi_cancel_requests WHERE attempt_id = ? AND replay_key = ?',
+            attemptId,
+            request.idempotencyKey
+          )
+          .toArray()[0]
+        if (prior && prior['body'] !== body) throw new Error('CLOUDFLARE_CANCEL_REPLAY_CONFLICT')
+        if (!prior)
+          this.storage.sql.exec(
+            'INSERT INTO cp_pi_cancel_requests(attempt_id, replay_key, body) VALUES (?, ?, ?)',
+            attemptId,
+            request.idempotencyKey,
+            body
+          )
+      }
+      if (['completed', 'cancelled', 'cancelling'].includes(current.state)) return current
+      return this.transition(
+        attemptId,
+        current.state,
+        current.state === 'accepted' ? 'cancelled' : 'cancelling'
+      )
     })
   }
 
@@ -239,6 +311,49 @@ export class CloudflareOwnerJournal {
     })
   }
 
+  /** Atomic receipt/outcome/event commit; never transitions interrupted work back to running. */
+  settle(attemptId: string, receipt: CloudflareSettlementReceipt): CloudflareTaskRecord {
+    return this.storage.transactionSync(() => {
+      this.assertOwner()
+      // The authorized request selects the target; ledger output cannot redirect settlement.
+      const current = this.get(attemptId)
+      assertSettlementReceipt(
+        receipt,
+        current,
+        JSON.parse(this.pinsJson) as CloudflareOwnerPins,
+        this.epoch
+      )
+      const body = stableJson(receipt)
+      if (current.settlement) {
+        if (stableJson(current.settlement) !== body)
+          throw new Error('CLOUDFLARE_SETTLEMENT_REPLAY_CONFLICT')
+        return current
+      }
+      if (!['reconciliation_required', 'cancelling'].includes(current.state))
+        throw new Error('CLOUDFLARE_SETTLEMENT_STATE_DENIED')
+      this.storage.sql.exec(
+        'INSERT INTO cp_pi_settlements (attempt_id, receipt_ref, body) VALUES (?, ?, ?)',
+        attemptId,
+        receipt.receiptRef,
+        body
+      )
+      this.storage.sql.exec(
+        'UPDATE cp_pi_tasks SET state = ?, epoch = ?, result = ? WHERE attempt_id = ?',
+        receipt.disposition,
+        this.epoch,
+        receipt.result === undefined ? null : stableJson(receipt.result),
+        attemptId
+      )
+      this.storage.sql.exec(
+        'INSERT INTO cp_pi_events (attempt_id, state, occurred_at) VALUES (?, ?, ?)',
+        attemptId,
+        receipt.disposition,
+        this.timestamp()
+      )
+      return this.get(attemptId)
+    })
+  }
+
   events(attemptId: string, afterSequence = 0): readonly { sequence: number; state: string }[] {
     this.get(attemptId)
     if (!Number.isSafeInteger(afterSequence) || afterSequence < 0)
@@ -251,6 +366,35 @@ export class CloudflareOwnerJournal {
       )
       .toArray()
       .map((row) => ({ sequence: Number(row['sequence']), state: String(row['state']) }))
+  }
+
+  timedEvents(
+    attemptId: string,
+    afterSequence = 0
+  ): readonly { sequence: number; state: string; occurredAt: number }[] {
+    this.events(attemptId, afterSequence) // Validate owner, attempt and cursor before querying.
+    return this.storage.sql
+      .exec(
+        'SELECT sequence, state, occurred_at FROM cp_pi_events WHERE attempt_id = ? AND sequence > ? ORDER BY sequence',
+        attemptId,
+        afterSequence
+      )
+      .toArray()
+      .map((row) => {
+        if (row['occurred_at'] == null) throw new Error('CLOUDFLARE_HISTORICAL_TIMING_UNAVAILABLE')
+        return {
+          sequence: Number(row['sequence']),
+          state: String(row['state']),
+          occurredAt: Number(row['occurred_at']),
+        }
+      })
+  }
+
+  private timestamp(): number {
+    const value = this.now()
+    if (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000)
+      throw new Error('CLOUDFLARE_TIME_INVALID')
+    return value
   }
 
   pending(afterAttemptId = ''): readonly CloudflareTaskRecord[] {
@@ -291,7 +435,15 @@ export class CloudflareOwnerJournal {
   }
 
   private decode(row: Record<string, unknown>): CloudflareTaskRecord {
+    const settlement = this.storage.sql
+      .exec('SELECT body FROM cp_pi_settlements WHERE attempt_id = ?', String(row['attempt_id']))
+      .toArray()[0]
     return {
+      ...(settlement
+        ? { settlement: JSON.parse(String(settlement['body'])) as CloudflareSettlementReceipt }
+        : {}),
+      ...(row['handle_id'] == null ? {} : { handleId: String(row['handle_id']) }),
+      ...(row['accepted_at'] == null ? {} : { acceptedAt: Number(row['accepted_at']) }),
       task: JSON.parse(String(row['body'])) as CloudflareAcceptedTask,
       epoch: Number(row['epoch']),
       state: row['state'] as TaskState,

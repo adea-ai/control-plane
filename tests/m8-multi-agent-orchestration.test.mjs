@@ -139,6 +139,7 @@ describe('M8 multi-agent orchestration acceptance', () => {
 
     const replay = await fixture.delegations.recordChildProgress({
       delegationId: ids.researchDelegationId,
+      childAttemptId: ids.researchAttemptId,
       state: 'completed',
       observedAt: '2026-08-25T20:02:00.000Z',
       terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
@@ -205,11 +206,13 @@ describe('M8 multi-agent orchestration acceptance', () => {
     })
     await runtimeFixture.delegations.recordChildProgress({
       delegationId: ids.researchDelegationId,
+      childAttemptId: ids.researchAttemptId,
       state: 'running',
       observedAt: '2026-08-25T20:01:00.000Z',
     })
     const unavailable = await runtimeFixture.delegations.recordChildProgress({
       delegationId: ids.researchDelegationId,
+      childAttemptId: ids.researchAttemptId,
       state: 'failed',
       observedAt: '2026-08-25T20:02:00.000Z',
       failure: {
@@ -232,6 +235,7 @@ describe('M8 multi-agent orchestration acceptance', () => {
     await expect(
       cancellationFixture.delegations.recordChildProgress({
         delegationId: ids.researchDelegationId,
+        childAttemptId: ids.researchAttemptId,
         state: 'completed',
         observedAt: '2026-08-25T20:01:00.000Z',
         terminalResultRef: 'art_01JBBCDEF0123456789ABCDEFG',
@@ -469,13 +473,17 @@ function branch(parentPlan, input) {
 }
 
 async function completeChild(service, delegationId, terminalResultRef) {
+  const childAttemptId =
+    delegationId === ids.researchDelegationId ? ids.researchAttemptId : ids.implementationAttemptId
   await service.recordChildProgress({
     delegationId,
+    childAttemptId,
     state: 'running',
     observedAt: '2026-08-25T20:01:00.000Z',
   })
   return service.recordChildProgress({
     delegationId,
+    childAttemptId,
     state: 'completed',
     observedAt: '2026-08-25T20:02:00.000Z',
     terminalResultRef,

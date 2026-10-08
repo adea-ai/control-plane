@@ -1,0 +1,44 @@
+{
+  "name": "@control-plane/pi-durable-adapter",
+  "version": "0.2.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "browser": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "node": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint src",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@control-plane/contracts": "workspace:*",
+    "@control-plane/domain": "workspace:*",
+    "@control-plane/execution-plan": "workspace:*",
+    "@control-plane/model-gateway": "workspace:*",
+    "@control-plane/orchestration": "workspace:*",
+    "@control-plane/runtime-sdk": "workspace:*",
+    "@control-plane/tool-execution": "workspace:*",
+    "@control-plane/tool-sdk": "workspace:*",
+    "@control-plane/usage-ledger": "workspace:*",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@control-plane/sqlite-persistence": "workspace:*"
+  },
+  "engines": {
+    "node": "24.21.0"
+  }
+}

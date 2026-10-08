@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.34.0...sqlite-persistence-v1.35.0) (2026-10-08)
+
+
+### Features
+
+* retain governed Pi child admission and report-back ([#929](https://github.com/adea-ai/control-plane/issues/929)) ([06efbc3](https://github.com/adea-ai/control-plane/commit/06efbc3b8d7246d1a2b0f3978bcfd44d13ac8205))
+
 ## [1.34.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.33.2...sqlite-persistence-v1.34.0) (2026-10-08)
 
 

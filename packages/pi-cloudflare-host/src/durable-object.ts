@@ -1,6 +1,8 @@
 import type { Context } from '@earendil-works/chord'
-import type { RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import type { RuntimeCancelRequest, RuntimeStartRequest } from '@control-plane/runtime-sdk'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
+import type { CloudflareReconciliationAuthority } from './reconciliation.js'
+import { CloudflarePiRuntimeAdapter } from './adapter.js'
 import { CloudflarePiHost } from './host.js'
 import type { CloudflareCurrentAuthority, CloudflarePiEngine } from './host.js'
 import { CloudflareOwnerJournal } from './owner.js'
@@ -16,6 +18,7 @@ export interface CloudflareOwnerContext {
 export interface CloudflareOwnerBindings {
   readonly context: Context
   readonly pins: CloudflareOwnerPins
+  readonly reconciliation?: CloudflareReconciliationAuthority
   readonly authority: CloudflareCurrentAuthority
   readonly now: () => number
   readonly openEngine: (
@@ -33,30 +36,41 @@ export class CloudflarePiDurableOwner {
   ) {
     const pins = Object.freeze({ ...bindings.pins })
     this.ready = context.blockConcurrencyWhile(async () => {
-      const journal = new CloudflareOwnerJournal(context.storage, pins)
+      const journal = new CloudflareOwnerJournal(context.storage, pins, bindings.now)
       // On every constructor reentry, repair persisted wake intent before serving events.
       await journal.repairAlarm()
-      const host = new CloudflarePiHost(journal, pins, bindings.authority, async () => {
-        const storage = await openCloudflarePiStorage(context.storage)
-        try {
-          const engine = await bindings.openEngine(storage)
-          return {
-            run: (task, effect) => engine.run(task, effect),
-            close: async () => {
-              try {
-                await engine.close()
-              } finally {
-                await storage.close(bindings.context)
-              }
-            },
+      const host = new CloudflarePiHost(
+        journal,
+        pins,
+        bindings.authority,
+        async () => {
+          const storage = await openCloudflarePiStorage(context.storage)
+          try {
+            const engine = await bindings.openEngine(storage)
+            return {
+              run: (task, effect) => engine.run(task, effect),
+              close: async () => {
+                try {
+                  await engine.close()
+                } finally {
+                  await storage.close(bindings.context)
+                }
+              },
+            }
+          } catch (error) {
+            await storage.close(bindings.context)
+            throw error
           }
-        } catch (error) {
-          await storage.close(bindings.context)
-          throw error
-        }
-      })
+        },
+        bindings.reconciliation
+      )
       return { journal, host }
     })
+  }
+
+  /** Explicit local composition only; does not register or activate a Worker profile. */
+  runtimeAdapter(): CloudflarePiRuntimeAdapter {
+    return new CloudflarePiRuntimeAdapter(this, this.bindings.now)
   }
 
   async accept(request: RuntimeStartRequest) {
@@ -71,8 +85,16 @@ export class CloudflarePiDurableOwner {
     return (await this.ready).host.events(attemptId, afterSequence)
   }
 
-  async cancel(attemptId: string) {
-    return (await this.ready).host.cancel(attemptId)
+  async timedEvents(attemptId: string, afterSequence = 0) {
+    return (await this.ready).host.timedEvents(attemptId, afterSequence)
+  }
+
+  async reconcile(attemptId: string) {
+    return (await this.ready).host.reconcile(attemptId)
+  }
+
+  async cancel(attemptId: string, request?: RuntimeCancelRequest) {
+    return (await this.ready).host.cancel(attemptId, request)
   }
 
   async alarm(): Promise<void> {

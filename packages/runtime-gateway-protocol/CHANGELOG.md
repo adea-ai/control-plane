@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.6.2...runtime-gateway-protocol-v1.7.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
 ## [1.6.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.6.1...runtime-gateway-protocol-v1.6.2) (2026-10-01)
 
 

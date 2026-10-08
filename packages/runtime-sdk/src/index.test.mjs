@@ -62,6 +62,20 @@ describe('runtime capability vocabulary', () => {
     ).toThrow('Capability requirements must be unique')
   })
 
+  test('legacy runtime fixtures cannot satisfy explicit workspace execution requirements', () => {
+    for (const fixture of Object.values(RuntimeFixtures)) {
+      expect(
+        evaluateCapabilities(fixture.capabilities, [
+          { capability: 'execution.scope.workspace.v1', necessity: 'required' },
+        ])
+      ).toMatchObject({
+        eligible: false,
+        mode: 'ineligible',
+        missingRequired: ['execution.scope.workspace.v1'],
+      })
+    }
+  })
+
   test('keeps every session operation independently representable', () => {
     const sessionCapabilities = [
       'session.create',

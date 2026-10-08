@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.3.0...pi-cloudflare-host-v0.4.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
+## [0.3.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.2.0...pi-cloudflare-host-v0.3.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** reconcile interrupted Cloudflare Pi effects ([#971](https://github.com/adea-ai/control-plane/issues/971)) ([b0d6b8a](https://github.com/adea-ai/control-plane/commit/b0d6b8aa921bddeef5366ead44efbb0cd92b4b39))
+
 ## [0.2.0](https://github.com/adea-ai/control-plane/compare/pi-cloudflare-host-v0.1.0...pi-cloudflare-host-v0.2.0) (2026-10-08)
 
 

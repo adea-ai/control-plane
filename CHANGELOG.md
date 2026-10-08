@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.83.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.82.0...workspace-v1.83.0) (2026-10-08)
+
+
+### Features
+
+* compose partial Cloudflare runtime adapter ([#977](https://github.com/adea-ai/control-plane/issues/977)) ([cd26e7f](https://github.com/adea-ai/control-plane/commit/cd26e7f55065e39998b633c78ec518747d777d1c))
+
+## [1.82.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.81.0...workspace-v1.82.0) (2026-10-08)
+
+
+### Features
+
+* **pi-durable:** add persistent governed Node runtime and funded lead admission ([#949](https://github.com/adea-ai/control-plane/issues/949)) ([2ad205f](https://github.com/adea-ai/control-plane/commit/2ad205f783c09a0cc7e208d5c799d6c18636500a))
+
+## [1.81.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.80.0...workspace-v1.81.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** reconcile interrupted Cloudflare Pi effects ([#971](https://github.com/adea-ai/control-plane/issues/971)) ([b0d6b8a](https://github.com/adea-ai/control-plane/commit/b0d6b8aa921bddeef5366ead44efbb0cd92b4b39))
+
+## [1.80.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.79.0...workspace-v1.80.0) (2026-10-08)
+
+
+### Features
+
+* retain governed Pi child admission and report-back ([#929](https://github.com/adea-ai/control-plane/issues/929)) ([06efbc3](https://github.com/adea-ai/control-plane/commit/06efbc3b8d7246d1a2b0f3978bcfd44d13ac8205))
+
 ## [1.79.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.78.0...workspace-v1.79.0) (2026-10-08)
 
 
