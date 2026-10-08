@@ -41,8 +41,17 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
       env: { ...process.env, NODE_NO_WARNINGS: '1' },
     })
     let output = ''
+    let stdout = ''
+    const events = []
     child.stdout.on('data', (chunk) => {
       output = `${output}${chunk}`.slice(-16384)
+      stdout += chunk
+      const lines = stdout.split('\n')
+      stdout = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('{')) continue
+        events.push(JSON.parse(line))
+      }
     })
     child.stderr.on('data', (chunk) => {
       output = `${output}${chunk}`.slice(-16384)
@@ -53,7 +62,7 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
     })
     // Attach a handler immediately; callers still observe the original failure.
     exit.catch(() => {})
-    const owned = { child, exit, output: () => output }
+    const owned = { child, exit, events, output: () => output }
     children.add(owned)
     return owned
   }
@@ -61,7 +70,7 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
     const deadline = Date.now() + timeout
     while (Date.now() < deadline) {
       const rows = await evidence()
-      const result = predicate(rows)
+      const result = predicate([...rows, ...(owned?.events ?? [])])
       if (result) return result
       if (owned && (owned.child.exitCode !== null || owned.child.signalCode !== null)) {
         throw new Error(`J1_WORKER_EXIT_BEFORE_EVIDENCE: ${owned.output()}`)

@@ -40,6 +40,7 @@ test('J1 unfinished child resumes the same native session after parent completio
     const replay = await recover(harness)
     expect(replay.handle).toEqual(snapshot.handle)
     expect(replay.grant).toEqual(original.grant)
+    expect(replay.replayOriginalRetained).toBe(true)
     expect(replay.modelUsageCount).toBe(1)
     expect(replay.inboxTerminalCount).toBe(1)
     expect(harness.transport.requests).toHaveLength(1)
