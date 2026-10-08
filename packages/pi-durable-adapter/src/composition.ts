@@ -37,6 +37,9 @@ export async function createNodePiDurableRuntime(options: NodePiDurableCompositi
       ? {
           governedDelegateChild: {
             prepare: governedDelegateChild.prepare,
+            ...(governedDelegateChild.retainContinuation
+              ? { retainContinuation: governedDelegateChild.retainContinuation }
+              : {}),
             gate: () => {
               if (!effects) throw new Error('PI_GOVERNED_TOOL_GATE_REQUIRED')
               return effects

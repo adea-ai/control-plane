@@ -1,7 +1,19 @@
 import type { Context } from '@earendil-works/chord'
-import type { RuntimeCancelRequest, RuntimeStartRequest } from '@control-plane/runtime-sdk'
+import type {
+  RuntimeCancelRequest,
+  RuntimeStartRequest,
+  RuntimeSessionOperation,
+} from '@control-plane/runtime-sdk'
+import { RuntimeSessionOperationSchema } from '@control-plane/runtime-sdk'
 import type { DurableObjectSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/cloudflare'
 import type { CloudflareReconciliationAuthority } from './reconciliation.js'
+import {
+  CloudflareReadOnlySessions,
+  CloudflareSessionJournal,
+  parseBinding,
+  sessionError,
+} from './sessions.js'
+import type { CloudflareSessionAuthority, CloudflareSessionBinding } from './sessions.js'
 import { CloudflarePiRuntimeAdapter } from './adapter.js'
 import { CloudflarePiHost } from './host.js'
 import type { CloudflareCurrentAuthority, CloudflarePiEngine } from './host.js'
@@ -19,6 +31,7 @@ export interface CloudflareOwnerBindings {
   readonly context: Context
   readonly pins: CloudflareOwnerPins
   readonly reconciliation?: CloudflareReconciliationAuthority
+  readonly sessionAuthority?: CloudflareSessionAuthority
   readonly authority: CloudflareCurrentAuthority
   readonly now: () => number
   readonly openEngine: (
@@ -28,7 +41,11 @@ export interface CloudflareOwnerBindings {
 
 /** Thin initialization/alarm seam. Production Worker routing and capability activation remain unavailable. */
 export class CloudflarePiDurableOwner {
-  private readonly ready: Promise<{ journal: CloudflareOwnerJournal; host: CloudflarePiHost }>
+  private readonly ready: Promise<{
+    journal: CloudflareOwnerJournal
+    host: CloudflarePiHost
+    sessions?: CloudflareReadOnlySessions
+  }>
 
   constructor(
     context: CloudflareOwnerContext,
@@ -64,13 +81,40 @@ export class CloudflarePiDurableOwner {
         },
         bindings.reconciliation
       )
-      return { journal, host }
+      const sessions = bindings.sessionAuthority
+        ? new CloudflareReadOnlySessions(
+            journal,
+            new CloudflareSessionJournal(context.storage, journal),
+            pins,
+            bindings.authority,
+            bindings.sessionAuthority,
+            () => openCloudflarePiStorage(context.storage),
+            bindings.context,
+            bindings.now
+          )
+        : undefined
+      return { journal, host, ...(sessions ? { sessions } : {}) }
     })
   }
 
   /** Explicit local composition only; does not register or activate a Worker profile. */
   runtimeAdapter(): CloudflarePiRuntimeAdapter {
     return new CloudflarePiRuntimeAdapter(this, this.bindings.now)
+  }
+
+  /** Trusted composition only: verify an existing canonical session/native record, never mint authority. */
+  async bindSession(binding: CloudflareSessionBinding): Promise<void> {
+    const snapshot = parseBinding(binding)
+    const { sessions } = await this.ready
+    if (!sessions) throw sessionError('CLOUDFLARE_SESSION_UNSUPPORTED', 'unsupported')
+    await sessions.bind(snapshot)
+  }
+
+  async session(operation: RuntimeSessionOperation) {
+    const snapshot = RuntimeSessionOperationSchema.parse(operation)
+    const { sessions } = await this.ready
+    if (!sessions) throw sessionError('CLOUDFLARE_SESSION_UNSUPPORTED', 'unsupported')
+    return sessions.operation(snapshot)
   }
 
   async accept(request: RuntimeStartRequest) {

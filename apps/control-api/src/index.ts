@@ -247,6 +247,7 @@ export * from './pi-durable/lead-preparation.js'
 export * from './pi-durable/unused-lead-allocation.js'
 export * from './pi-durable/child-progress-scanner.js'
 export * from './pi-durable/lead-running-lifecycle.js'
+export * from './pi-durable/sqlite-child-continuations.js'
 export * from './pi-durable/model-product-authority.js'
 
 export * from './models/model-connections.service.js'

@@ -82,6 +82,16 @@ test.skipIf(!enabled)(
       expect(before.result.output.planDigest).toBe(
         accepted.task.request.executionPlan.contentDigest
       )
+      expect(await json('context-a/session-bind')).toEqual({ bound: true })
+      expect(await json('context-a/session-bind')).toEqual({ bound: true })
+      const session = (await json('context-a/session-load')).session
+      expect(session.state).toBe('active')
+      expect(
+        (await json('context-a/session-list')).sessions.map((value) => value.sessionId)
+      ).toEqual([session.sessionId])
+      expect((await mf.dispatchFetch('http://qualification/context-b/session-list')).status).toBe(
+        500
+      )
       const summary = await json('context-a/summary')
       expect(summary.conversations).toHaveLength(1)
       expect(summary.events.map((event) => event.state)).toEqual([
@@ -151,6 +161,12 @@ test.skipIf(!enabled)(
         'running',
         'completed',
       ])
+      const pendingNative = (await json('context-a/summary')).nativeTasks
+      expect((await json('context-a/session-load')).session.sessionId).toBe(session.sessionId)
+      expect(
+        (await json('context-a/session-list')).sessions.map((value) => value.sessionId)
+      ).toEqual([session.sessionId])
+      expect((await json('context-a/summary')).nativeTasks).toEqual(pendingNative)
       const upgraded = await json(`context-a/finish?taskId=${checkpoint.taskId}`)
       expect(upgraded.conversationId).toBe(checkpoint.conversationId)
       expect(upgraded.task.version).toBe(2)
@@ -178,6 +194,21 @@ test.skipIf(!enabled)(
       )
       expect((await json('context-a/read')).result).toEqual(before.result)
       expect((await json('context-a/summary')).events).toEqual(summary.events)
+      await mf.dispose()
+      mf = undefined
+      mf = new Miniflare(
+        convertV4MiniflareOptions({
+          ...options,
+          bindings: { ...options.bindings, TASK_VERSION: '2', SESSION_REVOKED: 'true' },
+        })
+      )
+      expect((await mf.dispatchFetch('http://qualification/context-a/session-load')).status).toBe(
+        500
+      )
+      expect((await mf.dispatchFetch('http://qualification/context-a/session-list')).status).toBe(
+        500
+      )
+      expect((await json('context-a/read')).result).toEqual(before.result)
     } finally {
       socket?.close()
       await mf?.dispose()

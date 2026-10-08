@@ -6,6 +6,7 @@ import {
   RuntimeExecutionProgressSchema,
   RuntimeCancelRequestSchema,
   RuntimeStartRequestSchema,
+  RuntimeSessionOperationSchema,
   inspectRuntimeCapabilities,
 } from '@control-plane/runtime-sdk'
 import type {
@@ -28,6 +29,7 @@ import { stableJson } from './owner.js'
 
 /** Trusted in-process owner port; not caller-supplied HTTP authority or a Worker route. */
 export interface CloudflareRuntimeOwner {
+  session?(operation: RuntimeSessionOperation): Promise<RuntimeSessionResult>
   accept(request: RuntimeStartRequest): Promise<CloudflareTaskRecord>
   read(attemptId: string): Promise<CloudflareTaskRecord>
   timedEvents(
@@ -68,7 +70,7 @@ export class CloudflarePiRuntimeAdapter implements RuntimeAdapter {
       capabilities: [],
       limitations: [
         'Internal Cloudflare owner composition only; no deployment profile or capabilities advertised.',
-        'Input, approval, sessions and cleanup are unsupported.',
+        'Input, approval, session mutation/history and cleanup are unsupported; session load/list require explicit current canonical session authority.',
         'Interrupted native checkpoints remain quarantined; trusted reconciliation never resends effects.',
       ],
       observedAt: this.observedAt(),
@@ -142,8 +144,11 @@ export class CloudflarePiRuntimeAdapter implements RuntimeAdapter {
   ): Promise<RuntimeExecutionStatus> {
     throw failure('CLOUDFLARE_APPROVAL_UNSUPPORTED', 'unsupported')
   }
-  async session(_operation: RuntimeSessionOperation): Promise<RuntimeSessionResult> {
-    throw failure('CLOUDFLARE_SESSION_UNSUPPORTED', 'unsupported')
+  async session(input: RuntimeSessionOperation): Promise<RuntimeSessionResult> {
+    const operation = RuntimeSessionOperationSchema.parse(input)
+    if (!this.owner.session || !['load', 'list'].includes(operation.operation))
+      throw failure('CLOUDFLARE_SESSION_UNSUPPORTED', 'unsupported')
+    return this.owner.session(operation)
   }
   async cleanup(_handle: RuntimeExecutionHandle): Promise<void> {
     throw failure('CLOUDFLARE_CLEANUP_UNSUPPORTED', 'unsupported')
