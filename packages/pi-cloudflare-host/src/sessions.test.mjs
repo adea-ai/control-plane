@@ -63,7 +63,7 @@ import { CloudflareReadOnlySessions } from './sessions.ts'
 import { CloudflarePiRuntimeAdapter } from './adapter.ts'
 import { openCloudflarePiStorage } from './storage.ts'
 
-async function nativeFixture() {
+async function nativeFixture(sessionCount = 1) {
   const f = fixture()
   await f.host.accept(request, 42)
   const seed = await openCloudflarePiStorage(f.storage)
@@ -71,6 +71,18 @@ async function nativeFixture() {
   await seed.commit([{ type: 'conversation', value: { id: nativeId } }], BACKGROUND_CONTEXT)
   await seed.close(BACKGROUND_CONTEXT)
   const exact = { ...binding, nativeConversationId: nativeId }
+  const allBindings = [exact]
+  for (let index = 1; index < sessionCount; index++) {
+    const extra = await openCloudflarePiStorage(f.storage)
+    const extraId = await extra.mintId()
+    await extra.commit([{ type: 'conversation', value: { id: extraId } }], BACKGROUND_CONTEXT)
+    await extra.close(BACKGROUND_CONTEXT)
+    allBindings.push({
+      ...binding,
+      sessionId: `ses_${String(index + 1).padStart(26, '0')}`,
+      nativeConversationId: extraId,
+    })
+  }
   let revoked = false,
     expiresAt = 100,
     nativeReads = 0,
@@ -84,8 +96,7 @@ async function nativeFixture() {
       if (revoked || expiresAt <= 42) throw new Error('SESSION_AUTHORITY_REVOKED')
       for (const entry of entries) {
         if (
-          entry.binding.sessionId !== exact.sessionId ||
-          entry.binding.nativeConversationId !== nativeId ||
+          !allBindings.some((candidate) => stableJson(candidate) === stableJson(entry.binding)) ||
           entry.task.canonicalActorPrincipalId !== 'user:00000000-0000-0000-0000-000000000001' ||
           stableJson(entry.task.request) !== stableJson(request)
         )
@@ -124,6 +135,7 @@ async function nativeFixture() {
   return {
     ...f,
     exact,
+    allBindings,
     sessions,
     create,
     sessionAuthority: authority,
@@ -393,3 +405,29 @@ test('owner snapshots binding and direct session operation before initialization
     f.db.close()
   }
 })
+
+for (const change of ['revocation', 'epoch']) {
+  test(`two-session list stops before the next native read after ${change}`, async () => {
+    const f = await nativeFixture(2)
+    try {
+      for (const entry of f.allBindings) await f.sessions.bind(entry)
+      const before = f.nativeCounts()
+      let changed = false
+      f.onRead(() => {
+        if (changed) return
+        changed = true
+        if (change === 'revocation') f.revokeSession()
+        else new CloudflareOwnerJournal(f.storage, pins).assertOwner()
+      })
+      await expect(f.sessions.operation({ operation: 'list' })).rejects.toThrow(
+        change === 'revocation' ? 'SESSION_AUTHORITY_REVOKED' : 'CLOUDFLARE_OWNER_STALE'
+      )
+      expect(f.nativeCounts().nativeReads - before.nativeReads).toBe(1)
+      expect(f.nativeCounts().nativeCloses - before.nativeCloses).toBe(1)
+      expect(f.counts().opens).toBe(0)
+      expect(f.db.query('SELECT * FROM cp_pi_sessions').all()).toHaveLength(2)
+    } finally {
+      f.db.close()
+    }
+  })
+}

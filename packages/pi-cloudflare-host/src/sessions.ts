@@ -207,6 +207,7 @@ export class CloudflareReadOnlySessions {
           entry.binding.nativeConversationId as ConversationId,
           this.context
         )
+        await this.assertCurrent(entries, operation, retained)
         if (native?.id !== entry.binding.nativeConversationId)
           throw sessionError('CLOUDFLARE_NATIVE_CONVERSATION_MISSING', 'unavailable')
       }
