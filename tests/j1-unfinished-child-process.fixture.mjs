@@ -1,5 +1,6 @@
 // Test-owned process harness. Only children spawned here may be signalled.
 import { spawn } from 'node:child_process'
+import assert from 'node:assert/strict'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -9,6 +10,71 @@ const worker = fileURLToPath(
   new URL('./pi-child-continuation-process.fixture.mjs', import.meta.url)
 )
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+export function assertJ1DeniedRecovery(snapshot, reason) {
+  assert.ok(['PI_CHILD_CONTINUATION_REJECTED', 'PI_CHILD_CONTINUATION_DENIED'].includes(reason))
+  const classification =
+    reason === 'PI_CHILD_CONTINUATION_REJECTED' ? 'missing_grant' : 'expired_grant'
+  assert.equal(snapshot.schemaVersion, 'pi-child-recovery-evidence/v1')
+  assert.equal(snapshot.recoveryOutcome, 'expected_denial')
+  assert.equal(snapshot.recoveryBoundary, 'assert_resume')
+  assert.equal(snapshot.blocked, true)
+  assert.equal(snapshot.reason, reason)
+  assert.deepEqual(snapshot.rejection, { stage: 'assert_resume', code: reason, classification })
+  const condition = snapshot.expectedCanonicalCondition
+  assert.equal(condition.kind, classification)
+  assert.equal(condition.parentState, 'completed')
+  assert.equal(condition.parentState, snapshot.parentState)
+  assert.equal(condition.grantPresent, classification === 'expired_grant')
+  if (classification === 'missing_grant') assert.equal(snapshot.grant, null)
+  if (classification === 'expired_grant') {
+    assert.equal(condition.expiresAt, snapshot.grant.expiresAt)
+    assert.ok(Number.isFinite(Date.parse(condition.now)))
+    assert.ok(Date.parse(condition.now) >= Date.parse(condition.expiresAt))
+  }
+}
+
+export function assertJ1QuarantinedRecovery(snapshot) {
+  assert.equal(snapshot.schemaVersion, 'pi-child-recovery-evidence/v1')
+  assert.equal(snapshot.recoveryOutcome, 'pending_physical_send')
+  assert.equal(snapshot.recoveryBoundary, 'runtime_recover')
+  assert.equal(snapshot.pendingReason, 'PI_PROCESS_PHYSICAL_SEND_PENDING')
+  assert.equal(snapshot.runtimeConstructed, true)
+  assert.equal(snapshot.drainCompleted, true)
+  assert.notEqual(snapshot.blocked, true)
+  assert.equal(snapshot.reason, undefined)
+  assert.equal(snapshot.reconciled, false)
+  assert.equal(snapshot.state, 'unknown')
+}
+
+export function assertJ1ConcurrentRecovery(snapshots) {
+  assert.equal(snapshots.length, 2)
+  assert.notEqual(snapshots[0].pid, snapshots[1].pid)
+  for (const snapshot of snapshots) {
+    assert.ok(Number.isSafeInteger(snapshot.pid))
+    assert.ok(snapshot.pid > 0)
+    assert.equal(snapshot.schemaVersion, 'pi-child-recovery-evidence/v1')
+    assert.equal(snapshot.recoveryBoundary, 'runtime_recover')
+    assert.equal(snapshot.runtimeConstructed, true)
+    assert.equal(snapshot.drainCompleted, true)
+    assert.notEqual(snapshot.blocked, true)
+    assert.equal(snapshot.reason, undefined)
+    assert.ok(['starting', 'running', 'completed'].includes(snapshot.state))
+    assert.ok(Number.isSafeInteger(snapshot.journalOwnership.epoch))
+    assert.ok(snapshot.journalOwnership.epoch > 0)
+    if (snapshot.state === 'completed') {
+      assert.equal(snapshot.recoveryOutcome, 'completed')
+      assert.equal(snapshot.reconciled, true)
+    } else {
+      assert.equal(snapshot.recoveryOutcome, 'competing_owner')
+      assert.ok(Number.isSafeInteger(snapshot.journalOwnership.ownerPid))
+      assert.ok(snapshot.journalOwnership.ownerPid > 0)
+      assert.notEqual(snapshot.journalOwnership.ownerPid, snapshot.pid)
+      assert.equal(snapshot.journalOwnership.ownerEpoch, snapshot.journalOwnership.epoch)
+    }
+  }
+  assert.ok(snapshots.some((snapshot) => snapshot.state === 'completed'))
+}
 
 export async function createUnfinishedChildProcessHarness(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'j1-unfinished-child-'))
