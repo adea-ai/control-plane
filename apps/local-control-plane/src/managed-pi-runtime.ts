@@ -10,12 +10,16 @@ import {
   ManagedPiDriver,
   ManagedPiProcessClient,
   type ManagedPiProcessInputResolver,
+  type ManagedPiProcessInvocation,
+  type ManagedPiProcessInvocationContext,
 } from '@control-plane/managed-pi-adapter'
 import {
   DirectLocalRuntimeTransport,
   type RuntimeAdapterWithTransport,
 } from '@control-plane/runtime-sdk'
-import type { NodeProcessSpawnPolicy } from '@control-plane/deployment'
+import type { NodeProcessSpawnPolicy, SecretsProvider } from '@control-plane/deployment'
+import type { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { createManagedPiModelConnection } from './managed-model-runtime.js'
 import {
   resolvePublishedRuntimeInputs,
   type LocalRuntimeApprovalGate,
@@ -41,9 +45,17 @@ export interface LocalManagedPiRuntimeRepositories {
   >
   readonly contextPackages: Pick<ContextPackageRepository, 'get'>
   readonly dataDirectory: string
+  readonly usageLedger: DurableUsageLedger
+  readonly secrets: SecretsProvider
   /** Optional approval enforcement (#188); absent leaves resolution unchanged. */
   readonly catalogApproval?: LocalRuntimeApprovalGate
 }
+
+type ModelConnectionFactory = (
+  configuration: ReturnType<typeof ManagedPiConfigurationSchema.parse>,
+  context: ManagedPiProcessInvocationContext,
+  workspaceId: string
+) => Promise<NonNullable<ManagedPiProcessInvocation['modelConnection']>>
 
 export function createLocalManagedPiRuntime(
   repositories: LocalManagedPiRuntimeRepositories,
@@ -54,16 +66,30 @@ export function createLocalManagedPiRuntime(
     dataDirectory: `${repositories.dataDirectory}/managed-pi`,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
     ...(options.spawnPolicy === undefined ? {} : { spawnPolicy: options.spawnPolicy }),
-    inputResolver: new RepositoryManagedPiProcessInputResolver(repositories, {
-      provider: options.provider,
-      model: options.model,
-      modelAlias: options.modelAlias,
-      modelCapabilities: options.modelCapabilities,
-      providerClass: options.providerClass,
-      dataResidency: options.dataResidency,
-    }),
+    inputResolver: new RepositoryManagedPiProcessInputResolver(
+      repositories,
+      {
+        provider: options.provider,
+        model: options.model,
+        modelAlias: options.modelAlias,
+        modelCapabilities: options.modelCapabilities,
+        providerClass: options.providerClass,
+        dataResidency: options.dataResidency,
+      },
+      (configuration, context, workspaceId) =>
+        createManagedPiModelConnection({
+          configuration,
+          context,
+          workspaceId,
+          directory: `${repositories.dataDirectory}/managed-pi-models`,
+          ledger: repositories.usageLedger,
+          secrets: repositories.secrets,
+          route: options,
+          path: options.environment?.['PATH'] ?? '/usr/bin:/bin',
+        })
+    ),
   })
-  return new ManagedPiAdapter({
+  const runtime = new ManagedPiAdapter({
     transport: new DirectLocalRuntimeTransport(
       new ManagedPiDriver({
         client,
@@ -73,6 +99,7 @@ export function createLocalManagedPiRuntime(
       })
     ),
   })
+  return Object.assign(runtime, { close: () => client.close() })
 }
 
 export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcessInputResolver {
@@ -80,21 +107,26 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
   readonly #contextPackages: LocalManagedPiRuntimeRepositories['contextPackages']
   readonly #approval: LocalManagedPiRuntimeRepositories['catalogApproval']
   readonly #route: LocalRuntimeModelRoute
+  readonly #modelAlias: string
+  readonly #connect: ModelConnectionFactory | undefined
 
   constructor(
     repositories: Pick<
       LocalManagedPiRuntimeRepositories,
       'catalog' | 'contextPackages' | 'catalogApproval'
     >,
-    model: LocalModelRouteOptions
+    model: LocalModelRouteOptions,
+    connect?: ModelConnectionFactory
   ) {
     this.#catalog = repositories.catalog
     this.#contextPackages = repositories.contextPackages
     this.#approval = repositories.catalogApproval
     this.#route = new LocalRuntimeModelRoute(model, 'MANAGED_PI')
+    this.#modelAlias = model.modelAlias
+    this.#connect = connect
   }
 
-  async resolve(configurationInput: unknown) {
+  async resolve(configurationInput: unknown, context?: ManagedPiProcessInvocationContext) {
     const configuration = ManagedPiConfigurationSchema.parse(configurationInput)
     const [{ profile, skills }, contextPackage] = await Promise.all([
       resolvePublishedRuntimeInputs(this.#catalog, configuration, 'MANAGED_PI', this.#approval),
@@ -138,6 +170,21 @@ export class RepositoryManagedPiProcessInputResolver implements ManagedPiProcess
       }),
       '</control-plane-task-context>',
     ].join('\n')
+    if (this.#connect) {
+      if (!context) throw new Error('MANAGED_PI_MODEL_ALLOCATION_REQUIRED')
+      const modelConnection = await this.#connect(
+        configuration,
+        context,
+        contextPackage.projectState.workspaceId
+      )
+      return {
+        systemPrompt: systemSections.join('\n\n'),
+        prompt,
+        provider: 'control-plane',
+        model: this.#modelAlias,
+        modelConnection,
+      }
+    }
     return {
       systemPrompt: systemSections.join('\n\n'),
       prompt,

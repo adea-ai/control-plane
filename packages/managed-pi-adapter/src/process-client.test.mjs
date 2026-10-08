@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -26,6 +27,219 @@ import { ManagedPiProcessClient } from './process-client.ts'
 import { writeManagedPiRpcFixture } from './test-support/managed-pi-rpc-fixture.mjs'
 
 describe('ManagedPiProcessClient', () => {
+  test('shutdown waits for workspace preflight without writing a late admission', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pi-workspace-preflight-'))
+    const workspace = Promise.withResolvers()
+    const began = Promise.withResolvers()
+    const plan = createExecutionPlanTestFixture()
+    const configuration = translateExecutionPlanToManagedPi(plan, '1.2.0')
+    const attemptId = `att_${'6'.repeat(26)}`
+    const executionId = `exe_${'6'.repeat(26)}`
+    const client = new ManagedPiProcessClient({
+      executablePath: '/must-not-spawn',
+      dataDirectory: directory,
+      inputResolver: {
+        resolveWorkspace: async () => {
+          began.resolve()
+          return workspace.promise
+        },
+        resolve: async () => {
+          throw new Error('must not prepare')
+        },
+      },
+    })
+    const start = client
+      .start({
+        attemptId,
+        executionId,
+        configuration,
+        idempotencyKey: 'workspace-preflight',
+        attemptBudget: {
+          schemaVersion: 1,
+          workspaceId: plan.correlation.workspaceId,
+          executionId,
+          attemptId,
+          executionPlanId: plan.executionPlanId,
+          executionPlanDigest: plan.contentDigest,
+          reservationKey: `runtime-attempt:${attemptId}`,
+          currency: 'USD',
+          maximumMicrounits: configuration.limits.budget.maximumMicrounits,
+          maximumTokens: configuration.limits.tokens.maximumTotal,
+        },
+      })
+      .catch((error) => error)
+    try {
+      await began.promise
+      let closed = false
+      const closing = client.close().then(() => {
+        closed = true
+      })
+      await delay(0)
+      expect(closed).toBe(false)
+      workspace.resolve(plan.correlation.workspaceId)
+      await closing
+      expect((await start).message).toBe('PI_CLIENT_CLOSED')
+      expect(await readdir(directory)).toEqual([])
+    } finally {
+      workspace.resolve(plan.correlation.workspaceId)
+      await start
+      await client.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  test('shutdown waits for and closes a late prepared connection without spawning', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pi-late-connection-'))
+    const preparation = Promise.withResolvers()
+    const began = Promise.withResolvers()
+    let closed = 0
+    let observedSignal
+    const client = new ManagedPiProcessClient({
+      executablePath: '/must-not-spawn',
+      dataDirectory: directory,
+      inputResolver: {
+        resolve: async (_configuration, context) => {
+          observedSignal = context.signal
+          began.resolve()
+          await preparation.promise
+          return {
+            systemPrompt: 'bounded',
+            prompt: 'data',
+            provider: 'control-plane',
+            model: 'reasoning.standard',
+            modelConnection: {
+              environment: {},
+              close: async () => {
+                closed++
+              },
+            },
+          }
+        },
+      },
+    })
+    const command = {
+      attemptId: `att_${'9'.repeat(26)}`,
+      idempotencyKey: 'late-connection',
+      configuration: translateExecutionPlanToManagedPi(createExecutionPlanTestFixture(), '1.2.0'),
+    }
+    const start = client.start(command)
+    const observed = start.then(
+      () => undefined,
+      (error) => error
+    )
+    try {
+      await began.promise
+      const closing = client.close()
+      expect(observedSignal.aborted).toBe(true)
+      preparation.resolve()
+      await closing
+      expect((await observed).message).toBe('PI_CLIENT_CLOSED')
+      expect(closed).toBe(1)
+      await expect(access(join(directory, command.attemptId))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      preparation.resolve()
+      await client.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test.each(['success', 'reject', 'cancel', 'shutdown', 'filesystem', 'unconfirmed-stop'])(
+    'owns the model connection through %s termination',
+    async (mode) => {
+      const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-model-lease-'))
+      const executablePath = join(directory, 'pi-fixture.mjs')
+      const recordPath = join(directory, 'record.json')
+      const dataDirectory = join(directory, 'executions')
+      const attemptId = `att_${'7'.repeat(26)}`
+      let closed = 0
+      let handle
+      const originalStop = ProcessRpcLink.prototype.stop
+      await writeManagedPiRpcFixture(executablePath)
+      const client = new ManagedPiProcessClient({
+        executablePath,
+        dataDirectory,
+        environment: { HOME: '/ambient/home', CONTROL_PLANE_SECRET: 'must-not-leak' },
+        inputResolver: {
+          resolve: async () => ({
+            systemPrompt: 'private instruction',
+            prompt: 'task',
+            provider: 'control-plane',
+            model: 'reasoning.standard',
+            modelConnection: {
+              environment: {
+                PATH: process.env.PATH ?? '/usr/bin:/bin',
+                HOME: '/private/attempt/home',
+                MOCK_RECORD_PATH: recordPath,
+                ...(mode === 'reject'
+                  ? { MOCK_MODE: 'reject' }
+                  : mode === 'cancel' || mode === 'shutdown' || mode === 'unconfirmed-stop'
+                    ? { MOCK_MODE: 'hold' }
+                    : {}),
+              },
+              close: async () => {
+                closed++
+              },
+            },
+          }),
+        },
+      })
+      try {
+        if (mode === 'filesystem') {
+          await mkdir(dataDirectory)
+          await writeFile(join(dataDirectory, attemptId), 'blocks directory creation')
+        }
+        const command = {
+          attemptId,
+          idempotencyKey: `model-lease:${mode}`,
+          configuration: translateExecutionPlanToManagedPi(
+            createExecutionPlanTestFixture(),
+            '1.2.0'
+          ),
+        }
+        if (mode === 'filesystem' || mode === 'reject')
+          await expect(client.start(command)).rejects.toThrow()
+        else {
+          handle = await client.start(command)
+          if (mode === 'unconfirmed-stop') {
+            ProcessRpcLink.prototype.stop = async function (options) {
+              await originalStop.call(this, options)
+              return false
+            }
+            await expect(client.cancel(handle)).rejects.toThrow('PI_PROCESS_STOP_UNCONFIRMED')
+            expect(closed).toBe(1)
+            return
+          } else if (mode === 'shutdown') {
+            expect(closed).toBe(0)
+            await client.close()
+            await expect(
+              client.start({ ...command, attemptId: `att_${'8'.repeat(26)}` })
+            ).rejects.toThrow('PI_CLIENT_CLOSED')
+          } else if (mode === 'cancel') {
+            expect(closed).toBe(0)
+            await client.cancel(handle)
+          } else
+            for await (const _event of client.progress(handle)) {
+              /* drain terminal receipt */
+            }
+          expect(await client.status(handle)).toMatchObject({
+            state: mode === 'cancel' || mode === 'shutdown' ? 'cancelled' : 'succeeded',
+          })
+          const record = JSON.parse(await readFile(recordPath, 'utf8'))
+          expect(record.environment.HOME).toBe('/private/attempt/home')
+          expect(record.environment.controlPlaneSecret).toBeNull()
+          await client.cleanup(handle)
+          handle = undefined
+        }
+        expect(closed).toBe(1)
+      } finally {
+        ProcessRpcLink.prototype.stop = originalStop
+        if (handle) await client.cleanup(handle).catch(() => undefined)
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('coalesces concurrent input resolution and retains rejected admission identity', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-pi-admission-'))
     let resolutions = 0

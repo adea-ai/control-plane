@@ -254,12 +254,7 @@ export function resolveLocalRuntimeOptions(
     throw new Error('LOCAL_MANAGED_PI_MODEL_CONFIGURATION_REQUIRED')
   }
   const executablePath = environment['CONTROL_PLANE_MANAGED_PI_EXECUTABLE'] ?? 'pi'
-  const childEnvironment = pickEnvironment(environment, [
-    'HOME',
-    'PATH',
-    'PI_CODING_AGENT_DIR',
-    'PI_CODING_AGENT_SESSION_DIR',
-  ])
+  const childEnvironment = pickEnvironment(environment, ['PATH'])
   return {
     runtimeFactory: (repositories) =>
       createLocalManagedPiRuntime(repositories, {

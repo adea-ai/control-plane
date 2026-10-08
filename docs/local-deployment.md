@@ -161,10 +161,16 @@ ManagedPiProcessClient -> Pi RPC`. Before starting Pi, it resolves the exact pub
 AgentProfile/Skill versions and the content-addressed ContextPackage from SQLite and rejects any
 missing, draft, or mismatched pin. Pi receives the materialized input through strict JSONL RPC.
 Ambient tools, extensions, skills, prompt templates, themes, context files, project trust, and
-session persistence are disabled. The child receives only `HOME`, `PATH`,
-`PI_CODING_AGENT_DIR`, and `PI_CODING_AGENT_SESSION_DIR` when those names are present; Control Plane
-database, relay, API, and service credentials are not inherited. Provider/model selectors are
-non-secret. Native Pi authentication remains in the explicitly selected Pi configuration directory.
+session persistence are disabled. The child receives PATH plus a freshly generated
+private HOME, `PI_CODING_AGENT_DIR`, and `PI_CODING_AGENT_SESSION_DIR`; ambient Pi
+configuration is not inherited. Native Pi authentication contains only the
+attempt's private model-broker capability. Provider/model selectors describe the
+approved server route, while Pi selects `control-plane` and the logical alias.
+Before execution, an operator must record scoped spending approval and its pinned
+price/deployment/credential reference through the private file boundary described
+in [model-gateway.md](model-gateway.md). The server leases provider credentials and
+commits each model-request hold in the same SQLite usage store as workflow budget
+admission. Closing the attempt revokes the broker and removes private configuration.
 The configured logical alias, declared model capabilities, provider class, provider deny-list, and
 data residency must satisfy the immutable ExecutionPlan model policy or materialization fails closed.
 

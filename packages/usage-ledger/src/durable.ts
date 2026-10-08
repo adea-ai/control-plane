@@ -810,6 +810,33 @@ export class DurableUsageLedger {
     })
   }
 
+  /** The immutable admitted attempt ceiling, read under validated store scope.
+   * This allocation is not evidence of spending authorization or purchased funds.
+   */
+  async attemptAllocation(workspaceId: string, executionId: string, attemptId: string) {
+    const parsed = z
+      .object({
+        workspaceId: IdentifierSchemas.workspaceId,
+        executionId: IdentifierSchemas.executionId,
+        attemptId: IdentifierSchemas.attemptId,
+      })
+      .strict()
+      .safeParse({ workspaceId, executionId, attemptId })
+    if (!parsed.success) throw usageError('INVALID_ENTRY')
+    return this.#store.transaction(workspaceId, async (transaction) => {
+      const loaded = await this.#loadValidatedTree(transaction, workspaceId, executionId)
+      const reservation = openAttemptReservation(loaded.budget, {
+        attemptId,
+        reservationKey: `runtime-attempt:${attemptId}`,
+      })
+      return Object.freeze({
+        currency: loaded.budget.currency,
+        maximumMicrounits: reservation.maximumMicrounits,
+        maximumTokens: reservation.maximumTokens,
+      })
+    })
+  }
+
   async entries(workspaceId: string, executionId: string): Promise<readonly UsageLedgerEntry[]> {
     const parsed = z
       .object({

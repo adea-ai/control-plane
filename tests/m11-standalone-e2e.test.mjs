@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 
 async function isolatedLocalPorts() {
@@ -58,6 +58,8 @@ import {
 } from '@control-plane/local-control-plane'
 import { seedSystemCatalogOwners } from '../apps/local-control-plane/src/test-catalog-owners.mjs'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
+import { SqliteDurableUsageStore } from '@control-plane/sqlite-persistence'
 import {
   DirectLocalRuntimeTransport,
   ExternalSessionRegistry,
@@ -686,7 +688,10 @@ describe('M11 standalone execution composition', () => {
       const executablePath = realExecutable ?? join(directory, 'pi-fixture.mjs')
       const promptRecord = join(directory, 'prompt-record.json')
       if (!realExecutable)
-        await writeManagedPiRpcFixture(executablePath, { runtimeVersion: '1.0.0' })
+        await writeManagedPiRpcFixture(executablePath, {
+          runtimeVersion: '1.0.0',
+          ...(mode === 'cancel' ? { mockMode: 'hold', mockRecordPath: promptRecord } : {}),
+        })
       const localOptions = {
         dataDirectory: directory,
         runtimeFactory: (repositories) => {
@@ -706,6 +711,11 @@ describe('M11 standalone execution composition', () => {
                 : {}),
             },
           })
+          const start = runtime.start.bind(runtime)
+          runtime.start = async (request) => {
+            await writeNativePiFixtureSpendingRecord(directory, request, realExecutable)
+            return start(request)
+          }
           if (realExecutable && mode === 'cancel') {
             const cleanup = runtime.cleanup.bind(runtime)
             runtime.cleanup = async (handle) => {
@@ -863,6 +873,21 @@ describe('M11 standalone execution composition', () => {
           expect((await attached.json()).status).toBe(mode === 'cancel' ? 'cancelled' : 'completed')
         }
         expect(await local.executions.listAttempts(execution.executionId)).toHaveLength(1)
+        const ledger = new DurableUsageLedger({
+          store: new SqliteDurableUsageStore(local.persistence),
+        })
+        const entries = await ledger.entries(plan.correlation.workspaceId, execution.executionId)
+        if (realExecutable) {
+          expect(entries.filter((entry) => entry.kind === 'model_reservation')).toHaveLength(1)
+          const charges = entries.filter((entry) => entry.kind === 'model_usage')
+          if (mode === 'complete')
+            expect(charges.map((entry) => entry.costMicrounits)).toEqual([17])
+          else {
+            expect(charges).toEqual([])
+            expect(entries.filter((entry) => entry.kind === 'model_release')).toEqual([])
+          }
+        }
+        expect(await readdir(join(directory, 'managed-pi-models'))).toEqual([])
         if (mode === 'cancel') {
           expect(execution.state).toBe('cancelled')
           expect(execution.terminalResultRef).toBeUndefined()
@@ -1024,6 +1049,78 @@ describe('M11 standalone execution composition', () => {
     }
   })
 })
+
+// Synthetic operator authorization belongs only to this native certification
+// fixture. Production execution acceptance never manufactures spending grants.
+async function writeNativePiFixtureSpendingRecord(directory, request, realExecutable) {
+  const budget = request.attemptBudget
+  if (!budget || !request.executionId) throw new Error('M11_NATIVE_PI_ALLOCATION_REQUIRED')
+  const plan = request.executionPlan
+  const endpoint = realExecutable
+    ? new URL('/v1/chat/completions', process.env.M11_REAL_PI_CANCELLATION_READY_URL).href
+    : 'http://127.0.0.1:1/v1/chat/completions'
+  const scope = {
+    workspaceId: budget.workspaceId,
+    executionId: request.executionId,
+    attemptId: request.attemptId,
+  }
+  const grant = {
+    schemaVersion: 1,
+    ...scope,
+    authorizationId: 'm11-fixture-spend',
+    evidenceRef: 'fixture://m11/native-spend',
+    deploymentId: 'm11-fixture-deployment',
+    credentialRef: 'lease://m11/fixture',
+    principalRef: 'service:m11-fixture',
+    alias: 'reasoning.standard',
+    policySnapshotDigest: plan.policySnapshot.digest,
+    currency: 'USD',
+    fundingSource: 'hq_managed',
+    maximumMicrounits: budget.maximumMicrounits,
+    maximumTokens: budget.maximumTokens,
+    issuedAt: '2020-01-01T00:00:00.000Z',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  }
+  const record = {
+    schemaVersion: 1,
+    executionPlanId: plan.executionPlanId,
+    executionPlanDigest: plan.contentDigest,
+    grant,
+    price: {
+      schemaVersion: 1,
+      deploymentId: grant.deploymentId,
+      provider: realExecutable ? 'fixture' : 'fixture-provider',
+      model: realExecutable ? 'fixture' : 'fixture-model',
+      version: 'm11-fixture-price',
+      currency: 'USD',
+      fundingSource: 'hq_managed',
+      validFrom: grant.issuedAt,
+      validUntil: grant.expiresAt,
+      maximumInputTokens: 32000,
+      maximumOutputTokens: 128,
+      ratesMicrounitsPerMillionTokens: { input: 1000000, cachedInput: 1000000, output: 2000000 },
+    },
+    endpoint,
+    proxyModelId: 'fixture',
+    credential: { provider: 'file', key: 'm11-native-model-key' },
+    costClass: 'standard',
+    entitlements: [],
+  }
+  const grantDirectory = join(
+    directory,
+    'secrets',
+    'model-authorizations',
+    scope.workspaceId,
+    scope.executionId
+  )
+  await mkdir(grantDirectory, { recursive: true, mode: 0o700 })
+  await writeFile(join(grantDirectory, `${scope.attemptId}.json`), JSON.stringify(record), {
+    mode: 0o600,
+  })
+  await writeFile(join(directory, 'secrets', 'm11-native-model-key'), 'fixture-only', {
+    mode: 0o600,
+  })
+}
 
 async function waitForNativePiPrompt(realExecutable, promptRecord) {
   const deadline = Date.now() + 15000

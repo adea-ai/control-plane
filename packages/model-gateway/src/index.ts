@@ -127,7 +127,7 @@ export type ManagedModelRequest = z.output<typeof ManagedModelRequestSchema>
 export type ManagedModelResult = z.output<typeof ManagedModelResultSchema>
 export type ModelStreamChunk = z.output<typeof ModelStreamChunkSchema>
 
-interface ModelDeployment {
+export interface ModelDeployment {
   readonly deploymentId: string
   readonly alias: string
   readonly provider: string
@@ -209,10 +209,17 @@ export interface AdapterStreamChunk {
 }
 
 export interface ModelProviderAdapter {
-  complete(request: ManagedModelRequest, deployment: ModelDeployment): Promise<AdapterCompletion>
+  /** A physical transport must own cancellation through response accounting. */
+  readonly handlesTimeout?: boolean
+  complete(
+    request: ManagedModelRequest,
+    deployment: ModelDeployment,
+    signal?: AbortSignal
+  ): Promise<AdapterCompletion>
   stream(
     request: ManagedModelRequest,
-    deployment: ModelDeployment
+    deployment: ModelDeployment,
+    signal?: AbortSignal
   ): AsyncIterable<AdapterStreamChunk>
   health(): Promise<{
     readonly healthy: boolean
@@ -269,8 +276,10 @@ export class ManagedModelGateway {
     this.#now = options.now ?? (() => new Date().toISOString())
   }
 
-  async complete(input: unknown): Promise<ManagedModelResult> {
+  async complete(input: unknown, signal?: AbortSignal): Promise<ManagedModelResult> {
+    signal?.throwIfAborted()
     const { request, candidates } = await this.#prepare(input)
+    signal?.throwIfAborted()
     const eligibleCandidateIds = candidates.map(({ deployment }) => deployment.deploymentId)
     let fallbackFrom: string | undefined
     for (let index = 0; index < candidates.length; index += 1) {
@@ -280,11 +289,15 @@ export class ManagedModelGateway {
       this.#calls.set(request.modelCallId, deployment.adapterRef)
       let completion: AdapterCompletion
       try {
-        completion = await withTimeout(
-          adapter.complete(request, deployment),
-          request.settings.timeoutMs,
-          () => new ModelProviderError('MODEL_TIMEOUT', true)
-        )
+        signal?.throwIfAborted()
+        const pending = adapter.complete(request, deployment, signal)
+        completion = adapter.handlesTimeout
+          ? await pending
+          : await withTimeout(
+              pending,
+              request.settings.timeoutMs,
+              () => new ModelProviderError('MODEL_TIMEOUT', false)
+            )
       } catch (error) {
         const retryable = error instanceof ModelProviderError && error.retryable
         if (retryable && index + 1 < candidates.length) {
@@ -323,8 +336,10 @@ export class ManagedModelGateway {
     throw new ModelGatewayError('MODEL_UNAVAILABLE')
   }
 
-  async *stream(input: unknown): AsyncIterable<ModelStreamChunk> {
+  async *stream(input: unknown, signal?: AbortSignal): AsyncIterable<ModelStreamChunk> {
+    signal?.throwIfAborted()
     const { request, candidates } = await this.#prepare(input)
+    signal?.throwIfAborted()
     const selected = candidates[0]
     if (!selected) throw new ModelGatewayError('MODEL_UNAVAILABLE')
     const { deployment, adapter } = selected
@@ -332,7 +347,8 @@ export class ManagedModelGateway {
     let sequence = 0
     let completed = false
     try {
-      for await (const chunk of adapter.stream(request, deployment)) {
+      for await (const chunk of adapter.stream(request, deployment, signal)) {
+        signal?.throwIfAborted()
         if (completed) throw new ModelGatewayError('STREAM_FAILED', true)
         completed = chunk.finishReason !== undefined
         yield ModelStreamChunkSchema.parse({
@@ -346,8 +362,11 @@ export class ManagedModelGateway {
         })
       }
       if (!completed) throw new ModelGatewayError('STREAM_FAILED', true)
-    } catch {
-      throw new ModelGatewayError('STREAM_FAILED', true)
+    } catch (error) {
+      throw new ModelGatewayError(
+        'STREAM_FAILED',
+        signal?.aborted ? false : error instanceof ModelProviderError ? error.retryable : true
+      )
     }
   }
 
@@ -437,16 +456,24 @@ export class ManagedModelGateway {
   }
 }
 
+export interface LiteLlmRequestInput {
+  readonly model: string
+  readonly messages: ManagedModelRequest['messages']
+  readonly maxTokens: number
+  readonly temperature: number
+  readonly timeoutMs: number
+  readonly traceId: string
+  readonly credentialRef: string
+  readonly context: {
+    readonly request: ManagedModelRequest
+    readonly deployment: ModelDeployment
+    readonly signal?: AbortSignal
+  }
+}
+
 export interface LiteLlmClientPort {
-  complete(input: {
-    readonly model: string
-    readonly messages: ManagedModelRequest['messages']
-    readonly maxTokens: number
-    readonly temperature: number
-    readonly timeoutMs: number
-    readonly traceId: string
-    readonly credentialRef: string
-  }): Promise<{
+  readonly managesPhysicalTimeout?: boolean
+  complete(input: LiteLlmRequestInput): Promise<{
     readonly choices: readonly {
       readonly message: { readonly content: string }
       readonly finish_reason: string
@@ -461,20 +488,14 @@ export interface LiteLlmClientPort {
     readonly id?: string
     readonly response_ms?: number
   }>
-  stream?(input: {
-    readonly model: string
-    readonly messages: ManagedModelRequest['messages']
-    readonly maxTokens: number
-    readonly temperature: number
-    readonly timeoutMs: number
-    readonly traceId: string
-    readonly credentialRef: string
-  }): AsyncIterable<{
+  stream?(input: LiteLlmRequestInput): AsyncIterable<{
     readonly delta: string
     readonly finish_reason?: string
     readonly usage?: {
       readonly prompt_tokens: number
       readonly completion_tokens: number
+      readonly prompt_tokens_details?: { readonly cached_tokens?: number }
+      readonly completion_tokens_details?: { readonly reasoning_tokens?: number }
     }
   }>
   health(): Promise<{
@@ -487,12 +508,14 @@ export interface LiteLlmClientPort {
 
 export class LiteLlmAdapter implements ModelProviderAdapter {
   readonly client: LiteLlmClientPort
+  readonly handlesTimeout: boolean
 
   constructor(options: { readonly client: LiteLlmClientPort }) {
     this.client = options.client
+    this.handlesTimeout = options.client.managesPhysicalTimeout === true
   }
 
-  async complete(request: ManagedModelRequest, deployment: ModelDeployment) {
+  async complete(request: ManagedModelRequest, deployment: ModelDeployment, signal?: AbortSignal) {
     const result = await this.client.complete({
       model: deployment.providerModel,
       messages: request.messages,
@@ -501,6 +524,7 @@ export class LiteLlmAdapter implements ModelProviderAdapter {
       timeoutMs: request.settings.timeoutMs,
       traceId: request.traceId,
       credentialRef: deployment.credentialRef,
+      context: { request, deployment, ...(signal === undefined ? {} : { signal }) },
     })
     const choice = result.choices[0]
     if (!choice) throw new Error('LITELLM_EMPTY_RESPONSE')
@@ -520,7 +544,8 @@ export class LiteLlmAdapter implements ModelProviderAdapter {
 
   async *stream(
     request: ManagedModelRequest,
-    deployment: ModelDeployment
+    deployment: ModelDeployment,
+    signal?: AbortSignal
   ): AsyncIterable<AdapterStreamChunk> {
     if (!this.client.stream) throw new Error('LITELLM_STREAM_NOT_CONFIGURED')
     for await (const chunk of this.client.stream({
@@ -531,6 +556,7 @@ export class LiteLlmAdapter implements ModelProviderAdapter {
       timeoutMs: request.settings.timeoutMs,
       traceId: request.traceId,
       credentialRef: deployment.credentialRef,
+      context: { request, deployment, ...(signal === undefined ? {} : { signal }) },
     })) {
       yield {
         delta: chunk.delta,
@@ -543,6 +569,8 @@ export class LiteLlmAdapter implements ModelProviderAdapter {
               usage: {
                 inputTokens: chunk.usage.prompt_tokens,
                 outputTokens: chunk.usage.completion_tokens,
+                cachedInputTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+                reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? 0,
               },
             }),
       }
@@ -557,6 +585,13 @@ export class LiteLlmAdapter implements ModelProviderAdapter {
     return this.client.cancel(modelCallId)
   }
 }
+
+export {
+  LedgerLiteLlmHttpClient,
+  RecordedModelSpendingAuthorizationSchema,
+} from './litellm-http.js'
+export type { ModelHttpAuthority, ModelHttpAuthorization } from './litellm-http.js'
+export { NativeModelBroker } from './native-model-broker.js'
 
 export class FakeModelAdapter implements ModelProviderAdapter {
   readonly requests: { readonly request: ManagedModelRequest; readonly deploymentId: string }[] = []

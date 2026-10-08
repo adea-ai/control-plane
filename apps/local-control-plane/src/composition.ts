@@ -55,6 +55,7 @@ import {
   assertSqliteWorkflowExecutionReference,
 } from '@control-plane/sqlite-persistence'
 import type { StructuredLogger } from '@control-plane/bootstrap'
+import { DurableUsageLedger } from '@control-plane/usage-ledger'
 import {
   createRestateEndpointFactory,
   EmbeddedExecutionWorkflowDispatcher,
@@ -218,6 +219,8 @@ export interface LocalControlPlaneCompositionOptions {
     readonly catalog: LocalControlApiComposition['catalog']
     readonly contextPackages: LocalControlApiComposition['contextPackages']
     readonly dataDirectory: string
+    readonly usageLedger: DurableUsageLedger
+    readonly secrets: SecretsProvider
     /** Present when catalogApprovalPolicy is configured (#188). */
     readonly catalogApproval?: LocalRuntimeApprovalGate
   }) => LocalRuntimeTransport
@@ -410,12 +413,16 @@ export class LocalControlPlaneComposition {
     )
     this.#initializeGraphRuntime =
       graphRuntime === undefined ? undefined : () => graphRuntime.initialize(controlApi)
+    const usageStore = new SqliteDurableUsageStore(this.persistence)
+    const usageLedger = new DurableUsageLedger({ store: usageStore })
     const runtimeTransport =
       options.runtimeTransport ??
       options.runtimeFactory?.({
         catalog: controlApi.catalog,
         contextPackages: controlApi.contextPackages,
         dataDirectory: this.dataDirectory,
+        usageLedger,
+        secrets: this.secrets,
         ...(options.catalogApprovalPolicy === undefined
           ? {}
           : {
@@ -481,7 +488,7 @@ export class LocalControlPlaneComposition {
               new DisabledGraphSegmentActivities(),
             commands: this.commands,
             budgetAdmission: new DurableRuntimeBudgetAdmission({
-              store: new SqliteDurableUsageStore(this.persistence),
+              store: usageStore,
               commands: this.commandRepository,
             }),
           }))

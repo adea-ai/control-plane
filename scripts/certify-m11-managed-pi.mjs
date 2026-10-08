@@ -86,7 +86,11 @@ try {
       if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/chat/completions')
         return new Response(null, { status: 404 })
       const body = await request.json()
-      requests.push({ body, authorization: request.headers.get('authorization') })
+      requests.push({
+        body,
+        authorization: request.headers.get('authorization'),
+        retries: request.headers.get('x-litellm-num-retries'),
+      })
       if (requests.length === 2 || requests.length === 4) {
         const localCancellation = requests.length === 4
         const stream = new ReadableStream({
@@ -307,6 +311,11 @@ try {
     assert.equal(request.body.model, 'fixture')
     assert.equal(request.body.stream, true)
     assert.equal(request.body.tools?.length ?? 0, 0)
+  }
+  for (const request of requests.slice(2)) {
+    assert.equal(request.retries, '0', 'Local broker disables opaque proxy retries')
+    assert.equal(request.body.num_retries, 0)
+    assert.equal(request.body.disable_fallbacks, true)
   }
   const originalEvents = []
   for await (const event of client.progress(handle)) originalEvents.push(event)

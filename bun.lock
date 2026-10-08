@@ -125,6 +125,7 @@
         "@control-plane/langgraph-adapter": "workspace:*",
         "@control-plane/managed-pi-adapter": "workspace:*",
         "@control-plane/memory-writeback": "workspace:*",
+        "@control-plane/model-gateway": "workspace:*",
         "@control-plane/object-store": "workspace:*",
         "@control-plane/orchestration": "workspace:*",
         "@control-plane/remote-control-relay": "workspace:*",
@@ -142,6 +143,7 @@
         "@restatedev/restate-server": "1.7.13",
         "fastify": "5.12.5",
         "semver": "7.8.5",
+        "zod": "4.6.5",
       },
     },
     "apps/runtime-gateway": {
@@ -402,6 +404,7 @@
         "@control-plane/contracts": "workspace:*",
         "@control-plane/domain": "workspace:*",
         "@control-plane/policy": "workspace:*",
+        "@control-plane/usage-ledger": "workspace:*",
         "zod": "4.6.5",
       },
     },

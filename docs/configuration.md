@@ -102,9 +102,13 @@ The standalone Local entrypoint selects the packaged managed Pi RPC client only 
 executable defaults to `pi` and may be overridden by `CONTROL_PLANE_MANAGED_PI_EXECUTABLE`. These
 values choose and attest a runtime route but do not carry credentials. The route must satisfy the
 immutable model alias, capability, provider-class, provider-deny, and residency policy. The child
-process inherits only the documented Pi/home/path allowlist, so service/bootstrap secrets never
-become ambient runtime authority. Unknown runtime families and incomplete or ineligible model
-selection fail startup.
+process receives PATH and fresh private HOME/agent/session directories. Ambient
+HOME and Pi configuration are not forwarded. Native authentication contains only
+an attempt broker capability; the server resolves provider credentials through
+SecretsProvider after authenticating the private operator spending record described
+in [model-gateway.md](model-gateway.md). Unknown runtime families and incomplete
+or ineligible model selection fail startup; missing spending authority denies the
+attempt before a native process or model listener starts.
 
 ## Current service surfaces
 

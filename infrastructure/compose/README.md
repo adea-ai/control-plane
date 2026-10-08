@@ -63,6 +63,12 @@ M11_REAL_PI_DURABLE_EXECUTION=restate docker compose -p cp-m11-native-pi-test \
 
 The certification target is test-only and is not referenced by either shipped Simple target. It has no credential mount, no network, a read-only root filesystem, and writable temporary filesystems only for the test process.
 
+The required M10 Operability gate runs this certification serially for SQLite and
+Restate on its disposable GitHub runner. The container has a 1 CPU/1 GiB ceiling;
+build and execution have explicit deadlines. Cleanup removes only that run's
+Compose project and fails if any owned container remains. This lane does not
+start Docker on the developer host.
+
 ## Server profile
 
 The `server` profile runs three long-lived services: the all-in-one hosted Control Plane, PostgreSQL, and Restate. A one-shot migration container applies the versioned schema before the Control Plane starts. PostgreSQL and Restate stay private on the Compose network; only the Control API is published to host loopback.
