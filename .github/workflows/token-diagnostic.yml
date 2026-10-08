@@ -15,7 +15,6 @@ jobs:
           TOKEN: ${{ secrets.CODE_FOUNDRY_TOKEN }}
         run: |
           set -euo pipefail
-          sha=$(curl -s -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/commits/main | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).sha))')
           try() { # tag suffix, extra json
             status=$(curl -s -o /tmp/pp.json -w '%{http_code}' -X POST \
               -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.github+json' \
@@ -24,8 +23,8 @@ jobs:
             echo "variant $1 (grn=$2): status=$status $(head -c 120 /tmp/pp.json)"
             if [ "$status" = "201" ]; then
               id=$(node -e 'console.log(require("/tmp/pp.json").id)')
-              curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/releases/$id
-              curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/git/refs/tags/zzz-shape-$1 || true
+              curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/releases/${id}
+              curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/git/refs/tags/zzz-shape-${1} || true
             fi
           }
           try grn-true true
@@ -37,6 +36,6 @@ jobs:
           echo "variant body: status=$status $(head -c 120 /tmp/p3.json)"
           if [ "$status" = "201" ]; then
             id=$(node -e 'console.log(require("/tmp/p3.json").id)')
-            curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/releases/$id
+            curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/releases/${id}
             curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/adea-ai/control-plane/git/refs/tags/zzz-shape-body || true
           fi
