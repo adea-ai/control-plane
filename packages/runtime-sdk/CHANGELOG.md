@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.12.0...runtime-sdk-v1.13.0) (2026-10-08)
+
+
+### Features
+
+* **runtime:** add workspace scope capability vocabulary ([#952](https://github.com/adea-ai/control-plane/issues/952)) ([c76e25c](https://github.com/adea-ai/control-plane/commit/c76e25c376cb19b92875f2cf3a93f19180a0067e))
+
 ## [1.12.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.11.1...runtime-sdk-v1.12.0) (2026-10-07)
 
 
