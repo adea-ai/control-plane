@@ -1,4 +1,7 @@
 export * from './current-authority.js'
+export * from './pi-durable-account.js'
+export * from './funding-preparation.js'
+export * from './file-recorded-funding.js'
 export * from './funding-view.js'
 export {
   ModelFundingOwnerSchema,
