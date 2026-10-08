@@ -26,6 +26,7 @@
   "packages/model-gateway": "1.4.0",
   "packages/object-store": "1.6.1",
   "packages/orchestration": "1.6.0",
+  "packages/pi-cloudflare-host": "0.1.0",
   "packages/policy": "1.4.1",
   "packages/production-readiness": "1.4.2",
   "packages/profile-portability": "1.6.0",
