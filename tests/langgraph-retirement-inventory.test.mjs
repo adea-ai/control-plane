@@ -54,6 +54,26 @@ async function withFixtureStore(options, run) {
   }
 }
 
+/**
+ * Copies the fixture store into the test temp directory and deletes every
+ * execution-plan row, simulating vanished plans; the fixture itself stays
+ * untouched and the copy is disposable.
+ */
+async function createPlanlessStoreCopy(fixture) {
+  const copyPath = join(temporaryDirectory, 'planless.sqlite')
+  await rm(copyPath, { force: true })
+  const { Database } = await import('bun:sqlite')
+  const source = new Database(fixture.path, { readonly: true })
+  source.exec(`VACUUM INTO '${copyPath}'`)
+  source.close()
+  const writer = new Database(copyPath)
+  writer.run('begin')
+  writer.run('delete from control_plane_records where namespace = ?1', 'execution-plans')
+  writer.run('commit')
+  writer.close()
+  return copyPath
+}
+
 function buildManifest(store, { observationScope = 'local-disposable-store', ...options } = {}) {
   return buildInventoryManifest({
     database: store.database,
@@ -180,19 +200,7 @@ describe('langgraph retirement inventory', () => {
 
     test('in-flight executions whose plan vanished are typed incomplete, never silent', async () => {
       await withFixtureStore({}, async ({ fixture }) => {
-        // Delete the running execution's plan row on a COPY of the store so
-        // the fixture itself stays untouched; the copy is disposable.
-        const copyPath = join(temporaryDirectory, 'planless.sqlite')
-        await rm(copyPath, { force: true })
-        const { Database } = await import('bun:sqlite')
-        const source = new Database(fixture.path, { readonly: true })
-        source.exec(`VACUUM INTO '${copyPath}'`)
-        source.close()
-        const writer = new Database(copyPath)
-        writer.run('begin')
-        writer.run('delete from control_plane_records where namespace = ?1', 'execution-plans')
-        writer.run('commit')
-        writer.close()
+        const copyPath = await createPlanlessStoreCopy(fixture)
         const copiedStore = await openReadOnlyStore(copyPath)
         try {
           const manifest = buildManifest(copiedStore)
@@ -236,6 +244,41 @@ describe('langgraph retirement inventory', () => {
         expect(() => buildManifest(store, { limits: { entriesPerSection: 0 } })).toThrow(
           RetirementInventoryError
         )
+      })
+    })
+
+    test('exact counts and per-entry attribution are independent of the entry limit', async () => {
+      await withFixtureStore({}, async ({ store }) => {
+        const wide = buildManifest(store)
+        const attributionByKey = (manifest) =>
+          new Map(
+            manifest.sections.definitions.entries.map((entry) => [
+              `${entry.workspaceId}\u0000${entry.graphDefinitionId}\u0000${entry.graphVersion}`,
+              entry.consumersObserved,
+            ])
+          )
+        const wideAttribution = attributionByKey(wide)
+        for (const entriesPerSection of [1, 2]) {
+          const bounded = buildManifest(store, {
+            limits: { entriesPerSection, pageSize: 1 },
+          })
+          expect(bounded.sections.definitions.truncated).toBe(true)
+          expect(bounded.sections.consumers.truncated).toBe(true)
+          // The cap bounds the consumers section as a whole, curated
+          // registry entries included.
+          expect(bounded.sections.consumers.entries).toHaveLength(entriesPerSection)
+          // Full aggregates are computed over the whole scan, not the bounded
+          // display entries, so totals never move with --limit.
+          expect(bounded.sections.definitions.counts).toEqual(wide.sections.definitions.counts)
+          expect(bounded.sections.executions.counts).toEqual(wide.sections.executions.counts)
+          expect(bounded.sections.checkpoints.counts).toEqual(wide.sections.checkpoints.counts)
+          expect(bounded.sections.consumers.counts).toEqual(wide.sections.consumers.counts)
+          // Per-definition attribution (including curated consumers) stays
+          // exact for every entry the bounded manifest still emits.
+          for (const [key, observed] of attributionByKey(bounded)) {
+            expect(observed).toEqual(wideAttribution.get(key))
+          }
+        }
       })
     })
   })
@@ -708,6 +751,104 @@ describe('langgraph retirement inventory', () => {
         expect(report.verdicts[0].reasons).toContain('WORKFLOW_NOT_IN_INVENTORY')
         expect(report.verdicts[0].reasons).toContain('INVENTORY_ENTRIES_TRUNCATED')
       })
+    })
+
+    test('a running execution whose plan vanished blocks retirement approval', async () => {
+      await withFixtureStore({}, async ({ fixture }) => {
+        const copyPath = await createPlanlessStoreCopy(fixture)
+        const copiedStore = await openReadOnlyStore(copyPath)
+        try {
+          const manifest = buildManifest(copiedStore)
+          // The running execution is unattributable now, so no definition
+          // entry carries its in-flight count — retirement must still block.
+          expect(manifest.sections.executions.counts.inFlightPlansMissing).toBe(1)
+          const report = validateDispositions({ dispositions: [fullProposal('retire')] }, manifest)
+          expect(report.verdicts[0].verdict).toBe('blocked')
+          expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_EXECUTION_WITHOUT_PLAN')
+          expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
+        } finally {
+          copiedStore.database.close()
+          await rm(copyPath, { force: true })
+        }
+      })
+    })
+
+    test('retirement on incomplete or stale execution evidence is blocked, never counted as zero', async () => {
+      const betaRetire = {
+        ...fullProposal('retire', {
+          graphDefinitionId: 'graph:inventory-beta',
+          requiredBehavior: undefined,
+          replacementEvidence: undefined,
+          inFlightAcknowledged: undefined,
+        }),
+      }
+      // Stale evidence: the scan is older than the freshness threshold, so a
+      // zero in-flight count is not trustworthy attribution.
+      await withFixtureStore(
+        { now: () => new Date('2026-01-01T00:00:00.000Z') },
+        async ({ store }) => {
+          const staleManifest = buildManifest(store)
+          expect(staleManifest.sections.executions.status).toBe(OBSERVATION_STATUS.STALE)
+          const staleReport = validateDispositions({ dispositions: [betaRetire] }, staleManifest)
+          expect(staleReport.verdicts[0].verdict).toBe('blocked')
+          expect(staleReport.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+        }
+      )
+      // Incomplete evidence: a malformed execution row means the in-flight
+      // attribution was not fully read; it must never pass as zero.
+      await withFixtureStore({ injectMalformedExecution: true }, async ({ store }) => {
+        const incompleteManifest = buildManifest(store)
+        expect(incompleteManifest.sections.executions.status).toBe(OBSERVATION_STATUS.INCOMPLETE)
+        expect(incompleteManifest.sections.executions.malformedRecords).toBe(1)
+        const incompleteReport = validateDispositions(
+          { dispositions: [betaRetire] },
+          incompleteManifest
+        )
+        expect(incompleteReport.verdicts[0].verdict).toBe('blocked')
+        expect(incompleteReport.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+        expect(incompleteReport.summary).toEqual({
+          total: 1,
+          approved: 0,
+          rejected: 0,
+          blocked: 1,
+        })
+      })
+    })
+
+    test('retirement without a read execution source is blocked, not approved', () => {
+      const report = validateDispositions(
+        { dispositions: [fullProposal('retire')] },
+        {
+          observedAt: OBSERVED_AT,
+          observationScope: 'repository-scan',
+          sections: {
+            definitions: {
+              truncated: false,
+              malformedRecords: 0,
+              entries: [
+                {
+                  ...alphaKey,
+                  consumersObserved: {
+                    catalogCommands: 0,
+                    checkpointRows: 0,
+                    inFlightExecutions: 0,
+                    retainedExecutions: 0,
+                  },
+                },
+              ],
+            },
+            executions: {
+              status: OBSERVATION_STATUS.UNKNOWN,
+              truncated: false,
+              malformedRecords: 0,
+              counts: { inFlight: 0, inFlightPlansMissing: 0 },
+            },
+          },
+        }
+      )
+      expect(report.verdicts[0].verdict).toBe('blocked')
+      expect(report.verdicts[0].reasons).toContain('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+      expect(report.summary).toEqual({ total: 1, approved: 0, rejected: 0, blocked: 1 })
     })
 
     test('malformed documents throw a typed error', () => {

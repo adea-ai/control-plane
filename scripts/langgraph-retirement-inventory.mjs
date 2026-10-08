@@ -554,6 +554,7 @@ function collectCatalogCallers(database, context) {
       malformedCount: 0,
       truncated: false,
       readError: 'NAMESPACE_SCAN_FAILED',
+      distinctCallers: 0,
       entries: [],
     }
   }
@@ -581,6 +582,9 @@ function collectCatalogCallers(database, context) {
     malformedCount,
     truncated,
     readError: undefined,
+    // Distinct callers are counted over the full scan; the entry list is the
+    // only bounded surface.
+    distinctCallers: callers.size,
     entries: entries.toSorted((left, right) => compareCodePoint(left.consumerId, right.consumerId)),
   }
 }
@@ -885,6 +889,7 @@ function collectCheckpoints(database, context) {
     ),
     truncated,
     malformedRecords: malformedCount,
+    internal: { checkpointRowsByExecution },
   }
 }
 
@@ -1012,6 +1017,7 @@ export function buildInventoryManifest({
         malformedCount: 0,
         truncated: false,
         readError: 'STORE_UNAVAILABLE',
+        distinctCallers: 0,
         entries: [],
       }
 
@@ -1025,6 +1031,10 @@ export function buildInventoryManifest({
         ...scanContext,
       })
     : emptyCheckpointsSection(storeIdentity, observedAt, normalizedLimits)
+  const { internal: checkpointInternals, ...checkpointsPublic } = checkpoints
+  // Row attribution per graph is computed over every checkpoint thread, never
+  // over the bounded display entries, so it stays exact under --limit.
+  const checkpointRowsByGraph = checkpointInternals?.checkpointRowsByExecution ?? new Map()
 
   const definitions = storeAvailable
     ? collectDefinitions(database, {
@@ -1032,16 +1042,28 @@ export function buildInventoryManifest({
         observedAt,
         limits: normalizedLimits,
         executionsByGraph: executionInternals?.executionsByGraph ?? new Map(),
-        checkpointRowsByExecution: checkpointRowsByExecutionIndex(
-          checkpoints.entries,
-          executionGraphKeys
-        ),
+        checkpointRowsByExecution: checkpointRowsByGraph,
         catalogCommandsByGraph: storeAvailable
           ? catalogCommandsByGraphIndex(database, scanContext)
           : new Map(),
         ...scanContext,
       })
     : emptyDefinitionsSection(storeIdentity, observedAt, normalizedLimits)
+
+  // The entry cap applies to the whole consumers section — curated registry
+  // and observed callers together — while counts stay computed over the full
+  // scan, so bounding never changes any total.
+  const consumerEntries = [
+    ...KNOWN_CONSUMERS.map((consumer) => ({
+      ...consumer,
+      profile: { ...consumer.profile },
+      observation: { evidence: 'curated-registry', observedAt, origin: 'repository-scan' },
+    })),
+    ...catalogCallers.entries,
+  ]
+    .toSorted((left, right) => compareCodePoint(left.consumerId, right.consumerId))
+    .slice(0, normalizedLimits.entriesPerSection)
+  const consumersTotal = KNOWN_CONSUMERS.length + catalogCallers.distinctCallers
 
   const consumers = {
     observedAt,
@@ -1050,21 +1072,19 @@ export function buildInventoryManifest({
       identity: storeAvailable ? storeIdentity : null,
       namespaces: storeAvailable ? [NAMESPACES.catalogCommands] : [],
     },
-    ...consumersOutcome({ storeAvailable, catalogCallers, normalizedLimits, observedAt }),
+    ...consumersOutcome({
+      storeAvailable,
+      catalogCallers,
+      truncated: consumersTotal > normalizedLimits.entriesPerSection,
+      normalizedLimits,
+      observedAt,
+    }),
     counts: {
       registered: KNOWN_CONSUMERS.length,
       catalogCommandReceipts: catalogCallers.rowCount,
-      distinctCatalogCallers: new Set(catalogCallers.entries.map((entry) => entry.profile.callerId))
-        .size,
+      distinctCatalogCallers: catalogCallers.distinctCallers,
     },
-    entries: [
-      ...KNOWN_CONSUMERS.map((consumer) => ({
-        ...consumer,
-        profile: { ...consumer.profile },
-        observation: { evidence: 'curated-registry', observedAt, origin: 'repository-scan' },
-      })),
-      ...catalogCallers.entries,
-    ].toSorted((left, right) => compareCodePoint(left.consumerId, right.consumerId)),
+    entries: consumerEntries,
   }
 
   return {
@@ -1105,7 +1125,12 @@ export function buildInventoryManifest({
         reasons: ['STORE_UNAVAILABLE'],
       }),
     },
-    sections: { definitions, consumers, executions: executionsPublic, checkpoints },
+    sections: {
+      definitions,
+      consumers,
+      executions: executionsPublic,
+      checkpoints: checkpointsPublic,
+    },
     historyOwnership: {
       catalogCommands:
         'graph-definition-commands receipts are the append-only publication history of the catalog',
@@ -1126,7 +1151,7 @@ export function buildInventoryManifest({
     epistemics: retainedWorkEpistemics({
       observationScope,
       executions: executionsPublic,
-      checkpoints,
+      checkpoints: checkpointsPublic,
     }),
     historicalDecisionReconciliation: {
       items: [
@@ -1172,7 +1197,13 @@ function normalizeLimits(limits) {
   }
 }
 
-function consumersOutcome({ storeAvailable, catalogCallers, normalizedLimits, observedAt }) {
+function consumersOutcome({
+  storeAvailable,
+  catalogCallers,
+  truncated,
+  normalizedLimits,
+  observedAt,
+}) {
   if (!storeAvailable)
     return {
       status: OBSERVATION_STATUS.UNKNOWN,
@@ -1185,7 +1216,7 @@ function consumersOutcome({ storeAvailable, catalogCallers, normalizedLimits, ob
     readError: catalogCallers.readError,
     rowCount: catalogCallers.rowCount,
     malformedCount: catalogCallers.malformedCount,
-    truncated: catalogCallers.truncated,
+    truncated,
     newestUpdatedAtValue: null,
     maxAgeDays: normalizedLimits.maxAgeDays,
     observedAt,
@@ -1197,20 +1228,9 @@ function consumersOutcome({ storeAvailable, catalogCallers, normalizedLimits, ob
   return {
     status,
     reasons: outcome.reasons,
-    truncated: catalogCallers.truncated,
+    truncated,
     malformedRecords: catalogCallers.malformedCount,
   }
-}
-
-function checkpointRowsByExecutionIndex(checkpointEntries, executionGraphKeys) {
-  const index = new Map()
-  for (const entry of checkpointEntries) {
-    const graphKey =
-      entry.executionId === undefined ? undefined : executionGraphKeys.get(entry.executionId)
-    if (graphKey === undefined) continue
-    index.set(graphKey, (index.get(graphKey) ?? 0) + entry.checkpointRows + entry.writeRows)
-  }
-  return index
 }
 
 function emptyDefinitionsSection(identity, observedAt, normalizedLimits) {
@@ -1371,6 +1391,14 @@ const DISPOSITION_EVIDENCE_MATRIX = Object.freeze({
  * executes a disposition. Verdicts: approved | rejected | blocked.
  * Workflow identity is workspace-scoped — a proposal names
  * (workspaceId, graphDefinitionId, graphVersion).
+ *
+ * Retirement (`retire`) additionally blocks while execution evidence does not
+ * support a zero-live-work conclusion for the store: running executions whose
+ * plan vanished are unattributable (IN_FLIGHT_EXECUTION_WITHOUT_PLAN), and an
+ * executions section that was not fully read (incomplete, stale, truncated,
+ * malformed, or out of scope) means a zero in-flight count is not trustworthy
+ * attribution (IN_FLIGHT_ATTRIBUTION_INCOMPLETE). Missing attribution is never
+ * counted as zero.
  */
 export function validateDispositions(document, manifest) {
   if (document === null || typeof document !== 'object' || !Array.isArray(document.dispositions))
@@ -1427,11 +1455,21 @@ export function validateDispositions(document, manifest) {
     const inFlight = entry?.consumersObserved?.inFlightExecutions ?? 0
     if (disposition === 'drain' && inFlight > 0 && proposal.inFlightAcknowledged !== true)
       missingEvidence.add('inFlightAcknowledged')
-    if (disposition === 'retire' && inFlight > 0) reasons.push('IN_FLIGHT_WORK_PRESENT')
+    if (disposition === 'retire') {
+      if (inFlight > 0) reasons.push('IN_FLIGHT_WORK_PRESENT')
+      const executionsSection = manifest?.sections?.executions
+      if ((executionsSection?.counts?.inFlightPlansMissing ?? 0) > 0)
+        reasons.push('IN_FLIGHT_EXECUTION_WITHOUT_PLAN')
+      if (!sectionFullyRead(executionsSection)) reasons.push('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+    }
     if (missingEvidence.size > 0) reasons.push('MISSING_REQUIRED_EVIDENCE')
     if (Array.isArray(proposal.unresolvedBlockers) && proposal.unresolvedBlockers.length > 0)
       reasons.push('UNRESOLVED_BLOCKERS_DECLARED')
-    const verdict = reasons.includes('UNRESOLVED_BLOCKERS_DECLARED')
+    const blocked =
+      reasons.includes('UNRESOLVED_BLOCKERS_DECLARED') ||
+      reasons.includes('IN_FLIGHT_EXECUTION_WITHOUT_PLAN') ||
+      reasons.includes('IN_FLIGHT_ATTRIBUTION_INCOMPLETE')
+    const verdict = blocked
       ? 'blocked'
       : reasons.length === 0 && missingEvidence.size === 0
         ? 'approved'
@@ -1541,6 +1579,10 @@ is workspace-scoped):
      "inFlightAcknowledged": true,         // drain, when in-flight work exists
      "unresolvedBlockers": []              // nonempty -> verdict blocked
   }]}
+
+Retire verdicts block while execution evidence is not fully read (incomplete,
+stale, truncated, or out of scope) or any running execution lost its plan —
+unattributed in-flight work is never counted as zero.
 
 Output: a single deterministic JSON manifest on stdout. Failures print one
 sanitized LANGGRAPH_RETIREMENT_INVENTORY_FAILED:<CODE> line on stderr.
